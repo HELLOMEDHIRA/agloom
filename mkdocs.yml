@@ -9,8 +9,8 @@ copyright: "&copy; 2026 MEDHIRA"
 
 theme:
   name: material
-  logo: assets/medhira-logo.svg
-  favicon: assets/medhira-logo.svg
+  logo: assets/medhira-logo.png
+  favicon: assets/medhira-logo.png
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default

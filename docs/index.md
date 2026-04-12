@@ -1,6 +1,6 @@
 <div align="center" markdown>
 
-![MEDHIRA](assets/medhira-logo.svg){ width="120" }
+![MEDHIRA](assets/medhira-logo.png){ width="120" }
 
 # agloom
 
