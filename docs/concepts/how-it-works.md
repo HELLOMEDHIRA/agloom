@@ -13,7 +13,7 @@ flowchart TD
     D -->|REACT| F[ReAct Tool Loop]
     D -->|SUPERVISOR| G[Manager + Parallel Workers]
     D -->|PIPELINE| H[Sequential Stages]
-    D -->|REFLECTION| I[Generate → Critique → Revise]
+    D -->|REFLECTION| I[Generate - Critique - Revise]
     D -->|Other| J[SWARM / BLACKBOARD / etc.]
     E --> K[Skill Learning]
     F --> K
@@ -82,14 +82,14 @@ The result is cached (if `query_cache=` is set) and returned as an `ExecutionRes
 
 ```mermaid
 graph LR
-    subgraph create_agent
+    subgraph CA["create_agent"]
         direction TB
         A[Classifier] --> B[Pattern Router]
-        B --> C[9 Pattern Handlers]
+        B --> C[Pattern Handlers]
         C --> D[Worker Pool]
     end
 
-    subgraph Infrastructure
+    subgraph INFRA["Infrastructure"]
         direction TB
         E[Circuit Breaker]
         F[Rate Limiter]
@@ -97,7 +97,7 @@ graph LR
         H[Retry Engine]
     end
 
-    subgraph Data Layer
+    subgraph DATA["Data Layer"]
         direction TB
         I[Session Memory]
         J[Long-Term Store]
@@ -106,8 +106,8 @@ graph LR
         M[Query Cache]
     end
 
-    create_agent --> Infrastructure
-    create_agent --> Data Layer
+    CA --> INFRA
+    CA --> DATA
 ```
 
 ## Thread Safety

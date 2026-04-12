@@ -105,7 +105,7 @@ flowchart TD
     Q[Query] --> G[Generator]
     G --> C{Critic}
     C -->|Score < threshold| G
-    C -->|Score ≥ threshold| R[Response]
+    C -->|Score >= threshold| R[Response]
 ```
 
 **Example queries:** "Write a professional cover letter", "Create a detailed technical specification."
