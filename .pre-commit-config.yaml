@@ -1,0 +1,67 @@
+default_language_version:
+  python: python3.13
+
+repos:
+  # ── Housekeeping ────────────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: ['--unsafe']
+      - id: check-toml
+      - id: check-json
+        exclude: '\.jsonl$'
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+        exclude: '(uv\.lock|assets/medhira-logo\.png)$'
+      - id: debug-statements
+      - id: detect-private-key
+      - id: check-ast
+
+  # ── Ruff (lint + format) ────────────────────────────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.6
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        types_or: [python, pyi]
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  # ── Pyrefly (type checking) ────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: pyrefly
+        name: pyrefly type check
+        entry: uv run pyrefly check
+        language: system
+        types: [python]
+        pass_filenames: false
+        args: [agloom/]
+
+  # ── Conventional commits (commit message validation) ───────────────────────
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.5.0
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
+
+  # ── Secrets detection ──────────────────────────────────────────────────────
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        exclude: '(uv\.lock|\.jsonl|\.secrets\.baseline)$'
+
+  # ── Version consistency ────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: version-check
+        name: version consistency check
+        entry: python -c "import tomllib; f=open('pyproject.toml','rb'); d=tomllib.load(f); v=d['project']['version']; print(f'Version {v} OK')"
+        language: system
+        files: 'pyproject\.toml$'
+        pass_filenames: false

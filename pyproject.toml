@@ -1,0 +1,151 @@
+[project]
+name = "agloom"
+version = "0.1.1"
+description = "The intelligent fabric for AI agents — 9 execution patterns, auto-classified, self-learning, production-ready. Drop-in replacement for LangChain's create_agent."
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.11"
+keywords = ["langchain", "langgraph", "agent", "llm", "ai", "patterns", "skills", "agloom"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "langchain>=1.2.13",
+    "langchain-classic>=1.0.3",
+    "langchain-mcp-adapters>=0.2.2",
+    "langgraph>=1.1.3",
+    "qdrant-client>=1.17.1",
+    "requests>=2.33.0",
+    "sentence-transformers>=5.3.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/HELLOMEDHIRA/agloom"
+Documentation = "https://agloom.readthedocs.io"
+Repository = "https://github.com/HELLOMEDHIRA/agloom"
+Issues = "https://github.com/HELLOMEDHIRA/agloom/issues"
+
+[project.optional-dependencies]
+groq = ["langchain-groq>=1.1.2"]
+huggingface = ["langchain-huggingface>=1.2.1"]
+nvidia = ["langchain-nvidia-ai-endpoints>=1.2.1"]
+webhook = ["httpx>=0.27.0"]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.6",
+    "mkdocstrings[python]>=0.29",
+    "mkdocs-gen-files>=0.5",
+    "mkdocs-literate-nav>=0.6",
+]
+all = [
+    "langchain-groq>=1.1.2",
+    "langchain-huggingface>=1.2.1",
+    "langchain-nvidia-ai-endpoints>=1.2.1",
+    "httpx>=0.27.0",
+]
+
+[dependency-groups]
+dev = [
+    "commitizen>=4.13.10",
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.6",
+    "mkdocstrings[python]>=0.29",
+    "mkdocs-gen-files>=0.5",
+    "mkdocs-literate-nav>=0.6",
+    "pre-commit>=4.5.1",
+    "pyrefly>=0.60.2",
+    "ruff>=0.15.10",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agloom"]
+exclude = ["examples/", "test.py", "test_skill_evolution.py"]
+
+# ── Ruff ──────────────────────────────────────────────────────────────────────
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["agloom"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "N",      # pep8-naming
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+    "T20",    # flake8-print (catches stray print())
+    "RUF",    # ruff-specific rules
+    "ASYNC",  # flake8-async
+    "S",      # flake8-bandit (security)
+    "C4",     # flake8-comprehensions
+    "PIE",    # flake8-pie
+    "RET",    # flake8-return
+    "TCH",    # flake8-type-checking
+]
+ignore = [
+    "E501",    # line length handled by formatter
+    "S101",    # assert usage is fine for us
+    "B008",    # function call in default argument (Pydantic Field)
+    "RET504",  # unnecessary assignment before return
+    "UP007",   # X | Y union syntax (keep Optional for compat docs)
+    "RUF001",  # ambiguous unicode — we use box-drawing chars in log banners
+    "RUF002",  # ambiguous unicode in docstrings
+    "RUF003",  # ambiguous unicode in comments
+    "S110",    # try-except-pass — intentional silencing in fallback paths
+    "S112",    # try-except-continue — intentional in retry loops
+    "ASYNC109", # async-function-with-timeout — we use asyncio.wait_for explicitly
+    "N806",    # variable in function should be lowercase (we use PascalCase for class aliases)
+    "N818",    # exception name should end in Error
+    "SIM105",  # use contextlib.suppress — explicit try/except is clearer here
+    "SIM102",  # collapsible if — sometimes nested ifs are clearer
+    "SIM118",  # in-dict-keys — .keys() is sometimes more explicit
+    "TC001",   # typing-only-first-party-import — can break runtime
+    "TC002",   # typing-only-third-party-import — can break runtime
+    "TC003",   # typing-only-stdlib-import — can break runtime
+    "UP042",   # replace str+Enum with StrEnum — keep backward compat
+    "RUF005",  # collection-literal-concatenation — tuple concat is fine
+]
+
+[tool.ruff.lint.per-file-ignores]
+"test*.py" = ["S", "T20", "E402", "N817", "B006", "B011", "RUF059"]
+"examples/*.py" = ["S", "T20", "T201"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["agloom"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+# ── Commitizen ────────────────────────────────────────────────────────────────
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.1.1"
+version_files = [
+    "pyproject.toml:version",
+    "agloom/__init__.py:__version__",
+]
+tag_format = "v$version"
+update_changelog_on_bump = true
+changelog_file = "CHANGELOG.md"
+bump_message = "release: v$new_version"

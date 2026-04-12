@@ -1,0 +1,112 @@
+site_name: agloom
+site_url: https://agloom.readthedocs.io
+site_description: "agloom — Weave intelligent agents from 9 execution patterns. Built by MEDHIRA."
+site_author: MEDHIRA
+repo_url: https://github.com/HELLOMEDHIRA/agloom
+repo_name: HELLOMEDHIRA/agloom
+edit_uri: edit/main/docs/
+copyright: "&copy; 2026 MEDHIRA"
+
+theme:
+  name: material
+  logo: assets/medhira-logo.svg
+  favicon: assets/medhira-logo.svg
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+  - def_list
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Why agloom?: getting-started/why-agloom.md
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quickstart.md
+      - Requirements: getting-started/requirements.md
+  - Core Concepts:
+      - How It Works: concepts/how-it-works.md
+      - Execution Patterns: concepts/patterns.md
+      - The create_agent API: concepts/create-agent.md
+  - Features:
+      - Tool Calling: features/tools.md
+      - Memory: features/memory.md
+      - Skill Learning: features/skills.md
+      - Feedback & Evaluation: features/feedback.md
+      - Streaming & Events: features/streaming.md
+      - Human-in-the-Loop: features/hitl.md
+      - Frozen Agents: features/frozen-agents.md
+      - Observability & LangSmith: features/observability.md
+  - Configuration:
+      - All Parameters: configuration/parameters.md
+      - Timeouts & Retries: configuration/reliability.md
+      - Logging & Debug: configuration/logging.md
+      - Errors & Warnings: configuration/errors.md
+  - Examples:
+      - Basic Agent: examples/basic.md
+      - Tools & REACT: examples/tools.md
+      - Streaming UI: examples/streaming.md
+      - Frozen / Batch: examples/frozen.md
+      - Multi-Agent: examples/multi-agent.md
+  - Contributing: contributing.md
+  - Changelog: changelog.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/HELLOMEDHIRA/agloom
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/user/HELLOMEDHIRA/

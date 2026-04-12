@@ -1,0 +1,56 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing / coverage
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# Type checkers
+.mypy_cache/
+.pyrefly/
+
+# Linter / test caches
+.ruff_cache/
+.pytest_cache/
+
+# Logs
+*.log
+
+# Agent / IDE config (local only)
+.claude/
+
+# MkDocs build output
+site/
+
+# Secrets baseline (tracked, but regenerated)
+# .secrets.baseline
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Qdrant local storage
+qdrant_data/
+skills_store/
