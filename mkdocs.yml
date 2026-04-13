@@ -88,6 +88,8 @@ nav:
       - Feedback & Evaluation: features/feedback.md
       - Streaming & Events: features/streaming.md
       - Human-in-the-Loop: features/hitl.md
+      - Middleware: features/middleware.md
+      - MCP Servers: features/mcp.md
       - Frozen Agents: features/frozen-agents.md
       - Observability & LangSmith: features/observability.md
   - Configuration:
@@ -95,6 +97,8 @@ nav:
       - Timeouts & Retries: configuration/reliability.md
       - Logging & Debug: configuration/logging.md
       - Errors & Warnings: configuration/errors.md
+  - Guides:
+      - Production Integration: guides/production.md
   - Examples:
       - Basic Agent: examples/basic.md
       - Tools & REACT: examples/tools.md

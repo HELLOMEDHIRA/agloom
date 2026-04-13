@@ -56,7 +56,26 @@ The three laws of thermodynamics are:
 
 ## What happened
 
-1. `create_agent` created the agent with default settings
+1. `create_agent` created the agent with default settings (session memory auto-created)
 2. The classifier analyzed "What are the three laws of thermodynamics?" → simple factual query → **DIRECT** pattern
 3. One LLM call was made
 4. The result includes the response, pattern used, step trace, and token usage
+
+## Adding conversation memory
+
+Pass `thread_id` to maintain context across calls:
+
+```python
+async def chat_example():
+    agent = create_agent(model=llm, name="chat-agent")
+
+    # First turn
+    r1 = await agent.ainvoke("My name is Alice", thread_id="chat-1")
+    print(r1.output)
+
+    # Second turn — agent remembers because same thread_id
+    r2 = await agent.ainvoke("What's my name?", thread_id="chat-1")
+    print(r2.output)  # → "Your name is Alice"
+```
+
+Without `thread_id`, each call gets a random ID and can't find previous turns.

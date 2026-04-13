@@ -45,8 +45,8 @@ agloom supports multiple LLM providers. Install only what you need:
 ## Verify Installation
 
 ```python
-import src
-print(src.__version__)  # → 0.1.0
+import agloom
+print(agloom.__version__)  # → 0.1.1
 ```
 
 ## Environment Variables

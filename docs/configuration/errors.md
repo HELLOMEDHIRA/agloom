@@ -16,6 +16,7 @@ These are `ValueError` exceptions raised immediately when `create_agent` is call
 | `user_callback must be callable` | `user_callback=42` | Pass an async function |
 | `frozen=True requires non-empty frozen_template` | `frozen=True` without template | Provide `frozen_template="..."` |
 | `frozen=True requires non-empty input_key` | `input_key=[]` | Provide at least one key |
+| `query must be a dict for frozen agents` | Passing `str` to `ainvoke()` when `frozen=True` | Pass a dict matching `input_key` (e.g., `{"input": "text"}`) |
 | `Tool name(s) X are reserved by agloom` | Tool name conflicts with internal names | Rename your tool. Reserved: `save_memory`, `recall_memory`, `load_skill` |
 
 ## Runtime Warnings (logged, non-fatal)
@@ -89,3 +90,9 @@ These are warnings logged during execution. They don't crash your agent — aglo
 | `TimeoutError` | LLM call exceeded `llm_timeout` | Increase timeout or check LLM provider |
 | `RateLimitError` | LLM provider rate limit hit | Set `rate_limit` to throttle calls |
 | `CircuitBreakerOpen` | Too many consecutive LLM failures | Wait for cooldown or check provider status |
+
+## Event Errors (from astream_events)
+
+| Event | When emitted | What it means |
+|-------|-------------|---------------|
+| `error` | Execution failed during `astream_events()` | Contains `error` field with the error message. The stream terminates after this event |

@@ -179,8 +179,8 @@ result = await agent.ainvoke("Research renewable energy trends, analyze the econ
 | **Zero-Config Classification** | Your agent picks the right strategy for every query. No if-else routing. No manual pattern selection |
 | **Skill Learning** | Agents remember what worked. Next time a similar query arrives, they already know the approach |
 | **Auto-Evaluation** | Every response is scored. Quality degrades? agloom detects the trend and adjusts |
-| **Memory** | Session memory + long-term memory + passive injection. Two parameters: `memory=`, `store=` |
-| **Streaming** | Token streaming for responsive UIs. Event streaming for ChatGPT-style "thinking" visibility |
+| **Memory** | Session memory (always on) + long-term memory + passive injection. Pass `thread_id` for sessions, `store=` for persistence |
+| **Streaming** | Real-time token streaming + structured events in a single API. Build ChatGPT-style "thinking" UIs with tool call tracking |
 | **Step Tracing** | Full audit trail: classify → tool call → worker → synthesis. Every step timed and logged |
 | **Token Tracking** | Know exactly how many tokens each query costs. Across all LLM calls, aggregated |
 | **Human-in-the-Loop** | 4 levels of control: pause before patterns, tools, workers, or send runtime signals |
@@ -223,6 +223,17 @@ asyncio.run(main())
 
 **That's 7 lines to a production-grade agent with auto-classification, step tracing, and token tracking.**
 
+### Conversation Memory
+
+Session memory is always active. Pass `thread_id` to maintain context across calls:
+
+```python
+# Same thread_id = agent remembers previous turns
+result = await agent.ainvoke("My name is Alice", thread_id="session-1")
+result = await agent.ainvoke("What's my name?", thread_id="session-1")
+# → "Your name is Alice"
+```
+
 <br>
 
 ## Streaming — Because No One Likes Loading Spinners
@@ -238,8 +249,12 @@ async for token in agent.astream("Explain quantum computing"):
 async for event in agent.astream_events("Research renewable energy"):
     if event.type == "thinking":
         show_spinner(f"Analyzing query...")
+    elif event.type == "token":
+        print(event.data["content"], end="", flush=True)  # real-time tokens
     elif event.type == "tool_call":
-        show_step(f"Calling {event.data['name']}...")
+        show_step(f"Calling {event.data['name']} [{event.data.get('id', '')}]...")
+    elif event.type == "tool_result":
+        show_step(f"Result [{event.data.get('id', '')}]: {event.data['output'][:50]}")
     elif event.type == "worker_end":
         show_step(f"Worker finished: {event.data['name']}")
     elif event.type == "done":
@@ -265,9 +280,8 @@ agent = create_agent(
     llm_timeout=60.0,           # 60s timeout per LLM call
     # + built-in circuit breaker (automatic)
 
-    # Memory
+    # Memory (session memory is auto-created; store enables long-term features)
     store=InMemoryStore(),      # long-term memory + skills + feedback
-    memory=SessionMemory(),     # conversation history
 
     # Quality
     feedback_handler=LTSFeedbackHandler(),  # auto-eval + user feedback
@@ -300,6 +314,9 @@ Everything you need at **[agloom.readthedocs.io](https://agloom.readthedocs.io)*
 | [Execution Patterns](https://agloom.readthedocs.io/concepts/patterns/) | All 9 patterns with diagrams and examples |
 | [All Parameters](https://agloom.readthedocs.io/configuration/parameters/) | Every `create_agent` parameter explained |
 | [Streaming & Events](https://agloom.readthedocs.io/features/streaming/) | Build responsive UIs with streaming APIs |
+| [Middleware](https://agloom.readthedocs.io/features/middleware/) | Transform queries and results with hooks |
+| [MCP Servers](https://agloom.readthedocs.io/features/mcp/) | Connect to external tool servers |
+| [Production Guide](https://agloom.readthedocs.io/guides/production/) | FastAPI, Docker, testing, multi-tenancy, structured output |
 | [Errors & Warnings](https://agloom.readthedocs.io/configuration/errors/) | Every error message, what causes it, how to fix it |
 | [LangSmith Integration](https://agloom.readthedocs.io/features/observability/) | Zero-config tracing and observability |
 

@@ -7,6 +7,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..logging_utils import get_logger
 from ..models import (
+    AgentEvent,
     ExecutionResult,
     PatternType,
     QueryAnalysis,
@@ -71,22 +72,47 @@ async def handle_supervisor(
 
     configs = resolve_worker_configs(agent, plans)
 
+    event_queue = agent.get("_event_queue")
+
+    for wc in configs:
+        start_step = _make_step(StepType.WORKER_START, wc.worker_id, input=wc.task[:200])
+        steps.append(start_step)
+        if event_queue is not None:
+            await event_queue.put(
+                AgentEvent(
+                    type="worker_start",
+                    data={"name": wc.worker_id, "input": wc.task[:200]},
+                )
+            )
+
     worker_results, skipped_ids = await run_workers_with_hitl(
         agent=agent,
         configs=configs,
         invoke_config=config,
     )
     for wr in worker_results:
-        steps.append(
-            _make_step(
-                StepType.WORKER_END,
-                wr.worker_id,
-                input=wr.task[:200],
-                output=wr.output[:200],
-                duration_ms=wr.elapsed_ms,
-                signal=wr.signal.value,
-            )
+        end_step = _make_step(
+            StepType.WORKER_END,
+            wr.worker_id,
+            input=wr.task[:200],
+            output=wr.output[:200],
+            duration_ms=wr.elapsed_ms,
+            signal=wr.signal.value,
         )
+        steps.append(end_step)
+        if event_queue is not None:
+            await event_queue.put(
+                AgentEvent(
+                    type="worker_end",
+                    data={
+                        "name": wr.worker_id,
+                        "input": wr.task[:200],
+                        "output": wr.output[:200],
+                        "duration_ms": wr.elapsed_ms,
+                        "signal": wr.signal.value,
+                    },
+                )
+            )
         if wr.token_usage:
             usage = _merge_token_usage(usage, wr.token_usage)
 
@@ -213,6 +239,11 @@ async def aggregate_results(
     worker_results: list[WorkerResult],
     skipped_ids: list[str],
 ) -> str:
+    """Synthesize all worker outputs via an LLM call.
+
+    When _event_queue is present, streams tokens in real-time via
+    llm.astream() so users see the synthesis being composed live.
+    """
     if not worker_results:
         return "No worker results to aggregate."
 
@@ -221,26 +252,43 @@ async def aggregate_results(
         for r in worker_results
     )
     skipped_note = f"\nThe following workers were skipped: {skipped_ids}" if skipped_ids else ""
+    messages = [
+        SystemMessage(content=MANAGER_AGGREGATION_PROMPT),
+        HumanMessage(
+            content=(
+                f"Original query: {query}\n"
+                f"Worker results:\n{results_text}"
+                f"{skipped_note}\n"
+                f"Synthesize all results into a single comprehensive answer."
+            )
+        ),
+    ]
+    event_queue = agent.get("_event_queue")
+    _timeout = agent.get("llm_timeout", 120.0)
+
     try:
-        _timeout = agent.get("llm_timeout", 120.0)
-        resp = await asyncio.wait_for(
-            agent["llm"].ainvoke(
-                [
-                    SystemMessage(content=MANAGER_AGGREGATION_PROMPT),
-                    HumanMessage(
-                        content=(
-                            f"Original query: {query}\n"
-                            f"Worker results:\n{results_text}"
-                            f"{skipped_note}\n"
-                            f"Synthesize all results into a single comprehensive answer."
-                        )
-                    ),
-                ]
-            ),
-            timeout=_timeout,
-        )
-        logger.event(f"[Supervisor] Aggregation done: {len(resp.content)} chars.")
-        return resp.content
+        if event_queue is not None:
+            chunks: list[str] = []
+
+            async def _stream():
+                async for chunk in agent["llm"].astream(messages):
+                    content = getattr(chunk, "content", "")
+                    if content:
+                        content = content if isinstance(content, str) else str(content)
+                        chunks.append(content)
+                        await event_queue.put(AgentEvent(type="token", data={"content": content}))
+
+            await asyncio.wait_for(_stream(), timeout=_timeout)
+            output = "".join(chunks)
+        else:
+            resp = await asyncio.wait_for(
+                agent["llm"].ainvoke(messages),
+                timeout=_timeout,
+            )
+            output = resp.content
+
+        logger.event(f"[Supervisor] Aggregation done: {len(output)} chars.")
+        return output
     except Exception as e:
         logger.error(f"[Supervisor] Aggregation LLM failed: {e}")
         return "\n".join(f"{r.worker_id}: {r.output}" for r in worker_results)

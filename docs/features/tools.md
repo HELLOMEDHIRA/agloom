@@ -119,15 +119,19 @@ See [Human-in-the-Loop](hitl.md) for all 4 interrupt levels.
 
 ## Step Tracing for Tools
 
-Every tool call and result is recorded in the step trace:
+Every tool call and result is recorded in the step trace with a unique `id` that links call to result:
 
 ```python
 result = await agent.ainvoke("Calculate 15 * 7")
 
 for step in result.steps:
-    print(f"[{step.type.value}] {step.name}")
-# [classify   ] analyze_query
-# [tool_call  ] calculate
-# [tool_result] calculate
-# [llm_call   ] react_agent
+    tc_id = step.metadata.get("id", "")
+    id_str = f" [{tc_id[:8]}]" if tc_id else ""
+    print(f"[{step.type.value:12s}] {step.name}{id_str}")
+# [classify    ] analyze_query
+# [tool_call   ] calculate [tc_abc12]
+# [tool_result ] calculate [tc_abc12]  ← same id links call to result
+# [llm_call    ] react_agent
 ```
+
+The `id` field is also available on `tool_call` and `tool_result` events from `astream_events()`, enabling UI elements like spinners that show "calling tool X..." and dismiss when the matching result arrives.

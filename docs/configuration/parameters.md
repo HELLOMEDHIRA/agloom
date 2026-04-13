@@ -8,7 +8,7 @@ Complete reference for every `create_agent` parameter. All parameters except `mo
 |-----------|------|---------|-------------|
 | `model` | `BaseChatModel` | **required** | Any LangChain-compatible LLM |
 | `tools` | `list[BaseTool]` | `None` → `[]` | Tools the agent can call. See [Tool Calling](../features/tools.md) |
-| `system_prompt` | `str \| Callable` | auto-generated | Static string or dynamic function `(state) -> str`. Dynamic prompts are called on every invocation |
+| `system_prompt` | `str \| Callable` | auto-generated | Static string or dynamic function `(state) -> str`. See [Dynamic System Prompts](../guides/production.md#dynamic-system-prompts) |
 | `name` | `str` | auto-generated | Agent name used in logging, memory namespaces, and diagnostics |
 | `debug` | `bool` | `False` | Enable DEBUG-level structured logging. See [Logging](logging.md) |
 
@@ -17,11 +17,11 @@ Complete reference for every `create_agent` parameter. All parameters except `mo
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `store` | `BaseStore` | `None` | LangGraph store. Enables: long-term memory, skills, feedback |
-| `memory` | `SessionMemory` | `None` | Per-thread session memory |
-| `query_cache` | Qdrant client | `None` | Semantic cache for repeat queries |
-| `enable_memory_tools` | `bool` | `True` | Expose `save_memory`/`recall_memory` tools to the agent |
-| `session_max_turns` | `int` | `20` | Max turns to keep in session memory |
-| `user_id` | `str` | `None` | Default user ID for memory namespacing |
+| `memory` | `SessionMemory` | auto-created | Per-thread session memory. Auto-created with ephemeral `InMemoryStore` if not provided |
+| `query_cache` | `dict` | `None` | Semantic cache dict from `create_cache()`. See [Query Cache](../features/memory.md#query-cache) |
+| `enable_memory_tools` | `bool` | `True` | Expose `save_memory`/`recall_memory` tools to the agent (requires `store=`) |
+| `session_max_turns` | `int` | `20` | Max turns to keep in session memory. Only applies to auto-created `SessionMemory` |
+| `user_id` | `str` | `None` | Config-level default user ID. Must also be passed at call time to activate user-scoped LT namespace |
 
 ## Human-in-the-Loop
 
@@ -83,12 +83,44 @@ See [Timeouts & Retries](reliability.md) for details.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `middleware` | `list` | `()` | Before/after agent middleware |
-| `response_format` | Pydantic model | `None` | Structured output schema |
-| `state_schema` | `type` | `None` | Custom state schema for the graph |
-| `context_schema` | `type` | `None` | Custom context schema |
-| `checkpointer` | `Checkpointer` | `None` | LangGraph checkpointer for state recovery |
-| `mcp_servers` | `list[MCPServerConfig]` | `None` | MCP server connections |
+| `middleware` | `list` | `()` | Before/after agent middleware. See [Middleware](../features/middleware.md) |
+| `response_format` | Pydantic model | `None` | Structured output schema (extra LLM reformat pass). See [Structured Output](../guides/production.md#structured-output) |
+| `state_schema` | `type` | `None` | Reserved for future use |
+| `context_schema` | `type` | `None` | Reserved for future use |
+| `checkpointer` | `Checkpointer` | `None` | LangGraph checkpointer for resume/get_state. See [Checkpointer](../guides/production.md#checkpointer-resume-and-state-inspection) |
+| `mcp_servers` | `list[MCPServerConfig]` | `None` | MCP server connections. See [MCP Servers](../features/mcp.md) |
+
+## Runtime Parameters (Method Signatures)
+
+These parameters are passed at invocation time to `ainvoke()`, `astream()`, `astream_events()`, and `abatch()`:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `query` | `str \| dict` | **required** | The input query. `dict` only valid for `frozen=True` agents |
+| `thread_id` | `str \| None` | `None` | Session ID for memory isolation. `None` = ephemeral |
+| `user_id` | `str \| None` | `None` | Stable cross-session identity for LT namespace |
+| `lt_namespace` | `tuple \| None` | `None` | Explicit shared namespace (multi-agent) |
+| `context` | `dict \| None` | `None` | Arbitrary context passed to middleware and callbacks |
+| `stream_mode` | `str` | `"tokens"` | `astream()` only: `"tokens"` or `"result"` |
+| `max_concurrent` | `int` | `5` | `abatch()` only: concurrent query limit |
+
+### Full method signatures
+
+```python
+await agent.ainvoke(query, *, thread_id=None, user_id=None,
+                    lt_namespace=None, context=None)
+
+async for token in agent.astream(query, *, thread_id=None, user_id=None,
+                                  lt_namespace=None, context=None,
+                                  stream_mode="tokens")
+
+async for event in agent.astream_events(query, *, thread_id=None,
+                                         user_id=None, lt_namespace=None,
+                                         context=None)
+
+await agent.abatch(queries, *, thread_id=None, user_id=None,
+                   lt_namespace=None, context=None, max_concurrent=5)
+```
 
 ## Example: Minimal
 
@@ -104,8 +136,8 @@ agent = create_agent(
     tools=[search, calculate],
     system_prompt="You are a data analyst. Be precise and cite sources.",
     name="analyst",
-    store=InMemoryStore(),
-    memory=SessionMemory(),
+    store=InMemoryStore(),          # enables long-term memory, skills, feedback
+    # memory= is auto-created; session_max_turns controls its size
     debug=False,
     max_concurrent=8,
     max_retries=3,
@@ -114,4 +146,7 @@ agent = create_agent(
     feedback_handler=LTSFeedbackHandler(),
     session_max_turns=50,
 )
+
+# At call time — pass thread_id for session continuity
+result = await agent.ainvoke("Analyze Q3 data", thread_id="session-1", user_id="analyst-42")
 ```

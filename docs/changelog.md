@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.1] — 2026-04-13
+
+### Added
+
+- Real-time token-by-token streaming for ALL patterns (REACT, SUPERVISOR, DIRECT, etc.) via `astream_events()` — tokens now stream during each LLM call, not after completion
+- `StepType.TOKEN` enum value for token events in step traces
+- `tool_call_id` correlation: `tool_call` and `tool_result` events/steps now include an `id` field linking each call to its result (essential for parallel tool execution tracking)
+- Combined token + event streaming in `astream_events()` — provides both structured step events AND real-time token chunks in a single stream
+- Live event emission during execution: events are pushed to consumers as they happen, not replayed after completion
+- `worker_start` events emitted when supervisor workers begin execution
+- Full method signatures documented for `ainvoke()`, `astream()`, `astream_events()`, and `abatch()` including `thread_id`, `user_id`, `lt_namespace`, and `context` parameters
+
+### Fixed
+
+- Installation docs showed `import src` instead of `import agloom`
+- Installation docs showed version `0.1.0` instead of current version
+
 ## [0.1.0] — 2026-04-12
 
 ### Added

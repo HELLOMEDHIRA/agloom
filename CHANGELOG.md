@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-04-13
+
+### Added
+- Real-time token-by-token streaming for ALL patterns via `astream_events()`.
+- `StepType.TOKEN` enum value for token events in step traces.
+- `tool_call_id` correlation on `tool_call` and `tool_result` events/steps.
+- Combined token + event streaming in `astream_events()`.
+- Live event emission during execution (not replayed after completion).
+- `worker_start` events emitted when supervisor workers begin.
+- Full method signatures documented for all runtime methods.
+
+### Fixed
+- Installation docs showed `import src` instead of `import agloom`.
+
 ## [0.1.0] - 2026-04-12
 
 ### Added

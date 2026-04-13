@@ -379,6 +379,7 @@ class StepType(str, Enum):
     REFLECTION = "reflection"
     FALLBACK = "fallback"
     INTERRUPT = "interrupt"
+    TOKEN = "token"  # noqa: S105
 
 
 class AgentStep(BaseModel):

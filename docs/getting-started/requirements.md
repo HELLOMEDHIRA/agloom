@@ -18,7 +18,7 @@ These are installed automatically with `pip install agloom`:
 | `langchain-classic` | ≥ 1.0.3 | Legacy compatibility layer |
 | `langchain-mcp-adapters` | ≥ 0.2.2 | MCP server integration |
 | `langgraph` | ≥ 1.1.3 | State graphs, stores, checkpointing |
-| `qdrant-client` | ≥ 1.17.1 | Semantic query cache |
+| `qdrant-client` | ≥ 1.17.1 | Semantic query cache (via `create_cache()`, uses Qdrant for vector similarity) |
 | `requests` | ≥ 2.33.0 | HTTP utilities |
 | `sentence-transformers` | ≥ 5.3.0 | Embedding-based skill matching |
 

@@ -10,6 +10,7 @@ from langgraph.errors import GraphRecursionError
 
 from ..logging_utils import get_logger
 from ..models import (
+    AgentEvent,
     ExecutionResult,
     PatternType,
     QueryAnalysis,
@@ -109,6 +110,16 @@ async def handle_react(
             interrupt_before_tools=interrupt_before_tools,
             user_callback=user_callback,
             incoming_config=config,
+        )
+
+    event_queue = agent.get("_event_queue")
+    if event_queue is not None:
+        return await _handle_react_streaming(
+            agent=agent,
+            query=query,
+            analysis=analysis,
+            config=config,
+            event_queue=event_queue,
         )
 
     react_agent = create_agent(
@@ -223,6 +234,227 @@ async def handle_react(
     )
 
 
+async def _handle_react_streaming(
+    agent: dict,
+    query: str,
+    analysis: QueryAnalysis,
+    config: dict | None = None,
+    event_queue: asyncio.Queue | None = None,
+) -> ExecutionResult:
+    """REACT with live token-by-token streaming via LangGraph astream_events.
+
+    Uses the LangGraph agent's astream_events(version="v2") to capture:
+    - on_chat_model_stream: individual LLM tokens → pushed as "token" events
+    - on_tool_start: tool invocations → pushed as "tool_call" events with id
+    - on_tool_end: tool results → pushed as "tool_result" events with matching id
+    - on_chain_end: final state for response extraction
+
+    Falls back to the standard ainvoke path if astream_events is unavailable.
+    """
+    llm = agent["llm"]
+    tools = agent["tools"]
+    system_prompt = agent["system_prompt"] + REACT_TOOL_DISCIPLINE
+    name = agent.get("name", "UnifiedAgent")
+    steps: list = (config or {}).get("_steps", [])
+
+    react_agent = create_agent(
+        model=llm,
+        tools=tools,
+        system_prompt=system_prompt,
+    )
+
+    invoke_config = {
+        **(config or {}),
+        "recursion_limit": REACT_RECURSION_LIMIT,
+    }
+    state = {"messages": [{"role": "user", "content": query}]}
+
+    t0 = time.perf_counter()
+    final_response = None
+    _tool_run_ids: dict[str, str] = {}
+
+    try:
+        async for event in react_agent.astream_events(state, config=invoke_config, version="v2"):
+            kind = event["event"]
+
+            if kind == "on_chat_model_stream":
+                chunk = event["data"]["chunk"]
+                content = getattr(chunk, "content", "")
+                if content:
+                    content = content if isinstance(content, str) else str(content)
+                    if event_queue:
+                        await event_queue.put(AgentEvent(type="token", data={"content": content}))
+
+            elif kind == "on_tool_start":
+                run_id = str(event.get("run_id", ""))
+                tool_name = event.get("name", "unknown")
+                tool_input = event.get("data", {}).get("input", {})
+                _tool_run_ids[run_id] = tool_name
+                if event_queue:
+                    await event_queue.put(
+                        AgentEvent(
+                            type="tool_call",
+                            data={
+                                "id": run_id,
+                                "name": tool_name,
+                                "input": str(tool_input)[:200],
+                            },
+                        )
+                    )
+                steps.append(
+                    _make_step(
+                        StepType.TOOL_CALL,
+                        tool_name,
+                        input=str(tool_input)[:200],
+                        id=run_id,
+                    )
+                )
+
+            elif kind == "on_tool_end":
+                run_id = str(event.get("run_id", ""))
+                tool_name = _tool_run_ids.pop(run_id, event.get("name", "unknown"))
+                tool_output = str(event.get("data", {}).get("output", ""))
+                if event_queue:
+                    await event_queue.put(
+                        AgentEvent(
+                            type="tool_result",
+                            data={
+                                "id": run_id,
+                                "name": tool_name,
+                                "output": tool_output[:200],
+                            },
+                        )
+                    )
+                steps.append(
+                    _make_step(
+                        StepType.TOOL_RESULT,
+                        tool_name,
+                        output=tool_output[:200],
+                        id=run_id,
+                    )
+                )
+
+            elif kind == "on_chain_end":
+                output_data = event.get("data", {}).get("output")
+                if isinstance(output_data, dict) and "messages" in output_data:
+                    final_response = output_data
+
+        dur = round((time.perf_counter() - t0) * 1000, 1)
+        output = _extract_last_ai_message(final_response)
+        if not output:
+            output = "No output produced."
+
+        usage = _extract_token_usage(final_response)
+        steps.append(
+            _make_step(
+                StepType.LLM_CALL,
+                "react_agent",
+                input=query[:200],
+                output=output[:200],
+                duration_ms=dur,
+                messages=len((final_response or {}).get("messages", [])),
+            )
+        )
+
+        logger.event(f"[React|stream] Done — {len((final_response or {}).get('messages', []))} messages.")
+        return ExecutionResult(
+            pattern_used=PatternType.REACT,
+            query=query,
+            output=output,
+            steps_taken=2,
+            success=True,
+            analysis=analysis,
+            steps=steps,
+            token_usage=usage,
+        )
+
+    except GraphRecursionError:
+        logger.warning(f"[React|stream] Recursion limit ({REACT_RECURSION_LIMIT}) reached.")
+        partial = "Step limit reached — partial result may be incomplete."
+        try:
+            partial = _extract_last_ai_message(final_response) or partial
+        except Exception:
+            pass
+        steps.append(_make_step(StepType.FALLBACK, "react_recursion_limit", output=partial[:200]))
+        return ExecutionResult(
+            pattern_used=PatternType.REACT,
+            query=query,
+            output=partial,
+            steps_taken=REACT_RECURSION_LIMIT,
+            success=True,
+            analysis=analysis,
+            steps=steps,
+        )
+
+    except Exception as exc:
+        logger.error(f"[React|stream] Failed: {exc}")
+        logger.debug(f"[React|stream] Falling back to ainvoke for {name}")
+        return await _handle_react_ainvoke_fallback(
+            agent=agent,
+            query=query,
+            analysis=analysis,
+            config=config,
+        )
+
+
+async def _handle_react_ainvoke_fallback(
+    agent: dict,
+    query: str,
+    analysis: QueryAnalysis,
+    config: dict | None = None,
+) -> ExecutionResult:
+    """Fallback to standard ainvoke when streaming is unavailable."""
+    llm = agent["llm"]
+    tools = agent["tools"]
+    system_prompt = agent["system_prompt"] + REACT_TOOL_DISCIPLINE
+    steps: list = (config or {}).get("_steps", [])
+
+    react_agent = create_agent(model=llm, tools=tools, system_prompt=system_prompt)
+    invoke_config = {**(config or {}), "recursion_limit": REACT_RECURSION_LIMIT}
+    state = {"messages": [{"role": "user", "content": query}]}
+
+    try:
+        t0 = time.perf_counter()
+        response = await asyncio.wait_for(
+            react_agent.ainvoke(state, config=invoke_config),
+            timeout=_AINVOKE_TIMEOUT,
+        )
+        dur = round((time.perf_counter() - t0) * 1000, 1)
+        output = _extract_last_ai_message(response) or "No output produced."
+        usage = _extract_token_usage(response)
+        _collect_tool_steps(response, steps)
+        steps.append(
+            _make_step(
+                StepType.LLM_CALL,
+                "react_agent",
+                input=query[:200],
+                output=output[:200],
+                duration_ms=dur,
+            )
+        )
+        return ExecutionResult(
+            pattern_used=PatternType.REACT,
+            query=query,
+            output=output,
+            steps_taken=2,
+            success=True,
+            analysis=analysis,
+            steps=steps,
+            token_usage=usage,
+        )
+    except Exception as exc:
+        logger.error(f"[React|fallback] Failed: {exc}")
+        return ExecutionResult(
+            pattern_used=PatternType.REACT,
+            query=query,
+            output=f"REACT execution failed: {exc}",
+            steps_taken=1,
+            success=False,
+            analysis=analysis,
+            steps=steps,
+        )
+
+
 async def _handle_react_hitl(
     llm,
     tools: list,
@@ -321,7 +553,12 @@ async def _handle_react_hitl(
 
 
 def _collect_tool_steps(response: dict | None, steps: list) -> None:
-    """Scan response messages for tool calls/results and append steps."""
+    """Scan response messages for tool calls/results and append steps.
+
+    Extracts tool_call_id from LangChain messages so callers can correlate
+    which tool_result belongs to which tool_call (essential for parallel
+    tool execution tracking and UI spinners).
+    """
     if not isinstance(response, dict):
         return
     from langchain_core.messages import ToolMessage
@@ -334,6 +571,7 @@ def _collect_tool_steps(response: dict | None, steps: list) -> None:
                         StepType.TOOL_CALL,
                         tc.get("name", "unknown"),
                         input=str(tc.get("args", ""))[:200],
+                        id=tc.get("id", ""),
                     )
                 )
         elif isinstance(msg, ToolMessage):
@@ -342,6 +580,7 @@ def _collect_tool_steps(response: dict | None, steps: list) -> None:
                     StepType.TOOL_RESULT,
                     msg.name or "unknown",
                     output=str(msg.content)[:200],
+                    id=getattr(msg, "tool_call_id", "") or "",
                 )
             )
 

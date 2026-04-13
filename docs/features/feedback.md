@@ -17,11 +17,19 @@ Capture explicit user ratings and corrections:
 ```python
 result = await agent.ainvoke("Explain quantum entanglement")
 
-# User rates the response (1-5 scale)
+# User rates the response
 await agent.feedback(
     run_id=result.run_id,
-    rating=4,
+    rating="positive",              # "positive" | "negative" | "neutral"
     comment="Good but could be simpler",
+)
+
+# Submit a correction when the response was wrong
+await agent.feedback(
+    run_id=result.run_id,
+    rating="negative",
+    comment="Incorrect explanation of Bell's theorem",
+    correct="Bell's theorem proves that...",  # correction text
 )
 ```
 

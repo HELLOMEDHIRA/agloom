@@ -99,5 +99,6 @@ Both agents use the same `store` and `user_id`, so:
 ## Important Notes
 
 - Use **different agent names** unless you intentionally want to share skill/feedback namespaces
-- Use the same **`user_id`** to share memories between agents for a specific user
-- Each agent maintains its own **session memory** (if configured) — only the long-term store is shared
+- Pass the same **`user_id`** at **call time** (on `ainvoke`, `astream`, etc.) to share long-term memories between agents for a specific user
+- Each agent maintains its own **session memory** (auto-created) — only the long-term store is shared
+- `thread_id` controls session memory isolation; `user_id` controls long-term memory namespace

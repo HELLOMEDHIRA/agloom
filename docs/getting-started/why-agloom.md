@@ -26,7 +26,7 @@ There's no built-in way to score agent outputs, detect quality degradation, or i
 
 Session memory, long-term memory, user-scoped memory, passive injection — each requires separate integration, and they don't talk to each other.
 
-**agloom fix:** Pass `memory=` for session, `store=` for long-term. That's it. Passive injection happens automatically. Memory tools are exposed to the agent by default.
+**agloom fix:** Session memory is always on — just pass `thread_id` at call time. Add `store=` for long-term memory. Passive injection happens automatically. Memory tools are exposed to the agent by default.
 
 ### 5. "I can't show the user what the agent is thinking"
 
@@ -50,8 +50,8 @@ Timeouts, retries, rate limiting, circuit breakers, concurrent worker limits, st
 | Classification | Manual | Automatic |
 | Skill learning | No | Built-in |
 | Feedback | No | Auto-eval + user + trends |
-| Memory | DIY wiring | `memory=` / `store=` |
-| Streaming | Basic | Tokens + Events + Steps |
+| Memory | DIY wiring | Always on + `thread_id` + `store=` |
+| Streaming | Basic | Combined tokens + events in one stream, real-time for all patterns |
 | Token tracking | No | Built-in |
 | HITL | Basic | 4 levels (pattern/tool/worker/signal) |
 | Timeouts/retries | DIY | Configurable parameters |

@@ -123,36 +123,60 @@ async def _handle_direct(
     analysis: QueryAnalysis,
     config: dict | None = None,
 ) -> ExecutionResult:
-    """Fallback for DIRECT when direct_response is missing — simple LLM call."""
+    """Fallback for DIRECT when direct_response is missing — simple LLM call.
+
+    When _event_queue is present (astream_events path), streams tokens
+    in real-time via llm.astream() instead of waiting for llm.ainvoke().
+    """
     steps: list[AgentStep] = (config or {}).get("_steps", [])
     usage: dict[str, int] = {}
     output = (analysis.direct_response or "").strip()
+    event_queue = agent.get("_event_queue")
 
     if not output:
         _timeout = agent.get("llm_timeout", 120.0)
+        messages = [
+            SystemMessage(content=agent.get("system_prompt", "")),
+            HumanMessage(content=query),
+        ]
         t0 = time.perf_counter()
-        response = await asyncio.wait_for(
-            agent["llm"].ainvoke(
-                [
-                    SystemMessage(content=agent.get("system_prompt", "")),
-                    HumanMessage(content=query),
-                ]
-            ),
-            timeout=_timeout,
-        )
-        dur = round((time.perf_counter() - t0) * 1000, 1)
-        output = response.content
-        usage = _extract_token_usage(response)
-        steps.append(
-            _make_step(
-                StepType.LLM_CALL,
-                "direct_llm",
-                input=query[:200],
-                output=output[:200],
-                duration_ms=dur,
-                **usage,
+
+        if event_queue is not None:
+            chunks: list[str] = []
+            last_chunk = None
+
+            async def _stream():
+                nonlocal last_chunk
+                async for chunk in agent["llm"].astream(messages):
+                    last_chunk = chunk
+                    content = getattr(chunk, "content", "")
+                    if content:
+                        content = content if isinstance(content, str) else str(content)
+                        chunks.append(content)
+                        await _emit_token_event(agent, content)
+
+            await asyncio.wait_for(_stream(), timeout=_timeout)
+            output = "".join(chunks)
+            usage = _extract_token_usage(last_chunk) if last_chunk else {}
+        else:
+            response = await asyncio.wait_for(
+                agent["llm"].ainvoke(messages),
+                timeout=_timeout,
             )
+            output = response.content
+            usage = _extract_token_usage(response)
+
+        dur = round((time.perf_counter() - t0) * 1000, 1)
+        step = _make_step(
+            StepType.LLM_CALL,
+            "direct_llm",
+            input=query[:200],
+            output=output[:200],
+            duration_ms=dur,
+            **usage,
         )
+        steps.append(step)
+        await _emit_step_event(agent, step)
 
     return ExecutionResult(
         pattern_used=PatternType.DIRECT,
@@ -213,11 +237,49 @@ _STEP_TO_EVENT: dict[StepType, str] = {
     StepType.REFLECTION: "reflection",
     StepType.FALLBACK: "fallback",
     StepType.INTERRUPT: "interrupt",
+    StepType.TOKEN: "token",
 }
 
 
 def _step_type_to_event_type(st: StepType) -> str:
     return _STEP_TO_EVENT.get(st, st.value)
+
+
+async def _emit_step_event(config: dict, step: AgentStep) -> None:
+    """Push a live event to the event queue for a completed step.
+
+    Called from run_fresh() and pattern handlers to provide real-time
+    visibility into execution progress. No-op when _event_queue is absent
+    (i.e. caller used ainvoke() rather than astream_events()).
+    """
+    queue = config.get("_event_queue")
+    if queue is None:
+        return
+    event_type = _step_type_to_event_type(step.type)
+    await queue.put(
+        AgentEvent(
+            type=event_type,
+            data={
+                "name": step.name,
+                "input": step.input,
+                "output": step.output,
+                "duration_ms": step.duration_ms,
+                **step.metadata,
+            },
+        )
+    )
+
+
+async def _emit_token_event(config: dict, content: str) -> None:
+    """Push a single token chunk to the live event queue.
+
+    Called during LLM streaming within astream_events() to provide
+    real-time token-by-token output to the UI consumer.
+    """
+    queue = config.get("_event_queue")
+    if queue is None:
+        return
+    await queue.put(AgentEvent(type="token", data={"content": content}))
 
 
 RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
@@ -765,16 +827,16 @@ async def run_fresh(
             structured_max_retries=config.get("structured_max_retries", 2),
         )
         classify_ms = round((time.perf_counter() - t_classify) * 1000, 1)
-        _steps.append(
-            _make_step(
-                StepType.CLASSIFY,
-                "analyze_query",
-                input=augmented_query[:200],
-                output=f"pattern={analysis.pattern.value} complexity={analysis.complexity}",
-                duration_ms=classify_ms,
-                subtasks=len(analysis.subtasks),
-            )
+        classify_step = _make_step(
+            StepType.CLASSIFY,
+            "analyze_query",
+            input=augmented_query[:200],
+            output=f"pattern={analysis.pattern.value} complexity={analysis.complexity}",
+            duration_ms=classify_ms,
+            subtasks=len(analysis.subtasks),
         )
+        _steps.append(classify_step)
+        await _emit_step_event(config, classify_step)
         logger.event(
             f"[{name}] classify → pattern={analysis.pattern.value} "
             f"complexity={analysis.complexity} "
@@ -792,14 +854,14 @@ async def run_fresh(
             hit = await cache_get(cache, processed_query, analysis.pattern.value)
             if hit:
                 logger.event(f"[{name}] CACHE HIT — returning cached result.")
-                _steps.append(
-                    _make_step(
-                        StepType.CACHE_HIT,
-                        "semantic_cache",
-                        input=processed_query[:200],
-                        output=hit["output"][:200],
-                    )
+                cache_step = _make_step(
+                    StepType.CACHE_HIT,
+                    "semantic_cache",
+                    input=processed_query[:200],
+                    output=hit["output"][:200],
                 )
+                _steps.append(cache_step)
+                await _emit_step_event(config, cache_step)
                 cached = ExecutionResult(
                     pattern_used=PatternType(hit["pattern"]),
                     query=raw_query_str,
@@ -820,14 +882,14 @@ async def run_fresh(
     if pattern_val in config.get("interrupt_before", []):
         should_continue = await _check_pattern_interrupt(config, "before", pattern_val, raw_query_str)
         if not should_continue:
-            _steps.append(
-                _make_step(
-                    StepType.INTERRUPT,
-                    f"interrupt_before:{pattern_val}",
-                    input=raw_query_str[:200],
-                    output="aborted",
-                )
+            int_step = _make_step(
+                StepType.INTERRUPT,
+                f"interrupt_before:{pattern_val}",
+                input=raw_query_str[:200],
+                output="aborted",
             )
+            _steps.append(int_step)
+            await _emit_step_event(config, int_step)
             return ExecutionResult(
                 pattern_used=analysis.pattern,
                 query=raw_query_str,
@@ -844,14 +906,14 @@ async def run_fresh(
     # actual input. Custom handlers via register_pattern() must always run.
     _has_custom_direct = registry.get(PatternType.DIRECT) is not _handle_direct
     if not is_frozen and analysis.pattern == PatternType.DIRECT and analysis.direct_response and not _has_custom_direct:
-        _steps.append(
-            _make_step(
-                StepType.LLM_CALL,
-                "direct_shortcircuit",
-                input=raw_query_str[:200],
-                output=analysis.direct_response[:200],
-            )
+        direct_step = _make_step(
+            StepType.LLM_CALL,
+            "direct_shortcircuit",
+            input=raw_query_str[:200],
+            output=analysis.direct_response[:200],
         )
+        _steps.append(direct_step)
+        await _emit_step_event(config, direct_step)
         result = ExecutionResult(
             pattern_used=PatternType.DIRECT,
             query=raw_query_str,
@@ -913,14 +975,14 @@ async def run_fresh(
     if pattern_val in config.get("interrupt_after", []):
         should_continue = await _check_pattern_interrupt(config, "after", pattern_val, raw_query_str, result)
         if not should_continue:
-            _steps.append(
-                _make_step(
-                    StepType.INTERRUPT,
-                    f"interrupt_after:{pattern_val}",
-                    input=raw_query_str[:200],
-                    output="interrupted",
-                )
+            int_after_step = _make_step(
+                StepType.INTERRUPT,
+                f"interrupt_after:{pattern_val}",
+                input=raw_query_str[:200],
+                output="interrupted",
             )
+            _steps.append(int_after_step)
+            await _emit_step_event(config, int_after_step)
             result = ExecutionResult(
                 pattern_used=analysis.pattern,
                 query=raw_query_str,
@@ -1445,98 +1507,100 @@ class UnifiedAgent:
         """
         Live event streaming API for ChatGPT-style "thinking" UIs.
 
+        Events are emitted in real-time as the pipeline executes — not
+        replayed after completion. Token events stream during each LLM
+        call, giving production chat UIs the typing effect users expect.
+
         Yields AgentEvent objects as the agent executes:
           type="thinking"      — classify/analysis step
-          type="tool_call"     — tool invocation
-          type="tool_result"   — tool response
+          type="llm_call"      — LLM call completed (metadata/duration)
+          type="tool_call"     — tool invocation (includes id for correlation)
+          type="tool_result"   — tool response (includes matching id)
           type="worker_start"  — worker begins
           type="worker_end"    — worker completes
-          type="token"         — streaming token (DIRECT only)
+          type="token"         — real-time streaming token chunk
           type="done"          — final result with full ExecutionResult
 
+        Token streaming works for ALL patterns — DIRECT, REACT, SUPERVISOR,
+        etc. Each LLM call in the pipeline streams tokens as they arrive.
+
+        Combined token + event mode: this single API provides BOTH
+        structured step events AND real-time token chunks, matching the
+        industry standard set by LangGraph's astream_events(version="v2").
+
         Usage:
-            async for event in agent.astream_events("Explain X"):
+            async for event in agent.astream_events("Explain X",
+                                                     thread_id="t1",
+                                                     user_id="u123"):
                 if event.type == "thinking":
-                    print(f"Thinking: {event.data.get('reasoning')}")
+                    print(f"Analyzing: {event.data.get('output', '')}")
                 elif event.type == "token":
-                    print(event.data["content"], end="")
+                    print(event.data["content"], end="", flush=True)
+                elif event.type == "tool_call":
+                    tc_id = event.data.get("id", "")
+                    print(f"\\nCalling {event.data['name']} [{tc_id}]...")
+                elif event.type == "tool_result":
+                    tc_id = event.data.get("id", "")
+                    print(f"Result [{tc_id}]: {event.data['output'][:50]}")
                 elif event.type == "done":
                     final_result = event.data["result"]
         """
         event_queue: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
 
-        async def _run_and_push() -> ExecutionResult:
-            effective_thread_id, effective_ltns, invoke_config = self.resolve_ids(thread_id, user_id, lt_namespace)
+        async def _run_and_push() -> None:
+            try:
+                effective_thread_id, effective_ltns, invoke_config = self.resolve_ids(thread_id, user_id, lt_namespace)
 
-            await _ensure_mcp_connected(self.config)
-            await _ensure_skills_bootstrapped(self.config)
+                await _ensure_mcp_connected(self.config)
+                await _ensure_skills_bootstrapped(self.config)
 
-            if self.config.get("frozen"):
-                await _ensure_frozen_analysis(self.config)
+                if self.config.get("frozen"):
+                    await _ensure_frozen_analysis(self.config)
 
-            run_config = {
-                **self.config,
-                "signal_queue": invoke_config["configurable"]["signal_queue"],
-                "clarification_queues": invoke_config["configurable"]["clarification_queues"],
-                "_event_queue": event_queue,
-            }
+                run_config = {
+                    **self.config,
+                    "signal_queue": invoke_config["configurable"]["signal_queue"],
+                    "clarification_queues": invoke_config["configurable"]["clarification_queues"],
+                    "_event_queue": event_queue,
+                }
 
-            result = await run_fresh(
-                config=run_config,
-                query=query,
-                effective_thread_id=effective_thread_id,
-                effective_ltns=effective_ltns,
-                invoke_config=invoke_config,
-                context=context or {},
-                user_id=user_id,
-            )
-            return result
+                result = await run_fresh(
+                    config=run_config,
+                    query=query,
+                    effective_thread_id=effective_thread_id,
+                    effective_ltns=effective_ltns,
+                    invoke_config=invoke_config,
+                    context=context or {},
+                    user_id=user_id,
+                )
+                await event_queue.put(
+                    AgentEvent(
+                        type="done",
+                        data={"result": result.model_dump()},
+                    )
+                )
+            except Exception as exc:
+                await event_queue.put(
+                    AgentEvent(
+                        type="error",
+                        data={"error": str(exc)},
+                    )
+                )
+            finally:
+                await event_queue.put(None)
 
         task = asyncio.create_task(_run_and_push())
-
-        done = False
-        while not done:
-            if task.done():
-                try:
-                    result = task.result()
-                    for step in result.steps:
-                        event_type = _step_type_to_event_type(step.type)
-                        await event_queue.put(
-                            AgentEvent(
-                                type=event_type,
-                                data={
-                                    "name": step.name,
-                                    "input": step.input,
-                                    "output": step.output,
-                                    "duration_ms": step.duration_ms,
-                                    **step.metadata,
-                                },
-                            )
-                        )
-                    await event_queue.put(
-                        AgentEvent(
-                            type="done",
-                            data={"result": result.model_dump()},
-                        )
-                    )
-                    await event_queue.put(None)
-                except Exception as exc:
-                    await event_queue.put(
-                        AgentEvent(
-                            type="error",
-                            data={"error": str(exc)},
-                        )
-                    )
-                    await event_queue.put(None)
-                done = True
-            else:
-                await asyncio.sleep(0.01)
 
         while True:
             event = await event_queue.get()
             if event is None:
                 break
             yield event
+
+        if task.done() and not task.cancelled():
+            exc = task.exception()
+            if exc is not None:
+                raise exc
 
     def invoke(
         self,

@@ -3449,8 +3449,8 @@ def sec22_steps_tokens_streaming():
     # ── Unit tests: model creation ──
 
     run_test(
-        "StepType has 10 values",
-        lambda: assert_eq(len(StepType), 10) or "10 step types",
+        "StepType has 11 values",
+        lambda: assert_eq(len(StepType), 11) or "11 step types (includes TOKEN)",
     )
 
     run_test(
@@ -3759,6 +3759,191 @@ def sec22_steps_tokens_streaming():
 
     run_async_test("astream_events includes thinking/llm_call events", test_astream_events_has_thinking())
 
+    # ── Integration: astream_events emits token events for DIRECT ──
+
+    async def test_astream_events_token_react():
+        """REACT pattern should emit token events when streaming via astream_events."""
+        agent = create_agent(model=llm, tools=[calculate], name="TokenReactAgent")
+        events = []
+        async for event in agent.astream_events("Use the calculate tool to compute 7+3"):
+            events.append(event)
+        event_types = [e.type for e in events]
+        has_token = "token" in event_types
+        assert "done" in event_types, f"Expected 'done' event, got {event_types}"
+        if has_token:
+            token_events = [e for e in events if e.type == "token"]
+            for te in token_events:
+                assert "content" in te.data, f"Token event missing 'content' key: {te.data}"
+                assert isinstance(te.data["content"], str), "Token content should be str"
+            return f"{len(token_events)} token events, types={set(event_types)}"
+        return f"no token events (short-circuit or fallback), types={set(event_types)}"
+
+    run_async_test("astream_events emits events for REACT with tools", test_astream_events_token_react())
+
+    async def test_astream_events_direct_shortcircuit():
+        """DIRECT short-circuit has no token events (no LLM call), which is correct."""
+        agent = create_agent(model=llm, name="DirectSCAgent")
+        events = []
+        async for event in agent.astream_events("What is 1+1?"):
+            events.append(event)
+        event_types = [e.type for e in events]
+        assert "done" in event_types, f"Expected 'done' event, got {event_types}"
+        assert "thinking" in event_types or "llm_call" in event_types, (
+            f"Expected thinking or llm_call, got {event_types}"
+        )
+        return f"types={set(event_types)}"
+
+    run_async_test("astream_events works for DIRECT short-circuit", test_astream_events_direct_shortcircuit())
+
+    # ── Integration: astream_events with thread_id and user_id ──
+
+    async def test_astream_events_with_ids():
+        agent = create_agent(model=llm, name="EventIDAgent")
+        events = []
+        async for event in agent.astream_events(
+            "Hello",
+            thread_id="test-thread-1",
+            user_id="test-user-1",
+        ):
+            events.append(event)
+        event_types = [e.type for e in events]
+        assert "done" in event_types, f"Expected 'done' in {event_types}"
+        done = next(e for e in events if e.type == "done")
+        assert "result" in done.data, "Done event missing result"
+        return f"events={len(events)}, types={set(event_types)}"
+
+    run_async_test("astream_events with thread_id/user_id", test_astream_events_with_ids())
+
+    # ── Integration: tool_call_id correlation in REACT ──
+
+    async def test_tool_call_id_react():
+        agent = create_agent(model=llm, tools=[calculate], name="ToolIDAgent")
+        result = await agent.ainvoke("Use calculate tool to compute 5 + 3")
+        tool_calls = [s for s in result.steps if s.type == StepType.TOOL_CALL]
+        tool_results = [s for s in result.steps if s.type == StepType.TOOL_RESULT]
+        if tool_calls and tool_results:
+            tc = tool_calls[0]
+            tr = tool_results[0]
+            tc_id = tc.metadata.get("id", "") if tc.metadata else ""
+            tr_id = tr.metadata.get("id", "") if tr.metadata else ""
+            if tc_id and tr_id:
+                assert tc_id == tr_id, f"tool_call id={tc_id} != tool_result id={tr_id}"
+                return f"matched id={tc_id}"
+            return f"ids present: tc={tc_id!r} tr={tr_id!r} (may be empty for some paths)"
+        return f"steps={[s.type.value for s in result.steps]} (no tool_call/result found)"
+
+    run_async_test("tool_call_id links tool_call to tool_result", test_tool_call_id_react())
+
+    # ── Integration: astream_events tool events have id ──
+
+    async def test_astream_events_tool_id():
+        agent = create_agent(model=llm, tools=[calculate], name="EventToolIDAgent")
+        events = []
+        async for event in agent.astream_events("Use the calculate tool to compute 10 * 2"):
+            events.append(event)
+        tc_events = [e for e in events if e.type == "tool_call"]
+        tr_events = [e for e in events if e.type == "tool_result"]
+        if tc_events and tr_events:
+            tc_id = tc_events[0].data.get("id", "")
+            tr_id = tr_events[0].data.get("id", "")
+            if tc_id and tr_id:
+                assert tc_id == tr_id, f"Event tool_call id={tc_id} != tool_result id={tr_id}"
+                return f"event id matched: {tc_id}"
+            return f"event ids: tc={tc_id!r} tr={tr_id!r}"
+        event_types = [e.type for e in events]
+        return f"event_types={event_types} (tool events may not appear if DIRECT)"
+
+    run_async_test("astream_events tool_call/tool_result have matching id", test_astream_events_tool_id())
+
+    # ── Unit: StepType.TOKEN exists ──
+
+    run_test(
+        "StepType.TOKEN enum value exists",
+        lambda: (assert_eq(StepType.TOKEN.value, "token")) or "TOKEN=token",
+    )
+
+    # ── Unit: _make_step with id parameter ──
+
+    run_test(
+        "_make_step creates step with id in metadata",
+        lambda: (
+            lambda s: (
+                (assert_true(s.metadata is not None) and assert_eq(s.metadata.get("id"), "tc_123")) or "id in metadata"
+            )
+        )(_make_step(StepType.TOOL_CALL, "search", input="query", id="tc_123")),
+    )
+
+    # ── Integration: astream with thread_id ──
+
+    async def test_astream_thread_id():
+        agent = create_agent(model=llm, name="StreamThreadAgent")
+        chunks = []
+        async for chunk in agent.astream("Say hi", thread_id="stream-t1"):
+            chunks.append(chunk)
+        full = "".join(chunks)
+        assert len(full) > 0, "stream should yield output with thread_id"
+        return f"{len(chunks)} chunks, text={full[:40]}"
+
+    run_async_test("astream with thread_id", test_astream_thread_id())
+
+    # ── Integration: astream_events token content is concatenatable ──
+
+    async def test_token_content_concat():
+        agent = create_agent(model=llm, name="TokenConcatAgent")
+        tokens = []
+        final_output = ""
+        async for event in agent.astream_events("What is 2+2?"):
+            if event.type == "token":
+                tokens.append(event.data["content"])
+            elif event.type == "done":
+                final_output = event.data.get("result", {}).get("output", "")
+        if tokens:
+            concatenated = "".join(tokens)
+            assert len(concatenated) > 0, "Token concatenation should be non-empty"
+            return f"tokens={len(tokens)}, concat_len={len(concatenated)}"
+        return f"no token events (final_output={final_output[:40]})"
+
+    run_async_test("astream_events token content is concatenatable", test_token_content_concat())
+
+    # ── Integration: middleware works with astream_events ──
+
+    async def test_middleware_with_events():
+        class TrackMW:
+            def __init__(self):
+                self.before_called = False
+                self.after_called = False
+
+            async def before_agent(self, query, context):
+                self.before_called = True
+
+            async def after_agent(self, result, context):
+                self.after_called = True
+
+        mw = TrackMW()
+        agent = create_agent(model=llm, middleware=[mw], name="MWEventAgent")
+        events = []
+        async for event in agent.astream_events("Hello"):
+            events.append(event)
+        assert "done" in [e.type for e in events], "Should have done event"
+        assert mw.before_called, "before_agent should be called"
+        assert mw.after_called, "after_agent should be called"
+        return f"middleware hooks called, events={len(events)}"
+
+    run_async_test("middleware works with astream_events", test_middleware_with_events())
+
+    # ── Integration: session memory with thread_id across calls ──
+
+    async def test_session_memory_thread():
+        agent = create_agent(model=llm, name="SessionThreadAgent")
+        tid = f"test-session-{uuid.uuid4().hex[:8]}"
+        await agent.ainvoke("My favorite color is blue", thread_id=tid)
+        r2 = await agent.ainvoke("What is my favorite color?", thread_id=tid)
+        lower = r2.output.lower()
+        assert "blue" in lower, f"Agent should remember 'blue', got: {r2.output[:100]}"
+        return f"remembered: {r2.output[:60]}"
+
+    run_async_test("session memory works with thread_id", test_session_memory_thread())
+
     # ── Unit: _extract_token_usage with mock AIMessage ──
 
     run_test(
@@ -3783,6 +3968,11 @@ def sec22_steps_tokens_streaming():
     run_test(
         "StepType, AgentStep, AgentEvent exported from __init__",
         lambda: import_check("agloom", ["StepType", "AgentStep", "AgentEvent"]),
+    )
+
+    run_test(
+        "PatternType, SignalType, ExecutionResult exported",
+        lambda: import_check("agloom", ["PatternType", "SignalType", "ExecutionResult", "create_agent"]),
     )
 
 

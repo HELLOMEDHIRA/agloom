@@ -73,15 +73,29 @@ agent = create_agent(
 
 ## L4: Signal Queue
 
-For programmatic control during execution:
+For programmatic control during execution. Each `ainvoke()` call creates an isolated `signal_queue` via the internal config. To send signals, access the queue from a concurrent task:
 
 ```python
+import asyncio
 from agloom import SignalType
+from agloom.models import Signal
 
-# During execution, send signals
-await agent.signal(SignalType.HALT_ALL)     # Stop everything
-await agent.signal(SignalType.CLARIFICATION_REQUEST)  # Request clarification
+async def run_with_halt():
+    # Launch ainvoke in a background task
+    task = asyncio.create_task(agent.ainvoke("Long research query"))
+
+    # Wait a bit, then halt all workers
+    await asyncio.sleep(5)
+
+    # Access the per-run signal queue from the agent's config
+    signal_queue = agent.config["configurable"]["signal_queue"]
+    await signal_queue.put(Signal(signal_type=SignalType.HALT_ALL))
+
+    result = await task  # will complete early due to HALT_ALL
 ```
+
+!!! note "Per-run isolation"
+    Each `ainvoke()` call gets its own fresh `signal_queue`. Two concurrent `ainvoke()` calls cannot interfere with each other's signals.
 
 ## The user_callback Function
 
@@ -101,6 +115,33 @@ async def my_callback(context: dict) -> bool:
 !!! info "Error handling"
     If `user_callback` raises an exception, agloom catches it, logs a warning, and **continues** (fail-open):
     `[HITL-L1] user_callback raised Error(...) — continuing (fail-open).`
+
+## Worker Clarification Requests
+
+In multi-agent patterns (SUPERVISOR, PIPELINE, etc.), individual workers can ask the user for clarification during execution. This is handled automatically via the `ask_for_clarification` tool:
+
+1. A worker encounters ambiguity and calls `ask_for_clarification("What format do you prefer?")`
+2. The signal is routed through L4 (`signal_queue`) as a `CLARIFICATION_REQUEST`
+3. Your `user_callback` receives the question and returns an answer
+4. The answer is routed back to the specific worker (no cross-talk between concurrent workers)
+
+```python
+async def my_callback(context: dict) -> bool | str:
+    action = context.get("action", "")
+    if action == "clarification_request":
+        question = context.get("question", "")
+        print(f"Worker asks: {question}")
+        return input("Your answer: ")  # return the answer string
+    return True  # approve other actions
+
+agent = create_agent(
+    model=llm,
+    user_callback=my_callback,
+    name="clarifying-agent",
+)
+```
+
+Workers time out after **300 seconds** if no answer is received, and continue with a fallback message.
 
 ## Step Tracing
 

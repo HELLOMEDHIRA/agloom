@@ -30,12 +30,12 @@ flowchart TD
 
 ### 1. Memory Injection
 
-If `memory=` or `store=` is provided, agloom retrieves:
+agloom always injects available memory context before each query:
 
-- **Session memory** — recent conversation turns from the current thread
-- **Long-term memory** — relevant memories from the user's namespace
+- **Session memory** — recent conversation turns from the current `thread_id` (always active; auto-created with ephemeral store if `memory=` is not passed)
+- **Long-term memory** — relevant memories from the user's namespace (requires `store=`)
 
-These are prepended to the system prompt so the LLM has full context.
+These are prepended to the system prompt so the LLM has full context. Pass `thread_id` at call time to enable session continuity across calls.
 
 ### 2. Query Classification
 
@@ -49,7 +49,7 @@ An LLM-powered classifier analyzes the query and determines:
 
 ### 3. Cache Check
 
-If `query_cache=` is set, agloom checks for semantically similar previous queries. On a cache hit, the cached result is returned immediately (saving an LLM call).
+If `query_cache=` is set (via `create_cache()`), agloom checks for semantically similar previous queries using Qdrant vector search. On a cache hit, the cached result is returned immediately (saving an LLM call). See [Query Cache](../features/memory.md#query-cache) for setup.
 
 ### 4. HITL Interrupts (if configured)
 

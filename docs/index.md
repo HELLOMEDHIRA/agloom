@@ -88,8 +88,8 @@ asyncio.run(main())
 | **9 Execution Patterns** | DIRECT → HYBRID_DAG, auto-selected per query |
 | **Skill Learning** | Agents remember what worked and reuse it |
 | **Auto-Evaluation** | Every response scored. Trends detected. Skills adjusted |
-| **Memory** | Session + long-term + passive injection. Two parameters |
-| **Streaming** | Tokens + events + step tracing. Build ChatGPT-style UIs |
+| **Memory** | Session (always on) + long-term + passive injection. Pass `thread_id` for sessions |
+| **Streaming** | Real-time tokens + structured events in one stream. Build ChatGPT-style UIs |
 | **Human-in-the-Loop** | 4 interrupt levels: pattern, tool, worker, signal |
 | **Production Guards** | Circuit breaker, rate limiter, timeouts, retries |
 | **LangSmith** | Auto-detected. Zero code changes |

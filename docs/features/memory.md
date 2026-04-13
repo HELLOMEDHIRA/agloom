@@ -25,37 +25,104 @@ flowchart TD
 
 ## Session Memory
 
-Short-term, per-thread memory that tracks the current conversation:
+Short-term, per-thread memory that tracks the current conversation.
+
+!!! info "Always active"
+    Session memory is **always created automatically**, even if you don't pass `memory=`. By default, agloom creates a `SessionMemory` backed by an ephemeral `InMemoryStore`. This means turns are tracked within a process but lost on restart. For persistence, pass your own `SessionMemory` with a persistent store.
 
 ```python
 from agloom import create_agent, SessionMemory
 
+# Option 1: Use defaults — session memory auto-created (ephemeral)
+agent = create_agent(model=llm, name="chat-agent")
+
+# Option 2: Explicit session memory (same behavior, but explicit)
 agent = create_agent(
     model=llm,
     memory=SessionMemory(),
     session_max_turns=20,  # keep last 20 turns (default)
     name="chat-agent",
 )
+```
 
-# Turn 1
+### The key: passing `thread_id`
+
+Session memory only works across calls if you pass the **same `thread_id`**. Without `thread_id`, each call gets a random UUID and can't find previous turns:
+
+```python
+# WITHOUT thread_id — each call is isolated (ephemeral UUID)
 await agent.ainvoke("My name is Alice")
-# Turn 2 — the agent remembers
-await agent.ainvoke("What is my name?")  # → "Your name is Alice"
+await agent.ainvoke("What is my name?")  # → agent does NOT remember
+
+# WITH thread_id — calls share session history
+await agent.ainvoke("My name is Alice", thread_id="session-1")
+await agent.ainvoke("What is my name?", thread_id="session-1")
+# → "Your name is Alice"
 ```
 
 ### How it works
 
-- Each `ainvoke` call stores the query and response as a turn
-- The last `session_max_turns` turns are injected into the system prompt
+- Each `ainvoke` call stores the query and response as a turn under `("session", thread_id)`
+- The last `session_max_turns` turns are injected into the system prompt on the next call
 - Older turns are evicted (FIFO)
-- Threads are isolated — different thread IDs get different histories
+- Threads are isolated — different `thread_id` values get different histories
+
+### Passing `thread_id` and `user_id`
+
+Pass `thread_id` and `user_id` as keyword arguments to **any** runtime method (`ainvoke`, `astream`, `astream_events`, `abatch`):
+
+```python
+# Stateful conversation with session memory
+result = await agent.ainvoke("My name is Alice", thread_id="session-1")
+result = await agent.ainvoke("What is my name?", thread_id="session-1")
+# → "Your name is Alice"
+
+# Streaming with session context
+async for token in agent.astream("Tell me more", thread_id="session-1"):
+    print(token, end="")
+
+# Event streaming with session context
+async for event in agent.astream_events("Explain X",
+                                         thread_id="session-1",
+                                         user_id="user-42"):
+    ...
+
+# Batch — all queries share the same thread (or omit for isolated)
+results = await agent.abatch(
+    ["Question 1", "Question 2"],
+    thread_id="session-1",
+    user_id="user-42",
+)
+```
+
+### Identity resolution priority
+
+Long-term memory namespace is resolved in this order:
+
+| Priority | Parameter | Namespace | Use case |
+|----------|-----------|-----------|----------|
+| 1 (highest) | `lt_namespace=(...)` | Explicit tuple | Multi-agent shared state |
+| 2 | `user_id="u123"` (at **call time**) | `(agent_name, "u123")` | Cross-session user identity |
+| 3 (default) | Neither passed | `(agent_name, thread_id)` | Thread-scoped (default) |
+
+!!! warning "`user_id` must be passed at call time"
+    Setting `user_id` on `create_agent()` sets a **config default** but does **not** activate user-scoped namespacing. You must pass `user_id=` on each `ainvoke()` / `astream()` / `astream_events()` / `abatch()` call for it to take effect:
+
+    ```python
+    # This does NOT scope LT memory to "alice" at call time:
+    agent = create_agent(model=llm, store=store, user_id="alice")
+    await agent.ainvoke("Hello")  # namespace = (agent_name, random_uuid)
+
+    # This DOES scope LT memory to "alice":
+    await agent.ainvoke("Hello", user_id="alice")  # namespace = (agent_name, "alice")
+    ```
 
 ### Configuration
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `memory` | `None` | `SessionMemory()` instance |
-| `session_max_turns` | `20` | Max turns to retain |
+| `memory` | auto-created | `SessionMemory()` instance. Auto-created with ephemeral `InMemoryStore` if not provided |
+| `session_max_turns` | `20` | Max turns to retain. Only applies to the auto-created `SessionMemory` — ignored if you pass your own `memory=SessionMemory(max_turns=N)` |
 
 ## Long-Term Store
 
@@ -131,3 +198,72 @@ agent = create_agent(
 ```
 
 With `enable_memory_tools=False`, the agent still benefits from passive injection but cannot explicitly save or recall memories.
+
+## Query Cache
+
+agloom includes an optional **semantic query cache** backed by Qdrant. When enabled, repeated or semantically similar queries return cached results instantly without making LLM calls.
+
+### Enabling the cache
+
+```python
+from agloom import create_agent, create_cache
+from sentence_transformers import SentenceTransformer
+
+# Create an embedding model for semantic similarity
+embeddings = SentenceTransformer("all-MiniLM-L6-v2")
+
+# Create the cache (in-memory Qdrant by default)
+cache = create_cache(embeddings=embeddings)
+
+agent = create_agent(
+    model=llm,
+    query_cache=cache,
+    name="cached-agent",
+)
+
+# First call — runs full pipeline
+result = await agent.ainvoke("What is photosynthesis?")
+
+# Second call with similar wording — cache hit, returns instantly
+result = await agent.ainvoke("Explain photosynthesis")
+```
+
+### `create_cache` parameters
+
+```python
+cache = create_cache(
+    embeddings=embeddings,          # Required: embedding model for vector search
+    similarity_threshold=0.92,      # How similar queries must be to match (default: 0.92)
+    qdrant_url=None,                # Remote Qdrant server URL (default: in-memory)
+    qdrant_api_key=None,            # API key for remote Qdrant
+    vector_size=384,                # Embedding dimension (default: 384 for MiniLM)
+)
+```
+
+### Pattern-specific TTLs
+
+The cache applies different time-to-live values per pattern:
+
+| Pattern | TTL | Reason |
+|---------|-----|--------|
+| DIRECT | 24 hours | Simple factual queries rarely change |
+| REACT | 1 hour | Tool-dependent results may update |
+| SUPERVISOR | 30 min | Multi-agent results may vary |
+| PLANNER | 30 min | Multi-step plans may differ |
+| REFLECTION | No cache | Quality-critical outputs should always be fresh |
+| HYBRID_DAG | No cache | Complex pipelines should re-execute |
+
+### Remote Qdrant (production)
+
+For persistent caching across restarts, use a remote Qdrant server:
+
+```python
+cache = create_cache(
+    embeddings=embeddings,
+    qdrant_url="http://localhost:6333",
+    qdrant_api_key="your-key",
+)
+```
+
+!!! info "Cache is not user-scoped"
+    The query cache is shared across all users and threads. It matches based on query text similarity and pattern type only. For user-specific results, the cache is bypassed when results differ.

@@ -38,7 +38,7 @@ Issues = "https://github.com/HELLOMEDHIRA/agloom/issues"
 groq = ["langchain-groq>=1.1.2"]
 huggingface = ["langchain-huggingface>=1.2.1"]
 nvidia = ["langchain-nvidia-ai-endpoints>=1.2.1"]
-webhook = ["httpx>=0.27.0"]
+webhook = ["httpx>=0.28.1"]
 docs = [
     "mkdocs>=1.6",
     "mkdocs-material>=9.6",

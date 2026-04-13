@@ -155,14 +155,14 @@ Some subtasks run in parallel; their outputs feed into sequential steps.
 The classifier is automatic, but you can register custom handlers:
 
 ```python
-from agloom import create_agent, ExecutionResult
+from agloom import create_agent, ExecutionResult, PatternType
 
 async def my_handler(agent, query, analysis, config):
     # Custom logic here
     return ExecutionResult(output="Custom result", pattern_used=analysis.pattern)
 
 agent = create_agent(model=llm, name="custom")
-agent.register_pattern("REACT", my_handler)
+agent.register_pattern(PatternType.REACT, my_handler)
 ```
 
 !!! note "Fallback Behavior"

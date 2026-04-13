@@ -88,10 +88,11 @@ for step in result.steps:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `type` | `StepType` | classify, llm_call, tool_call, tool_result, worker_end, etc. |
+| `type` | `StepType` | classify, llm_call, tool_call, tool_result, worker_start, worker_end, token, etc. |
 | `name` | `str` | Step identifier |
 | `input` | `str` | What went in |
 | `output` | `str` | What came out |
+| `id` | `str` | Tool call correlation ID (for `tool_call`/`tool_result` steps) |
 | `duration_ms` | `float` | How long it took |
 | `timestamp` | `str` | ISO 8601 timestamp |
 | `metadata` | `dict` | Additional context |

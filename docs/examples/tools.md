@@ -70,8 +70,8 @@ Output:  The result of (25 * 4) + 17 is 117.
 
 Step trace:
   [classify    ] analyze_query — 450ms
-  [tool_call   ] calculate — 0ms
-  [tool_result ] calculate — 1ms
+  [tool_call   ] calculate — 0ms   (id=call_abc123)
+  [tool_result ] calculate — 1ms   (id=call_abc123)
   [llm_call    ] react_agent — 320ms
 ```
 
@@ -79,4 +79,5 @@ Step trace:
 
 - When tools are provided and the query needs them, agloom automatically selects **REACT**
 - The step trace shows exactly what happened: classify → tool call → tool result → final LLM call
-- You can see the tool was called with the expression and returned the result
+- Tool call and tool result steps share the same `id` — useful for matching calls to results when multiple tools run in parallel
+- You can also use `astream_events()` to see tool calls and token chunks in real time

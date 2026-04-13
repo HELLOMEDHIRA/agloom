@@ -70,6 +70,35 @@ async for token in agent.astream("Tell me about Mars"):
     print(token, end="", flush=True)
 ```
 
+## Conversation Memory
+
+Session memory is **always active** (auto-created with an ephemeral store). To use it across calls, pass the **same `thread_id`**:
+
+```python
+# Without thread_id — each call is isolated (random UUID)
+await agent.ainvoke("My name is Alice")
+await agent.ainvoke("What's my name?")  # won't remember!
+
+# With thread_id — conversation memory works
+result = await agent.ainvoke("My name is Alice", thread_id="session-1")
+result = await agent.ainvoke("What's my name?", thread_id="session-1")
+# → "Your name is Alice"
+```
+
+For **cross-session** identity (long-term memory), pass `user_id` at call time along with a `store`:
+
+```python
+from langgraph.store.memory import InMemoryStore
+
+agent = create_agent(model=llm, store=InMemoryStore(), name="my-agent")
+
+# user_id must be passed at call time to activate user-scoped memory
+result = await agent.ainvoke("Save my preference: dark mode",
+                              thread_id="s1", user_id="user-42")
+```
+
+All runtime methods (`ainvoke`, `astream`, `astream_events`, `abatch`) accept `thread_id`, `user_id`, and `context`. See [Memory](../features/memory.md) for details.
+
 ## Graceful Cleanup
 
 Use the context manager to ensure resources (MCP connections, feedback handlers) are cleaned up:
