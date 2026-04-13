@@ -54,3 +54,5 @@ site/
 # Qdrant local storage
 qdrant_data/
 skills_store/
+
+.vscode/
