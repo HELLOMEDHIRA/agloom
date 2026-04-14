@@ -15,9 +15,15 @@ Usage:
         result = await agent.ainvoke("Hello")
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 from .cache import cache_get, cache_set, create_cache
+from .delegation import (
+    BackgroundDelegationManager,
+    BackgroundTask,
+    BackgroundTaskStatus,
+    HandoffTarget,
+)
 from .llm_utils import (
     AsyncRateLimiter,
     CircuitBreaker,
@@ -50,8 +56,12 @@ __all__ = [
     "AgentEvent",
     "AgentStep",
     "AsyncRateLimiter",
+    "BackgroundDelegationManager",
+    "BackgroundTask",
+    "BackgroundTaskStatus",
     "CircuitBreaker",
     "ExecutionResult",
+    "HandoffTarget",
     "LLMSemaphore",
     "LongTermStore",
     "PatternType",

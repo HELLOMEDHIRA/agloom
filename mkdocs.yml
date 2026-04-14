@@ -91,6 +91,7 @@ nav:
       - Middleware: features/middleware.md
       - MCP Servers: features/mcp.md
       - Frozen Agents: features/frozen-agents.md
+      - Task Delegation: features/delegation.md
       - Observability & LangSmith: features/observability.md
   - Configuration:
       - All Parameters: configuration/parameters.md

@@ -124,6 +124,93 @@ Long-term memory namespace is resolved in this order:
 | `memory` | auto-created | `SessionMemory()` instance. Auto-created with ephemeral `InMemoryStore` if not provided |
 | `session_max_turns` | `20` | Max turns to retain. Only applies to the auto-created `SessionMemory` — ignored if you pass your own `memory=SessionMemory(max_turns=N)` |
 
+## Auto-Summarization
+
+When conversations grow long, raw turns can consume significant context window budget. agloom automatically summarizes older turns into a compressed summary, preserving key information while freeing up tokens for the current conversation.
+
+### How it works
+
+1. After each turn is recorded, agloom counts the total tokens across all stored turns (using `tiktoken`)
+2. If the total exceeds `summarize_threshold` (default: 200,000 tokens), summarization triggers
+3. The oldest 70% of turns are compressed into a single summary turn via an LLM call
+4. The most recent 30% of turns are kept intact
+5. The summary replaces the oldest turns in storage
+
+```mermaid
+flowchart LR
+    Turn[New turn added] --> Count[Count total tokens]
+    Count --> Check{"> threshold?"}
+    Check -->|No| Keep[Store as-is]
+    Check -->|Yes| Split["Split: oldest 70% / recent 30%"]
+    Split --> LLM["LLM: summarize oldest"]
+    LLM --> Merge["[SUMMARY] + recent turns"]
+    Merge --> Keep
+```
+
+### Default behavior
+
+Auto-summarization is **enabled by default**. No configuration needed:
+
+```python
+agent = create_agent(model=llm, name="chat-agent")
+# Auto-summarization will trigger when conversation history exceeds 200k tokens
+```
+
+### Disabling auto-summarization
+
+For latency-sensitive or cost-sensitive scenarios, disable it:
+
+```python
+agent = create_agent(
+    model=llm,
+    name="fast-agent",
+    auto_summarize=False,  # oldest turns are dropped instead of summarized
+)
+```
+
+### Using a cheaper model for summarization
+
+By default, the agent's own model handles summarization. For cost savings, use a separate faster/cheaper model:
+
+```python
+agent = create_agent(
+    model=ChatGPT(model="gpt-4o"),            # main model for agent tasks
+    summarizer_model=ChatGPT(model="gpt-4o-mini"),  # cheaper model for summarization
+    name="cost-efficient-agent",
+)
+```
+
+### Custom threshold
+
+Adjust when summarization triggers:
+
+```python
+agent = create_agent(
+    model=llm,
+    summarize_threshold=100_000,  # trigger earlier (default: 200,000)
+    name="agent",
+)
+```
+
+### How summaries appear in conversation history
+
+When `format_context` renders turns for the LLM, summary turns appear with a clear header:
+
+```
+Previous conversation summary: The user discussed AI agent patterns.
+They preferred the REACT pattern for tool-heavy tasks and requested...
+User: What about the SUPERVISOR pattern?
+Assistant: The SUPERVISOR pattern is ideal for...
+```
+
+### Configuration
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `auto_summarize` | `True` | Enable automatic conversation summarization |
+| `summarize_threshold` | `200_000` | Token count that triggers summarization (min 10,000) |
+| `summarizer_model` | `None` | Separate LLM for summarization. `None` = use agent's own model |
+
 ## Long-Term Store
 
 Persistent, user-scoped memory backed by a LangGraph `BaseStore`:

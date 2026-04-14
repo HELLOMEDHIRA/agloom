@@ -12,7 +12,15 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 
 from .logging_utils import get_logger
-from .models import ResolvedWorkerConfig, SignalType, WorkerResult, _extract_token_usage
+from .models import (
+    AgentStep,
+    ResolvedWorkerConfig,
+    SignalType,
+    StepType,
+    WorkerResult,
+    _extract_token_usage,
+    _make_step,
+)
 
 logger = get_logger(__name__)
 
@@ -73,6 +81,8 @@ async def run_worker(
         elapsed_ms=elapsed_ms,
         attempt=result.attempt,
         token_usage=result.token_usage,
+        steps=result.steps,
+        messages=result.messages,
     )
 
     logger.info(
@@ -172,11 +182,13 @@ async def _run_react(
                 timeout=WORKER_AINVOKE_TIMEOUT,
             )
             output, usage = _extract_output(result)
+            tool_steps = _extract_tool_steps(result)
 
             attempt_ms = round((time.perf_counter() - t_attempt) * 1000, 1)
             logger.info(
                 f"[{config.worker_id}] ReAct attempt {attempt} ok | "
-                f"attempt_ms={attempt_ms} | output_chars={len(output)}"
+                f"attempt_ms={attempt_ms} | output_chars={len(output)} | "
+                f"tool_steps={len(tool_steps)}"
             )
             return WorkerResult(
                 worker_id=config.worker_id,
@@ -185,6 +197,8 @@ async def _run_react(
                 signal=SignalType.SUCCESS,
                 attempt=attempt,
                 token_usage=usage,
+                steps=tool_steps,
+                messages=result.get("messages", []),
             )
 
         except asyncio.CancelledError:
@@ -283,6 +297,10 @@ async def _run_llm_only(
                 f"[{config.worker_id}] LLM-only attempt {attempt} ok | "
                 f"attempt_ms={attempt_ms} | output_chars={len(output)}"
             )
+            input_msgs = [
+                SystemMessage(content=config.system_prompt),
+                HumanMessage(content=task_content),
+            ]
             return WorkerResult(
                 worker_id=config.worker_id,
                 task=config.task,
@@ -290,6 +308,7 @@ async def _run_llm_only(
                 signal=SignalType.SUCCESS,
                 attempt=attempt,
                 token_usage=usage,
+                messages=input_msgs + [resp],
             )
 
         except asyncio.CancelledError:
@@ -325,6 +344,38 @@ async def _run_llm_only(
         error="ExhaustedRetries",
         attempt=config.max_retries + 1,
     )
+
+
+def _extract_tool_steps(result: Any, *, max_length: int = 0) -> list[AgentStep]:
+    """Extract tool_call/tool_result steps from a LangGraph ainvoke response."""
+    if not isinstance(result, dict):
+        return []
+    from langchain_core.messages import ToolMessage
+
+    steps: list[AgentStep] = []
+    for msg in result.get("messages", []):
+        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+            for tc in msg.tool_calls:
+                steps.append(
+                    _make_step(
+                        StepType.TOOL_CALL,
+                        tc.get("name", "unknown"),
+                        input=str(tc.get("args", "")),
+                        id=tc.get("id", ""),
+                        max_length=max_length,
+                    )
+                )
+        elif isinstance(msg, ToolMessage):
+            steps.append(
+                _make_step(
+                    StepType.TOOL_RESULT,
+                    msg.name or "unknown",
+                    output=str(msg.content),
+                    id=getattr(msg, "tool_call_id", "") or "",
+                    max_length=max_length,
+                )
+            )
+    return steps
 
 
 def _extract_output(result: Any) -> tuple[str, dict[str, int]]:

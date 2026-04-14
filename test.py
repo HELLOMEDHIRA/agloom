@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import io
+import logging
+import logging.handlers
 import math
 import os
 import sys
@@ -3537,14 +3539,14 @@ def sec22_steps_tokens_streaming():
     )
 
     run_test(
-        "_make_step truncates long input/output to 500 chars",
+        "_make_step default: no truncation",
         lambda: (
             (
                 (s := _make_step(StepType.LLM_CALL, "trunc", input="x" * 1000, output="y" * 1000))
-                and assert_eq(len(s.input), 500)
-                and assert_eq(len(s.output), 500)
+                and assert_eq(len(s.input), 1000)
+                and assert_eq(len(s.output), 1000)
             )
-            or "truncation ok"
+            or "no truncation by default"
         ),
     )
 
@@ -3977,6 +3979,1255 @@ def sec22_steps_tokens_streaming():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  SEC 23: tool_result Events & Checkpoint Persistence
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def sec23_tool_result_and_checkpoints():
+    print("\n" + "=" * 60)
+    print("  SEC 23: tool_result Events & Checkpoint Persistence")
+    print("=" * 60)
+
+    from langchain_core.language_models import FakeListChatModel
+
+    # ── Unit: WorkerResult has steps field ──
+
+    run_test(
+        "WorkerResult has steps field (default empty)",
+        lambda: (
+            ((wr := WorkerResult(worker_id="w1", task="t", output="o")) and assert_eq(wr.steps, []))
+            or "steps field exists"
+        ),
+    )
+
+    run_test(
+        "WorkerResult accepts steps in constructor",
+        lambda: (
+            (
+                (step := _make_step(StepType.TOOL_CALL, "search", input="q", id="tc1"))
+                and (
+                    wr := WorkerResult(
+                        worker_id="w1",
+                        task="t",
+                        output="o",
+                        steps=[step],
+                    )
+                )
+                and assert_eq(len(wr.steps), 1)
+                and assert_eq(wr.steps[0].type, StepType.TOOL_CALL)
+            )
+            or "steps populated"
+        ),
+    )
+
+    # ── Unit: _extract_tool_steps from worker.py ──
+
+    from agloom.worker import _extract_tool_steps
+
+    run_test(
+        "_extract_tool_steps returns empty for non-dict",
+        lambda: assert_eq(_extract_tool_steps("not a dict"), []) or "empty",
+    )
+
+    run_test(
+        "_extract_tool_steps returns empty for no messages",
+        lambda: assert_eq(_extract_tool_steps({"messages": []}), []) or "empty",
+    )
+
+    # ── Unit: _save_checkpoint with no checkpointer ──
+
+    from agloom.unified_agent import _save_checkpoint
+
+    async def test_save_checkpoint_none():
+        result = ExecutionResult(
+            pattern_used=PatternType.DIRECT,
+            query="test",
+            output="ok",
+            steps_taken=1,
+            success=True,
+            run_id="run-1",
+        )
+        await _save_checkpoint(None, "t1", result, "test")
+        return "no-op when checkpointer is None"
+
+    run_async_test("_save_checkpoint no-op when checkpointer=None", test_save_checkpoint_none())
+
+    # ── Integration: checkpoint written and readable via MemorySaver ──
+
+    async def test_checkpoint_written():
+        from langgraph.checkpoint.memory import MemorySaver
+
+        saver = MemorySaver()
+        mock_llm = FakeListChatModel(responses=["The answer is 42."])
+        agent = create_agent(
+            model=mock_llm,
+            name="CheckpointAgent",
+            checkpointer=saver,
+        )
+        tid = f"ckpt-test-{uuid.uuid4().hex[:8]}"
+        result = await agent.ainvoke("What is 42?", thread_id=tid)
+        assert result.success, f"invoke failed: {result.output}"
+
+        state = await agent.get_state(tid)
+        assert state is not None, "get_state returned None — checkpoint not written"
+        data = state.checkpoint["channel_values"]
+        assert data["query"] == "What is 42?", f"wrong query: {data.get('query')}"
+        assert data["pattern"] == result.pattern_used.value
+        assert data["run_id"] == result.run_id
+        return f"checkpoint written: pattern={data['pattern']}, run_id={data['run_id'][:8]}"
+
+    run_async_test("checkpoint written after ainvoke() with MemorySaver", test_checkpoint_written())
+
+    # ── Integration: checkpoint written via astream_events ──
+
+    async def test_checkpoint_via_stream_events():
+        from langgraph.checkpoint.memory import MemorySaver
+
+        saver = MemorySaver()
+        mock_llm = FakeListChatModel(responses=["Streamed answer."])
+        agent = create_agent(
+            model=mock_llm,
+            name="StreamCkptAgent",
+            checkpointer=saver,
+        )
+        tid = f"stream-ckpt-{uuid.uuid4().hex[:8]}"
+        events = []
+        async for ev in agent.astream_events("Stream me", thread_id=tid):
+            events.append(ev)
+
+        assert any(e.type == "done" for e in events), "no done event"
+        state = await agent.get_state(tid)
+        assert state is not None, "get_state returned None after astream_events"
+        data = state.checkpoint["channel_values"]
+        assert data["query"] == "Stream me"
+        return f"checkpoint via astream_events ok: run_id={data['run_id'][:8]}"
+
+    run_async_test("checkpoint written after astream_events()", test_checkpoint_via_stream_events())
+
+    # ── Integration: no checkpoint when checkpointer not set ──
+
+    async def test_no_checkpoint_without_checkpointer():
+        mock_llm = FakeListChatModel(responses=["No checkpoint."])
+        agent = create_agent(model=mock_llm, name="NoCkptAgent")
+        result = await agent.ainvoke("test")
+        assert result.success
+        try:
+            await agent.get_state("some-thread")
+            assert False, "should have raised RuntimeError"
+        except RuntimeError:
+            pass
+        return "no checkpoint, get_state raises RuntimeError"
+
+    run_async_test("no checkpoint without checkpointer (get_state raises)", test_no_checkpoint_without_checkpointer())
+
+    # ── Integration: REACT fallback emits tool events to queue ──
+
+    async def test_react_fallback_emits_tool_events():
+        from langchain_core.messages import AIMessage, ToolMessage
+
+        from agloom.patterns.react import _handle_react_ainvoke_fallback
+
+        mock_response = {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "search", "args": {"q": "test"}, "id": "tc_1"}],
+                ),
+                ToolMessage(content="result data", name="search", tool_call_id="tc_1"),
+                AIMessage(content="Final answer based on search."),
+            ]
+        }
+
+        event_queue = asyncio.Queue()
+        fake_llm = FakeListChatModel(responses=["Final answer based on search."])
+        agent_dict = {
+            "llm": fake_llm,
+            "tools": [],
+            "system_prompt": "test",
+            "_event_queue": event_queue,
+        }
+
+        from unittest.mock import AsyncMock, patch
+
+        with patch("agloom.patterns.react.create_agent") as mock_create:
+            mock_agent = AsyncMock()
+            mock_agent.ainvoke = AsyncMock(return_value=mock_response)
+            mock_create.return_value = mock_agent
+
+            await _handle_react_ainvoke_fallback(
+                agent=agent_dict,
+                query="test",
+                analysis=QueryAnalysis(
+                    pattern=PatternType.REACT,
+                    complexity=5,
+                    reasoning="test",
+                ),
+            )
+
+        events = []
+        while not event_queue.empty():
+            events.append(await event_queue.get())
+
+        event_types = [e.type for e in events]
+        assert "tool_call" in event_types, f"no tool_call event: {event_types}"
+        assert "tool_result" in event_types, f"no tool_result event: {event_types}"
+        tc_event = next(e for e in events if e.type == "tool_call")
+        assert tc_event.data["name"] == "search"
+        return f"fallback emits: {event_types}"
+
+    run_async_test("REACT fallback emits tool_call/tool_result events", test_react_fallback_emits_tool_events())
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SEC 24: Configurable Truncation & Fallback Pattern
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def sec24_truncation_and_fallback():
+    print("\n" + "=" * 60)
+    print("  SEC 24: Configurable Truncation & Fallback Pattern")
+    print("=" * 60)
+
+    from agloom.models import DEFAULT_STEP_MAX_LENGTH, _trunc
+
+    # ── Unit: _trunc helper ──
+
+    run_test(
+        "_trunc returns full string when limit=0",
+        lambda: assert_eq(_trunc("a" * 10000, 0), "a" * 10000) or "_trunc(0) = no truncation",
+    )
+
+    run_test(
+        "_trunc returns full string when limit=-1",
+        lambda: assert_eq(_trunc("hello", -1), "hello") or "_trunc(-1) = no truncation",
+    )
+
+    run_test(
+        "_trunc truncates at limit",
+        lambda: assert_eq(_trunc("abcdefghij", 5), "abcde") or "truncated to 5",
+    )
+
+    run_test(
+        "_trunc default is no truncation (0)",
+        lambda: (
+            (assert_eq(DEFAULT_STEP_MAX_LENGTH, 0) and assert_eq(len(_trunc("x" * 1000)), 1000))
+            or "default = no truncation"
+        ),
+    )
+
+    # ── Unit: _make_step max_length ──
+
+    run_test(
+        "_make_step max_length=0 keeps full output",
+        lambda: (
+            (
+                (s := _make_step(StepType.LLM_CALL, "test", input="x" * 1000, output="y" * 2000, max_length=0))
+                and assert_eq(len(s.input), 1000)
+                and assert_eq(len(s.output), 2000)
+            )
+            or "no truncation"
+        ),
+    )
+
+    run_test(
+        "_make_step max_length=100 truncates",
+        lambda: (
+            (
+                (s := _make_step(StepType.LLM_CALL, "test", input="x" * 1000, output="y" * 2000, max_length=100))
+                and assert_eq(len(s.input), 100)
+                and assert_eq(len(s.output), 100)
+            )
+            or "truncated to 100"
+        ),
+    )
+
+    # ── Integration: max_step_output_length=0 produces full output in steps ──
+
+    from langchain_core.language_models import FakeListChatModel
+
+    async def test_no_truncation_agent():
+        long_output = "Z" * 5000
+        mock_llm = FakeListChatModel(responses=[long_output])
+        agent = create_agent(model=mock_llm, name="NoTruncAgent", max_step_output_length=0)
+        result = await agent.ainvoke("test query")
+        assert result.success, "invoke failed"
+        llm_steps = [s for s in result.steps if s.type == StepType.LLM_CALL]
+        assert llm_steps, "no LLM_CALL steps"
+        step_out_len = len(llm_steps[-1].output)
+        assert step_out_len == 5000, f"expected 5000 chars, got {step_out_len}"
+        return f"step output length={step_out_len} (no truncation)"
+
+    run_async_test("max_step_output_length=0 preserves full output", test_no_truncation_agent())
+
+    async def test_custom_truncation():
+        long_output = "A" * 5000
+        mock_llm = FakeListChatModel(responses=[long_output])
+        agent = create_agent(model=mock_llm, name="CustomTruncAgent", max_step_output_length=100)
+        result = await agent.ainvoke("test query")
+        assert result.success, "invoke failed"
+        llm_steps = [s for s in result.steps if s.type == StepType.LLM_CALL]
+        assert llm_steps, "no LLM_CALL steps"
+        step_out_len = len(llm_steps[-1].output)
+        assert step_out_len == 100, f"expected 100 chars, got {step_out_len}"
+        return f"step output length={step_out_len} (truncated to 100)"
+
+    run_async_test("max_step_output_length=100 truncates steps", test_custom_truncation())
+
+    # ── Unit: fallback_pattern config stored ──
+
+    run_test(
+        "fallback_pattern=None by default",
+        lambda: (
+            (
+                (
+                    mock_llm := FakeListChatModel(responses=["x"]),
+                    agent := create_agent(model=mock_llm, name="FBDefault"),
+                )
+                and assert_eq(agent.config.get("fallback_pattern"), None)
+            )
+            or "None default"
+        ),
+    )
+
+    run_test(
+        "fallback_pattern stored in config",
+        lambda: (
+            (
+                (
+                    mock_llm := FakeListChatModel(responses=["x"]),
+                    agent := create_agent(
+                        model=mock_llm,
+                        name="FBCustom",
+                        fallback_pattern=PatternType.DIRECT,
+                    ),
+                )
+                and assert_eq(agent.config["fallback_pattern"], PatternType.DIRECT)
+            )
+            or "fallback_pattern set"
+        ),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SEC 25: Model Validation (create_agent model parameter)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def sec25_model_validation():
+    print("\n" + "=" * 60)
+    print("  SEC 25: Model Validation")
+    print("=" * 60)
+
+    from langchain_core.language_models import FakeListChatModel
+
+    from agloom.models import _validate_model_object, _validate_model_string
+
+    # --- _validate_model_string ---
+
+    run_test(
+        "provider-prefixed string emits no warning",
+        lambda: _validate_model_string("openai:gpt-4o") is None or "no warning",
+    )
+
+    run_test(
+        "slash-separated string emits no warning",
+        lambda: _validate_model_string("meta-llama/llama-4-scout-17b-16e-instruct") is None or "no warning",
+    )
+
+    run_test(
+        "bare gpt-4o triggers warning",
+        lambda: (
+            (
+                handler := logging.handlers.MemoryHandler(capacity=100),
+                records := [],
+                handler.setFormatter(logging.Formatter("%(message)s")),
+                logger := logging.getLogger("agloom.models"),
+                logger.addHandler(handler),
+                logger.setLevel(logging.WARNING),
+                _validate_model_string("gpt-4o"),
+                records.extend(handler.buffer),
+                logger.removeHandler(handler),
+            )
+            and len(records) > 0
+            and "bare model name" in records[-1].getMessage()
+            and "openai:gpt-4o" in records[-1].getMessage()
+        ),
+    )
+
+    run_test(
+        "bare claude- triggers warning with anthropic hint",
+        lambda: (
+            (
+                handler := logging.handlers.MemoryHandler(capacity=100),
+                logger := logging.getLogger("agloom.models"),
+                logger.addHandler(handler),
+                logger.setLevel(logging.WARNING),
+                _validate_model_string("claude-3-5-sonnet"),
+                captured := list(handler.buffer),
+                logger.removeHandler(handler),
+            )
+            and len(captured) > 0
+            and "anthropic" in captured[-1].getMessage()
+        ),
+    )
+
+    run_test(
+        "bare unknown string triggers generic warning",
+        lambda: (
+            (
+                handler := logging.handlers.MemoryHandler(capacity=100),
+                logger := logging.getLogger("agloom.models"),
+                logger.addHandler(handler),
+                logger.setLevel(logging.WARNING),
+                _validate_model_string("my-custom-model"),
+                captured := list(handler.buffer),
+                logger.removeHandler(handler),
+            )
+            and len(captured) > 0
+            and "no provider prefix" in captured[-1].getMessage()
+        ),
+    )
+
+    # --- _validate_model_object ---
+
+    run_test(
+        "valid LLM object (has ainvoke) emits no warning",
+        lambda: _validate_model_object(FakeListChatModel(responses=["x"])) is None or "no warning",
+    )
+
+    run_test(
+        "invalid object (no ainvoke/invoke) triggers warning",
+        lambda: (
+            (
+                handler := logging.handlers.MemoryHandler(capacity=100),
+                logger := logging.getLogger("agloom.models"),
+                logger.addHandler(handler),
+                logger.setLevel(logging.WARNING),
+                _validate_model_object(42),
+                captured := list(handler.buffer),
+                logger.removeHandler(handler),
+            )
+            and len(captured) > 0
+            and "no 'ainvoke' or 'invoke'" in captured[-1].getMessage()
+        ),
+    )
+
+    # --- create_agent with None / empty string ---
+
+    run_test(
+        "create_agent with model=None raises ValueError",
+        lambda: _expect_error(lambda: create_agent(model=None, name="NullModel")),
+    )
+
+    run_test(
+        "create_agent with model='' raises ValueError",
+        lambda: _expect_error(lambda: create_agent(model="", name="EmptyModel")),
+    )
+
+    run_test(
+        "create_agent with model='  ' raises ValueError",
+        lambda: _expect_error(lambda: create_agent(model="  ", name="BlankModel")),
+    )
+
+    # --- create_agent with valid provider-prefixed model ---
+
+    run_test(
+        "create_agent with prefixed string stores it in config",
+        lambda: (
+            (agent := create_agent(model="groq:llama-3.3-70b-versatile", name="PrefixedOk"),)
+            and agent.config.get("model") is not None
+        ),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SEC 26: Raw Messages Exposure (ExecutionResult.messages)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def sec26_raw_messages():
+    print("\n" + "=" * 60)
+    print("  SEC 26: Raw Messages in ExecutionResult")
+    print("=" * 60)
+
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+    from agloom.models import ExecutionResult, PatternType, WorkerResult
+
+    # --- Model field exists ---
+
+    run_test(
+        "ExecutionResult has messages field (default empty list)",
+        lambda: (
+            (
+                r := ExecutionResult(
+                    pattern_used=PatternType.DIRECT,
+                    query="test",
+                    output="ok",
+                ),
+            )
+            and isinstance(r.messages, list)
+            and len(r.messages) == 0
+        ),
+    )
+
+    run_test(
+        "ExecutionResult.messages accepts message objects",
+        lambda: (
+            (
+                msgs := [HumanMessage(content="hi"), AIMessage(content="hello")],
+                r := ExecutionResult(
+                    pattern_used=PatternType.DIRECT,
+                    query="test",
+                    output="ok",
+                    messages=msgs,
+                ),
+            )
+            and len(r.messages) == 2
+            and r.messages[0].content == "hi"
+            and r.messages[1].content == "hello"
+        ),
+    )
+
+    run_test(
+        "WorkerResult has messages field (default empty list)",
+        lambda: (
+            (
+                wr := WorkerResult(
+                    worker_id="w1",
+                    task="do stuff",
+                    output="done",
+                ),
+            )
+            and isinstance(wr.messages, list)
+            and len(wr.messages) == 0
+        ),
+    )
+
+    run_test(
+        "WorkerResult.messages accepts message objects",
+        lambda: (
+            (
+                msgs := [SystemMessage(content="sys"), HumanMessage(content="q"), AIMessage(content="a")],
+                wr := WorkerResult(
+                    worker_id="w1",
+                    task="do stuff",
+                    output="done",
+                    messages=msgs,
+                ),
+            )
+            and len(wr.messages) == 3
+        ),
+    )
+
+    # --- DIRECT pattern returns messages ---
+
+    async def _test_direct_messages():
+        from langchain_core.messages import AIMessage, HumanMessage
+
+        llm = _make_llm()
+        agent = create_agent(model=llm, name="DirectMsgTest")
+        result = await agent.ainvoke("What is 2+2?")
+        assert isinstance(result.messages, list), f"Expected list, got {type(result.messages)}"
+        if result.messages:
+            has_human = any(isinstance(m, HumanMessage) for m in result.messages)
+            has_ai = any(isinstance(m, AIMessage) for m in result.messages)
+            assert has_human or has_ai, "Messages should contain HumanMessage or AIMessage objects"
+        return True
+
+    run_async_test(
+        "DIRECT pattern returns raw messages from LLM call",
+        _test_direct_messages(),
+    )
+
+    # --- REACT pattern returns messages ---
+
+    async def _test_react_messages():
+        from langchain_core.messages import AIMessage, HumanMessage
+        from langchain_core.tools import tool
+
+        @tool
+        def add(a: int, b: int) -> int:
+            """Add two numbers."""
+            return a + b
+
+        llm = _make_llm()
+        agent = create_agent(model=llm, tools=[add], name="ReactMsgTest")
+        result = await agent.ainvoke("What is 3 + 5? Use the add tool.")
+        assert isinstance(result.messages, list), f"Expected list, got {type(result.messages)}"
+        if result.messages:
+            has_human = any(isinstance(m, HumanMessage) for m in result.messages)
+            has_ai = any(isinstance(m, AIMessage) for m in result.messages)
+            assert has_human or has_ai, "Messages should contain HumanMessage or AIMessage objects"
+        return True
+
+    run_async_test(
+        "REACT pattern returns raw messages from LangGraph agent",
+        _test_react_messages(),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SEC 27: Auto Context Summarization
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def sec27_auto_summarization():
+    print("\n" + "=" * 60)
+    print("  SEC 27: Auto Context Summarization")
+    print("=" * 60)
+
+    from agloom.memory.session import (
+        _SUMMARY_MARKER,
+        SessionMemory,
+        _count_tokens,
+        _turns_to_text,
+    )
+
+    # --- Token counting ---
+
+    run_test(
+        "_count_tokens uses tiktoken",
+        lambda: (
+            (tok := _count_tokens("Hello world, this is a test.")) and isinstance(tok, int) and tok > 0 and tok < 100
+        ),
+    )
+
+    run_test(
+        "_count_tokens empty string is 0",
+        lambda: _count_tokens("") == 0,
+    )
+
+    # --- _turns_to_text ---
+
+    run_test(
+        "_turns_to_text formats normal turns",
+        lambda: (
+            (
+                text := _turns_to_text(
+                    [
+                        {"q": "hello", "a": "hi there", "p": "DIRECT"},
+                        {"q": "how?", "a": "fine", "p": "REACT"},
+                    ]
+                )
+            )
+            and "User: hello" in text
+            and "Assistant: hi there" in text
+        ),
+    )
+
+    run_test(
+        "_turns_to_text formats summary turns with marker",
+        lambda: (
+            (
+                text := _turns_to_text(
+                    [
+                        {"q": _SUMMARY_MARKER, "a": "Previous context compressed.", "p": "summary"},
+                        {"q": "new question", "a": "new answer", "p": "DIRECT"},
+                    ]
+                )
+            )
+            and "[Previous summary]" in text
+            and "User: new question" in text
+        ),
+    )
+
+    # --- SessionMemory init with summarization params ---
+
+    run_test(
+        "SessionMemory accepts auto_summarize params",
+        lambda: (
+            (
+                sm := SessionMemory(
+                    max_turns=10,
+                    auto_summarize=True,
+                    summarize_threshold=50_000,
+                )
+            )
+            and sm.auto_summarize is True
+            and sm.summarize_threshold == 50_000
+            and sm.summarizer_model is None
+        ),
+    )
+
+    run_test(
+        "SessionMemory auto_summarize=False disables it",
+        lambda: (sm := SessionMemory(auto_summarize=False)) and sm.auto_summarize is False,
+    )
+
+    # --- _maybe_summarize skips when disabled ---
+
+    async def _test_summarize_skip_disabled():
+        sm = SessionMemory(auto_summarize=False, max_turns=100)
+        turns = [{"q": f"q{i}", "a": "a" * 10000, "p": "DIRECT"} for i in range(20)]
+        result = await sm._maybe_summarize(turns)
+        assert len(result) == 20, f"Expected 20 turns (unchanged), got {len(result)}"
+        return True
+
+    run_async_test(
+        "_maybe_summarize skips when auto_summarize=False",
+        _test_summarize_skip_disabled(),
+    )
+
+    # --- _maybe_summarize skips when below threshold ---
+
+    async def _test_summarize_skip_below_threshold():
+        from langchain_core.language_models import FakeListChatModel
+
+        mock_llm = FakeListChatModel(responses=["should not be called"])
+        sm = SessionMemory(
+            auto_summarize=True,
+            summarize_threshold=999_999,
+            summarizer_model=mock_llm,
+            max_turns=100,
+        )
+        turns = [{"q": "hello", "a": "world", "p": "DIRECT"}]
+        result = await sm._maybe_summarize(turns)
+        assert len(result) == 1, "Turns should be unchanged below threshold"
+        return True
+
+    run_async_test(
+        "_maybe_summarize skips when below threshold",
+        _test_summarize_skip_below_threshold(),
+    )
+
+    # --- _maybe_summarize skips when too few turns ---
+
+    async def _test_summarize_skip_few_turns():
+        from langchain_core.language_models import FakeListChatModel
+
+        mock_llm = FakeListChatModel(responses=["should not be called"])
+        sm = SessionMemory(
+            auto_summarize=True,
+            summarize_threshold=1,
+            summarizer_model=mock_llm,
+            max_turns=100,
+        )
+        turns = [{"q": "a", "a": "b", "p": "D"}, {"q": "c", "a": "d", "p": "D"}]
+        result = await sm._maybe_summarize(turns)
+        assert len(result) == 2, "Should skip when < 4 turns"
+        return True
+
+    run_async_test(
+        "_maybe_summarize skips when < 4 turns",
+        _test_summarize_skip_few_turns(),
+    )
+
+    # --- _maybe_summarize triggers when above threshold ---
+
+    async def _test_summarize_triggers():
+        from langchain_core.language_models import FakeListChatModel
+
+        mock_llm = FakeListChatModel(responses=["Summary of conversation: user asked about math."])
+        sm = SessionMemory(
+            auto_summarize=True,
+            summarize_threshold=10,
+            summarizer_model=mock_llm,
+            max_turns=100,
+        )
+        turns = [{"q": f"question {i}", "a": f"answer {i} " * 50, "p": "DIRECT"} for i in range(10)]
+        result = await sm._maybe_summarize(turns)
+        assert len(result) < 10, f"Expected compressed turns, got {len(result)}"
+        assert result[0]["q"] == _SUMMARY_MARKER, f"First turn should be summary, got {result[0]['q']}"
+        assert "Summary of conversation" in result[0]["a"]
+        return True
+
+    run_async_test(
+        "_maybe_summarize triggers and compresses turns",
+        _test_summarize_triggers(),
+    )
+
+    # --- format_context renders summary turns correctly ---
+
+    run_test(
+        "format_context renders summary turns with header",
+        lambda: (
+            (
+                sm := SessionMemory(max_turns=10, auto_summarize=False),
+                sm.add_turn("t1", _SUMMARY_MARKER, "Users discussed AI topics."),
+                sm.add_turn("t1", "new question", "new answer", "DIRECT"),
+                ctx := sm.format_context("t1", last_n=5),
+            )
+            and "Previous conversation summary:" in ctx
+            and "Users discussed AI topics." in ctx
+            and "User: new question" in ctx
+        ),
+    )
+
+    # --- create_agent passes summarization params ---
+
+    run_test(
+        "create_agent with auto_summarize=False",
+        lambda: (
+            (
+                agent := create_agent(
+                    model=_make_llm(),
+                    name="SumOff",
+                    auto_summarize=False,
+                ),
+            )
+            and agent.config["memory"].auto_summarize is False
+        ),
+    )
+
+    run_test(
+        "create_agent with custom summarize_threshold",
+        lambda: (
+            (
+                agent := create_agent(
+                    model=_make_llm(),
+                    name="SumCustom",
+                    summarize_threshold=50_000,
+                ),
+            )
+            and agent.config["memory"].summarize_threshold == 50_000
+        ),
+    )
+
+    run_test(
+        "create_agent default auto_summarize=True with summarizer_model set",
+        lambda: (
+            (
+                agent := create_agent(
+                    model=_make_llm(),
+                    name="SumDefault",
+                ),
+            )
+            and agent.config["memory"].auto_summarize is True
+            and agent.config["memory"].summarizer_model is not None
+        ),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SEC 28: Task Delegation System
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def sec28_delegation():
+    print("\n" + "=" * 60)
+    print("  SEC 28: Task Delegation System")
+    print("=" * 60)
+
+    llm = _make_llm()
+
+    from agloom.delegation import (
+        BackgroundDelegationManager,
+        BackgroundTask,
+        BackgroundTaskStatus,
+        HandoffTarget,
+        _build_delegation_context,
+        _check_filter,
+        _transform_query,
+        make_agent_tool,
+        resolve_handoff,
+        run_delegate,
+    )
+
+    # ── Unit tests (no LLM) ─────────────────────────────────────────────
+
+    # HandoffTarget construction
+    run_test(
+        "HandoffTarget: basic construction",
+        lambda: (
+            (
+                mock_agent := type("MockAgent", (), {"name": "test_agent"})(),
+                ht := HandoffTarget(mock_agent, description="Test delegate"),
+            )
+            and ht.name == "test_agent"
+            and ht.description == "Test delegate"
+            and ht.filter_fn is None
+            and ht.input_transform is None
+        ),
+    )
+
+    run_test(
+        "HandoffTarget: custom name overrides agent.name",
+        lambda: (
+            (
+                mock_agent := type("MockAgent", (), {"name": "original"})(),
+                ht := HandoffTarget(mock_agent, name="custom_name", description="Custom"),
+            )
+            and ht.name == "custom_name"
+        ),
+    )
+
+    run_test(
+        "HandoffTarget: repr is informative",
+        lambda: (
+            (
+                mock_agent := type("MockAgent", (), {"name": "r_agent"})(),
+                ht := HandoffTarget(mock_agent, description="Research papers"),
+            )
+            and "r_agent" in repr(ht)
+            and "Research papers" in repr(ht)
+        ),
+    )
+
+    # _build_delegation_context
+    run_test(
+        "_build_delegation_context: empty targets → empty string",
+        lambda: _build_delegation_context([]) == "",
+    )
+
+    run_test(
+        "_build_delegation_context: formats delegate list",
+        lambda: (
+            (
+                mock := type("M", (), {"name": "n"})(),
+                t1 := HandoffTarget(mock, name="research", description="Research papers"),
+                t2 := HandoffTarget(mock, name="coder", description="Write code"),
+                ctx := _build_delegation_context([t1, t2]),
+            )
+            and "[research]" in ctx
+            and "Research papers" in ctx
+            and "[coder]" in ctx
+            and "Write code" in ctx
+            and "AVAILABLE DELEGATES" in ctx
+        ),
+    )
+
+    # _check_filter
+    async def test_check_filter_none():
+        mock = type("M", (), {"name": "a"})()
+        ht = HandoffTarget(mock, filter_fn=None)
+        assert await _check_filter(ht, "anything") is True
+        return True
+
+    run_async_test("_check_filter: None filter → always True", test_check_filter_none())
+
+    async def test_check_filter_sync():
+        mock = type("M", (), {"name": "a"})()
+        ht = HandoffTarget(mock, filter_fn=lambda q: "research" in q)
+        assert await _check_filter(ht, "research papers") is True
+        assert await _check_filter(ht, "write code") is False
+        return True
+
+    run_async_test("_check_filter: sync filter_fn", test_check_filter_sync())
+
+    async def test_check_filter_async():
+        mock = type("M", (), {"name": "a"})()
+
+        async def async_filter(q):
+            return q.startswith("code")
+
+        ht = HandoffTarget(mock, filter_fn=async_filter)
+        assert await _check_filter(ht, "code review") is True
+        assert await _check_filter(ht, "research") is False
+        return True
+
+    run_async_test("_check_filter: async filter_fn", test_check_filter_async())
+
+    # _transform_query
+    async def test_transform_none():
+        mock = type("M", (), {"name": "a"})()
+        ht = HandoffTarget(mock, input_transform=None)
+        assert await _transform_query(ht, "original") == "original"
+        return True
+
+    run_async_test("_transform_query: None → identity", test_transform_none())
+
+    async def test_transform_sync():
+        mock = type("M", (), {"name": "a"})()
+        ht = HandoffTarget(mock, input_transform=lambda q: q.upper())
+        assert await _transform_query(ht, "hello") == "HELLO"
+        return True
+
+    run_async_test("_transform_query: sync transform", test_transform_sync())
+
+    async def test_transform_async():
+        mock = type("M", (), {"name": "a"})()
+
+        async def xform(q):
+            return f"[transformed] {q}"
+
+        ht = HandoffTarget(mock, input_transform=xform)
+        assert await _transform_query(ht, "test") == "[transformed] test"
+        return True
+
+    run_async_test("_transform_query: async transform", test_transform_async())
+
+    # resolve_handoff
+    async def test_resolve_by_name():
+        m = type("M", (), {"name": "x"})()
+        t1 = HandoffTarget(m, name="alpha", description="A")
+        t2 = HandoffTarget(m, name="beta", description="B")
+        result = await resolve_handoff([t1, t2], "any query", "beta")
+        assert result is t2
+        return True
+
+    run_async_test("resolve_handoff: by name", test_resolve_by_name())
+
+    async def test_resolve_first_eligible():
+        m = type("M", (), {"name": "x"})()
+        t1 = HandoffTarget(m, name="a", filter_fn=lambda q: False)
+        t2 = HandoffTarget(m, name="b", filter_fn=lambda q: True)
+        result = await resolve_handoff([t1, t2], "query")
+        assert result is t2
+        return True
+
+    run_async_test("resolve_handoff: first eligible (filter)", test_resolve_first_eligible())
+
+    async def test_resolve_none_match():
+        m = type("M", (), {"name": "x"})()
+        t1 = HandoffTarget(m, name="a", filter_fn=lambda q: False)
+        result = await resolve_handoff([t1], "query")
+        assert result is None
+        return True
+
+    run_async_test("resolve_handoff: no match → None", test_resolve_none_match())
+
+    # BackgroundDelegationManager unit tests
+    run_test(
+        "BackgroundDelegationManager: init empty",
+        lambda: (
+            (mgr := BackgroundDelegationManager()) and len(mgr.list_tasks()) == 0 and mgr.status("nonexistent") is None
+        ),
+    )
+
+    run_test(
+        "BackgroundTaskStatus: enum values",
+        lambda: (
+            BackgroundTaskStatus.PENDING == "pending"
+            and BackgroundTaskStatus.RUNNING == "running"
+            and BackgroundTaskStatus.COMPLETED == "completed"
+            and BackgroundTaskStatus.FAILED == "failed"
+            and BackgroundTaskStatus.CANCELLED == "cancelled"
+        ),
+    )
+
+    # ── Integration tests (LLM) ─────────────────────────────────────────
+
+    # as_tool()
+    async def test_as_tool():
+        child = create_agent(model=llm, name="ChildTool")
+        tool = child.as_tool(description="Ask the child agent a question")
+        assert tool.name == "ask_ChildTool"
+        assert "child" in tool.description.lower() or "delegate" in tool.description.lower()
+        # Verify the tool is callable and works
+        result = await tool.ainvoke({"query": "What is 2+2?"})
+        assert isinstance(result, str) and len(result) > 0
+        return f"tool_name={tool.name} output={result[:40]}"
+
+    run_async_test("as_tool(): agent as LangChain tool", test_as_tool())
+
+    async def test_as_tool_custom_name():
+        child = create_agent(model=llm, name="Specialist")
+        tool = child.as_tool(name="research_tool", description="Custom research tool")
+        assert tool.name == "research_tool"
+        assert tool.description == "Custom research tool"
+        return f"tool_name={tool.name}"
+
+    run_async_test("as_tool(): custom name and description", test_as_tool_custom_name())
+
+    # register_handoff()
+    async def test_register_handoff():
+        parent = create_agent(model=llm, name="Parent")
+        child = create_agent(model=llm, name="ChildHO")
+        parent.register_handoff(child, description="Handle research tasks")
+        targets = parent.config["_handoff_targets"]
+        assert len(targets) == 1
+        assert targets[0].name == "ChildHO"
+        assert targets[0].description == "Handle research tasks"
+        return f"registered: {targets[0].name}"
+
+    run_async_test("register_handoff(): registers target", test_register_handoff())
+
+    async def test_register_handoff_target_object():
+        parent = create_agent(model=llm, name="ParentHT")
+        child = create_agent(model=llm, name="ChildHT")
+        ht = HandoffTarget(child, name="custom", description="Custom handoff")
+        parent.register_handoff(ht)
+        targets = parent.config["_handoff_targets"]
+        assert len(targets) == 1
+        assert targets[0].name == "custom"
+        return f"registered: {targets[0].name}"
+
+    run_async_test("register_handoff(): accepts HandoffTarget", test_register_handoff_target_object())
+
+    # delegates param in create_agent
+    async def test_delegates_param():
+        child = create_agent(model=llm, name="DChild")
+        parent = create_agent(model=llm, name="DParent", delegates=[child])
+        targets = parent.config["_delegate_targets"]
+        assert len(targets) == 1
+        assert targets[0].name == "DChild"
+        return f"delegates: {[t.name for t in targets]}"
+
+    run_async_test("create_agent(delegates=[]): hierarchical delegation", test_delegates_param())
+
+    async def test_delegates_with_handoff_target():
+        child = create_agent(model=llm, name="DHChild")
+        ht = HandoffTarget(child, name="research_specialist", description="Handles research")
+        parent = create_agent(model=llm, name="DHParent", delegates=[ht])
+        targets = parent.config["_delegate_targets"]
+        assert len(targets) == 1
+        assert targets[0].name == "research_specialist"
+        return f"delegates: {[t.name for t in targets]}"
+
+    run_async_test("create_agent(delegates=[]): accepts HandoffTarget", test_delegates_with_handoff_target())
+
+    # adelegate() — explicit delegation
+    async def test_adelegate():
+        child = create_agent(model=llm, name="ADelChild")
+        parent = create_agent(model=llm, name="ADelParent", delegates=[child])
+        result = await parent.adelegate("Say hello", delegate_name="ADelChild")
+        assert result.success
+        assert len(result.output) > 0
+        return f"output={result.output[:40]}"
+
+    run_async_test("adelegate(): explicit delegation by name", test_adelegate())
+
+    async def test_adelegate_no_match():
+        parent = create_agent(model=llm, name="ADelNoMatch")
+        try:
+            await parent.adelegate("Hello", delegate_name="nonexistent")
+            assert False, "Should have raised ValueError"
+        except ValueError as e:
+            assert "No matching delegate" in str(e)
+        return "ValueError raised correctly"
+
+    run_async_test("adelegate(): no match raises ValueError", test_adelegate_no_match())
+
+    # run_delegate()
+    async def test_run_delegate():
+        child = create_agent(model=llm, name="RunDelChild")
+        ht = HandoffTarget(child, description="Test delegate")
+        result = await run_delegate(ht, "What is 1+1?")
+        assert result.success
+        assert len(result.output) > 0
+        return f"pattern={result.pattern_used.value} output={result.output[:40]}"
+
+    run_async_test("run_delegate(): direct delegate execution", test_run_delegate())
+
+    async def test_run_delegate_with_transform():
+        child = create_agent(model=llm, name="XfChild")
+        ht = HandoffTarget(
+            child,
+            description="Test",
+            input_transform=lambda q: f"Answer concisely: {q}",
+        )
+        result = await run_delegate(ht, "What is Python?")
+        assert result.success
+        return f"output={result.output[:40]}"
+
+    run_async_test("run_delegate(): with input_transform", test_run_delegate_with_transform())
+
+    # Background delegation
+    async def test_background_delegation():
+        child = create_agent(model=llm, name="BGChild")
+        parent = create_agent(model=llm, name="BGParent", delegates=[child])
+        task_id = await parent.adelegate_background("Say hello", delegate_name="BGChild")
+        assert isinstance(task_id, str) and len(task_id) > 0
+
+        # Check status while running (may already be completed)
+        bg = parent.background_status(task_id)
+        assert bg is not None
+        assert bg.task_id == task_id
+
+        # Await result
+        result = await parent.await_background(task_id, timeout=60.0)
+        assert result is not None
+        assert result.success
+        assert len(result.output) > 0
+
+        # Check status after completion
+        bg = parent.background_status(task_id)
+        assert bg.status == BackgroundTaskStatus.COMPLETED
+        return f"task_id={task_id[:8]}… output={result.output[:30]}"
+
+    run_async_test("adelegate_background(): full lifecycle", test_background_delegation())
+
+    async def test_background_cancel():
+        # Create a child that takes long enough to cancel
+        child = create_agent(model=llm, name="BGCancel", tools=[extract_keywords])
+        parent = create_agent(model=llm, name="BGCParent", delegates=[child])
+        task_id = await parent.adelegate_background(
+            "Extract keywords from a very long text about quantum computing and AI",
+            delegate_name="BGCancel",
+        )
+        # Give it a moment to start, then cancel
+        await asyncio.sleep(0.1)
+        await parent.cancel_background(task_id)
+        bg = parent.background_status(task_id)
+        # May have completed before cancel — both outcomes are valid
+        assert bg.status in (BackgroundTaskStatus.CANCELLED, BackgroundTaskStatus.COMPLETED)
+        return f"status={bg.status.value}"
+
+    run_async_test("cancel_background(): cancel running task", test_background_cancel())
+
+    async def test_background_no_match():
+        parent = create_agent(model=llm, name="BGNoMatch")
+        try:
+            await parent.adelegate_background("Hello", delegate_name="nonexistent")
+            assert False, "Should have raised ValueError"
+        except ValueError:
+            pass
+        return "ValueError raised correctly"
+
+    run_async_test("adelegate_background(): no match raises ValueError", test_background_no_match())
+
+    # BackgroundDelegationManager cleanup
+    async def test_bg_manager_cleanup():
+        mgr = BackgroundDelegationManager()
+        # Simulate an old completed task
+        bg = BackgroundTask(
+            task_id="old-task",
+            target_name="test",
+            query="old query",
+            status=BackgroundTaskStatus.COMPLETED,
+            completed_at=time.time() - 7200,  # 2 hours ago
+        )
+        mgr._tasks["old-task"] = bg
+        removed = mgr.cleanup(max_age_seconds=3600)
+        assert removed == 1
+        assert mgr.status("old-task") is None
+        return f"removed={removed}"
+
+    run_async_test("BackgroundDelegationManager.cleanup()", test_bg_manager_cleanup())
+
+    # _all_delegation_targets combines both sources
+    async def test_all_targets_combined():
+        child1 = create_agent(model=llm, name="T1")
+        child2 = create_agent(model=llm, name="T2")
+        parent = create_agent(model=llm, name="AllTargets", delegates=[child1])
+        parent.register_handoff(child2, description="Handoff target")
+        all_targets = parent._all_delegation_targets()
+        names = [t.name for t in all_targets]
+        assert "T2" in names, f"Missing handoff target in {names}"
+        assert "T1" in names, f"Missing delegate target in {names}"
+        assert len(all_targets) == 2
+        return f"targets={names}"
+
+    run_async_test("_all_delegation_targets: combines handoff + delegates", test_all_targets_combined())
+
+    # make_agent_tool
+    async def test_make_agent_tool():
+        child = create_agent(model=llm, name="ToolChild")
+        tool = make_agent_tool(child, name="my_tool", description="My custom tool")
+        assert tool.name == "my_tool"
+        assert tool.description == "My custom tool"
+        return f"tool={tool.name}"
+
+    run_async_test("make_agent_tool(): creates tool with custom name", test_make_agent_tool())
+
+    # as_tool used in parent agent
+    async def test_as_tool_in_parent():
+        child = create_agent(model=llm, name="ToolAgent")
+        parent = create_agent(
+            model=llm,
+            name="ToolParent",
+            tools=[child.as_tool(description="Ask ToolAgent a question")],
+        )
+        # Verify tool is registered
+        tool_names = [t.name for t in parent.config["tools"]]
+        assert "ask_ToolAgent" in tool_names, f"Expected ask_ToolAgent in {tool_names}"
+        return f"tools={tool_names}"
+
+    run_async_test("as_tool() registered in parent's tool list", test_as_tool_in_parent())
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  Assertion helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -4047,6 +5298,12 @@ def main():
     sec20_logging_repr()
     sec21_dynamic_prompt_middleware_interrupts()
     sec22_steps_tokens_streaming()
+    sec23_tool_result_and_checkpoints()
+    sec24_truncation_and_fallback()
+    sec25_model_validation()
+    sec26_raw_messages()
+    sec27_auto_summarization()
+    sec28_delegation()
 
     elapsed = round(time.time() - start, 1)
 

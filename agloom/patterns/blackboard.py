@@ -59,9 +59,11 @@ async def handle_blackboard(
     """
     agent_name = agent.get("name", "Agent")
     llm = agent["llm"]
+    ml = agent.get("max_step_output_length", 0)
     signal_queue = get_signal_queue(agent, config)
     steps: list = (config or {}).get("_steps", [])
     usage: dict[str, int] = {}
+    raw_messages: list = []
 
     logger.event(f"[Blackboard] {agent_name} — query={query[:60]}... ks_count={len(analysis.subtasks)}")
 
@@ -75,6 +77,7 @@ async def handle_blackboard(
             success=False,
             analysis=analysis,
             steps=steps,
+            messages=raw_messages,
         )
 
     ks_configs = resolve_worker_configs(agent, analysis.subtasks)
@@ -123,14 +126,16 @@ async def handle_blackboard(
             logger.event(f"[Blackboard] Running KS '{ks_cfg.worker_id}' (round {round_num})")
             result = await worker_module.run_worker(enriched_cfg, llm, invoke_config=config)
             worker_results.append(result)
+            raw_messages.extend(getattr(result, "messages", []))
             steps.append(
                 _make_step(
                     StepType.WORKER_END,
                     result.worker_id,
-                    input=result.task[:200],
-                    output=result.output[:200],
+                    input=result.task,
+                    output=result.output,
                     duration_ms=result.elapsed_ms,
                     signal=result.signal.value,
+                    max_length=ml,
                 )
             )
             if result.token_usage:
@@ -196,16 +201,20 @@ async def handle_blackboard(
             },
             steps=steps,
             token_usage=usage,
+            messages=raw_messages,
         )
 
     synthesis_prompt = BLACKBOARD_SYNTHESIS_PROMPT.format(board_snapshot=board.snapshot())
+    synth_input = [HumanMessage(content=synthesis_prompt)]
     try:
         _timeout = agent.get("llm_timeout", 120.0) if isinstance(agent, dict) else 120.0
         t_synth = time.perf_counter()
         response = await asyncio.wait_for(
-            llm.ainvoke([HumanMessage(content=synthesis_prompt)]),
+            llm.ainvoke(synth_input),
             timeout=_timeout,
         )
+        raw_messages.extend(synth_input)
+        raw_messages.append(response)
         synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
         synthesis = response.content.strip()
         synth_usage = _extract_token_usage(response)
@@ -215,14 +224,16 @@ async def handle_blackboard(
             _make_step(
                 StepType.LLM_CALL,
                 "blackboard_synthesis",
-                input=query[:200],
-                output=synthesis[:200],
+                input=query,
+                output=synthesis,
                 duration_ms=synth_ms,
+                max_length=ml,
             )
         )
         logger.event(f"[Blackboard] Synthesis done — {len(synthesis)} chars.")
     except Exception as exc:
         logger.error(f"[Blackboard] Synthesis LLM failed: {exc}")
+        raw_messages.extend(synth_input)
         synthesis = "\n\n".join(f"[{r.worker_id}]: {r.output}" for r in successful)
 
     logger.event(
@@ -248,4 +259,5 @@ async def handle_blackboard(
         },
         steps=steps,
         token_usage=usage,
+        messages=raw_messages,
     )

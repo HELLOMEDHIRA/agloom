@@ -53,8 +53,10 @@ async def handle_hybrid_dag(
     """
     agent_name = agent.get("name", "Agent")
     llm = agent["llm"]
+    ml = agent.get("max_step_output_length", 0)
     steps: list = (config or {}).get("_steps", [])
     usage: dict[str, int] = {}
+    raw_messages: list = []
     logger.event(f"[HYBRID_DAG] {agent_name!r} query={query[:60]!r}... subtasks={len(analysis.subtasks)}")
 
     if not analysis.subtasks:
@@ -66,6 +68,7 @@ async def handle_hybrid_dag(
             success=False,
             analysis=analysis,
             steps=steps,
+            messages=raw_messages,
         )
 
     plans = [
@@ -138,14 +141,16 @@ async def handle_hybrid_dag(
                 _make_step(
                     StepType.WORKER_END,
                     result.worker_id,
-                    input=result.task[:200],
-                    output=result.output[:200],
+                    input=result.task,
+                    output=result.output,
                     duration_ms=result.elapsed_ms,
                     signal=result.signal.value,
+                    max_length=ml,
                 )
             )
             if result.token_usage:
                 usage = _merge_token_usage(usage, result.token_usage)
+            raw_messages.extend(getattr(result, "messages", []))
 
     total_success = sum(1 for r in all_results if r.signal == SignalType.SUCCESS)
     total = len(all_results)
@@ -163,6 +168,7 @@ async def handle_hybrid_dag(
             analysis=analysis,
             steps=steps,
             token_usage=usage,
+            messages=raw_messages,
         )
 
     outputs_block = _format_all_outputs(all_results)
@@ -172,20 +178,20 @@ async def handle_hybrid_dag(
     )
     _timeout = agent.get("llm_timeout", 120.0) if isinstance(agent, dict) else 120.0
     t_synth = time.perf_counter()
-    synthesis_resp = await asyncio.wait_for(
-        llm.ainvoke(
-            [
-                SystemMessage(
-                    content=(
-                        "You are the final synthesizer of a multi-stage agent pipeline. "
-                        "Produce a complete, unified answer."
-                    )
-                ),
-                HumanMessage(content=synthesis_prompt),
-            ]
+    synth_input = [
+        SystemMessage(
+            content=(
+                "You are the final synthesizer of a multi-stage agent pipeline. Produce a complete, unified answer."
+            )
         ),
+        HumanMessage(content=synthesis_prompt),
+    ]
+    synthesis_resp = await asyncio.wait_for(
+        llm.ainvoke(synth_input),
         timeout=_timeout,
     )
+    raw_messages.extend(synth_input)
+    raw_messages.append(synthesis_resp)
     synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
     synth_usage = _extract_token_usage(synthesis_resp)
     if synth_usage:
@@ -195,9 +201,10 @@ async def handle_hybrid_dag(
         _make_step(
             StepType.LLM_CALL,
             "hybrid_dag_synthesis",
-            input=query[:200],
-            output=synthesis[:200],
+            input=query,
+            output=synthesis,
             duration_ms=synth_ms,
+            max_length=ml,
         )
     )
     logger.event(f"[HYBRID_DAG] Synthesis done: {len(synthesis)} chars.")
@@ -215,6 +222,7 @@ async def handle_hybrid_dag(
         analysis=analysis,
         steps=steps,
         token_usage=usage,
+        messages=raw_messages,
     )
 
 

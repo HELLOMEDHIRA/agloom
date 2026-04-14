@@ -44,8 +44,10 @@ async def handle_planner_executor(
     (continues on failure), then synthesize all results via manager LLM.
     """
     name = agent.get("name", "UnifiedAgent")
+    ml = agent.get("max_step_output_length", 0)
     steps: list = (config or {}).get("_steps", [])
     usage: dict[str, int] = {}
+    raw_messages: list = []
     logger.event(f"[PLANNER_EXECUTOR] ▶ {name} | query={query[:60]}... | steps={len(analysis.subtasks)}")
 
     if not analysis.subtasks:
@@ -57,6 +59,7 @@ async def handle_planner_executor(
             success=False,
             analysis=analysis,
             steps=steps,
+            messages=raw_messages,
         )
 
     plans = [
@@ -85,25 +88,31 @@ async def handle_planner_executor(
             _make_step(
                 StepType.WORKER_END,
                 wr.worker_id,
-                input=wr.task[:200],
-                output=wr.output[:200],
+                input=wr.task,
+                output=wr.output,
                 duration_ms=wr.elapsed_ms,
                 signal=wr.signal.value,
+                max_length=ml,
             )
         )
         if wr.token_usage:
             usage = _merge_token_usage(usage, wr.token_usage)
 
+    for wr in worker_results:
+        raw_messages.extend(getattr(wr, "messages", []))
+
     t_synth = time.perf_counter()
-    output = await _synthesize(agent, query, worker_results)
+    output, synth_msgs = await _synthesize(agent, query, worker_results)
+    raw_messages.extend(synth_msgs)
     synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
     steps.append(
         _make_step(
             StepType.LLM_CALL,
             "planner_synthesize",
-            input=query[:200],
-            output=output[:200],
+            input=query,
+            output=output,
             duration_ms=synth_ms,
+            max_length=ml,
         )
     )
 
@@ -122,6 +131,7 @@ async def handle_planner_executor(
         worker_results=worker_results,
         steps=steps,
         token_usage=usage,
+        messages=raw_messages,
     )
 
 
@@ -129,7 +139,7 @@ async def _synthesize(
     agent: dict,
     query: str,
     worker_results: list,
-) -> str:
+) -> tuple[str, list]:
     """Manager LLM synthesizes all execution steps into a final answer."""
     steps_text = "\n\n".join(
         [
@@ -138,26 +148,28 @@ async def _synthesize(
         ]
     )
 
+    synth_input = [
+        SystemMessage(content=SYNTHESIS_PROMPT),
+        HumanMessage(
+            content=(
+                f"Original query: {query}\n\n"
+                f"Execution steps:\n{steps_text}\n\n"
+                f"Synthesize all results into a comprehensive final answer:"
+            )
+        ),
+    ]
+    llm_messages = list(synth_input)
+
     try:
         _timeout = agent.get("llm_timeout", 120.0)
         resp = await asyncio.wait_for(
-            agent["llm"].ainvoke(
-                [
-                    SystemMessage(content=SYNTHESIS_PROMPT),
-                    HumanMessage(
-                        content=(
-                            f"Original query: {query}\n\n"
-                            f"Execution steps:\n{steps_text}\n\n"
-                            f"Synthesize all results into a comprehensive final answer:"
-                        )
-                    ),
-                ]
-            ),
+            agent["llm"].ainvoke(synth_input),
             timeout=_timeout,
         )
+        llm_messages.append(resp)
         logger.event(f"[PLANNER_EXECUTOR] Synthesis done — {len(resp.content)} chars.")
-        return resp.content
+        return resp.content, llm_messages
     except Exception as e:
         logger.error(f"[PLANNER_EXECUTOR] Synthesis failed: {e}")
         successful = [r for r in worker_results if r.signal.value == "SUCCESS"]
-        return successful[-1].output if successful else "All execution steps failed."
+        return (successful[-1].output if successful else "All execution steps failed."), llm_messages

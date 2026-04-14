@@ -93,6 +93,7 @@ asyncio.run(main())
 | **Human-in-the-Loop** | 4 interrupt levels: pattern, tool, worker, signal |
 | **Production Guards** | Circuit breaker, rate limiter, timeouts, retries |
 | **LangSmith** | Auto-detected. Zero code changes |
+| **Task Delegation** | 4 patterns: `as_tool()`, hand-off, hierarchical, background. Agents delegate to agents |
 | **Frozen Agents** | Classify once, batch thousands |
 
 ---

@@ -198,6 +198,7 @@ async def analyze_query(
     *,
     classifier_timeout: float = 30.0,
     structured_max_retries: int = 2,
+    fallback_pattern: PatternType | None = None,
 ) -> QueryAnalysis:
     """
     Single LLM call → QueryAnalysis.
@@ -275,15 +276,17 @@ async def analyze_query(
         return analysis
 
     except Exception as e:
-        logger.warning(
-            f"[Classifier] ⚠ Structured output failed ({e}) — falling back to {'REACT' if has_tools else 'DIRECT'}."
-        )
+        default_fb = fallback_pattern or (PatternType.REACT if has_tools else PatternType.DIRECT)
+        logger.warning(f"[Classifier] ⚠ Structured output failed ({e}) — falling back to {default_fb.value}.")
 
-        if has_tools:
+        if default_fb != PatternType.DIRECT:
             return QueryAnalysis(
-                pattern=PatternType.REACT,
+                pattern=default_fb,
                 complexity=5,
-                reasoning=("Structured output failed — defaulting to REACT so available tools remain accessible."),
+                reasoning=(
+                    f"Structured output failed — defaulting to {default_fb.value} "
+                    f"{'so available tools remain accessible' if has_tools else '(configured fallback)'}."
+                ),
                 direct_response=None,
                 subtasks=[],
                 estimated_steps=3,

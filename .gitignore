@@ -56,3 +56,4 @@ qdrant_data/
 skills_store/
 
 .vscode/
+.aider*

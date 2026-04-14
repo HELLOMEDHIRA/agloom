@@ -1,6 +1,6 @@
 [project]
 name = "agloom"
-version = "0.1.1"
+version = "0.1.2"
 description = "The intelligent fabric for AI agents — 9 execution patterns, auto-classified, self-learning, production-ready. Drop-in replacement for LangChain's create_agent."
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -38,6 +38,7 @@ Issues = "https://github.com/HELLOMEDHIRA/agloom/issues"
 groq = ["langchain-groq>=1.1.2"]
 huggingface = ["langchain-huggingface>=1.2.1"]
 nvidia = ["langchain-nvidia-ai-endpoints>=1.2.1"]
+summarize = ["tiktoken>=0.9.0"]
 webhook = ["httpx>=0.28.1"]
 docs = [
     "mkdocs>=1.6",
@@ -51,6 +52,7 @@ all = [
     "langchain-huggingface>=1.2.1",
     "langchain-nvidia-ai-endpoints>=1.2.1",
     "httpx>=0.27.0",
+    "tiktoken>=0.9.0",
 ]
 
 [dependency-groups]

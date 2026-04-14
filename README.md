@@ -184,6 +184,7 @@ result = await agent.ainvoke("Research renewable energy trends, analyze the econ
 | **Step Tracing** | Full audit trail: classify → tool call → worker → synthesis. Every step timed and logged |
 | **Token Tracking** | Know exactly how many tokens each query costs. Across all LLM calls, aggregated |
 | **Human-in-the-Loop** | 4 levels of control: pause before patterns, tools, workers, or send runtime signals |
+| **Task Delegation** | 4 patterns: `as_tool()`, transparent hand-off, hierarchical `delegates=[]`, background `adelegate_background()`. Agents delegate to agents |
 | **Frozen Agents** | Batch mode: classify once, execute thousands. Save ~300ms per call |
 | **Production Guards** | Circuit breaker, rate limiter, configurable timeouts, retries, concurrency limits — built in |
 | **LangSmith** | Auto-detected. Set the env var, see every trace. No code changes |
@@ -316,6 +317,7 @@ Everything you need at **[agloom.readthedocs.io](https://agloom.readthedocs.io)*
 | [Streaming & Events](https://agloom.readthedocs.io/features/streaming/) | Build responsive UIs with streaming APIs |
 | [Middleware](https://agloom.readthedocs.io/features/middleware/) | Transform queries and results with hooks |
 | [MCP Servers](https://agloom.readthedocs.io/features/mcp/) | Connect to external tool servers |
+| [Task Delegation](https://agloom.readthedocs.io/features/delegation/) | 4 patterns for agent-to-agent delegation |
 | [Production Guide](https://agloom.readthedocs.io/guides/production/) | FastAPI, Docker, testing, multi-tenancy, structured output |
 | [Errors & Warnings](https://agloom.readthedocs.io/configuration/errors/) | Every error message, what causes it, how to fix it |
 | [LangSmith Integration](https://agloom.readthedocs.io/features/observability/) | Zero-config tracing and observability |

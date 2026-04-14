@@ -16,6 +16,7 @@ from ..models import (
     WorkerResult,
     _make_step,
     _merge_token_usage,
+    _trunc,
 )
 from ._resolve import resolve_worker_configs
 from .hitl import run_workers_with_hitl
@@ -54,6 +55,8 @@ async def handle_supervisor(
     name = agent.get("name", "UnifiedAgent")
     steps: list = (config or {}).get("_steps", [])
     usage: dict[str, int] = {}
+    raw_messages: list = []
+    ml = agent.get("max_step_output_length", 0)
     logger.event(f"[Supervisor] {name!r} query={query[:60]!r}... subtasks_from_classifier={len(analysis.subtasks)}")
 
     plans = await get_worker_plans(agent, query, analysis)
@@ -67,6 +70,7 @@ async def handle_supervisor(
             success=False,
             analysis=analysis,
             steps=steps,
+            messages=raw_messages,
         )
     logger.event(f"[Supervisor] {len(plans)} worker plans: {[p.worker_id for p in plans]}")
 
@@ -75,13 +79,13 @@ async def handle_supervisor(
     event_queue = agent.get("_event_queue")
 
     for wc in configs:
-        start_step = _make_step(StepType.WORKER_START, wc.worker_id, input=wc.task[:200])
+        start_step = _make_step(StepType.WORKER_START, wc.worker_id, input=wc.task, max_length=ml)
         steps.append(start_step)
         if event_queue is not None:
             await event_queue.put(
                 AgentEvent(
                     type="worker_start",
-                    data={"name": wc.worker_id, "input": wc.task[:200]},
+                    data={"name": wc.worker_id, "input": _trunc(wc.task, ml)},
                 )
             )
 
@@ -91,13 +95,32 @@ async def handle_supervisor(
         invoke_config=config,
     )
     for wr in worker_results:
+        if event_queue is not None:
+            for step in getattr(wr, "steps", []):
+                if step.type in (StepType.TOOL_CALL, StepType.TOOL_RESULT):
+                    event_type = "tool_call" if step.type == StepType.TOOL_CALL else "tool_result"
+                    await event_queue.put(
+                        AgentEvent(
+                            type=event_type,
+                            data={
+                                "worker_id": wr.worker_id,
+                                "name": step.name,
+                                "input": step.input,
+                                "output": step.output,
+                                **step.metadata,
+                            },
+                        )
+                    )
+                    steps.append(step)
+
         end_step = _make_step(
             StepType.WORKER_END,
             wr.worker_id,
-            input=wr.task[:200],
-            output=wr.output[:200],
+            input=wr.task,
+            output=wr.output,
             duration_ms=wr.elapsed_ms,
             signal=wr.signal.value,
+            max_length=ml,
         )
         steps.append(end_step)
         if event_queue is not None:
@@ -106,8 +129,8 @@ async def handle_supervisor(
                     type="worker_end",
                     data={
                         "name": wr.worker_id,
-                        "input": wr.task[:200],
-                        "output": wr.output[:200],
+                        "input": _trunc(wr.task, ml),
+                        "output": _trunc(wr.output, ml),
                         "duration_ms": wr.elapsed_ms,
                         "signal": wr.signal.value,
                     },
@@ -115,6 +138,9 @@ async def handle_supervisor(
             )
         if wr.token_usage:
             usage = _merge_token_usage(usage, wr.token_usage)
+
+    for wr in worker_results:
+        raw_messages.extend(getattr(wr, "messages", []))
 
     if skipped_ids:
         logger.event(f"[Supervisor] Skipped workers: {skipped_ids}")
@@ -128,23 +154,26 @@ async def handle_supervisor(
             success=False,
             analysis=analysis,
             steps=steps,
+            messages=raw_messages,
         )
 
     t_agg = time.perf_counter()
-    output = await aggregate_results(
+    output, agg_msgs = await aggregate_results(
         agent=agent,
         query=query,
         worker_results=worker_results,
         skipped_ids=skipped_ids,
     )
+    raw_messages.extend(agg_msgs)
     agg_ms = round((time.perf_counter() - t_agg) * 1000, 1)
     steps.append(
         _make_step(
             StepType.LLM_CALL,
             "supervisor_aggregate",
-            input=query[:200],
-            output=output[:200],
+            input=query,
+            output=output,
             duration_ms=agg_ms,
+            max_length=ml,
         )
     )
     total_steps = len(worker_results) + 2
@@ -160,6 +189,7 @@ async def handle_supervisor(
         worker_results=worker_results,
         steps=steps,
         token_usage=usage,
+        messages=raw_messages,
     )
 
 
@@ -238,14 +268,14 @@ async def aggregate_results(
     query: str,
     worker_results: list[WorkerResult],
     skipped_ids: list[str],
-) -> str:
+) -> tuple[str, list]:
     """Synthesize all worker outputs via an LLM call.
 
     When _event_queue is present, streams tokens in real-time via
     llm.astream() so users see the synthesis being composed live.
     """
     if not worker_results:
-        return "No worker results to aggregate."
+        return "No worker results to aggregate.", []
 
     results_text = "\n".join(
         f"--- Worker {r.worker_id} | Status: {r.signal.value} ---\nTask: {r.task}\nResult: {r.output}"
@@ -263,6 +293,7 @@ async def aggregate_results(
             )
         ),
     ]
+    llm_messages = list(messages)
     event_queue = agent.get("_event_queue")
     _timeout = agent.get("llm_timeout", 120.0)
 
@@ -286,9 +317,10 @@ async def aggregate_results(
                 timeout=_timeout,
             )
             output = resp.content
+            llm_messages.append(resp)
 
         logger.event(f"[Supervisor] Aggregation done: {len(output)} chars.")
-        return output
+        return output, llm_messages
     except Exception as e:
         logger.error(f"[Supervisor] Aggregation LLM failed: {e}")
-        return "\n".join(f"{r.worker_id}: {r.output}" for r in worker_results)
+        return "\n".join(f"{r.worker_id}: {r.output}" for r in worker_results), llm_messages

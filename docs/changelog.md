@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.2] — 2026-04-14
+
+### Added
+
+- **Task Delegation System** — 4 composable delegation patterns for multi-agent workflows:
+    - `as_tool()` — wrap any agent as a LangChain tool for use in another agent's tool loop
+    - `register_handoff()` — transparent classifier-driven routing to specialist agents
+    - `delegates=[]` parameter on `create_agent()` — hierarchical delegation with `adelegate()` for explicit dispatch
+    - `adelegate_background()` / `await_background()` / `cancel_background()` / `background_status()` — fire-and-forget background delegation with full lifecycle management
+- New types: `HandoffTarget`, `BackgroundDelegationManager`, `BackgroundTask`, `BackgroundTaskStatus`
+- Delegation context injection into classifier prompt — registered delegates are visible to the routing LLM
+- SEC 28 test suite: 28 tests covering all 4 delegation patterns (unit + LLM integration)
+- Documentation: `docs/features/delegation.md` with full API reference and examples
+
 ## [0.1.1] — 2026-04-13
 
 ### Added

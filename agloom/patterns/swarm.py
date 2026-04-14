@@ -57,8 +57,10 @@ async def handle_swarm(
     """
     agent_name = agent.get("name", "Agent")
     llm = agent["llm"]
+    ml = agent.get("max_step_output_length", 0)
     steps: list = (config or {}).get("_steps", [])
     usage: dict[str, int] = {}
+    raw_messages: list = []
     logger.event(f"[Swarm] {agent_name!r} query={query[:60]!r}... agents={len(analysis.subtasks)}")
 
     if not analysis.subtasks:
@@ -70,6 +72,7 @@ async def handle_swarm(
             success=False,
             analysis=analysis,
             steps=steps,
+            messages=raw_messages,
         )
 
     plans = [
@@ -102,14 +105,18 @@ async def handle_swarm(
             _make_step(
                 StepType.WORKER_END,
                 wr.worker_id,
-                input=wr.task[:200],
-                output=wr.output[:200],
+                input=wr.task,
+                output=wr.output,
                 duration_ms=wr.elapsed_ms,
                 signal=wr.signal.value,
+                max_length=ml,
             )
         )
         if wr.token_usage:
             usage = _merge_token_usage(usage, wr.token_usage)
+
+    for wr in results:
+        raw_messages.extend(getattr(wr, "messages", []))
 
     if skipped_ids:
         logger.event(f"[Swarm] Skipped agents: {skipped_ids}")
@@ -130,6 +137,7 @@ async def handle_swarm(
             analysis=analysis,
             steps=steps,
             token_usage=usage,
+            messages=raw_messages,
         )
 
     perspectives = _format_perspectives(succeeded)
@@ -139,20 +147,21 @@ async def handle_swarm(
     )
     _timeout = agent.get("llm_timeout", 120.0) if isinstance(agent, dict) else 120.0
     t_synth = time.perf_counter()
-    synthesis_resp = await asyncio.wait_for(
-        llm.ainvoke(
-            [
-                SystemMessage(
-                    content=(
-                        "You are a synthesis engine for a multi-agent deliberation system. "
-                        "Find emergent insights, not just summaries."
-                    )
-                ),
-                HumanMessage(content=synthesis_prompt),
-            ]
+    synth_input = [
+        SystemMessage(
+            content=(
+                "You are a synthesis engine for a multi-agent deliberation system. "
+                "Find emergent insights, not just summaries."
+            )
         ),
+        HumanMessage(content=synthesis_prompt),
+    ]
+    synthesis_resp = await asyncio.wait_for(
+        llm.ainvoke(synth_input),
         timeout=_timeout,
     )
+    raw_messages.extend(synth_input)
+    raw_messages.append(synthesis_resp)
     synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
     synth_usage = _extract_token_usage(synthesis_resp)
     if synth_usage:
@@ -162,9 +171,10 @@ async def handle_swarm(
         _make_step(
             StepType.LLM_CALL,
             "swarm_synthesis",
-            input=query[:200],
-            output=synthesis[:200],
+            input=query,
+            output=synthesis,
             duration_ms=synth_ms,
+            max_length=ml,
         )
     )
     logger.event(f"[Swarm] Deliberation synthesis done: {len(synthesis)} chars.")
@@ -180,6 +190,7 @@ async def handle_swarm(
         analysis=analysis,
         steps=steps,
         token_usage=usage,
+        messages=raw_messages,
     )
 
 

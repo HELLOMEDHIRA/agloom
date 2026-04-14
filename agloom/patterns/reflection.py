@@ -14,6 +14,7 @@ from ..models import (
     WorkerResult,
     _make_step,
     _merge_token_usage,
+    _trunc,
 )
 from ._resolve import resolve_worker_configs
 from .worker_gates import drain_for_halt, get_signal_queue
@@ -57,11 +58,13 @@ async def handle_reflection(
     """
     agent_name = agent.get("name", "Agent")
     llm = agent["llm"]
+    ml = agent.get("max_step_output_length", 0)
     max_iterations = agent.get("max_reflection_iterations", 3)
     quality_threshold = agent.get("reflection_threshold", 7)
     signal_queue = get_signal_queue(agent, config)
     steps: list = (config or {}).get("_steps", [])
     usage: dict[str, int] = {}
+    raw_messages: list = []
 
     logger.event(
         f"[Reflection] {agent_name} — query={query[:60]}... max_iter={max_iterations}, threshold={quality_threshold}/10"
@@ -77,6 +80,7 @@ async def handle_reflection(
             success=False,
             analysis=analysis,
             steps=steps,
+            messages=raw_messages,
         )
 
     goal = analysis.subtasks[0].task
@@ -107,6 +111,7 @@ async def handle_reflection(
                     analysis=analysis,
                     worker_results=worker_results,
                     error="HALT_ALL",
+                    messages=raw_messages,
                 )
 
         if iteration == 0:
@@ -135,14 +140,16 @@ async def handle_reflection(
         logger.event(f"[Reflection] {agent_name} — iteration {iteration + 1}/{max_iterations}: generating...")
         gen_result = await worker_module.run_worker(gen_cfg, llm, invoke_config=config)
         worker_results.append(gen_result)
+        raw_messages.extend(getattr(gen_result, "messages", []))
         steps.append(
             _make_step(
                 StepType.WORKER_END,
                 gen_result.worker_id,
-                input=gen_result.task[:200],
-                output=gen_result.output[:200],
+                input=gen_result.task,
+                output=gen_result.output,
                 duration_ms=gen_result.elapsed_ms,
                 signal=gen_result.signal.value,
+                max_length=ml,
             )
         )
         if gen_result.token_usage:
@@ -172,6 +179,7 @@ async def handle_reflection(
         logger.event(f"[Reflection] {agent_name} — iteration {iteration + 1}/{max_iterations}: critiquing...")
         critic_result = await worker_module.run_worker(critic_cfg, llm, invoke_config=config)
         worker_results.append(critic_result)
+        raw_messages.extend(getattr(critic_result, "messages", []))
         if critic_result.token_usage:
             usage = _merge_token_usage(usage, critic_result.token_usage)
 
@@ -185,7 +193,7 @@ async def handle_reflection(
                 f"critic_{iteration}",
                 output=f"score={best_score}/10 passed={parsed['passed']}",
                 duration_ms=critic_result.elapsed_ms,
-                feedback=feedback[:200],
+                feedback=_trunc(feedback, ml),
             )
         )
 
@@ -216,6 +224,7 @@ async def handle_reflection(
                 },
                 steps=steps,
                 token_usage=usage,
+                messages=raw_messages,
             )
 
     logger.warning(f"[Reflection] ⚠ Max iterations reached — returning best draft (score={best_score}/10).")
@@ -233,6 +242,7 @@ async def handle_reflection(
         },
         steps=steps,
         token_usage=usage,
+        messages=raw_messages,
     )
 
 

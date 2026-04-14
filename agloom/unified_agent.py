@@ -58,6 +58,14 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool, StructuredTool
 
 from .classifier import analyze_query
+from .delegation import (
+    BackgroundDelegationManager,
+    HandoffTarget,
+    _build_delegation_context,
+    make_agent_tool,
+    resolve_handoff,
+    run_delegate,
+)
 from .logging_utils import configure_package_logging, get_logger
 from .mcp_support import MCPServerConfig
 from .memory import (
@@ -132,6 +140,8 @@ async def _handle_direct(
     usage: dict[str, int] = {}
     output = (analysis.direct_response or "").strip()
     event_queue = agent.get("_event_queue")
+    ml = agent.get("max_step_output_length", 0)
+    raw_messages: list = []
 
     if not output:
         _timeout = agent.get("llm_timeout", 120.0)
@@ -158,6 +168,7 @@ async def _handle_direct(
             await asyncio.wait_for(_stream(), timeout=_timeout)
             output = "".join(chunks)
             usage = _extract_token_usage(last_chunk) if last_chunk else {}
+            raw_messages = messages + ([last_chunk] if last_chunk else [])
         else:
             response = await asyncio.wait_for(
                 agent["llm"].ainvoke(messages),
@@ -165,14 +176,16 @@ async def _handle_direct(
             )
             output = response.content
             usage = _extract_token_usage(response)
+            raw_messages = messages + [response]
 
         dur = round((time.perf_counter() - t0) * 1000, 1)
         step = _make_step(
             StepType.LLM_CALL,
             "direct_llm",
-            input=query[:200],
-            output=output[:200],
+            input=query,
+            output=output,
             duration_ms=dur,
+            max_length=ml,
             **usage,
         )
         steps.append(step)
@@ -187,6 +200,7 @@ async def _handle_direct(
         analysis=analysis,
         steps=steps,
         token_usage=usage,
+        messages=raw_messages,
     )
 
 
@@ -510,6 +524,65 @@ async def _record_turn(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Checkpoint Persistence
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def _save_checkpoint(
+    checkpointer: Any,
+    thread_id: str,
+    result: ExecutionResult,
+    query: str,
+) -> None:
+    """Write execution state to the user-provided checkpointer.
+
+    Best-effort: failures are logged but never crash the run. Uses the
+    LangGraph Checkpoint TypedDict format so get_tuple() / alist() work
+    natively on the checkpointer without a compiled graph.
+    """
+    if checkpointer is None:
+        return
+    try:
+        from datetime import UTC, datetime
+
+        checkpoint_id = result.run_id or str(uuid.uuid4())
+        channel_values = {
+            "query": query,
+            "output": result.output,
+            "pattern": result.pattern_used.value,
+            "success": result.success,
+            "run_id": result.run_id,
+            "steps_taken": result.steps_taken,
+            "steps": [s.model_dump() for s in result.steps],
+            "token_usage": result.token_usage,
+            "message_count": len(result.messages),
+        }
+        channel_versions = dict.fromkeys(channel_values, 1)
+        checkpoint = {
+            "v": 1,
+            "id": checkpoint_id,
+            "ts": datetime.now(UTC).isoformat(),
+            "channel_values": channel_values,
+            "channel_versions": channel_versions,
+            "versions_seen": {},
+        }
+        metadata = {
+            "source": "loop",
+            "step": result.steps_taken,
+            "parents": {},
+            "run_id": result.run_id,
+        }
+        config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+        if hasattr(checkpointer, "aput"):
+            await checkpointer.aput(config, checkpoint, metadata, channel_versions)
+        elif hasattr(checkpointer, "put"):
+            checkpointer.put(config, checkpoint, metadata, channel_versions)
+        logger.debug(f"Checkpoint saved: thread_id={thread_id} run_id={result.run_id}")
+    except Exception as exc:
+        logger.warning(f"_save_checkpoint failed ({exc!r}) — non-fatal.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Lazy MCP Connection
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -648,6 +721,7 @@ async def _ensure_frozen_analysis(config: dict) -> None:
             tools=config.get("tools", []),
             classifier_timeout=config.get("classifier_timeout", 30.0),
             structured_max_retries=config.get("structured_max_retries", 2),
+            fallback_pattern=config.get("fallback_pattern"),
         )
 
         registry = config.get("registry", _HANDLERS)
@@ -694,6 +768,36 @@ def _apply_frozen_substitution(
         update={"subtasks": [st.model_copy(update={"task": _sub(st.task)}) for st in analysis.subtasks]}
     )
     return sub_query, sub_system_prompt, sub_analysis
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Delegation Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _extract_delegate_from_analysis(
+    analysis: QueryAnalysis,
+    targets: list[HandoffTarget],
+) -> str | None:
+    """
+    Check if the classifier's reasoning mentions a registered delegate name.
+
+    The classifier sees delegate descriptions via _build_delegation_context().
+    If its reasoning references a delegate by [name], we extract and return
+    that name for transparent hand-off routing.
+
+    Returns the delegate name or None if no match.
+    """
+    if not targets:
+        return None
+    reasoning = (analysis.reasoning or "").lower()
+    # Also check matched_skill — classifier may put the delegate name there
+    matched = (getattr(analysis, "matched_skill", None) or "").lower()
+    for t in targets:
+        t_lower = t.name.lower()
+        if t_lower in reasoning or t_lower in matched:
+            return t.name
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -750,6 +854,7 @@ async def run_fresh(
     store = config.get("store")
     cache = config.get("query_cache")
     registry = config.get("registry", _HANDLERS)
+    ml = config.get("max_step_output_length", 0)
 
     run_id = str(uuid.uuid4())
     _steps: list[AgentStep] = []
@@ -815,6 +920,16 @@ async def run_fresh(
             except Exception as exc:
                 logger.warning(f"[{name}] skill_injector failed ({exc!r}) — proceeding without.")
 
+        # ── Delegation context injection ─────────────────────────────────────
+        handoff_targets = config.get("_handoff_targets") or []
+        delegate_targets = config.get("_delegate_targets") or []
+        all_delegation_targets = handoff_targets + delegate_targets
+        delegation_ctx = _build_delegation_context(all_delegation_targets)
+        if delegation_ctx and skill_ctx:
+            skill_ctx = f"{skill_ctx}\n\n{delegation_ctx}"
+        elif delegation_ctx:
+            skill_ctx = delegation_ctx
+
         # ── Classify ──────────────────────────────────────────────────────────
         augmented_query = f"{memory_ctx}\n{processed_query}" if memory_ctx else processed_query
         t_classify = time.perf_counter()
@@ -825,13 +940,15 @@ async def run_fresh(
             skill_context=skill_ctx,
             classifier_timeout=config.get("classifier_timeout", 30.0),
             structured_max_retries=config.get("structured_max_retries", 2),
+            fallback_pattern=config.get("fallback_pattern"),
         )
         classify_ms = round((time.perf_counter() - t_classify) * 1000, 1)
         classify_step = _make_step(
             StepType.CLASSIFY,
             "analyze_query",
-            input=augmented_query[:200],
+            input=augmented_query,
             output=f"pattern={analysis.pattern.value} complexity={analysis.complexity}",
+            max_length=ml,
             duration_ms=classify_ms,
             subtasks=len(analysis.subtasks),
         )
@@ -846,6 +963,34 @@ async def run_fresh(
         pattern_val = analysis.pattern.value
         handler = None
 
+        # ── Transparent handoff routing ──────────────────────────────────────
+        # If delegates are registered, check whether the classifier's reasoning
+        # mentions a delegate name → route transparently.
+        if all_delegation_targets:
+            _delegate_name = _extract_delegate_from_analysis(analysis, all_delegation_targets)
+            if _delegate_name:
+                _handoff_target = await resolve_handoff(all_delegation_targets, processed_query, _delegate_name)
+                if _handoff_target:
+                    logger.event(f"[{name}] handoff → {_handoff_target.name}")
+                    handoff_result = await run_delegate(
+                        _handoff_target,
+                        processed_query,
+                        thread_id=effective_thread_id,
+                        user_id=user_id,
+                        context=context,
+                    )
+                    handoff_result = handoff_result.model_copy(
+                        update={
+                            "run_id": run_id,
+                            "steps": _steps + list(handoff_result.steps),
+                            "metadata": {**handoff_result.metadata, "delegated_to": _handoff_target.name},
+                        }
+                    )
+                    await _record_turn(
+                        memory, effective_thread_id, raw_query_str, handoff_result, user_id, effective_ltns
+                    )
+                    return handoff_result
+
         # ── Semantic cache check ─────────────────────────────────────────────
     if cache:
         try:
@@ -857,8 +1002,9 @@ async def run_fresh(
                 cache_step = _make_step(
                     StepType.CACHE_HIT,
                     "semantic_cache",
-                    input=processed_query[:200],
-                    output=hit["output"][:200],
+                    input=processed_query,
+                    output=hit["output"],
+                    max_length=ml,
                 )
                 _steps.append(cache_step)
                 await _emit_step_event(config, cache_step)
@@ -885,8 +1031,9 @@ async def run_fresh(
             int_step = _make_step(
                 StepType.INTERRUPT,
                 f"interrupt_before:{pattern_val}",
-                input=raw_query_str[:200],
+                input=raw_query_str,
                 output="aborted",
+                max_length=ml,
             )
             _steps.append(int_step)
             await _emit_step_event(config, int_step)
@@ -909,8 +1056,9 @@ async def run_fresh(
         direct_step = _make_step(
             StepType.LLM_CALL,
             "direct_shortcircuit",
-            input=raw_query_str[:200],
-            output=analysis.direct_response[:200],
+            input=raw_query_str,
+            output=analysis.direct_response,
+            max_length=ml,
         )
         _steps.append(direct_step)
         await _emit_step_event(config, direct_step)
@@ -978,8 +1126,9 @@ async def run_fresh(
             int_after_step = _make_step(
                 StepType.INTERRUPT,
                 f"interrupt_after:{pattern_val}",
-                input=raw_query_str[:200],
+                input=raw_query_str,
                 output="interrupted",
+                max_length=ml,
             )
             _steps.append(int_after_step)
             await _emit_step_event(config, int_after_step)
@@ -1314,7 +1463,7 @@ class UnifiedAgent:
             "clarification_queues": invoke_config["configurable"]["clarification_queues"],
         }
 
-        return await run_fresh(
+        result = await run_fresh(
             config=run_config,
             query=query,
             effective_thread_id=effective_thread_id,
@@ -1323,6 +1472,15 @@ class UnifiedAgent:
             context=context or {},
             user_id=user_id,
         )
+
+        await _save_checkpoint(
+            self.config.get("checkpointer"),
+            effective_thread_id,
+            result,
+            query if isinstance(query, str) else str(query),
+        )
+
+        return result
 
     async def astream(
         self,
@@ -1441,6 +1599,7 @@ class UnifiedAgent:
                 skill_context=skill_ctx,
                 classifier_timeout=self.config.get("classifier_timeout", 30.0),
                 structured_max_retries=self.config.get("structured_max_retries", 2),
+                fallback_pattern=self.config.get("fallback_pattern"),
             )
 
             if analysis.pattern != PatternType.DIRECT:
@@ -1573,6 +1732,14 @@ class UnifiedAgent:
                     context=context or {},
                     user_id=user_id,
                 )
+
+                await _save_checkpoint(
+                    self.config.get("checkpointer"),
+                    effective_thread_id,
+                    result,
+                    query if isinstance(query, str) else str(query),
+                )
+
                 await event_queue.put(
                     AgentEvent(
                         type="done",
@@ -1755,38 +1922,47 @@ class UnifiedAgent:
 
     async def get_state(self, thread_id: str) -> Any:
         """
-        Current graph state snapshot for a thread.
-        snapshot.next is non-empty when the graph is paused/interrupted.
-        Requires checkpointer.
-        """
-        if not self.config.get("checkpointer"):
-            raise RuntimeError(
-                "get_state() requires a checkpointer. Pass checkpointer=InMemorySaver() to create_agent()."
-            )
-        compiled = self.config.get("compiled_graph")
-        if compiled is None:
-            from .graph import build_agent_graph
+        Current state snapshot for a thread.
 
-            compiled = build_agent_graph(self.config)
-            self.config["compiled_graph"] = compiled
-        return await compiled.aget_state({"configurable": {"thread_id": thread_id}})
+        Returns the latest checkpoint written by ainvoke()/astream_events()
+        via the checkpointer. If no checkpoint exists for this thread,
+        returns None.
+
+        Requires checkpointer — pass checkpointer=MemorySaver() to create_agent().
+        """
+        checkpointer = self.config.get("checkpointer")
+        if not checkpointer:
+            raise RuntimeError(
+                "get_state() requires a checkpointer. Pass checkpointer=MemorySaver() to create_agent()."
+            )
+        config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+        try:
+            if hasattr(checkpointer, "aget_tuple"):
+                return await checkpointer.aget_tuple(config)
+            if hasattr(checkpointer, "get_tuple"):
+                return checkpointer.get_tuple(config)
+        except Exception as exc:
+            logger.warning(f"get_state failed ({exc!r}) — returning None.")
+        return None
 
     async def get_history(self, thread_id: str) -> Any:
         """
         Async iterator over full state history for a thread (time-travel).
-        Each item is a StateSnapshot. Requires checkpointer.
-        """
-        if not self.config.get("checkpointer"):
-            raise RuntimeError(
-                "get_history() requires a checkpointer. Pass checkpointer=InMemorySaver() to create_agent()."
-            )
-        compiled = self.config.get("compiled_graph")
-        if compiled is None:
-            from .graph import build_agent_graph
 
-            compiled = build_agent_graph(self.config)
-            self.config["compiled_graph"] = compiled
-        return compiled.aget_state_history({"configurable": {"thread_id": thread_id}})
+        Each item is a CheckpointTuple containing the checkpoint data
+        written by ainvoke()/astream_events(). Requires checkpointer.
+        """
+        checkpointer = self.config.get("checkpointer")
+        if not checkpointer:
+            raise RuntimeError(
+                "get_history() requires a checkpointer. Pass checkpointer=MemorySaver() to create_agent()."
+            )
+        config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+        if hasattr(checkpointer, "alist"):
+            return checkpointer.alist(config)
+        if hasattr(checkpointer, "list"):
+            return checkpointer.list(config)
+        return None
 
     def register_pattern(
         self,
@@ -1799,6 +1975,164 @@ class UnifiedAgent:
         """
         self.config["registry"][pattern_type] = handler_fn
         logger.event(f"[{self.name}] Pattern registered: {pattern_type.value}")
+
+    # ── Delegation API ───────────────────────────────────────────────────────
+
+    def as_tool(
+        self,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> BaseTool:
+        """
+        Wrap this agent as a LangChain tool for use in another agent's tool list.
+
+        Usage:
+            research = create_agent(model=llm, name="researcher", ...)
+            parent = create_agent(model=llm, tools=[research.as_tool()])
+        """
+        return make_agent_tool(self, name=name, description=description)
+
+    def register_handoff(
+        self,
+        target: Any,  # HandoffTarget | UnifiedAgent
+        *,
+        name: str | None = None,
+        description: str = "",
+        filter_fn: Callable | None = None,
+        input_transform: Callable | None = None,
+    ) -> None:
+        """
+        Register a transparent hand-off target.
+
+        When registered, the classifier sees the delegate's description and
+        can route queries directly to it. The hand-off is transparent — the
+        caller receives the delegate's result as if the parent handled it.
+
+        Accepts either a HandoffTarget or a raw UnifiedAgent (which gets
+        wrapped automatically).
+
+        Usage:
+            parent.register_handoff(
+                research_agent,
+                description="Research and summarize academic papers",
+            )
+        """
+        if isinstance(target, HandoffTarget):
+            ht = target
+        else:
+            ht = HandoffTarget(
+                target,
+                name=name,
+                description=description,
+                filter_fn=filter_fn,
+                input_transform=input_transform,
+            )
+        self.config.setdefault("_handoff_targets", []).append(ht)
+        logger.event(f"[{self.name}] Handoff registered: {ht.name!r} — {ht.description[:60]}")
+
+    async def adelegate(
+        self,
+        query: str,
+        *,
+        delegate_name: str | None = None,
+        thread_id: str | None = None,
+        user_id: str | None = None,
+        lt_namespace: tuple | None = None,
+        context: dict | None = None,
+    ) -> ExecutionResult:
+        """
+        Explicitly delegate a query to a registered delegate.
+
+        If delegate_name is given, routes to that specific delegate.
+        Otherwise, resolves the best match from handoff targets and
+        the delegates list.
+
+        Raises ValueError if no matching delegate is found.
+        """
+        all_targets = self._all_delegation_targets()
+        target = await resolve_handoff(all_targets, query, delegate_name)
+        if target is None:
+            available = [t.name for t in all_targets]
+            raise ValueError(
+                "No matching delegate found"
+                + (f" for name={delegate_name!r}" if delegate_name else "")
+                + f". Available: {available}"
+            )
+        return await run_delegate(
+            target,
+            query,
+            thread_id=thread_id,
+            user_id=user_id,
+            lt_namespace=lt_namespace,
+            context=context,
+        )
+
+    async def adelegate_background(
+        self,
+        query: str,
+        *,
+        delegate_name: str | None = None,
+        thread_id: str | None = None,
+        user_id: str | None = None,
+        lt_namespace: tuple | None = None,
+        context: dict | None = None,
+    ) -> str:
+        """
+        Fire-and-forget background delegation. Returns task_id immediately.
+
+        Usage:
+            task_id = await parent.adelegate_background(
+                "Research quantum computing",
+                delegate_name="researcher",
+            )
+            # Later:
+            result = await parent.await_background(task_id)
+        """
+        all_targets = self._all_delegation_targets()
+        target = await resolve_handoff(all_targets, query, delegate_name)
+        if target is None:
+            available = [t.name for t in all_targets]
+            raise ValueError(
+                "No matching delegate found"
+                + (f" for name={delegate_name!r}" if delegate_name else "")
+                + f". Available: {available}"
+            )
+        mgr: BackgroundDelegationManager = self.config["_bg_delegation_manager"]
+        return await mgr.submit(
+            target,
+            query,
+            thread_id=thread_id,
+            user_id=user_id,
+            lt_namespace=lt_namespace,
+            context=context,
+        )
+
+    async def await_background(
+        self,
+        task_id: str,
+        *,
+        timeout: float | None = None,
+    ) -> ExecutionResult | None:
+        """Wait for a background delegation to complete. Returns the result or None."""
+        mgr: BackgroundDelegationManager = self.config["_bg_delegation_manager"]
+        return await mgr.await_result(task_id, timeout=timeout)
+
+    def background_status(self, task_id: str):
+        """Get status of a background delegation task."""
+        mgr: BackgroundDelegationManager = self.config["_bg_delegation_manager"]
+        return mgr.status(task_id)
+
+    async def cancel_background(self, task_id: str) -> bool:
+        """Cancel a running background delegation. Returns True if cancelled."""
+        mgr: BackgroundDelegationManager = self.config["_bg_delegation_manager"]
+        return await mgr.cancel(task_id)
+
+    def _all_delegation_targets(self) -> list:
+        """Collect all delegation targets: handoff targets + delegates."""
+        targets = list(self.config.get("_handoff_targets") or [])
+        targets.extend(self.config.get("_delegate_targets") or [])
+        return targets
 
     def __repr__(self) -> str:
         cfg = self.config
@@ -1859,6 +2193,11 @@ def create_agent(
     max_reflection_iterations: int = 3,
     reflection_threshold: int = 7,
     mcp_servers: list[MCPServerConfig] | None = None,
+    max_step_output_length: int = 0,
+    fallback_pattern: PatternType | None = None,
+    auto_summarize: bool = True,
+    summarize_threshold: int = 200_000,
+    summarizer_model: Any = None,
     # ── Feedback system ──────────────────────────────────────────────────────
     # feedback_handler: plug-and-play UserFeedbackHandler implementation.
     # Accepted values (all from feedback/user_feedback.py):
@@ -1869,6 +2208,11 @@ def create_agent(
     #   Any custom class implementing UserFeedbackHandler protocol
     # Only active when store= is also provided (FeedbackStore is LTS-backed).
     feedback_handler: Any | None = None,
+    # ── Delegation ────────────────────────────────────────────────────────────
+    # delegates: list of (UnifiedAgent | HandoffTarget) that this agent can
+    # dispatch work to via run_delegate(). Exposed to the classifier so it
+    # can route transparently. Also accessible via agent.adelegate().
+    delegates: Sequence[Any] | None = None,
     # ── Frozen agent ─────────────────────────────────────────────────────────
     # frozen=True  → classify once on first ainvoke(), reuse forever.
     #                ainvoke() accepts str | dict. dict requires input_key list.
@@ -1945,6 +2289,9 @@ def create_agent(
         max_reflection_iterations=max_reflection_iterations,
         reflection_threshold=reflection_threshold,
         mcp_servers=list(mcp_servers or []),
+        auto_summarize=auto_summarize,
+        summarize_threshold=summarize_threshold,
+        summarizer_model=summarizer_model,
     )
 
     # ── Frozen params validation ─────────────────────────────────────────────
@@ -1971,18 +2318,33 @@ def create_agent(
         resolved_tools = mem_tools + resolved_tools  # memory tools first
 
     # ── Session memory (always active) ────────────────────────────────────────
+    resolved_summarizer = resolve_model(summarizer_model) if summarizer_model else resolved_llm
     resolved_memory = memory
     if resolved_memory is None:
         try:
             from langgraph.store.memory import InMemoryStore as LGStore
 
-            resolved_memory = SessionMemory(store=LGStore(), max_turns=session_max_turns)
+            resolved_memory = SessionMemory(
+                store=LGStore(),
+                max_turns=session_max_turns,
+                auto_summarize=auto_summarize,
+                summarize_threshold=summarize_threshold,
+                summarizer_model=resolved_summarizer if auto_summarize else None,
+            )
         except ImportError:
-            resolved_memory = SessionMemory(max_turns=session_max_turns)
+            resolved_memory = SessionMemory(
+                max_turns=session_max_turns,
+                auto_summarize=auto_summarize,
+                summarize_threshold=summarize_threshold,
+                summarizer_model=resolved_summarizer if auto_summarize else None,
+            )
         logger.debug(
             f"{agent_name}: SessionMemory auto-created with ephemeral InMemoryStore. "
+            f"auto_summarize={auto_summarize} threshold={summarize_threshold} "
             f"For persistence: memory=SessionMemory(store=AsyncSqliteStore(...))"
         )
+    elif auto_summarize and resolved_memory.summarizer_model is None:
+        resolved_memory.summarizer_model = resolved_summarizer
 
     # ── Core config dict ──────────────────────────────────────────────────────
     config: dict = {
@@ -2044,7 +2406,34 @@ def create_agent(
         "_frozen_lock": asyncio.Lock(),
         "frozen_analysis_ttl": frozen_analysis_ttl,
         "_frozen_analysis_ts": 0,
+        # Step output truncation (0 = no truncation)
+        "max_step_output_length": max_step_output_length,
+        # Classifier fallback pattern override
+        "fallback_pattern": fallback_pattern,
+        # ── Delegation ──────────────────────────────────────────────────────
+        "_handoff_targets": [],  # populated by register_handoff()
+        "_delegate_targets": [],  # populated from delegates= param below
+        "_bg_delegation_manager": BackgroundDelegationManager(),
     }
+
+    # ── Delegates (hierarchical delegation) ─────────────────────────────────
+    if delegates:
+        for d in delegates:
+            if isinstance(d, HandoffTarget):
+                config["_delegate_targets"].append(d)
+            else:
+                # Assume it's a UnifiedAgent — wrap with auto-generated description
+                config["_delegate_targets"].append(
+                    HandoffTarget(
+                        d,
+                        description=f"Delegate agent '{getattr(d, 'name', 'delegate')}' — "
+                        f"tools: {[t.name for t in getattr(d, 'config', {}).get('tools', [])]}",
+                    )
+                )
+        logger.event(
+            f"{agent_name}: {len(config['_delegate_targets'])} delegate(s) registered: "
+            f"{[t.name for t in config['_delegate_targets']]}"
+        )
 
     # ── MCP ───────────────────────────────────────────────────────────────────
     config["_mcp_servers"] = list(mcp_servers or [])

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging as _logging
+import re as _re
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
@@ -364,6 +366,8 @@ class WorkerResult(BaseModel):
     elapsed_ms: float = 0.0
     attempt: int = 1  # 1-based: which attempt produced this result
     token_usage: dict[str, int] = Field(default_factory=dict)
+    steps: list[Any] = Field(default_factory=list)
+    messages: list[Any] = Field(default_factory=list)
 
 
 class StepType(str, Enum):
@@ -429,6 +433,20 @@ class ExecutionResult(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     steps: list[AgentStep] = Field(default_factory=list)
     token_usage: dict[str, int] = Field(default_factory=dict)
+    messages: list[Any] = Field(
+        default_factory=list,
+        description="Raw LangChain message objects (AIMessage, HumanMessage, ToolMessage, etc.) from the execution.",
+    )
+
+
+DEFAULT_STEP_MAX_LENGTH: int = 0
+
+
+def _trunc(s: str, limit: int = DEFAULT_STEP_MAX_LENGTH) -> str:
+    """Truncate string to *limit* chars. 0 or negative → no truncation."""
+    if limit <= 0:
+        return s
+    return s[:limit]
 
 
 def _make_step(
@@ -438,14 +456,15 @@ def _make_step(
     input: str = "",
     output: str = "",
     duration_ms: float = 0.0,
+    max_length: int = DEFAULT_STEP_MAX_LENGTH,
     **extra: Any,
 ) -> AgentStep:
     """Convenience factory for AgentStep with auto-timestamp."""
     return AgentStep(
         type=step_type,
         name=name,
-        input=input[:500],
-        output=output[:500],
+        input=_trunc(input, max_length),
+        output=_trunc(output, max_length),
         duration_ms=duration_ms,
         metadata=extra,
     )
@@ -492,6 +511,78 @@ def _extract_token_usage(response: Any) -> dict[str, int]:
 
 
 _VALID_PATTERN_VALUES: frozenset[str] = frozenset(p.value.upper() for p in PatternType)
+
+
+_model_logger = _logging.getLogger("agloom.models")
+
+_PROVIDER_PREFIXED = _re.compile(r"^[a-z_-]+:")
+_HAS_SLASH = _re.compile(r"/")
+
+_KNOWN_BARE_PREFIXES = (
+    "gpt-",
+    "o1-",
+    "o3-",
+    "o4-",
+    "claude-",
+    "gemini-",
+    "gemma-",
+    "llama-",
+    "mistral-",
+    "mixtral-",
+    "codestral-",
+    "deepseek-",
+    "command-",
+    "qwen",
+)
+
+_PROVIDER_HINTS: dict[str, str] = {
+    "gpt-": "openai",
+    "o1-": "openai",
+    "o3-": "openai",
+    "o4-": "openai",
+    "claude-": "anthropic",
+    "gemini-": "google_genai",
+    "gemma-": "google_genai",
+    "command-": "cohere",
+}
+
+
+def _validate_model_string(model_id: str) -> None:
+    """Warn if a model-id string looks like a bare model name without a provider.
+
+    Does NOT raise — only emits a warning so developers catch typos early
+    instead of getting a cryptic error on the first LLM call.
+    """
+    if _PROVIDER_PREFIXED.match(model_id) or _HAS_SLASH.search(model_id):
+        return
+
+    lower = model_id.lower()
+    for prefix in _KNOWN_BARE_PREFIXES:
+        if lower.startswith(prefix):
+            hint = _PROVIDER_HINTS.get(prefix, "")
+            suggestion = f"'{hint}:{model_id}'" if hint else f"'provider:{model_id}' or 'org/{model_id}'"
+            _model_logger.warning(
+                f"Model string '{model_id}' looks like a bare model name without a provider prefix. "
+                f"This may fail at runtime. Did you mean {suggestion}? "
+                f"Examples: 'openai:gpt-4o', 'anthropic:claude-3-5-sonnet', 'meta-llama/llama-4-scout-17b-16e-instruct'."
+            )
+            return
+
+    _model_logger.warning(
+        f"Model string '{model_id}' has no provider prefix (e.g. 'openai:') or org slash (e.g. 'meta-llama/'). "
+        f"If this is intentional (e.g. a custom endpoint), you can ignore this warning. "
+        f"Otherwise, use 'provider:model-name' format."
+    )
+
+
+def _validate_model_object(model: Any) -> None:
+    """Warn if a model object doesn't look like a valid LLM."""
+    if not (hasattr(model, "ainvoke") or hasattr(model, "invoke")):
+        _model_logger.warning(
+            f"Model object of type '{type(model).__name__}' has no 'ainvoke' or 'invoke' method. "
+            f"Expected a BaseChatModel instance (e.g. ChatGroq, ChatOpenAI). "
+            f"This will likely fail at runtime."
+        )
 
 
 class AgentConfig(BaseModel):
@@ -560,6 +651,12 @@ class AgentConfig(BaseModel):
     max_reflection_iterations: int = Field(default=3, ge=1)
     reflection_threshold: int = Field(default=7, ge=0, le=10)
 
+    auto_summarize: bool = Field(default=True, description="Enable auto-summarization of conversation history")
+    summarize_threshold: int = Field(
+        default=200_000, ge=10_000, description="Token count threshold that triggers auto-summarization"
+    )
+    summarizer_model: Any = None
+
     mcp_servers: list[Any] = Field(default_factory=list)
 
     @field_validator("rate_limit")
@@ -577,8 +674,13 @@ class AgentConfig(BaseModel):
                 "model is required. Pass a BaseChatModel instance or a model-id string "
                 "(e.g. 'openai:gpt-4o', 'anthropic:claude-3-5-sonnet-20241022')."
             )
-        if isinstance(v, str) and not v.strip():
-            raise ValueError("model string is empty. Pass a non-empty model-id (e.g. 'openai:gpt-4o').")
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                raise ValueError("model string is empty. Pass a non-empty model-id (e.g. 'openai:gpt-4o').")
+            _validate_model_string(v)
+        else:
+            _validate_model_object(v)
         return v
 
     @field_validator("name")

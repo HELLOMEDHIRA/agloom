@@ -134,6 +134,27 @@ Events are pushed to the consumer **as they happen** during execution — not co
 - `worker_start`/`worker_end` events bracket worker execution
 - `done` fires only when the full pipeline completes
 
+### SUPERVISOR tool events
+
+For the SUPERVISOR pattern, tool events from each worker are emitted **post-hoc** — when a worker completes, its `tool_call` and `tool_result` events are emitted in sequence before `worker_end`. Each tool event includes a `worker_id` field so UI consumers can group them:
+
+```python
+async for event in agent.astream_events("Research and analyze"):
+    if event.type == "worker_start":
+        print(f"▶ {event.data['name']} started")
+    elif event.type == "tool_call":
+        worker = event.data.get("worker_id", "")
+        print(f"  🔧 [{worker}] calling {event.data['name']}")
+    elif event.type == "tool_result":
+        worker = event.data.get("worker_id", "")
+        print(f"  ✅ [{worker}] {event.data['name']}: {event.data['output'][:50]}")
+    elif event.type == "worker_end":
+        print(f"◼ {event.data['name']} done ({event.data['duration_ms']:.0f}ms)")
+```
+
+!!! note "Post-hoc vs real-time"
+    SUPERVISOR tool events are emitted when each worker finishes, not in real-time during worker execution. This keeps the event stream ordered and avoids interleaving from parallel workers. REACT tool events are emitted in real-time as tools execute.
+
 ## 3. Step Tracing
 
 Every `ExecutionResult` includes a `steps` list with a structured timeline:
@@ -154,8 +175,12 @@ Example output:
 [classify    ] analyze_query — 450ms
 [llm_call    ] supervisor_plan — 320ms
 [worker_start] researcher
+[tool_call   ] search_api            (worker: researcher)
+[tool_result ] search_api            (worker: researcher)
 [worker_end  ] researcher — 890ms
 [worker_start] analyst
+[tool_call   ] calculator            (worker: analyst)
+[tool_result ] calculator            (worker: analyst)
 [worker_end  ] analyst — 750ms
 [llm_call    ] supervisor_synthesize — 280ms
 ```
@@ -163,6 +188,29 @@ Example output:
 ### Step types
 
 `StepType` enum values: `classify`, `llm_call`, `tool_call`, `tool_result`, `worker_start`, `worker_end`, `cache_hit`, `reflection`, `fallback`, `interrupt`, `token`.
+
+### Controlling step output length
+
+By default, step `input` and `output` fields are **not truncated** — you get the full tool response. If you need to limit memory usage (e.g., high-throughput batch processing), set `max_step_output_length` to a positive value:
+
+```python
+# Default: full output (no truncation)
+agent = create_agent(model=llm, tools=[search_products])
+
+result = await agent.ainvoke("Find running shoes")
+for step in result.steps:
+    if step.type == StepType.TOOL_RESULT:
+        # step.output contains the FULL tool response
+        products = json.loads(step.output)
+        render_carousel(products)
+
+# Opt-in truncation for memory-sensitive deployments
+agent = create_agent(
+    model=llm,
+    tools=[search_products],
+    max_step_output_length=500,  # truncate step data to 500 chars
+)
+```
 
 ## 4. Token Usage Tracking
 
@@ -175,6 +223,48 @@ print(result.token_usage)
 ```
 
 Useful for cost monitoring and billing.
+
+## 5. Raw LangChain Messages
+
+Every `ExecutionResult` includes a `messages` field containing the raw LangChain message objects from the execution:
+
+```python
+result = await agent.ainvoke("What is 3 + 5?")
+
+for msg in result.messages:
+    print(f"{type(msg).__name__}: {msg.content[:80]}")
+# HumanMessage: What is 3 + 5?
+# AIMessage: (tool_calls=[...])
+# ToolMessage: 8
+# AIMessage: The result of 3 + 5 is 8.
+```
+
+This gives you direct access to:
+
+- **`AIMessage.tool_calls`** — structured tool call data (name, args, id)
+- **`ToolMessage.content`** — raw tool output
+- **`AIMessage.content`** — full LLM response text
+- **`AIMessage.usage_metadata`** — per-message token counts
+
+Useful for UI libraries (e.g. `@assistant-ui/react`) that render message objects directly, or for building custom tool visualization:
+
+```python
+from langchain_core.messages import AIMessage, ToolMessage
+
+for msg in result.messages:
+    if isinstance(msg, AIMessage) and msg.tool_calls:
+        for tc in msg.tool_calls:
+            print(f"Called {tc['name']}({tc['args']})")
+    elif isinstance(msg, ToolMessage):
+        print(f"Tool {msg.name} returned: {msg.content}")
+```
+
+Worker results also carry their own messages:
+
+```python
+for wr in result.worker_results:
+    print(f"Worker {wr.worker_id}: {len(wr.messages)} messages")
+```
 
 ## Enabling / Disabling
 
@@ -189,4 +279,5 @@ To get token usage, just access `result.token_usage` after any `ainvoke` call.
 | Simple chat UI | `astream()` | Token chunks only, simplest integration |
 | Rich "thinking" UI | `astream_events()` | Steps + tokens + tool tracking in one stream |
 | Post-run analysis | `ainvoke()` + `result.steps` | Full trace with timing data |
+| Raw message access | `ainvoke()` + `result.messages` | Full LangChain message objects |
 | Server-Sent Events | `astream_events()` | Each event serializes cleanly via `event.model_dump_json()` |

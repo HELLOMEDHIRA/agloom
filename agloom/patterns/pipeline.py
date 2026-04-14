@@ -33,8 +33,10 @@ async def handle_pipeline(
     sequentially (each receives previous output), return last output.
     """
     name = agent.get("name", "UnifiedAgent")
+    ml = agent.get("max_step_output_length", 0)
     steps: list = (config or {}).get("_steps", [])
     usage: dict[str, int] = {}
+    raw_messages: list = []
     logger.event(f"[Pipeline] ▶ {name} | query={query[:60]}... | steps={len(analysis.subtasks)}")
 
     if not analysis.subtasks:
@@ -46,6 +48,7 @@ async def handle_pipeline(
             success=False,
             analysis=analysis,
             steps=steps,
+            messages=raw_messages,
         )
 
     plans = [
@@ -88,14 +91,18 @@ async def handle_pipeline(
             _make_step(
                 StepType.WORKER_END,
                 wr.worker_id,
-                input=wr.task[:200],
-                output=wr.output[:200],
+                input=wr.task,
+                output=wr.output,
                 duration_ms=wr.elapsed_ms,
                 signal=wr.signal.value,
+                max_length=ml,
             )
         )
         if wr.token_usage:
             usage = _merge_token_usage(usage, wr.token_usage)
+
+    for wr in worker_results:
+        raw_messages.extend(getattr(wr, "messages", []))
 
     successful = [r for r in worker_results if r.signal.value == "SUCCESS"]
     if successful:
@@ -122,4 +129,5 @@ async def handle_pipeline(
         worker_results=worker_results,
         steps=steps,
         token_usage=usage,
+        messages=raw_messages,
     )

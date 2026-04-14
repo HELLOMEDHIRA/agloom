@@ -214,9 +214,9 @@ for wr in result.worker_results:
 
 Workers use the same `model` passed to `create_agent`. Per-worker model customization is not currently supported — all workers run against the same LLM.
 
-## Checkpointer: Resume and State Inspection
+## Checkpointer: State Persistence and Inspection
 
-For interruptible workflows, pass a `checkpointer` to enable state persistence:
+Pass a `checkpointer` to automatically persist execution state after every `ainvoke()` and `astream_events()` call:
 
 ```python
 from langgraph.checkpoint.memory import MemorySaver
@@ -224,18 +224,39 @@ from langgraph.checkpoint.memory import MemorySaver
 agent = create_agent(
     model=llm,
     checkpointer=MemorySaver(),
-    name="resumable-agent",
+    name="persistent-agent",
 )
+
+# Every call writes a checkpoint keyed by thread_id
+result = await agent.ainvoke("Explain RLHF", thread_id="session-1")
 ```
 
 ### Inspecting state
 
 ```python
 state = await agent.get_state(thread_id="session-1")
-print(state.next)  # non-empty if the graph is paused/interrupted
+if state:
+    checkpoint = state.checkpoint
+    data = checkpoint["channel_values"]
+    print(f"Query: {data['query']}")
+    print(f"Pattern: {data['pattern']}")
+    print(f"Output: {data['output'][:100]}")
+    print(f"Steps: {len(data['steps'])}")
+```
+
+### State history (time travel)
+
+Multiple calls to the same `thread_id` create a history of checkpoints:
+
+```python
+async for snapshot in await agent.get_history(thread_id="session-1"):
+    data = snapshot.checkpoint["channel_values"]
+    print(f"[{snapshot.checkpoint['ts']}] {data['query'][:60]} → {data['pattern']}")
 ```
 
 ### Resuming interrupted runs
+
+`resume()` operates on the **compiled LangGraph graph** path (not the normal `run_fresh` pipeline). It is intended for advanced interrupt/resume workflows where `interrupt_before` gates paused a graph node:
 
 ```python
 result = await agent.resume(
@@ -244,15 +265,8 @@ result = await agent.resume(
 )
 ```
 
-### State history (time travel)
-
-```python
-async for snapshot in await agent.get_history(thread_id="session-1"):
-    print(snapshot)
-```
-
-!!! note "Compiled graph path"
-    `resume`, `get_state`, and `get_history` operate on the **compiled LangGraph graph**, not the `run_fresh` pipeline. They are intended for advanced checkpoint/interrupt workflows.
+!!! note "Checkpoint vs resume"
+    `get_state()` and `get_history()` read checkpoints written by every `ainvoke()`/`astream_events()` call — they always have data. `resume()` requires the compiled graph path and is for advanced HITL workflows only.
 
 ## Testing Agents
 

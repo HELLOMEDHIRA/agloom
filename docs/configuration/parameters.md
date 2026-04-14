@@ -6,11 +6,33 @@ Complete reference for every `create_agent` parameter. All parameters except `mo
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `BaseChatModel` | **required** | Any LangChain-compatible LLM |
+| `model` | `BaseChatModel \| str` | **required** | LangChain LLM instance or model-id string (e.g. `"openai:gpt-4o"`). Validated at creation — bare names without a provider prefix trigger a warning |
 | `tools` | `list[BaseTool]` | `None` → `[]` | Tools the agent can call. See [Tool Calling](../features/tools.md) |
 | `system_prompt` | `str \| Callable` | auto-generated | Static string or dynamic function `(state) -> str`. See [Dynamic System Prompts](../guides/production.md#dynamic-system-prompts) |
 | `name` | `str` | auto-generated | Agent name used in logging, memory namespaces, and diagnostics |
 | `debug` | `bool` | `False` | Enable DEBUG-level structured logging. See [Logging](logging.md) |
+
+### Model Validation
+
+`create_agent()` validates the `model` parameter at creation time:
+
+- **`None` or empty string** → raises `ValueError` immediately
+- **String without provider prefix** (e.g. `"gpt-4o"` instead of `"openai:gpt-4o"`) → emits a **warning** with the suggested fix. The agent is still created, so custom endpoints still work.
+- **Object without `ainvoke`/`invoke` methods** → emits a **warning** that the object doesn't look like a valid LLM
+
+```python
+# These raise ValueError at creation time:
+create_agent(model=None)     # ValueError: model is required
+create_agent(model="")       # ValueError: model string is empty
+
+# These emit a warning but still create the agent:
+create_agent(model="gpt-4o")  # WARNING: looks like a bare model name. Did you mean 'openai:gpt-4o'?
+create_agent(model=42)        # WARNING: no 'ainvoke' or 'invoke' method
+
+# Correct usage — no warnings:
+create_agent(model="openai:gpt-4o")
+create_agent(model=ChatGroq(model="llama-3.3-70b-versatile"))
+```
 
 ## Memory & Storage
 
@@ -21,6 +43,9 @@ Complete reference for every `create_agent` parameter. All parameters except `mo
 | `query_cache` | `dict` | `None` | Semantic cache dict from `create_cache()`. See [Query Cache](../features/memory.md#query-cache) |
 | `enable_memory_tools` | `bool` | `True` | Expose `save_memory`/`recall_memory` tools to the agent (requires `store=`) |
 | `session_max_turns` | `int` | `20` | Max turns to keep in session memory. Only applies to auto-created `SessionMemory` |
+| `auto_summarize` | `bool` | `True` | Auto-summarize conversation history when token count exceeds threshold. See [Auto-Summarization](../features/memory.md#auto-summarization) |
+| `summarize_threshold` | `int` | `200_000` | Token count that triggers auto-summarization (min 10,000) |
+| `summarizer_model` | `BaseChatModel \| str` | `None` | Separate LLM for summarization. `None` = use the agent's own model |
 | `user_id` | `str` | `None` | Config-level default user ID. Must also be passed at call time to activate user-scoped LT namespace |
 
 ## Human-in-the-Loop
@@ -79,6 +104,17 @@ See [Timeouts & Retries](reliability.md) for details.
 | `input_key` | `str \| list[str]` | `"input"` | Placeholder name(s) |
 | `frozen_analysis_ttl` | `float` | `0` | Cache TTL in seconds (0 = never) |
 
+## Delegation
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `delegates` | `list[UnifiedAgent \| HandoffTarget]` | `None` | Child agents for hierarchical delegation. See [Delegation](../features/delegation.md) |
+
+Delegation can also be configured at runtime:
+
+- `agent.register_handoff(target, ...)` — add transparent hand-off targets after creation
+- `agent.as_tool()` — wrap agent as a LangChain tool for another agent's tool list
+
 ## Advanced
 
 | Parameter | Type | Default | Description |
@@ -87,8 +123,10 @@ See [Timeouts & Retries](reliability.md) for details.
 | `response_format` | Pydantic model | `None` | Structured output schema (extra LLM reformat pass). See [Structured Output](../guides/production.md#structured-output) |
 | `state_schema` | `type` | `None` | Reserved for future use |
 | `context_schema` | `type` | `None` | Reserved for future use |
-| `checkpointer` | `Checkpointer` | `None` | LangGraph checkpointer for resume/get_state. See [Checkpointer](../guides/production.md#checkpointer-resume-and-state-inspection) |
+| `checkpointer` | `Checkpointer` | `None` | LangGraph checkpointer for state persistence. See [Checkpointer](../guides/production.md#checkpointer-state-persistence-and-inspection) |
 | `mcp_servers` | `list[MCPServerConfig]` | `None` | MCP server connections. See [MCP Servers](../features/mcp.md) |
+| `max_step_output_length` | `int` | `0` | Max chars for step input/output in traces. `0` = no truncation (default — full output preserved). Set to e.g. `500` to limit memory usage |
+| `fallback_pattern` | `PatternType \| None` | `None` | Override classifier fallback when structured output fails. `None` = auto (REACT with tools, DIRECT without) |
 
 ## Runtime Parameters (Method Signatures)
 

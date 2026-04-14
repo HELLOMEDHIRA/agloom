@@ -17,6 +17,7 @@ from ..models import (
     StepType,
     _extract_token_usage,
     _make_step,
+    _trunc,
 )
 from .middleware import HumanApprovalMiddleware, UserAbort
 
@@ -60,6 +61,7 @@ async def handle_react(
     interrupt_before_tools = agent.get("interrupt_before_tools", [])
     user_callback = agent.get("user_callback")
     steps: list = (config or {}).get("_steps", [])
+    ml = agent.get("max_step_output_length", 0)
 
     hitl_active = bool(interrupt_before_tools and user_callback)
 
@@ -83,9 +85,10 @@ async def handle_react(
             _make_step(
                 StepType.LLM_CALL,
                 "react_fallback_llm",
-                input=query[:200],
-                output=resp.content[:200],
+                input=query,
+                output=resp.content,
                 duration_ms=dur,
+                max_length=ml,
             )
         )
         return ExecutionResult(
@@ -97,6 +100,11 @@ async def handle_react(
             analysis=analysis,
             steps=steps,
             token_usage=usage,
+            messages=[
+                SystemMessage(content=agent["system_prompt"]),
+                HumanMessage(content=query),
+                resp,
+            ],
         )
 
     if hitl_active:
@@ -150,14 +158,15 @@ async def handle_react(
                 output = "No output produced."
 
             usage = _extract_token_usage(response)
-            _collect_tool_steps(response, steps)
+            _collect_tool_steps(response, steps, max_length=ml)
             steps.append(
                 _make_step(
                     StepType.LLM_CALL,
                     "react_agent",
-                    input=query[:200],
-                    output=output[:200],
+                    input=query,
+                    output=output,
                     duration_ms=dur,
+                    max_length=ml,
                     messages=len(response.get("messages", [])),
                 )
             )
@@ -172,6 +181,7 @@ async def handle_react(
                 analysis=analysis,
                 steps=steps,
                 token_usage=usage,
+                messages=response.get("messages", []),
             )
 
         except GraphRecursionError:
@@ -181,7 +191,7 @@ async def handle_react(
                 partial = _extract_last_ai_message(response) or partial
             except Exception:
                 pass
-            steps.append(_make_step(StepType.FALLBACK, "react_recursion_limit", output=partial[:200]))
+            steps.append(_make_step(StepType.FALLBACK, "react_recursion_limit", output=partial, max_length=ml))
             return ExecutionResult(
                 pattern_used=PatternType.REACT,
                 query=query,
@@ -190,6 +200,7 @@ async def handle_react(
                 success=True,
                 analysis=analysis,
                 steps=steps,
+                messages=(response or {}).get("messages", []),
             )
 
         except Exception as exc:
@@ -221,6 +232,7 @@ async def handle_react(
                 success=False,
                 analysis=analysis,
                 steps=steps,
+                messages=(response or {}).get("messages", []),
             )
 
     return ExecutionResult(
@@ -256,6 +268,7 @@ async def _handle_react_streaming(
     system_prompt = agent["system_prompt"] + REACT_TOOL_DISCIPLINE
     name = agent.get("name", "UnifiedAgent")
     steps: list = (config or {}).get("_steps", [])
+    ml = agent.get("max_step_output_length", 0)
 
     react_agent = create_agent(
         model=llm,
@@ -297,7 +310,7 @@ async def _handle_react_streaming(
                             data={
                                 "id": run_id,
                                 "name": tool_name,
-                                "input": str(tool_input)[:200],
+                                "input": _trunc(str(tool_input), ml),
                             },
                         )
                     )
@@ -305,8 +318,9 @@ async def _handle_react_streaming(
                     _make_step(
                         StepType.TOOL_CALL,
                         tool_name,
-                        input=str(tool_input)[:200],
+                        input=str(tool_input),
                         id=run_id,
+                        max_length=ml,
                     )
                 )
 
@@ -321,7 +335,7 @@ async def _handle_react_streaming(
                             data={
                                 "id": run_id,
                                 "name": tool_name,
-                                "output": tool_output[:200],
+                                "output": _trunc(tool_output, ml),
                             },
                         )
                     )
@@ -329,8 +343,9 @@ async def _handle_react_streaming(
                     _make_step(
                         StepType.TOOL_RESULT,
                         tool_name,
-                        output=tool_output[:200],
+                        output=tool_output,
                         id=run_id,
+                        max_length=ml,
                     )
                 )
 
@@ -349,9 +364,10 @@ async def _handle_react_streaming(
             _make_step(
                 StepType.LLM_CALL,
                 "react_agent",
-                input=query[:200],
-                output=output[:200],
+                input=query,
+                output=output,
                 duration_ms=dur,
+                max_length=ml,
                 messages=len((final_response or {}).get("messages", [])),
             )
         )
@@ -366,6 +382,7 @@ async def _handle_react_streaming(
             analysis=analysis,
             steps=steps,
             token_usage=usage,
+            messages=(final_response or {}).get("messages", []),
         )
 
     except GraphRecursionError:
@@ -375,7 +392,7 @@ async def _handle_react_streaming(
             partial = _extract_last_ai_message(final_response) or partial
         except Exception:
             pass
-        steps.append(_make_step(StepType.FALLBACK, "react_recursion_limit", output=partial[:200]))
+        steps.append(_make_step(StepType.FALLBACK, "react_recursion_limit", output=partial, max_length=ml))
         return ExecutionResult(
             pattern_used=PatternType.REACT,
             query=query,
@@ -384,11 +401,13 @@ async def _handle_react_streaming(
             success=True,
             analysis=analysis,
             steps=steps,
+            messages=(final_response or {}).get("messages", []),
         )
 
     except Exception as exc:
-        logger.error(f"[React|stream] Failed: {exc}")
-        logger.debug(f"[React|stream] Falling back to ainvoke for {name}")
+        logger.warning(
+            f"[React|stream] astream_events failed ({type(exc).__name__}: {exc}) — falling back to ainvoke for {name}"
+        )
         return await _handle_react_ainvoke_fallback(
             agent=agent,
             query=query,
@@ -403,11 +422,17 @@ async def _handle_react_ainvoke_fallback(
     analysis: QueryAnalysis,
     config: dict | None = None,
 ) -> ExecutionResult:
-    """Fallback to standard ainvoke when streaming is unavailable."""
+    """Fallback to standard ainvoke when streaming is unavailable.
+
+    Emits tool_call/tool_result events post-hoc to the event queue so
+    UI consumers still receive tool visibility even on the fallback path.
+    """
     llm = agent["llm"]
     tools = agent["tools"]
     system_prompt = agent["system_prompt"] + REACT_TOOL_DISCIPLINE
     steps: list = (config or {}).get("_steps", [])
+    event_queue = agent.get("_event_queue")
+    ml = agent.get("max_step_output_length", 0)
 
     react_agent = create_agent(model=llm, tools=tools, system_prompt=system_prompt)
     invoke_config = {**(config or {}), "recursion_limit": REACT_RECURSION_LIMIT}
@@ -422,14 +447,34 @@ async def _handle_react_ainvoke_fallback(
         dur = round((time.perf_counter() - t0) * 1000, 1)
         output = _extract_last_ai_message(response) or "No output produced."
         usage = _extract_token_usage(response)
-        _collect_tool_steps(response, steps)
+
+        tool_steps_start = len(steps)
+        _collect_tool_steps(response, steps, max_length=ml)
+
+        if event_queue:
+            for step in steps[tool_steps_start:]:
+                if step.type in (StepType.TOOL_CALL, StepType.TOOL_RESULT):
+                    event_type = "tool_call" if step.type == StepType.TOOL_CALL else "tool_result"
+                    await event_queue.put(
+                        AgentEvent(
+                            type=event_type,
+                            data={
+                                "name": step.name,
+                                "input": step.input,
+                                "output": step.output,
+                                **step.metadata,
+                            },
+                        )
+                    )
+
         steps.append(
             _make_step(
                 StepType.LLM_CALL,
                 "react_agent",
-                input=query[:200],
-                output=output[:200],
+                input=query,
+                output=output,
                 duration_ms=dur,
+                max_length=ml,
             )
         )
         return ExecutionResult(
@@ -441,6 +486,7 @@ async def _handle_react_ainvoke_fallback(
             analysis=analysis,
             steps=steps,
             token_usage=usage,
+            messages=response.get("messages", []),
         )
     except Exception as exc:
         logger.error(f"[React|fallback] Failed: {exc}")
@@ -506,6 +552,7 @@ async def _handle_react_hitl(
             steps_taken=2,
             success=True,
             analysis=analysis,
+            messages=(response or {}).get("messages", []),
         )
 
     except UserAbort:
@@ -522,6 +569,7 @@ async def _handle_react_hitl(
             steps_taken=1,
             success=True,  # deliberate user action, not a failure
             analysis=analysis,
+            messages=(response or {}).get("messages", []),
         )
 
     except GraphRecursionError:
@@ -538,6 +586,7 @@ async def _handle_react_hitl(
             steps_taken=REACT_RECURSION_LIMIT,
             success=True,
             analysis=analysis,
+            messages=(response or {}).get("messages", []),
         )
 
     except Exception as exc:
@@ -549,10 +598,11 @@ async def _handle_react_hitl(
             steps_taken=1,
             success=False,
             analysis=analysis,
+            messages=(response or {}).get("messages", []),
         )
 
 
-def _collect_tool_steps(response: dict | None, steps: list) -> None:
+def _collect_tool_steps(response: dict | None, steps: list, *, max_length: int = 0) -> None:
     """Scan response messages for tool calls/results and append steps.
 
     Extracts tool_call_id from LangChain messages so callers can correlate
@@ -570,8 +620,9 @@ def _collect_tool_steps(response: dict | None, steps: list) -> None:
                     _make_step(
                         StepType.TOOL_CALL,
                         tc.get("name", "unknown"),
-                        input=str(tc.get("args", ""))[:200],
+                        input=str(tc.get("args", "")),
                         id=tc.get("id", ""),
+                        max_length=max_length,
                     )
                 )
         elif isinstance(msg, ToolMessage):
@@ -579,8 +630,9 @@ def _collect_tool_steps(response: dict | None, steps: list) -> None:
                 _make_step(
                     StepType.TOOL_RESULT,
                     msg.name or "unknown",
-                    output=str(msg.content)[:200],
+                    output=str(msg.content),
                     id=getattr(msg, "tool_call_id", "") or "",
+                    max_length=max_length,
                 )
             )
 

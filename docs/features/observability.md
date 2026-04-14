@@ -97,6 +97,10 @@ for step in result.steps:
 | `timestamp` | `str` | ISO 8601 timestamp |
 | `metadata` | `dict` | Additional context |
 
+## Raw Messages
+
+`result.messages` contains the raw LangChain message objects (`HumanMessage`, `AIMessage`, `ToolMessage`, etc.) from the execution. See [Streaming — Raw Messages](streaming.md#5-raw-langchain-messages) for usage.
+
 ## Token Usage Tracking
 
 ```python
