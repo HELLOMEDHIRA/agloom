@@ -78,6 +78,9 @@ nav:
       - Quick Start: getting-started/quickstart.md
       - CLI Shell: getting-started/cli.md
       - Requirements: getting-started/requirements.md
+  - CLI:
+      - CLI Reference: guides/cli.md
+      - Smart Context: guides/smart-context.md
   - Core Concepts:
       - How It Works: concepts/how-it-works.md
       - Execution Patterns: concepts/patterns.md
