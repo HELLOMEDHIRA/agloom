@@ -367,8 +367,33 @@ def build_index(
     return index
 
 
-def _create_embeddings(index: ProjectIndex, client) -> None:
-    """Create embeddings for chunks using OpenAI."""
+def _create_embeddings(index: ProjectIndex, client=None) -> None:
+    """Create embeddings for chunks using BGE model (local, free)."""
+    from sentence_transformers import SentenceTransformer
+
+    texts = [f"{c.name}: {c.content[:500]}" for c in index.chunks]
+    if not texts:
+        return
+
+    try:
+        # Use BGE embeddings (local, free, no API key needed)
+        model = SentenceTransformer("BAAI/bge-small-en-v1.5")
+        embeddings = model.encode(texts, show_progress_bar=False)
+
+        for i, chunk in enumerate(index.chunks):
+            chunk.embedding = embeddings[i].tolist()
+
+    except ImportError:
+        # Fallback to OpenAI if BGE not installed
+        if client:
+            _create_embeddings_openai(index, client)
+    except Exception:
+        # Keyword fallback on error
+        pass
+
+
+def _create_embeddings_openai(index: ProjectIndex, client) -> None:
+    """Create embeddings using OpenAI (fallback)."""
 
     texts = [f"{c.name}: {c.content[:500]}" for c in index.chunks]
     if not texts:
@@ -398,21 +423,17 @@ def search_similar(
     if not index.chunks:
         return []
 
-    # Try embeddings first
+    # Try BGE embeddings first (local, free)
     use_embeddings = any(c.embedding is not None for c in index.chunks)
 
     if use_embeddings and query_keywords:
         try:
-            import openai
+            from sentence_transformers import SentenceTransformer
 
-            client = openai.OpenAI()
-            response = client.embeddings.create(
-                model="text-embedding-3-small",
-                input=[query],
-            )
-            query_embedding = response.data[0].embedding
+            model = SentenceTransformer("BAAI/bge-small-en-v1.5")
+            query_embedding = model.encode([query])[0].tolist()
 
-            # Find similar using cosine similarity
+            # Calculate cosine similarity
             similarities = []
             for chunk in index.chunks:
                 if chunk.embedding:

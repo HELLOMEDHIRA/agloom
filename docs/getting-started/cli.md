@@ -202,7 +202,7 @@ Agloom uses embeddings + keyword matching for accurate code context:
 ```
 
 Features:
-- **Embeddings**: OpenAI ada + keyword fallback
+- **Embeddings**: BGE (local, free, no API key) + keyword fallback
 - **Chunking**: Per-function, per-class
 - **Token optimization**: Only relevant code injected
 
