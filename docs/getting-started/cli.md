@@ -4,7 +4,7 @@
 
 ## What is Agloom CLI?
 
-A production-ready terminal-based AI programming assistant. Not just for agents — build, test, debug, and ship software:
+A production-ready terminal-based AI programming assistant. Build, test, debug, and ship software:
 
 - **Code assistance** - Write, review, debug, refactor code
 - **Shell commands** - Execute terminal commands
@@ -97,11 +97,56 @@ execution:
   max_concurrent: 4
   max_retries: 2
   llm_timeout: 120.0
+  classifier_timeout: 30.0
 
 safety:
   require_approval: false
-  auto_approve: "read_file,list_directory"
+  auto_approve: "read_file,list_directory,get_working_directory"
+
+session:
+  current_session: ""
+  last_updated: ""
 ```
+
+### CLI Options
+
+| Option | Alias | Description | Default |
+|--------|-------|-------------|---------|
+| `--model` | `-m` | Model ID | auto |
+| `--name` | | Agent name | agloom |
+| `--system-prompt` | | Custom system prompt | (default) |
+| `--tools-dir` | `-t` | Custom tools directory | |
+| `--memory/--no-memory` | | Enable/disable memory | enabled |
+| `--memory-path` | | Memory storage path | auto |
+| `--skills/--no-skills` | | Enable/disable skills | enabled |
+| `--max-skills` | | Max skills to learn | 30 |
+| `--max-turns` | | Max session turns | 20 |
+| `--auto-summarize/--no-summarize` | | Auto-summarize conversations | enabled |
+| `--summarize-threshold` | | Token threshold for summarize | 200000 |
+| `--mcp` | | MCP servers (comma-separated) | |
+| `--interrupt-before` | | Interrupt before patterns | |
+| `--interrupt-after` | | Interrupt after patterns | |
+| `--interrupt-before-tools` | | Interrupt before specific tools | |
+| `--require-approval` | | Require approval for shell/file ops | disabled |
+| `--auto-approve` | | Tools to auto-approve | |
+| `--max-concurrent` | | Max concurrent workers | 4 |
+| `--max-retries` | | Max retries | 2 |
+| `--retry-delay` | | Retry delay (seconds) | 1.0 |
+| `--llm-timeout` | | LLM timeout (seconds) | 120.0 |
+| `--classifier-timeout` | | Classifier timeout | 30.0 |
+| `--fallback-pattern` | | Fallback pattern | |
+| `--frozen` | | Enable frozen mode | disabled |
+| `--frozen-template` | | Frozen template | |
+| `--feedback-webhook` | | Feedback webhook URL | |
+| `--cache-dir` | | Cache directory | |
+| `--config` | `-c` | Config file path | |
+| `--session` | `-s` | Session ID | |
+| `--project` | `-p` | Project directory | auto-detect |
+| `--rules-dir` | | Custom rules directory | |
+| `--refresh-rules` | | Force refresh rules | disabled |
+| `--verbose` | `-v` | Verbose logging | disabled |
+| `--no-builtins` | | Disable built-in tools | disabled |
+| `--version` | | Show version | |
 
 ### Project Override
 
@@ -119,26 +164,12 @@ rules:
   refresh: false
 ```
 
-### Custom Rules Directory
-
-Place YAML files in a custom directory:
+### Environment Variables
 
 ```bash
-# my-rules/coding-style.yaml
-code_style:
-  naming:
-    functions: snake_case
-    classes: PascalCase
-
-# my-rules/testing.yaml
-testing:
-  framework: pytest
-  patterns:
-    - test_*.py
-```
-
-```bash
-agloom --rules-dir ./my-rules
+export OPENAI_API_KEY="sk-..."
+export GROQ_API_KEY="gsk_..."
+export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
 ## Project Context Awareness
@@ -216,36 +247,9 @@ Each session keeps:
 - Modified files tracking
 - Turn count
 
-## Common Options
-
-| Option | Description |
-|-------|-------------|
-| `-m, --model` | Model ID (default: auto) |
-| `-c, --config` | Config file path |
-| `-t, --tools` | Tools directory |
-| `-p, --project` | Project directory |
-| `-s, --session` | Session ID |
-| `--rules-dir` | Custom rules directory |
-| `--refresh-rules` | Force refresh rules |
-| `-v, --verbose` | Enable verbose logging |
-| `--memory/--no-memory` | Enable/disable memory |
-| `--skills/--no-skills` | Enable/disable skills |
-| `--require-approval` | Require approval for shell/file operations |
-
-## Built-in Tools (46)
-
-| Category | Tools |
-|----------|-------|
-| **File** | read_file, write_file, list_directory, search_files, create_directory, remove_file, copy_file, move_file, get_file_info, file_exists |
-| **Shell** | run_shell, run_shell_interactive, get_system_info |
-| **HTTP** | http_get, http_post, http_put, http_delete, http_request |
-| **Web** | web_search, search_web, find_docs, search_github |
-| **Task** | create_task_plan, get_current_task, complete_step |
-| **Path** | get_working_directory, set_working_directory, path_join, path_parent |
-
 ## Data Storage
 
-Agloom stores data in `~/.agloom/`:
+Agloom stores data in `~/.agloom`:
 
 ```
 ~/.agloom/
@@ -259,11 +263,23 @@ Agloom stores data in `~/.agloom/`:
 └── logs/
 ```
 
+## Built-in Tools (46)
+
+| Category | Tools |
+|----------|-------|
+| **File** | read_file, write_file, list_directory, search_files, create_directory, remove_file, copy_file, move_file, get_file_info, file_exists |
+| **Shell** | run_shell, run_shell_interactive, get_system_info |
+| **HTTP** | http_get, http_post, http_put, http_delete, http_request |
+| **Web** | web_search, search_web, find_docs, search_github |
+| **Task** | create_task_plan, get_current_task, complete_step |
+| **Path** | get_working_directory, set_working_directory, path_join, path_parent |
+
 ## What's Next?
 
 | Topic | Link |
 |-------|------|
 | Full CLI Reference | [CLI Reference](../guides/cli.md) |
+| Smart Context | [Smart Context](../guides/smart-context.md) |
 | Execution Patterns | [Patterns](../concepts/patterns.md) |
 | Adding Custom Tools | [Tools](../features/tools.md) |
 | Memory System | [Memory](../features/memory.md) |
