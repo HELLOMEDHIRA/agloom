@@ -100,6 +100,7 @@ nav:
       - Errors & Warnings: configuration/errors.md
   - Guides:
       - Production Integration: guides/production.md
+      - CLI Reference: guides/cli.md
   - Examples:
       - Basic Agent: examples/basic.md
       - Tools & REACT: examples/tools.md

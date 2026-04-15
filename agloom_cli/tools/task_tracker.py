@@ -1,0 +1,182 @@
+"""Task planning and tracking — break down complex tasks and track progress."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from ..tool_loader import tool
+
+_task_tracker: dict[str, Any] = {}
+
+
+@tool
+async def create_task_plan(
+    task: str,
+    steps: list[str],
+) -> str:
+    """Create a task plan with discrete steps.
+
+    Args:
+        task: The main task description
+        steps: List of steps to complete the task
+
+    Returns:
+        Task plan with ID and steps
+    """
+    import uuid
+
+    task_id = uuid.uuid4().hex[:8]
+    _task_tracker[task_id] = {
+        "task": task,
+        "steps": [{"id": i, "description": s, "status": "pending"} for i, s in enumerate(steps)],
+        "current_step": 0,
+        "completed": [],
+    }
+
+    result = [f"[Task ID: {task_id}]", f"Task: {task}", "", "Steps:"]
+    for i, step in enumerate(steps):
+        result.append(f"  {i + 1}. ⏳ {step}")
+
+    return "\n".join(result)
+
+
+@tool
+async def get_current_task() -> str:
+    """Get the current task status and progress.
+
+    Returns:
+        Current task info and progress
+    """
+    if not _task_tracker:
+        return "No active tasks. Use create_task_plan first."
+
+    active_tasks = [tid for tid, t in _task_tracker.items() if t["current_step"] < len(t["steps"])]
+
+    if not active_tasks:
+        return "All tasks completed!"
+
+    tid = active_tasks[0]
+    task = _task_tracker[tid]
+
+    result = [
+        f"[Task ID: {tid}]",
+        f"Task: {task['task']}",
+        "",
+        "Progress:",
+    ]
+
+    for step in task["steps"]:
+        idx = step["id"]
+        desc = step["description"]
+        status = step["status"]
+
+        if status == "completed":
+            result.append(f"  ✓ {idx + 1}. {desc}")
+        elif idx == task["current_step"]:
+            result.append(f"  → {idx + 1}. {desc} (in progress)")
+        else:
+            result.append(f"  ⏳ {idx + 1}. {desc}")
+
+    progress = len(task["completed"]) / len(task["steps"]) * 100
+    result.append(f"\nProgress: {len(task['completed'])}/{len(task['steps'])} ({progress:.0f}%)")
+
+    return "\n".join(result)
+
+
+@tool
+async def complete_step(step_index: int | None = None) -> str:
+    """Mark a step as complete and move to next.
+
+    Args:
+        step_index: Step number to complete (0-based). If None, completes current.
+
+    Returns:
+        Confirmation and next step info
+    """
+    if not _task_tracker:
+        return "No active task. Use create_task_plan first."
+
+    active_tasks = [tid for tid, t in _task_tracker.items() if t["current_step"] < len(t["steps"])]
+    if not active_tasks:
+        return "No active task to update."
+
+    tid = active_tasks[0]
+    task = _task_tracker[tid]
+
+    if step_index is not None:
+        idx = step_index
+    else:
+        idx = task["current_step"]
+
+    if idx >= len(task["steps"]):
+        return f"Invalid step index. Max: {len(task['steps']) - 1}"
+
+    task["steps"][idx]["status"] = "completed"
+    if idx not in task["completed"]:
+        task["completed"].append(idx)
+
+    next_idx = idx + 1
+    if next_idx < len(task["steps"]):
+        task["current_step"] = next_idx
+        next_step = task["steps"][next_idx]["description"]
+        return f"✓ Step {idx + 1} completed. Next: {next_step}"
+    else:
+        return f"✓ Step {idx + 1} completed. All steps done!"
+
+
+@tool
+async def update_task_progress(
+    current_step: int,
+    total_steps: int,
+    status: str = "in_progress",
+) -> str:
+    """Quick way to update task progress manually.
+
+    Args:
+        current_step: Current step number (0-based)
+        total_steps: Total number of steps
+        status: Status message
+
+    Returns:
+        Progress update confirmation
+    """
+    progress = (current_step + 1) / total_steps * 100 if total_steps > 0 else 0
+    return f"[{status}] Step {current_step + 1}/{total_steps} ({progress:.0f}%)"
+
+
+@tool
+async def show_remaining_steps() -> str:
+    """Show remaining steps in current task.
+
+    Returns:
+        List of remaining steps
+    """
+    if not _task_tracker:
+        return "No active tasks."
+
+    active_tasks = [tid for tid, t in _task_tracker.items() if t["current_step"] < len(t["steps"])]
+    if not active_tasks:
+        return "All tasks completed!"
+
+    tid = active_tasks[0]
+    task = _task_tracker[tid]
+
+    remaining = task["steps"][task["current_step"] :]
+
+    result = [f"Remaining steps for task {tid}:"]
+    for step in remaining:
+        result.append(f"  • {step['description']}")
+
+    return "\n".join(result)
+
+
+@tool
+async def clear_task_tracker() -> str:
+    """Clear all task tracking data.
+
+    Returns:
+        Confirmation
+    """
+    global _task_tracker
+    _task_tracker = {}
+    return "Task tracker cleared. Use create_task_plan to start new task."
