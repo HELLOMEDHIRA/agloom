@@ -47,7 +47,7 @@ def render_event(event) -> None:
     elif event_type == "tool_call":
         name = data.get("name", "unknown")
         tool_id = data.get("id", "")
-        console.print(f"\n[yellow]🔧 {name}[/yellow]...", end=" ", flush=True)
+        console.print(f"\n[yellow]🔧 {name}[/yellow]...", end=" ")
         return tool_id
 
     elif event_type == "tool_result":

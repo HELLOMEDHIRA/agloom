@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
-from typing import Any
 
 from ..tool_loader import tool
 
@@ -152,11 +150,9 @@ async def remove_file(path: str, recursive: bool = False) -> str:
             if recursive:
                 shutil.rmtree(file_path)
                 return f"Directory removed: {path}"
-            else:
-                return f"Error: Use recursive=True to remove directory: {path}"
-        else:
-            file_path.unlink()
-            return f"File removed: {path}"
+            return f"Error: Use recursive=True to remove directory: {path}"
+        file_path.unlink()
+        return f"File removed: {path}"
     except Exception as e:
         return f"Error removing: {e}"
 
@@ -188,10 +184,9 @@ async def copy_file(source: str, destination: str, overwrite: bool = False) -> s
                 shutil.rmtree(dst)
             shutil.copytree(src, dst)
             return f"Directory copied: {source} → {destination}"
-        else:
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-            return f"File copied: {source} → {destination}"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        return f"File copied: {source} → {destination}"
     except Exception as e:
         return f"Error copying: {e}"
 
@@ -280,10 +275,7 @@ async def search_files(
         if not search_path.is_dir():
             return f"Error: Not a directory: {path}"
 
-        if recursive:
-            matches = search_path.rglob(pattern)
-        else:
-            matches = search_path.glob(pattern)
+        matches = search_path.rglob(pattern) if recursive else search_path.glob(pattern)
 
         results = []
         for match in sorted(matches):
@@ -316,7 +308,7 @@ def _resolve_path(path: str) -> Path:
     return Path.cwd() / p
 
 
-def _format_size(size: int) -> str:
+def _format_size(size: float) -> str:
     """Format file size in human-readable form."""
     for unit in ["B", "KB", "MB", "GB", "TB"]:
         if size < 1024:

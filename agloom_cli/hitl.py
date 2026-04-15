@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+
 from rich.console import Console
 from rich.prompt import Prompt
 
@@ -82,7 +83,7 @@ def create_user_callback(
             description = SENSITIVE_TOOLS.get(tool_name, f"execute {tool_name}")
 
             console.print()
-            console.print(f"[bold yellow]⚠️  Human Approval Required[/bold yellow]")
+            console.print("[bold yellow]⚠️  Human Approval Required[/bold yellow]")
             console.print(f"[yellow]Tool:[/yellow] {tool_name}")
             console.print(f"[yellow]Action:[/yellow] {description}")
             console.print()

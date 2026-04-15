@@ -1,71 +1,399 @@
-"""Configuration file loading — yaml/toml support."""
+"""Configuration file loading — yaml/toml support with auto-creation."""
 
 from __future__ import annotations
 
 import os
 import uuid
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-import tomli
 import yaml
 
+HomeDir = Path.home() / ".agloom"
+DefaultConfigPath = HomeDir / "agloom.yaml"
+ProjectConfigPath = Path(".agloom.yaml")
 
-def load_config(path: Path) -> dict[str, Any]:
+DEFAULT_CONFIG = """# agloom configuration file
+# Generated on first run - edit this file to customize your environment
+
+ai:
+  name: agloom
+  model: auto
+  system_prompt: |
+    You are an autonomous AI programming assistant built with agloom.
+
+    ## Your Capabilities
+
+    You have access to tools for:
+    - File operations: read, write, list, search, create, remove files and directories
+    - Shell commands: execute commands in the terminal
+    - Web search: search the web for documentation, bugs, or solutions
+    - HTTP requests: make API calls when needed
+    - Task planning: break down complex tasks into steps
+    - Working directory: navigate and manage project context
+
+    ## Guidelines
+
+    1. Always prefer existing code - Don't suggest rewriting unless necessary
+    2. Be concise - Give focused answers, not lengthy explanations
+    3. Think step-by-step - For complex tasks, plan before executing
+    4. Use tools wisely - Check file context before modifying
+    5. Handle errors - gracefully explain what went wrong
+    6. Respect user privacy - Don't log or store sensitive data
+
+    ## Code Style
+
+    - Follow existing conventions in the codebase
+    - Use meaningful variable names
+    - Add comments for complex logic
+    - Keep functions small and focused
+
+    ## Error Handling
+
+    When you make mistakes or hit dead ends:
+    - Acknowledge the error clearly
+    - Explain what happened and why
+    - Show what you tried and the outcome
+    - Offer the next best approach
+
+    ## Communication
+
+    - Use markdown for code blocks
+    - Show actual vs expected behavior for bugs
+    - Suggest specific fixes
+    - Ask clarification when requirements are unclear
+
+    Remember: You're collaborating with a human. They control the session, you assist.
+
+mcp:
+  servers: ""
+
+tools:
+  dir: ""
+  disabled: []
+
+memory:
+  enabled: true
+  max_turns: 50
+
+skills:
+  enabled: true
+  max_skills: 30
+
+rules:
+  # Custom rules directory (YAML files)
+  dir: ""
+  # Refresh rules on each session (default: false - only refresh if missing)
+  refresh: false
+
+execution:
+  max_concurrent: 4
+  max_retries: 2
+  llm_timeout: 120.0
+  classifier_timeout: 30.0
+
+safety:
+  require_approval: false
+  auto_approve: "read_file,list_directory,get_working_directory"
+
+session:
+  current_session: ""
+  last_updated: ""
+"""
+
+CONFIG_HEADER = """# agloom configuration
+#
+# This file is auto-created on first CLI run.
+# Edit this file to customize your agloom environment.
+#
+# For full documentation, see: https://agloom.readthedocs.io
+#
+# Config precedence:
+#   1. CLI arguments
+#   2. Project .agloom.yaml
+#   3. ~/.agloom/agloom.yaml
+#   4. Environment variables
+#   5. Default values
+"""
+
+
+def ensure_config_dir() -> Path:
+    """Ensure home config directory exists with subdirectories."""
+    HomeDir.mkdir(parents=True, exist_ok=True)
+    (HomeDir / "sessions").mkdir(exist_ok=True)
+    (HomeDir / "skills").mkdir(exist_ok=True)
+    (HomeDir / "logs").mkdir(exist_ok=True)
+    return HomeDir
+
+
+def create_default_config() -> dict[str, Any]:
+    """Create default config and save to file if not exists."""
+    if DefaultConfigPath.exists():
+        return load_config(DefaultConfigPath)
+
+    ensure_config_dir()
+
+    with open(DefaultConfigPath, "w") as f:
+        f.write(CONFIG_HEADER + "\n\n" + DEFAULT_CONFIG)
+
+    return load_config(DefaultConfigPath)
+
+
+def get_system_prompt() -> str:
+    """Get system prompt from config."""
+    config = load_config(None)
+    return config.get("ai", {}).get("system_prompt", "") or _get_default_system_prompt()
+
+
+def _get_default_system_prompt() -> str:
+    """Default system prompt similar to Claude Code/Cursor."""
+    return """You are an autonomous AI programming assistant built with agloom.
+
+## Your Capabilities
+
+You have access to tools for:
+- **File operations**: read, write, list, search, create, remove files and directories
+- **Shell commands**: execute commands in the terminal
+- **Web search**: search the web for documentation, bugs, or solutions
+- **HTTP requests**: make API calls when needed
+- **Task planning**: break down complex tasks into steps
+- **Working directory**: navigate and manage project context
+
+## Guidelines
+
+1. **Always prefer existing code** - Don't suggest rewriting unless necessary
+2. **Be concise** - Give focused answers, not lengthy explanations
+3. **Think step-by-step** - For complex tasks, plan before executing
+4. **Use tools wisely** - Check file context before modifying
+5. **Handle errors** - gracefully explain what went wrong and suggest fixes
+6. **Respect user privacy** - Don't log or store sensitive data
+
+## Code Style
+
+- Follow existing conventions in the codebase
+- Use meaningful variable names
+- Add comments for complex logic
+- Keep functions small and focused
+
+## Error Handling
+
+When you make mistakes or hit dead ends:
+- Acknowledge the error clearly
+- Explain what happened and why
+- Show what you tried and the outcome
+- Offer the next best approach
+
+## Communication
+
+- Use markdown for code blocks
+- Show actual vs expected behavior for bugs
+- Suggest specific fixes, not just "try differently"
+- Ask clarification when requirements are unclear
+
+Remember: You're collaborating with a human. They control the session, you assist."""
+
+
+def load_config(path: Path | None) -> dict[str, Any]:
     """Load configuration from yaml or toml file.
 
-    Supported formats:
-    - .yaml / .yml → PyYAML
-    - .toml → tomli
+    Config search order:
+    1. Current directory .agloom.yaml (project override)
+    2. Home ~/.agloom/agloom.yaml (user defaults)
+    3. Auto-create default config
 
-    Config precedence (highest):
+    Config precedence (highest to lowest):
     1. CLI flags
-    2. Config file
-    3. Environment variables
-    4. Defaults
+    2. Project config file
+    3. Home config file
+    4. Environment variables
+    5. Defaults
     """
-    if not path.exists():
-        return {}
+    config_paths = []
 
-    suffix = path.suffix.lower()
+    if path and path.exists():
+        config_paths.append(path)
+    elif ProjectConfigPath.exists():
+        config_paths.append(ProjectConfigPath)
 
-    with open(path, "rb" if suffix == ".toml" else "r") as f:
-        if suffix == ".toml":
-            return tomli.load(f)
-        return yaml.safe_load(f) or {}
+    if DefaultConfigPath.exists():
+        config_paths.append(DefaultConfigPath)
+
+    if not config_paths:
+        return create_default_config()
+
+    merged: dict[str, Any] = {}
+    for config_path in config_paths:
+        with open(config_path) as f:
+            loaded = yaml.safe_load(f) or {}
+        _deep_merge(merged, loaded)
+
+    return merged
 
 
-def get_thread_id(config: dict[str, Any]) -> str:
-    """Get thread ID from config or generate new one.
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Deep merge override into base."""
+    for key, value in override.items():
+        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def get_thread_id(config: dict[str, Any] | None = None) -> str:
+    """Get thread/session ID from config or generate new one.
 
     Priority:
-    1. config.thread_id (if set)
+    1. config.session.current_session
     2. AGLOOM_THREAD_ID env var
     3. Generate new UUID
     """
-    if config.get("thread_id"):
-        return config["thread_id"]
+    if config is None:
+        config = create_default_config()
+
+    session_config = config.get("session", {})
+    if session_config.get("current_session"):
+        return session_config["current_session"]
 
     if os.environ.get("AGLOOM_THREAD_ID"):
         return os.environ["AGLOOM_THREAD_ID"]
 
-    return uuid.uuid4().hex[:8]
+    thread_id = uuid.uuid4().hex[:8]
+    save_session(thread_id)
+    return thread_id
 
 
-def resolve_model(model_id: Optional[str]) -> Any:
+def save_session(thread_id: str, metadata: dict | None = None) -> None:
+    """Save session info to config file."""
+    config = create_default_config()
+
+    if "session" not in config:
+        config["session"] = {}
+
+    config["session"]["current_session"] = thread_id
+    config["session"]["last_updated"] = datetime.now().isoformat()
+
+    with open(DefaultConfigPath, "w") as f:
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+
+def start_new_session(thread_id: str | None = None) -> dict[str, Any]:
+    """Start a new session, creating session file."""
+    import json
+
+    if not thread_id:
+        thread_id = uuid.uuid4().hex[:8]
+
+    sessions_dir = ensure_config_dir() / "sessions"
+    session_file = sessions_dir / f"{thread_id}.json"
+
+    session_data = {
+        "id": thread_id,
+        "started_at": datetime.now().isoformat(),
+        "last_active": datetime.now().isoformat(),
+        "turns": 0,
+        "messages": [],
+    }
+
+    with open(session_file, "w") as f:
+        json.dump(session_data, f, indent=2)
+
+    config = create_default_config()
+    config.setdefault("session", {})["current_session"] = thread_id
+    config.setdefault("session", {})["last_updated"] = datetime.now().isoformat()
+
+    with open(DefaultConfigPath, "w") as f:
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+    return session_data
+
+
+def get_session_history(thread_id: str) -> list[dict]:
+    """Get session message history."""
+    import json
+
+    if not thread_id:
+        return []
+
+    sessions_dir = ensure_config_dir() / "sessions"
+    session_file = sessions_dir / f"{thread_id}.json"
+
+    if not session_file.exists():
+        return []
+
+    with open(session_file) as f:
+        session = json.load(f)
+
+    return session.get("messages", [])
+
+
+def add_to_session_history(thread_id: str, role: str, content: str) -> None:
+    """Add message to session history."""
+    import json
+
+    if not thread_id:
+        return
+
+    sessions_dir = ensure_config_dir() / "sessions"
+    session_file = sessions_dir / f"{thread_id}.json"
+
+    session: dict[str, Any] = {"id": thread_id, "messages": [], "turns": 0}
+
+    if session_file.exists():
+        with open(session_file) as f:
+            session = json.load(f)
+
+    session["messages"].append(
+        {
+            "role": role,
+            "content": content,
+            "timestamp": datetime.now().isoformat(),
+        }
+    )
+    session["last_active"] = datetime.now().isoformat()
+    session["turns"] = session.get("turns", 0) + 1
+
+    with open(session_file, "w") as f:
+        json.dump(session, f, indent=2)
+
+
+def list_sessions() -> list[dict]:
+    """List all saved sessions."""
+    import json
+
+    sessions_dir = ensure_config_dir() / "sessions"
+    if not sessions_dir.exists():
+        return []
+
+    sessions = []
+    for f in sessions_dir.glob("*.json"):
+        with open(f) as fp:
+            try:
+                sessions.append(json.load(fp))
+            except json.JSONDecodeError:
+                continue
+
+    return sorted(sessions, key=lambda x: x.get("last_active", ""), reverse=True)
+
+
+def resolve_model(model_id: str | None) -> Any:
     """Resolve model from ID or env var.
 
     Priority:
     1. Explicit model_id
-    2. OPENAI_MODEL_ID
-    3. ANTHROPIC_MODEL_ID
-    4. GROQ_MODEL_ID
-    5. Auto-detect from available env vars
+    2. Config model setting
+    3. Environment variables
+    4. Auto-detect from available API keys
     """
     from .model_resolver import get_model
 
     if model_id and model_id != "auto":
         return get_model(model_id)
+
+    config = create_default_config()
+    if config.get("ai", {}).get("model") and config["ai"]["model"] != "auto":
+        return get_model(config["ai"]["model"])
 
     env_model = (
         os.environ.get("OPENAI_MODEL_ID") or os.environ.get("ANTHROPIC_MODEL_ID") or os.environ.get("GROQ_MODEL_ID")
@@ -84,3 +412,41 @@ def resolve_model(model_id: Optional[str]) -> Any:
         return get_model("meta-llama/llama-4-scout-17b-16e-instruct")
 
     return None
+
+
+def add_to_gitignore() -> bool:
+    """Add agloom config to .gitignore if not present. Returns True if modified."""
+    gitignore = Path(".gitignore")
+
+    if not gitignore.exists():
+        return False
+
+    content = gitignore.read_text()
+
+    needed = []
+    if ".agloom" not in content:
+        needed.append(".agloom")
+    if ".agloom.yaml" not in content:
+        needed.append(".agloom.yaml")
+
+    if not needed:
+        return False
+
+    entries = [
+        "",
+        "# agloom config (local only)",
+    ]
+    for entry in needed:
+        entries.append(entry)
+
+    with open(gitignore, "a") as f:
+        f.write("\n" + "\n".join(entries))
+
+    return True
+
+
+def ensure_config_ready() -> dict[str, Any]:
+    """Ensure config is ready: create if needed, add to gitignore."""
+    config = create_default_config()
+    add_to_gitignore()
+    return config

@@ -6,7 +6,6 @@ import asyncio
 import os
 import platform
 import subprocess
-from typing import Any
 
 from ..tool_loader import tool
 
@@ -43,7 +42,7 @@ async def run_shell(
                 proc.communicate(),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             return f"Error: Command timed out after {timeout} seconds"
@@ -61,7 +60,7 @@ async def run_shell(
         if proc.returncode != 0:
             result_parts.append(f"[exit code: {proc.returncode}]")
 
-        return result_parts[0] if result_parts else "(no output)"
+        return "\n".join(result_parts) if result_parts else "(no output)"
 
     except FileNotFoundError:
         return f"Error: Command not found: {command.split()[0]}"
@@ -98,15 +97,18 @@ async def run_shell_interactive(
             shell=True,
             cwd=cwd,
             env=merged_env,
+            capture_output=True,
             text=True,
         )
 
+        parts = []
         if result.stdout:
-            print(result.stdout)
+            parts.append(result.stdout)
         if result.stderr:
-            print(f"[stderr] {result.stderr}", file=__import__("sys").stderr)
+            parts.append(f"[stderr] {result.stderr}")
+        parts.append(f"[exit code: {result.returncode}]")
 
-        return f"[exit code: {result.returncode}]"
+        return "\n".join(parts)
 
     except FileNotFoundError:
         return f"Error: Command not found: {command.split()[0]}"

@@ -4,22 +4,20 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import ClassVar
 
 from rich.console import Console
-from rich.layout import Layout
-from rich.live import Live
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from rich.table import Table
 from rich.text import Text
+
+from . import __version__
 
 
 class RichUI:
     """Rich UI like Deep Agents / Claude Code CLI."""
 
-    VERSION = "0.1.0"
-    THEME = {
+    THEME: ClassVar[dict[str, str]] = {
         "primary": "cyan",
         "secondary": "green",
         "accent": "blue",
@@ -53,13 +51,13 @@ class RichUI:
 [bold cyan]╔════════════════════════════════════════════════════════════╗
 ║  ██████╗  ██████╗  ██████╗ ████████╗    ██████╗  █████╗  ██████╗██╗  ██╗
 ║  ██╔══██╗ ██╔═══██╗ ██╔══██╗╚══██╔══╝   ██╔═══██╗██╔══██╗██╔════╝██║ ██╔╝
-║  ██████╔╝ ██║   ██║ ██║  ██║   ██║      ██║   ██║███████║██║     █████╔╝ 
-║  ██╔══██╗ ██║   ██║ ██║  ██║   ██║      ██║   ██║██╔══██║██║     ██╔═██╗ 
+║  ██████╔╝ ██║   ██║ ██║  ██║   ██║      ██║   ██║███████║██║     █████╔╝
+║  ██╔══██╗ ██║   ██║ ██║  ██║   ██║      ██║   ██║██╔══██║██║     ██╔═██╗
 ║  ██████╔╝ ╚██████╔╝ ██████╔╝   ██║      ╚██████╔╝██║  ██║╚██████╗██║  ██╗
 ║  ╚═════╝   ╚═════╝  ╚═════╝    ╚═╝       ╚═════╝ ╚═╝  ╚═╝ ╚══════╝╚═╝  ╚═╝
 ╚════════════════════════════════════════════════════════════╝[/bold cyan]
         """
-        version_text = f"[dim]v{self.VERSION}[/dim]"
+        version_text = f"[dim]v{__version__}[/dim]"
 
         header = Text()
         header.append(logo.rstrip(), style="cyan")
@@ -81,16 +79,16 @@ class RichUI:
         lines = []
 
         if self.langsmith_enabled:
-            lines.append(f"[green]✓[/green] [dim]LangSmith tracing: 'agloom-cli'[/dim]")
+            lines.append("[green]✓[/green] [dim]LangSmith tracing: 'agloom-cli'[/dim]")
         else:
-            lines.append(f"[dim]○ LangSmith: disabled[/dim]")
+            lines.append("[dim]○ LangSmith: disabled[/dim]")
 
         lines.append(f"[dim]Thread: {self.thread_id}[/dim]")
 
         if self.mcp_tools_loaded > 0:
             lines.append(f"[green]✓[/green] [dim]Loaded {self.mcp_tools_loaded} MCP tool(s)[/dim]")
         else:
-            lines.append(f"[dim]MCP: none loaded[/dim]")
+            lines.append("[dim]MCP: none loaded[/dim]")
 
         lines.append(f"[green]✓[/green] [green]{ready_message}[/green]")
 
@@ -142,7 +140,7 @@ class RichUI:
 
     def _update_token_count(self, text: str) -> None:
         """Estimate token count (rough ~4 chars per token)."""
-        self.token_count = len(text) // 4
+        self.token_count += len(text) // 4
 
     # ═══════════════════════════════════════════════════════════════════════════
     # INPUT SECTION
@@ -154,9 +152,9 @@ class RichUI:
 
     def render_input_box(self) -> Panel:
         """Render input box with blue border."""
-        content = f"""
+        content = """
 [bold blue]❯[/bold blue] [dim]Type your message...[/dim]
-        
+
 [dim]Enter send • Ctrl+J newline • @ files • / commands[/dim]"""
 
         return Panel(
@@ -168,8 +166,8 @@ class RichUI:
     def render_bottom_status(self) -> Panel:
         """Render bottom status bar with model, tokens, working dir."""
         status_parts = [
-            f"[green]●[/green] [green]auto[/green]",
-            f"[dim]shift+tab to cycle[/dim]",
+            "[green]●[/green] [green]auto[/green]",
+            "[dim]shift+tab to cycle[/dim]",
             f"[dim]{self.working_dir or '~'}[/dim]",
             f"[dim]{self.token_count:,} tokens[/dim]",
             f"[dim]openai:{self.model_name}[/dim]",
@@ -198,7 +196,7 @@ class RichUI:
 
     def render_tool_call(self, tool_name: str) -> None:
         """Render tool call with styling."""
-        self.console.print(f"[yellow]🔧[/yellow] [bold]{tool_name}[/bold]...", end=" ", flush=True)
+        self.console.print(f"[yellow]🔧[/yellow] [bold]{tool_name}[/bold]...", end=" ")
 
     def render_tool_result(self, result: str, success: bool = True) -> None:
         """Render tool result."""

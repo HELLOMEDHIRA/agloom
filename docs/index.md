@@ -77,6 +77,7 @@ asyncio.run(main())
 7 lines. Production-grade agent. Auto-classification. Step tracing. Token tracking.
 
 [Install & Quick Start →](getting-started/installation.md){ .md-button .md-button--primary }
+[CLI Shell →](getting-started/cli.md){ .md-button }
 [See All 9 Patterns →](concepts/patterns.md){ .md-button }
 
 ---

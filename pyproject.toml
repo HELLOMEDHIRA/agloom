@@ -1,6 +1,6 @@
 [project]
 name = "agloom"
-version = "0.1.3"
+version = "0.1.4"
 description = "The intelligent fabric for AI agents — 9 execution patterns, auto-classified, self-learning, production-ready. Drop-in replacement for LangChain's create_agent."
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -144,6 +144,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "test*.py" = ["S", "T20", "E402", "N817", "B006", "B011", "RUF059"]
 "examples/*.py" = ["S", "T20", "T201"]
+"agloom_cli/tools/*.py" = ["ASYNC230", "ASYNC221", "ASYNC240", "S602"]
+"agloom_cli/project.py" = ["S607"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["agloom"]
@@ -157,7 +159,7 @@ skip-magic-trailing-comma = false
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "0.1.1"
+version = "0.1.4"
 version_files = [
     "pyproject.toml:version",
     "agloom/__init__.py:__version__",

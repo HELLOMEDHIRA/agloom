@@ -22,7 +22,7 @@ def discover_tools(tools_dir: Path) -> list:
     Returns:
         List of BaseTool instances
     """
-    from langchain_core.tools import BaseTool, StructuredTool
+    from langchain_core.tools import BaseTool
 
     tools: list[BaseTool] = []
 
@@ -41,7 +41,7 @@ def discover_tools(tools_dir: Path) -> list:
 
 def load_tools_from_file(path: Path) -> list:
     """Load tools from a single Python file."""
-    from langchain_core.tools import BaseTool, StructuredTool
+    from langchain_core.tools import BaseTool
 
     tools: list[BaseTool] = []
 
@@ -72,7 +72,7 @@ def load_tools_from_file(path: Path) -> list:
 
 def _function_to_tool(func: Any, name: str) -> Any:
     """Convert a function to a LangChain tool."""
-    from langchain_core.tools import BaseTool, StructuredTool
+    from langchain_core.tools import StructuredTool
 
     if hasattr(func, "_tool_marker") and func._tool_marker:
         pass

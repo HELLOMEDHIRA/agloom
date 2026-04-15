@@ -109,11 +109,28 @@ async with create_agent(model=llm, name="safe-agent") as agent:
 # Everything cleaned up here
 ```
 
+## CLI Shell (Alternative)
+
+Prefer CLI over Python? Use the built-in shell:
+
+```bash
+pip install agloom[all]
+agloom  # Start interactive shell
+```
+
+```bash
+agloom "Explain quantum computing in 2 sentences"
+agloom -m groq  # Use Groq model
+```
+
+See [CLI Shell](getting-started/cli.md) for full reference.
+
 ## What's Next?
 
 | Topic | Link |
 |-------|------|
 | Understand the 9 patterns | [Execution Patterns](../concepts/patterns.md) |
+| CLI Shell | [CLI Shell](getting-started/cli.md) |
 | Every parameter explained | [All Parameters](../configuration/parameters.md) |
 | Add memory to your agent | [Memory](../features/memory.md) |
 | Build streaming UIs | [Streaming & Events](../features/streaming.md) |

@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from pathlib import Path
-from typing import Optional
 
 import pyfiglet
 from rich.console import Console
@@ -14,8 +12,8 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.text import Text
 
+from . import __version__
 from .ui import RichUI, get_ui, reset_ui
-
 
 console = Console()
 
@@ -32,7 +30,7 @@ def render_banner(text: str = "AGLOOM") -> Panel:
         t,
         border_style="cyan",
         padding=(0, 1),
-        subtitle=f"[cyan]v0.1.0[/cyan]",
+        subtitle=f"[cyan]v{__version__}[/cyan]",
         subtitle_align="right",
     )
 
@@ -81,53 +79,20 @@ async def run_shell(
     console.print()
 
     thread_id = state.ui.thread_id
-    tools_count = len(agent.config.get("tools", []))
+    langsmith_status = (
+        "[bold green]✓[/bold green] [dim]LangSmith: enabled (agloom-cli)[/dim]"
+        if state.ui.langsmith_enabled
+        else "[dim]○ LangSmith: disabled[/dim]"
+    )
 
     console.print(
         Panel(
-            f"[bold green]✓[/bold green] [dim]LangSmith: enabled (agloom-cli)[/dim]\n"
+            f"{langsmith_status}\n"
             f"[dim]Thread: [cyan]{thread_id}[/cyan][/dim]\n"
-            f"[bold green]✓[/bold green] [dim]Loaded [cyan]{tools_count}[/cyan] tool(s)[/dim]\n"
             f"[bold green]✓[/bold green] [bold green]{welcome}[/bold green]",
             border_style="green",
             padding=(0, 2),
             title="[bold]STATUS[/bold]",
-        )
-    )
-    console.print()
-
-    console.print(
-        Panel(
-            f"[bold blue]❯[/bold blue] [dim]Type your message...[/dim]\n\n"
-            f"[dim]Enter send • Ctrl+J newline • @ files • / commands[/dim]",
-            border_style="blue",
-            padding=(1, 2),
-            title="[bold]INPUT[/bold]",
-        )
-    )
-    console.print()
-
-    model_name = "auto"
-    console.print(
-        Panel(
-            f"[bold green]●[/bold green] [bold green]auto[/bold green]  "
-            f"[dim]shift+tab to cycle[/dim]  "
-            f"[cyan]{working_dir}[/cyan]  "
-            f"[yellow]0 tokens[/yellow]  "
-            f"[blue]openai:{model_name}[/blue]",
-            border_style="dim",
-            padding=(0, 1),
-            title="[dim]INFO[/dim]",
-        )
-    )
-    console.print()
-
-    console.print(
-        Panel(
-            f"[bold blue]❯[/bold blue] [dim]Type your message...[/dim]\n\n"
-            f"[dim]Enter send • Ctrl+J newline • @ files • / commands[/dim]",
-            border_style="blue",
-            padding=(1, 2),
         )
     )
     console.print()
@@ -142,13 +107,14 @@ async def run_shell(
             f"[dim]openai:{model_name}[/dim]",
             border_style="dim",
             padding=(0, 1),
+            title="[dim]INFO[/dim]",
         )
     )
     console.print()
 
     while True:
         try:
-            prompt_text = Prompt.get(
+            prompt_text = Prompt.ask(
                 "[bold cyan]❯[/bold cyan] ",
                 default="",
                 show_default=False,
@@ -163,8 +129,8 @@ async def run_shell(
 
             if prompt_text.strip().lower() == "clear":
                 console.clear()
-                await run_shell(agent, welcome="Shell cleared")
-                return
+                console.print("[dim]Shell cleared.[/dim]\n")
+                continue
 
             if prompt_text.strip().lower() == "history":
                 if state.history:
@@ -184,7 +150,7 @@ async def run_shell(
             console.print()
             console.print(
                 Panel(
-                    f"[bold magenta]>[bold magenta] {prompt_text}",
+                    f"[bold magenta]>[/bold magenta] {prompt_text}",
                     border_style="magenta",
                     padding=(0, 1),
                 )
@@ -213,7 +179,7 @@ async def run_shell(
                         tool_name = data.get("name", "unknown")
                         tool_id = data.get("id", "")
                         tool_status[tool_id] = tool_name
-                        console.print(f"\n[yellow]🔧[/yellow] [bold]{tool_name}[/bold]...", end=" ", flush=True)
+                        console.print(f"\n[yellow]🔧[/yellow] [bold]{tool_name}[/bold]...", end=" ")
 
                     elif event_type == "tool_result":
                         tool_id = data.get("id", "")
@@ -278,7 +244,7 @@ def _show_help() -> None:
             """
 [cyan]Available Commands:[/cyan]
   exit, quit, q    Exit the shell
-  clear           Clear the screen  
+  clear           Clear the screen
   history         View conversation history
   help            Show this help message
 

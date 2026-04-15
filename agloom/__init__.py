@@ -15,7 +15,12 @@ Usage:
         result = await agent.ainvoke("Hello")
 """
 
-__version__ = "0.1.2"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("agloom")
+except PackageNotFoundError:
+    __version__ = "0.0.0-dev"
 
 from .cache import cache_get, cache_set, create_cache
 from .delegation import (

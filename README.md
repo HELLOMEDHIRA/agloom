@@ -224,6 +224,46 @@ asyncio.run(main())
 
 **That's 7 lines to a production-grade agent with auto-classification, step tracing, and token tracking.**
 
+### CLI — Interactive Shell
+
+```bash
+pip install agloom[all]         # Install with CLI dependencies
+agloom                        # Start interactive shell
+agloom -m groq "What is 2+2?"  # Single prompt mode
+agloom -c config.yaml         # Load from config file
+```
+
+```bash
+# Shell mode example
+$ agloom
+agloom shell — type 'exit' to quit
+Model: auto
+Tools: 46
+Memory: enabled
+Skills: enabled (max: 30)
+
+> What causes auroras?
+[1/1] Calling get_system_info...
+[1/1] Calling web_search...
+Auroras are caused by charged particles from the sun...
+> exit
+```
+
+```bash
+# Single prompt example
+$ agloom -m groq "Explain quantum computing in 2 sentences"
+Quantum computing uses quantum mechanical phenomena...
+```
+
+```yaml
+# config.yaml example
+model: auto
+name: my-agent
+enable_memory: true
+max_skills: 30
+mcp_servers: slack,github
+```
+
 ### Conversation Memory
 
 Session memory is always active. Pass `thread_id` to maintain context across calls:
@@ -328,6 +368,25 @@ Everything you need at **[agloom.readthedocs.io](https://agloom.readthedocs.io)*
 
 - **Python** 3.11+
 - **LLM API key** — Groq, OpenAI, NVIDIA, HuggingFace, or any LangChain-compatible provider
+
+<br>
+
+## Testing
+
+```bash
+# Run CLI tests
+python test_cli.py
+
+# With specific API key
+GROQ_API_KEY="gsk_..." python test_cli.py
+```
+
+Tests cover:
+- Config loading (YAML/TOML)
+- Model resolution (auto/Groq/OpenAI)
+- Tool discovery and loading
+- Built-in tools (file, shell, HTTP, task tracking)
+- Module imports
 
 <br>
 

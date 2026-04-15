@@ -1,6 +1,6 @@
-# Agloom CLI — The Intelligent Agent Shell
+# Agloom CLI — The AI Programming Assistant Shell
 
-> *A production-ready CLI for building AI agents with 9 execution patterns, auto-classification, self-learning skills, and persistent memory.*
+> *The intelligent CLI for professional AI-assisted development — with project awareness, smart context injection, and auto-learned best practices.*
 
 ---
 

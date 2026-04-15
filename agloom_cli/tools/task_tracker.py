@@ -103,10 +103,7 @@ async def complete_step(step_index: int | None = None) -> str:
     tid = active_tasks[0]
     task = _task_tracker[tid]
 
-    if step_index is not None:
-        idx = step_index
-    else:
-        idx = task["current_step"]
+    idx = step_index if step_index is not None else task["current_step"]
 
     if idx >= len(task["steps"]):
         return f"Invalid step index. Max: {len(task['steps']) - 1}"
@@ -120,8 +117,7 @@ async def complete_step(step_index: int | None = None) -> str:
         task["current_step"] = next_idx
         next_step = task["steps"][next_idx]["description"]
         return f"✓ Step {idx + 1} completed. Next: {next_step}"
-    else:
-        return f"✓ Step {idx + 1} completed. All steps done!"
+    return f"✓ Step {idx + 1} completed. All steps done!"
 
 
 @tool

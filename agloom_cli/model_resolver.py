@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from typing import Any
 
 
 def get_model(model_id: str, **kwargs) -> Any:
@@ -26,7 +26,7 @@ def get_model(model_id: str, **kwargs) -> Any:
     """
     model_id_lower = model_id.lower()
 
-    if model_id_lower.startswith("gpt-") or model_id_lower.startswith("o1"):
+    if model_id_lower.startswith(("gpt-", "o1")):
         return _get_openai_model(model_id, **kwargs)
 
     if "claude" in model_id_lower or model_id_lower.startswith("anthropic"):
