@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/HELLOMEDHIRA/agloom/master/docs/assets/medhira-logo.png" width="140" alt="agloom">
+<img src="https://raw.githubusercontent.com/HELLOMEDHIRA/medhira/main/assets/medhira-logo.png" width="140" alt="agloom">
 
 <br>
 
@@ -405,7 +405,7 @@ We welcome contributions. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and g
 
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/HELLOMEDHIRA/agloom/master/docs/assets/medhira-logo.png" width="80" alt="agloom">
+<img src="https://raw.githubusercontent.com/HELLOMEDHIRA/medhira/main/assets/medhira-logo.png" width="80" alt="agloom">
 
 Built with care by **[MEDHIRA](https://github.com/HELLOMEDHIRA)**
 

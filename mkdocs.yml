@@ -9,8 +9,8 @@ copyright: "&copy; 2026 MEDHIRA"
 
 theme:
   name: material
-  logo: https://raw.githubusercontent.com/HELLOMEDHIRA/agloom/master/docs/assets/medhira-logo.svg
-  favicon: https://raw.githubusercontent.com/HELLOMEDHIRA/agloom/master/docs/assets/medhira-logo.png
+  logo: https://raw.githubusercontent.com/HELLOMEDHIRA/medhira/main/assets/medhira-logo.png
+  favicon: https://raw.githubusercontent.com/HELLOMEDHIRA/medhira/main/assets/medhira-logo.png
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default

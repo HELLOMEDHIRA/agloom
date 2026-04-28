@@ -1,6 +1,6 @@
 <div align="center" markdown>
 
-![agloom](https://raw.githubusercontent.com/HELLOMEDHIRA/agloom/master/docs/assets/medhira-logo.png){ width="120" }
+![agloom](https://raw.githubusercontent.com/HELLOMEDHIRA/medhira/main/assets/medhira-logo.png){ width="120" }
 
 # agloom
 
