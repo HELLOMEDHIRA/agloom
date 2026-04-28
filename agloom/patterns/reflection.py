@@ -162,10 +162,6 @@ async def handle_reflection(
             break
 
         draft = gen_result.output
-        # Critic score is the quality gate; length only breaks ties if we never meet the threshold.
-        if len(draft) > len(best_draft):
-            best_draft = draft
-
         critic_plan = WorkerPlan(
             worker_id=f"critic_{iteration}",
             task=(f"GOAL:\n{goal}\n\nDRAFT RESPONSE TO EVALUATE:\n{draft}"),
@@ -184,14 +180,18 @@ async def handle_reflection(
             usage = _merge_token_usage(usage, critic_result.token_usage)
 
         parsed = _parse_critic_response(critic_result.output, quality_threshold)
-        best_score = parsed["score"]
+        current_score = parsed["score"]
         feedback = parsed["feedback"]
+
+        if current_score >= best_score:
+            best_draft = draft
+            best_score = current_score
 
         steps.append(
             _make_step(
                 StepType.REFLECTION,
                 f"critic_{iteration}",
-                output=f"score={best_score}/10 passed={parsed['passed']}",
+                output=f"score={current_score}/10 passed={parsed['passed']}",
                 duration_ms=critic_result.elapsed_ms,
                 feedback=_trunc(feedback, ml),
             )
@@ -200,14 +200,14 @@ async def handle_reflection(
         logger.event(
             f"[Reflection] {agent_name} — "
             f"iteration {iteration + 1} result: "
-            f"score={best_score}/10, passed={parsed['passed']}, "
+            f"score={current_score}/10, passed={parsed['passed']}, "
             f"feedback='{feedback[:80]}...'"
         )
 
-        if parsed["score"] >= quality_threshold:
+        if current_score >= quality_threshold:
             logger.event(
                 f"[Reflection] {agent_name} — "
-                f"quality threshold met ({best_score}>={quality_threshold}) "
+                f"quality threshold met ({current_score}>={quality_threshold}) "
                 f"after {iteration + 1} iteration(s)."
             )
             return ExecutionResult(
@@ -249,7 +249,7 @@ async def handle_reflection(
 def _parse_critic_response(text: str, threshold: int) -> dict:
     """Parse SCORE/PASSED/FEEDBACK from critic text. Falls back to safe defaults on garbled input."""
     try:
-        score: int = 5
+        score: int = 0
         passed: bool | None = None
 
         score_match = re.search(r"SCORE\s*:\s*(\d+)", text, re.IGNORECASE)

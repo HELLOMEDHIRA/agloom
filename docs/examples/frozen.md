@@ -22,7 +22,7 @@ llm = ChatGroq(
 
 
 async def main():
-    agent = create_agent(
+    agent = await create_agent(
         model=llm,
         frozen=True,
         frozen_template="Translate the following text to French: {text}",

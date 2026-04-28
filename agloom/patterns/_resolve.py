@@ -49,6 +49,7 @@ def resolve_worker_configs(
                 tools=resolved_tools,
                 depends_on=subtask.depends_on or [],
                 context=dict(subtask.context) if subtask.context else {},
+                llm_timeout=float(agent.get("llm_timeout", 120.0)),
                 max_retries=agent.get("max_retries", 2),
                 retry_delay=agent.get("retry_delay", 1.0),
             )

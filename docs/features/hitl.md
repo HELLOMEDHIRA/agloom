@@ -26,13 +26,14 @@ async def my_callback(context):
     print(f"Pattern {context['pattern']} selected. Approve? (y/n)")
     return True  # True = proceed, False = abort
 
-agent = create_agent(
-    model=llm,
-    interrupt_before=["SUPERVISOR", "PIPELINE"],
-    interrupt_after=["REFLECTION"],
-    user_callback=my_callback,
-    name="guarded-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        interrupt_before=["SUPERVISOR", "PIPELINE"],
+        interrupt_after=["REFLECTION"],
+        user_callback=my_callback,
+        name="guarded-agent",
+    )
 ```
 
 **When it fires:** After classification, before the pattern handler starts (for `interrupt_before`) or after it completes (for `interrupt_after`).
@@ -46,13 +47,14 @@ agent = create_agent(
 Pause before specific tools are called:
 
 ```python
-agent = create_agent(
-    model=llm,
-    tools=[delete_file, read_file, write_file],
-    interrupt_before_tools=["delete_file", "write_file"],
-    user_callback=my_callback,
-    name="safe-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        tools=[delete_file, read_file, write_file],
+        interrupt_before_tools=["delete_file", "write_file"],
+        user_callback=my_callback,
+        name="safe-agent",
+    )
 ```
 
 Read operations proceed automatically; destructive operations require approval.
@@ -62,13 +64,14 @@ Read operations proceed automatically; destructive operations require approval.
 For multi-agent patterns (SUPERVISOR, PIPELINE, etc.), pause before or after specific workers:
 
 ```python
-agent = create_agent(
-    model=llm,
-    interrupt_before_workers=["deployer"],
-    interrupt_after_workers=["researcher"],
-    user_callback=my_callback,
-    name="supervised-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        interrupt_before_workers=["deployer"],
+        interrupt_after_workers=["researcher"],
+        user_callback=my_callback,
+        name="supervised-agent",
+    )
 ```
 
 ## L4: Signal Queue
@@ -134,11 +137,12 @@ async def my_callback(context: dict) -> bool | str:
         return input("Your answer: ")  # return the answer string
     return True  # approve other actions
 
-agent = create_agent(
-    model=llm,
-    user_callback=my_callback,
-    name="clarifying-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        user_callback=my_callback,
+        name="clarifying-agent",
+    )
 ```
 
 Workers time out after **300 seconds** if no answer is received, and continue with a fallback message.
@@ -160,6 +164,7 @@ for step in result.steps:
 Simply don't pass any interrupt parameters — HITL is opt-in, not opt-out:
 
 ```python
-# No HITL — runs without any pauses
-agent = create_agent(model=llm, name="auto-agent")
+async def main():
+    # No HITL — runs without any pauses
+    agent = await create_agent(model=llm, name="auto-agent")
 ```

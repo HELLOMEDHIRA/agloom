@@ -1,4 +1,16 @@
-"""Shell command execution — cross-platform support."""
+"""Shell command execution — cross-platform support.
+
+Security
+--------
+These helpers invoke the **system shell** (`asyncio.create_subprocess_shell`, ``subprocess.run(..., shell=True)``).
+They are intended for **trusted, local developer** sessions (for example the agloom CLI coding assistant).
+Feeding untrusted user input into ``command`` can lead to **command injection** and full host compromise.
+
+Mitigations: disable or gate shell tools in exposed deployments, require explicit approval for destructive
+commands, run agents with least-privilege OS users, and never point agents at secrets or production
+systems without review. See ``SECURITY.md`` at the repository root for reporting vulnerabilities.
+
+"""
 
 from __future__ import annotations
 
@@ -8,6 +20,21 @@ import platform
 import subprocess
 
 from ..tool_loader import tool
+
+_MAX_OUTPUT_BYTES = 512 * 1024  # 512 KB — prevents OOM on runaway commands
+_MAX_ENV_VALUE_CHARS = 100
+_REDACT_PATTERNS = ("key", "token", "secret", "password", "passwd", "auth", "cookie", "bearer")
+
+
+def _should_redact_env(name: str) -> bool:
+    n = name.lower()
+    return any(p in n for p in _REDACT_PATTERNS)
+
+
+def _redact(value: str) -> str:
+    if not value:
+        return value
+    return "[REDACTED]"
 
 
 @tool
@@ -21,13 +48,16 @@ async def run_shell(
 
     Args:
         command: Shell command to execute
-        timeout: Timeout in seconds (default: 30)
+        timeout: Timeout in seconds (default: 30, must be > 0)
         cwd: Working directory for the command
         env: Additional environment variables
 
     Returns:
         Command output (stdout + stderr)
     """
+    if timeout <= 0:
+        return "Error: Timeout must be a positive integer"
+
     try:
         proc = await asyncio.create_subprocess_shell(
             command,
@@ -44,18 +74,26 @@ async def run_shell(
             )
         except TimeoutError:
             proc.kill()
-            await proc.wait()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except TimeoutError:
+                pass  # process reaped by OS eventually
             return f"Error: Command timed out after {timeout} seconds"
 
         result_parts = []
 
         if stdout:
-            result_parts.append(stdout.decode("utf-8", errors="replace"))
+            decoded = stdout[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
+            result_parts.append(decoded)
+            if len(stdout) > _MAX_OUTPUT_BYTES:
+                result_parts.append(f"\n... (stdout truncated, {len(stdout)} bytes total)")
 
         if stderr:
-            err_text = stderr.decode("utf-8", errors="replace")
+            err_text = stderr[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
             if err_text:
                 result_parts.append(f"[stderr] {err_text}")
+                if len(stderr) > _MAX_OUTPUT_BYTES:
+                    result_parts.append(f"... (stderr truncated, {len(stderr)} bytes total)")
 
         if proc.returncode != 0:
             result_parts.append(f"[exit code: {proc.returncode}]")
@@ -99,6 +137,8 @@ async def run_shell_interactive(
             env=merged_env,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
 
         parts = []
@@ -184,16 +224,17 @@ async def list_env_vars(pattern: str = "*") -> str:
     matches = []
     for key, value in sorted(os.environ.items()):
         if fnmatch.fnmatch(key.lower(), pattern.lower()):
-            if len(value) > 100:
-                value = value[:100] + "..."
-            matches.append(f"{key}={value}")
+            out_val = value
+            if _should_redact_env(key):
+                out_val = _redact(out_val)
+            elif len(out_val) > _MAX_ENV_VALUE_CHARS:
+                out_val = out_val[:_MAX_ENV_VALUE_CHARS] + "..."
+            matches.append(f"{key}={out_val}")
 
     return "\n".join(matches) if matches else "No matching variables"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Helpers
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _merge_env(extra: dict[str, str] | None) -> dict[str, str] | None:

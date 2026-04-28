@@ -157,7 +157,7 @@ class ProjectRules:
 
         rules_file = rules_dir / f"{self.project_hash}.json"
 
-        with open(rules_file, "w") as f:
+        with open(rules_file, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2)
 
     @classmethod
@@ -171,7 +171,7 @@ class ProjectRules:
         if not rules_file.exists():
             return None
 
-        with open(rules_file) as f:
+        with open(rules_file, encoding="utf-8") as f:
             data = json.load(f)
 
         return cls.from_dict(data)

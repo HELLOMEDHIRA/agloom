@@ -31,7 +31,14 @@ def build_feedback_system(
     structured_max_retries: int = 2,
     low_score_threshold: float = 0.40,
 ) -> dict:
-    """Wire the complete feedback system. Returns a config dict fragment."""
+    """
+    Build store, auto-evaluator, trend detector, and handler for merging into agent config.
+
+    Returns:
+        Dict with keys ``feedback_store``, ``auto_evaluator``, ``trend_detector``,
+        ``feedback_handler`` (defaults to ``NoOpFeedbackHandler``). If ``skill_lifecycle``
+        is set, skill-failure signals from the store are forwarded to it.
+    """
     feedback_store = FeedbackStore(
         store=long_term_store,
         agent_name=agent_name,

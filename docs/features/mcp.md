@@ -17,30 +17,31 @@ Import `MCPServerConfig` and define your servers:
 from agloom.mcp_support import MCPServerConfig
 from agloom import create_agent
 
-agent = create_agent(
-    model=llm,
-    mcp_servers=[
-        MCPServerConfig(
-            name="filesystem",
-            transport="stdio",
-            command="npx",
-            args=["-y", "@modelcontextprotocol/server-filesystem", "/data"],
-        ),
-        MCPServerConfig(
-            name="weather",
-            transport="sse",
-            url="http://localhost:8000/mcp",
-        ),
-    ],
-    name="mcp-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        mcp_servers=[
+            MCPServerConfig(
+                name="filesystem",
+                transport="stdio",
+                command="npx",
+                args=["-y", "@modelcontextprotocol/server-filesystem", "/data"],
+            ),
+            MCPServerConfig(
+                name="weather",
+                transport="sse",
+                url="http://localhost:8000/mcp",
+            ),
+        ],
+        name="mcp-agent",
+    )
 ```
 
 !!! warning "Context manager required"
     Always use `async with` or call `await agent.aclose()` to close MCP connections:
 
     ```python
-    async with create_agent(model=llm, mcp_servers=[...], name="mcp-agent") as agent:
+    async with await create_agent(model=llm, mcp_servers=[...], name="mcp-agent") as agent:
         result = await agent.ainvoke("List files in /data")
     # MCP connections closed automatically
     ```
@@ -85,7 +86,7 @@ When the MCP connection is established, agloom loads:
 ## Example: Filesystem + Database
 
 ```python
-async with create_agent(
+async with await create_agent(
     model=llm,
     mcp_servers=[
         MCPServerConfig(
@@ -120,12 +121,13 @@ def calculate(expression: str) -> str:
     """Evaluate a math expression."""
     return str(eval(expression))
 
-agent = create_agent(
-    model=llm,
-    tools=[calculate],          # local tool
-    mcp_servers=[mcp_config],   # + MCP tools discovered at runtime
-    name="hybrid-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        tools=[calculate],          # local tool
+        mcp_servers=[mcp_config],   # + MCP tools discovered at runtime
+        name="hybrid-agent",
+    )
 ```
 
 ## Validation

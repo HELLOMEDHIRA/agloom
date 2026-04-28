@@ -1,7 +1,8 @@
-"""Active memory tools — save/recall that agents invoke on demand.
+"""Long-term memory tools ``save_memory`` and ``recall_memory``.
 
-Namespace is resolved at call-time from RunnableConfig (set by run_agent()),
-so tool instances are safely shared across all threads, users, and agents.
+Namespace comes from ``RunnableConfig["configurable"]["memory_namespace"]``, set by
+``UnifiedAgent.resolve_ids`` / compatible runners. If it is missing, an ephemeral
+namespace is used and persistence will not match real sessions.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ _FALLBACK_NS: tuple[str, ...] = ("memory", "default")
 
 
 def _resolve_namespace(config: RunnableConfig | None) -> tuple[str, ...]:
-    """Extract memory_namespace from config. Falls back to ephemeral ns on misconfiguration."""
+    """Return ``memory_namespace`` from config, or a one-off fallback if absent."""
     try:
         configurable = (config or {}).get("configurable", {})
         ns = configurable.get("memory_namespace")
@@ -35,40 +36,22 @@ def _resolve_namespace(config: RunnableConfig | None) -> tuple[str, ...]:
 
     ephemeral = ("memory", f"misconfigured_{uuid.uuid4().hex[:8]}")
     logger.error(
-        "[MemoryTool] ❌ memory_namespace missing from config — "
-        f"using ephemeral fallback {ephemeral}. "
-        "This save/recall will NOT persist across calls. "
-        "Ensure run_agent() is passing user_id or thread_id correctly."
+        "[MemoryTool] memory_namespace missing from RunnableConfig — "
+        f"using ephemeral namespace {ephemeral}. Saves will not persist across calls "
+        "unless the caller sets configurable.memory_namespace (e.g. via UnifiedAgent)."
     )
     return ephemeral
 
 
 def create_memory_tools(store: LongTermStore) -> list:
-    """Return [save_memory, recall_memory] tools bound to the given store."""
+    """Build ``save_memory`` and ``recall_memory`` tools bound to ``store``."""
 
     @tool
     def save_memory(key: str, content: str, config: Annotated[RunnableConfig, InjectedToolArg]) -> str:
-        """
-        Save an important fact or user preference to long-term memory.
+        """Store one fact under ``key`` in long-term memory (overwrites an existing ``key``).
 
-        Call this when the user shares something worth remembering across
-        future sessions — their name, goals, preferences, decisions, or
-        any key fact that would otherwise be lost when this conversation ends.
-
-        Behaviour:
-          - Same key → OVERWRITES the existing value (update, not duplicate).
-            Use stable semantic keys so facts stay consolidated:
-            "user_name", "pref_language", "goal_2026", "project_name"
-          - New key  → creates a new memory entry.
-
-        Args:
-            key:     Short, stable, descriptive identifier.
-                     Good:  "user_name", "pref_language", "dietary_restriction"
-                     Bad:   "fact_1", "info", "memory" (too generic)
-            content: The complete information as one or two sentences.
-                     Good:  "The user's name is Harish."
-                             "User prefers Python over JavaScript for backend work."
-                     Bad:   "Harish" (too terse — loses context on retrieval)
+        Use stable keys (e.g. ``user_name``, ``project_goal``) and one or two sentences in
+        ``content`` so retrieval stays meaningful.
         """
         ns = _resolve_namespace(config)
         store.store.put(ns, key, {"memory": content, "topic": key, "source": "agent"})
@@ -78,26 +61,9 @@ def create_memory_tools(store: LongTermStore) -> list:
 
     @tool
     def recall_memory(query: str, config: Annotated[RunnableConfig, InjectedToolArg]) -> str:
-        """
-        Search long-term memory for information relevant to a query.
+        """Search long-term memory for ``query``; returns up to five matches or a no-results message.
 
-        Call this when:
-          - The user asks about something that may have been shared in a
-            previous session (name, preferences, ongoing projects).
-          - You sense you may have stored relevant facts not visible in
-            the current conversation context.
-          - The passive context prefix didn't include what you need.
-
-        Returns up to 5 most relevant memories. If nothing is found,
-        returns "No relevant memories found." — do not fabricate.
-
-        Args:
-            query: Natural language description of what to recall.
-                   Good:  "user's name"
-                          "programming language preference"
-                          "ongoing project details"
-                          "dietary restrictions or allergies"
-                   Bad:   "everything" (too broad — use specific queries)
+        Do not invent facts when nothing is returned.
         """
         ns = _resolve_namespace(config)
         results = store.search(ns, query, limit=5)

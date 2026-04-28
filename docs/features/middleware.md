@@ -27,11 +27,12 @@ Both methods can be sync or async — agloom handles either.
 Pass a list of middleware objects to `create_agent`:
 
 ```python
-agent = create_agent(
-    model=llm,
-    middleware=[LoggingMiddleware(), GuardrailMiddleware()],
-    name="guarded-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        middleware=[LoggingMiddleware(), GuardrailMiddleware()],
+        name="guarded-agent",
+    )
 ```
 
 ### Execution order
@@ -98,16 +99,17 @@ class GuardrailMiddleware:
 ## Combining Multiple Middleware
 
 ```python
-agent = create_agent(
-    model=llm,
-    middleware=[
-        SanitizeMiddleware(),      # 1st: clean input
-        PIIRedactionMiddleware(),  # 2nd: redact PII
-        GuardrailMiddleware(),     # 3rd: block unsafe queries
-        CostMiddleware(),          # runs after_agent to track costs
-    ],
-    name="production-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        middleware=[
+            SanitizeMiddleware(),      # 1st: clean input
+            PIIRedactionMiddleware(),  # 2nd: redact PII
+            GuardrailMiddleware(),     # 3rd: block unsafe queries
+            CostMiddleware(),          # runs after_agent to track costs
+        ],
+        name="production-agent",
+    )
 ```
 
 ## Context Dict

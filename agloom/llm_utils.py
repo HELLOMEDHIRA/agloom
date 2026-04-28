@@ -1,21 +1,16 @@
-"""
-Centralised LLM helpers for production robustness.
-
-    robust_structured_call()  — retry-aware structured output with fallback
-    AsyncRateLimiter          — token-bucket rate limiter for API calls
-    LLMSemaphore              — global concurrency gate for LLM API calls
-    CircuitBreaker            — fast-fail after consecutive LLM failures
-    safe_create_task()         — fire-and-forget with exception logging
-"""
+"""LLM resilience: structured output retries, rate limiting, concurrency gate, circuit breaker, safe tasks."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import re
+import threading
 import time
+import weakref
+from collections import OrderedDict
 from collections.abc import Coroutine
-from typing import Any, TypeVar
+from typing import Any
 
 from langchain_core.messages import BaseMessage, SystemMessage
 from pydantic import BaseModel, ValidationError
@@ -24,34 +19,33 @@ from .logging_utils import get_logger
 
 logger = get_logger(__name__)
 
-T = TypeVar("T", bound=BaseModel)
-
 _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```")
 _JSON_OBJECT_RE = re.compile(r"\{[\s\S]*\}")
 
 
 class LLMSemaphore:
-    """
-    Process-wide concurrency gate for outbound LLM API calls.
+    """Lazy ``asyncio.Semaphore`` limiting concurrent LLM calls (per event loop).
 
-    Prevents overwhelming the API provider when many agents / workers
-    fire concurrent requests. Wraps asyncio.Semaphore with lazy init
-    (safe across module import order).
-
-    Usage:
-        sem = LLMSemaphore(max_concurrent=10)
-        async with sem:
-            result = await llm.ainvoke(...)
+    asyncio primitives are bound to the event loop they are created in. Since agloom
+    can be used across multiple loops (e.g. tests, threads, sync wrappers), we keep
+    a semaphore per running loop to avoid "bound to a different event loop" errors.
     """
 
     def __init__(self, max_concurrent: int = 10) -> None:
         self._max = max_concurrent
-        self._sem: asyncio.Semaphore | None = None
+        self._sems: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = (
+            weakref.WeakKeyDictionary()
+        )
+        self._lock = threading.Lock()
 
     def _ensure(self) -> asyncio.Semaphore:
-        if self._sem is None:
-            self._sem = asyncio.Semaphore(self._max)
-        return self._sem
+        loop = asyncio.get_running_loop()
+        with self._lock:
+            sem = self._sems.get(loop)
+            if sem is None:
+                sem = asyncio.Semaphore(self._max)
+                self._sems[loop] = sem
+            return sem
 
     async def __aenter__(self):
         await self._ensure().acquire()
@@ -64,7 +58,7 @@ class LLMSemaphore:
 DEFAULT_LLM_SEMAPHORE = LLMSemaphore(max_concurrent=10)
 
 
-async def robust_structured_call(
+async def robust_structured_call[T: BaseModel](
     llm: Any,
     schema: type[T],
     messages: list[BaseMessage],
@@ -74,16 +68,7 @@ async def robust_structured_call(
     rate_limiter: AsyncRateLimiter | None = None,
     caller: str = "",
 ) -> T | None:
-    """
-    Model-agnostic structured output with multi-strategy retry.
-
-    Strategy order (each attempt uses asyncio.wait_for with timeout):
-      1. json_schema method  — strict constrained decoding (OpenAI, GPT-OSS)
-      2. default method      — function calling (Llama, Qwen, Claude, etc.)
-      3. raw LLM + manual JSON parse — universal last resort
-
-    Returns the parsed Pydantic model or None after all attempts are exhausted.
-    """
+    """Parse ``schema`` from ``llm`` via json_schema → tool calling → raw JSON fallback; returns None if all fail."""
     tag = f"[{caller}] " if caller else ""
     errors: list[str] = []
 
@@ -134,37 +119,41 @@ async def robust_structured_call(
     return None
 
 
-_structured_cache: dict[tuple, Any] = {}
+_structured_cache: OrderedDict[tuple, Any] = OrderedDict()
 _STRUCTURED_CACHE_MAX = 64
+_cache_lock = threading.Lock()
 
 
-def _build_structured(
+def _build_structured[T: BaseModel](
     llm: Any,
     schema: type[T],
     method: str | None,
 ) -> Any | None:
     """Build a structured LLM, returning None if the method is unsupported. LRU-cached (max 64)."""
     cache_key = (id(llm), schema, method)
-    if cache_key in _structured_cache:
-        return _structured_cache[cache_key]
+    with _cache_lock:
+        if cache_key in _structured_cache:
+            _structured_cache.move_to_end(cache_key)
+            return _structured_cache[cache_key]
 
-    if len(_structured_cache) >= _STRUCTURED_CACHE_MAX:
-        oldest = next(iter(_structured_cache))
-        del _structured_cache[oldest]
+        if len(_structured_cache) >= _STRUCTURED_CACHE_MAX:
+            _structured_cache.popitem(last=False)
 
     kwargs: dict[str, Any] = {"include_raw": False}
     if method is not None:
         kwargs["method"] = method
     try:
         result = llm.with_structured_output(schema, **kwargs)
-        _structured_cache[cache_key] = result
+        with _cache_lock:
+            _structured_cache[cache_key] = result
         return result
     except (NotImplementedError, TypeError, ValueError):
-        _structured_cache[cache_key] = None
+        with _cache_lock:
+            _structured_cache[cache_key] = None
         return None
 
 
-async def _try_invoke(
+async def _try_invoke[T: BaseModel](
     structured: Any,
     messages: list[BaseMessage],
     timeout: float,
@@ -197,7 +186,7 @@ async def _try_invoke(
         return None
 
 
-async def _try_raw_json_fallback(
+async def _try_raw_json_fallback[T: BaseModel](
     llm: Any,
     schema: type[T],
     messages: list[BaseMessage],
@@ -236,7 +225,7 @@ async def _try_raw_json_fallback(
     return None
 
 
-def _extract_and_parse(text: str, schema: type[T]) -> T | None:
+def _extract_and_parse[T: BaseModel](text: str, schema: type[T]) -> T | None:
     """Extract JSON from fenced blocks or bare objects and parse into schema."""
     candidates: list[str] = []
 

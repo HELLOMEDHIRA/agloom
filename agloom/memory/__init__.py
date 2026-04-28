@@ -1,3 +1,5 @@
+"""Memory layer: session turns, long-term store, passive context injection, optional LT tools."""
+
 from .injection import build_memory_context, build_memory_context_sync
 from .session import SessionMemory
 from .store import LongTermStore

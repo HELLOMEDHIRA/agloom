@@ -1,6 +1,6 @@
 <div align="center" markdown>
 
-![MEDHIRA](assets/medhira-logo.png){ width="120" }
+![agloom](https://raw.githubusercontent.com/HELLOMEDHIRA/agloom/master/docs/assets/medhira-logo.png){ width="120" }
 
 # agloom
 
@@ -18,14 +18,17 @@ Drop-in replacement for LangChain's `create_agent` — with superpowers.
 
 ---
 
-## You write 2 lines. agloom does the rest.
+## You write a short async flow. agloom does the rest.
 
 ```python
-agent = create_agent(model=llm, tools=[search, calculate], name="analyst")
-result = await agent.ainvoke("Analyze Q3 sales across 3 regions and recommend strategy")
+from agloom import create_agent
+
+async def main():
+    agent = await create_agent(model=llm, tools=[search, calculate], name="analyst")
+    result = await agent.ainvoke("Analyze Q3 sales across 3 regions and recommend strategy")
 ```
 
-**What happened behind those 2 lines:**
+**What happened behind those calls:**
 
 1. Query classified → SUPERVISOR pattern (multi-faceted, parallelizable)
 2. Decomposed into 3 regional subtasks
@@ -64,7 +67,7 @@ from agloom import create_agent
 
 async def main():
     llm = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct")
-    agent = create_agent(model=llm, name="my-first-agent")
+    agent = await create_agent(model=llm, name="my-first-agent")
 
     result = await agent.ainvoke("What causes auroras?")
     print(result.output)

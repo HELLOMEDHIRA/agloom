@@ -1,4 +1,9 @@
-"""Ephemeral worker — create, execute, return, GC destroys."""
+"""Single-task workers used by supervisor/swarm/pipeline patterns.
+
+Each ``run_worker`` builds a short-lived LangChain ReAct agent (when tools exist),
+runs one assignment, and returns ``WorkerResult``. Recursion/time limits align with
+``patterns.react.REACT_RECURSION_LIMIT`` where applicable.
+"""
 
 from __future__ import annotations
 
@@ -24,9 +29,7 @@ from .models import (
 
 logger = get_logger(__name__)
 
-# LangGraph super-steps; keep aligned with REACT_RECURSION_LIMIT in patterns/react.py
 WORKER_RECURSION_LIMIT = 25
-WORKER_AINVOKE_TIMEOUT = 120  # bound blocking on provider HTTP; avoids indefinite hang
 
 REACT_DISCIPLINE = """
 TOOL USAGE RULES
@@ -45,17 +48,10 @@ async def run_worker(
     llm: Any,
     invoke_config: dict | None = None,
 ) -> WorkerResult:
-    """
-    Route to run_react (tools) or run_llm_only (no tools).
+    """Run one ``ResolvedWorkerConfig``: ReAct when ``tools`` is non-empty, else a single LLM call.
 
-    invoke_config flow:
-      run_fresh builds configurable{thread_id, memory_namespace, signal_queue}
-      → forwarded to every pattern handler → forwarded here
-      → merged (not replaced) into graph.ainvoke via build_graph_config()
-
-    Metrics:
-      elapsed_ms is measured at this layer — covers the full worker lifetime
-      including retries. Individual attempt timing is logged inside each mode.
+    ``invoke_config`` is forwarded from ``run_fresh`` and merged in ``build_graph_config``.
+    Result ``elapsed_ms`` includes retries.
     """
     t_start = time.perf_counter()
 
@@ -179,7 +175,7 @@ async def _run_react(
                     {"messages": [HumanMessage(content=task_content)]},
                     config=graph_config,
                 ),
-                timeout=WORKER_AINVOKE_TIMEOUT,
+                timeout=config.llm_timeout,
             )
             output, usage = _extract_output(result)
             tool_steps = _extract_tool_steps(result)
@@ -199,6 +195,17 @@ async def _run_react(
                 token_usage=usage,
                 steps=tool_steps,
                 messages=result.get("messages", []),
+            )
+
+        except TimeoutError:
+            logger.warning(f"[{config.worker_id}] timeout after {config.llm_timeout}s.")
+            return WorkerResult(
+                worker_id=config.worker_id,
+                task=config.task,
+                output=f"Worker timed out after {config.llm_timeout} seconds.",
+                signal=SignalType.FAILED,
+                error="TimeoutError",
+                attempt=attempt,
             )
 
         except asyncio.CancelledError:
@@ -287,7 +294,7 @@ async def _run_llm_only(
                         HumanMessage(content=task_content),
                     ]
                 ),
-                timeout=WORKER_AINVOKE_TIMEOUT,
+                timeout=config.llm_timeout,
             )
             output = resp.content
             usage = _extract_token_usage(resp)
@@ -309,6 +316,17 @@ async def _run_llm_only(
                 attempt=attempt,
                 token_usage=usage,
                 messages=input_msgs + [resp],
+            )
+
+        except TimeoutError:
+            logger.warning(f"[{config.worker_id}] timeout after {config.llm_timeout}s.")
+            return WorkerResult(
+                worker_id=config.worker_id,
+                task=config.task,
+                output=f"Worker timed out after {config.llm_timeout} seconds.",
+                signal=SignalType.FAILED,
+                error="TimeoutError",
+                attempt=attempt,
             )
 
         except asyncio.CancelledError:

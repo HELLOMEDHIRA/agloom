@@ -88,9 +88,11 @@ def render_event(event) -> None:
 def render_result(result) -> None:
     """Render the final ExecutionResult."""
     console.print()
-    console.print(f"[dim]Pattern: {result.pattern_used.value}[/dim]")
-    console.print(f"[dim]Steps: {result.steps_taken}[/dim]")
-    if result.token_usage:
+    if hasattr(result, "pattern_used") and result.pattern_used:
+        console.print(f"[dim]Pattern: {result.pattern_used.value}[/dim]")
+    if hasattr(result, "steps_taken"):
+        console.print(f"[dim]Steps: {result.steps_taken}[/dim]")
+    if hasattr(result, "token_usage") and result.token_usage:
         total = result.token_usage.get("total_tokens", 0)
         console.print(f"[dim]Tokens: {total}[/dim]")
 

@@ -9,7 +9,7 @@ from agloom import create_agent
 
 async def main():
     llm = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct")
-    agent = create_agent(model=llm, name="my-first-agent")
+    agent = await create_agent(model=llm, name="my-first-agent")
     result = await agent.ainvoke("What is the capital of Japan?")
     print(result.output)
 
@@ -43,21 +43,25 @@ print(result.metadata)                # Additional metadata
 Give your agent capabilities and it will automatically switch to the **REACT** pattern:
 
 ```python
+import asyncio
 from langchain_core.tools import tool
+from agloom import create_agent
 
 @tool
 def calculate(expression: str) -> str:
     """Evaluate a mathematical expression."""
     return str(eval(expression))
 
-agent = create_agent(
-    model=llm,
-    tools=[calculate],
-    name="math-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        tools=[calculate],
+        name="math-agent",
+    )
+    result = await agent.ainvoke("What is (25 * 4) + 17?")
+    print(result.pattern_used)  # → PatternType.REACT
 
-result = await agent.ainvoke("What is (25 * 4) + 17?")
-print(result.pattern_used)  # → PatternType.REACT
+asyncio.run(main())
 ```
 
 ## Streaming Responses
@@ -88,13 +92,20 @@ result = await agent.ainvoke("What's my name?", thread_id="session-1")
 For **cross-session** identity (long-term memory), pass `user_id` at call time along with a `store`:
 
 ```python
+import asyncio
 from langgraph.store.memory import InMemoryStore
+from agloom import create_agent
 
-agent = create_agent(model=llm, store=InMemoryStore(), name="my-agent")
+async def main():
+    agent = await create_agent(model=llm, store=InMemoryStore(), name="my-agent")
+    # user_id must be passed at call time to activate user-scoped memory
+    result = await agent.ainvoke(
+        "Save my preference: dark mode",
+        thread_id="s1",
+        user_id="user-42",
+    )
 
-# user_id must be passed at call time to activate user-scoped memory
-result = await agent.ainvoke("Save my preference: dark mode",
-                              thread_id="s1", user_id="user-42")
+asyncio.run(main())
 ```
 
 All runtime methods (`ainvoke`, `astream`, `astream_events`, `abatch`) accept `thread_id`, `user_id`, and `context`. See [Memory](../features/memory.md) for details.
@@ -104,7 +115,7 @@ All runtime methods (`ainvoke`, `astream`, `astream_events`, `abatch`) accept `t
 Use the context manager to ensure resources (MCP connections, feedback handlers) are cleaned up:
 
 ```python
-async with create_agent(model=llm, name="safe-agent") as agent:
+async with await create_agent(model=llm, name="safe-agent") as agent:
     result = await agent.ainvoke("Hello!")
 # Everything cleaned up here
 ```
@@ -114,23 +125,23 @@ async with create_agent(model=llm, name="safe-agent") as agent:
 Prefer CLI over Python? Use the built-in shell:
 
 ```bash
-pip install agloom[all]
+pip install agloom
 agloom  # Start interactive shell
 ```
 
 ```bash
 agloom "Explain quantum computing in 2 sentences"
-agloom -m groq  # Use Groq model
+agloom -m llama-3.3-70b-versatile  # Use Groq model
 ```
 
-See [CLI Shell](getting-started/cli.md) for full reference.
+See [CLI Shell](cli.md) for full reference.
 
 ## What's Next?
 
 | Topic | Link |
 |-------|------|
 | Understand the 9 patterns | [Execution Patterns](../concepts/patterns.md) |
-| CLI Shell | [CLI Shell](getting-started/cli.md) |
+| CLI Shell | [CLI Shell](cli.md) |
 | Every parameter explained | [All Parameters](../configuration/parameters.md) |
 | Add memory to your agent | [Memory](../features/memory.md) |
 | Build streaming UIs | [Streaming & Events](../features/streaming.md) |

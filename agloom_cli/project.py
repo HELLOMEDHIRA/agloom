@@ -141,7 +141,7 @@ def detect_language(root: Path, max_files: int = 50) -> str | None:
     if not language_counts:
         return None
 
-    return max(language_counts, key=language_counts.get)
+    return max(language_counts, key=lambda lang: language_counts[lang])
 
 
 def detect_frameworks(root: Path, language: str) -> list[str]:
@@ -230,11 +230,20 @@ def detect_dependencies(root: Path, language: str) -> dict[str, str]:
     elif language == "go":
         go_mod = root / "go.mod"
         if go_mod.exists():
-            for line in go_mod.read_text().splitlines():
-                if line.startswith("require ("):
-                    break
-                if " " in line and not line.startswith("module"):
-                    parts = line.strip().split()
+            content = go_mod.read_text()
+            in_require_block = False
+            for line in content.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("require ("):
+                    in_require_block = True
+                    continue
+                if in_require_block and stripped == ")":
+                    in_require_block = False
+                    continue
+                if in_require_block or (
+                    " " in line and not stripped.startswith("module") and not stripped.startswith("require")
+                ):
+                    parts = stripped.split()
                     if len(parts) >= 2:
                         deps[parts[0]] = parts[1]
 
@@ -358,7 +367,7 @@ def _detect_language_quick(root: Path) -> str | None:
         pass
 
     if counts:
-        return max(counts, key=counts.get)
+        return max(counts, key=lambda lang: counts[lang])
 
     return None
 
@@ -444,9 +453,14 @@ def save_project_context(context: ProjectContext, session_id: str, home_dir: Pat
 
     if session_file.exists():
         with open(session_file) as f:
-            session = json.load(f)
+            raw = json.load(f)
+        default_session: dict[str, Any] = {"id": session_id, "messages": [], "projects": {}}
+        session = raw if isinstance(raw, dict) else default_session
     else:
         session = {"id": session_id, "messages": [], "projects": {}}
+
+    if "projects" not in session or not isinstance(session["projects"], dict):
+        session["projects"] = {}
 
     project_key = str(context.root)
     session["projects"][project_key] = context.to_dict()
@@ -464,11 +478,16 @@ def get_session_projects(session_id: str, home_dir: Path) -> list[ProjectContext
     if not session_file.exists():
         return []
 
-    with open(session_file) as f:
+    with open(session_file, encoding="utf-8") as f:
         session = json.load(f)
 
     projects = []
     for project_data in session.get("projects", {}).values():
-        projects.append(ProjectContext(**project_data))
+        if not isinstance(project_data, dict):
+            continue
+        try:
+            projects.append(ProjectContext(**project_data))
+        except (TypeError, ValueError):
+            continue
 
     return projects

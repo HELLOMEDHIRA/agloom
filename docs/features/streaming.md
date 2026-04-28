@@ -193,23 +193,29 @@ Example output:
 
 By default, step `input` and `output` fields are **not truncated** — you get the full tool response. If you need to limit memory usage (e.g., high-throughput batch processing), set `max_step_output_length` to a positive value:
 
+Default — full tool output in steps:
+
 ```python
-# Default: full output (no truncation)
-agent = create_agent(model=llm, tools=[search_products])
+async def main():
+    agent = await create_agent(model=llm, tools=[search_products])
 
-result = await agent.ainvoke("Find running shoes")
-for step in result.steps:
-    if step.type == StepType.TOOL_RESULT:
-        # step.output contains the FULL tool response
-        products = json.loads(step.output)
-        render_carousel(products)
+    result = await agent.ainvoke("Find running shoes")
+    for step in result.steps:
+        if step.type == StepType.TOOL_RESULT:
+            # step.output contains the FULL tool response
+            products = json.loads(step.output)
+            render_carousel(products)
+```
 
-# Opt-in truncation for memory-sensitive deployments
-agent = create_agent(
-    model=llm,
-    tools=[search_products],
-    max_step_output_length=500,  # truncate step data to 500 chars
-)
+Opt-in truncation for memory-sensitive deployments:
+
+```python
+async def main():
+    agent = await create_agent(
+        model=llm,
+        tools=[search_products],
+        max_step_output_length=500,  # truncate step data to 500 chars
+    )
 ```
 
 ## 4. Token Usage Tracking

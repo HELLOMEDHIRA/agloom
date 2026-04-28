@@ -191,7 +191,7 @@ Features:
 
 ---
 
-## Built-in Tools (44 Ready)
+## Built-in Tools (46 Ready)
 
 | Category | Tools |
 |----------|-------|
@@ -199,8 +199,8 @@ Features:
 | **Shell** | run_shell, run_shell_interactive, get_system_info, get_env_var, set_env_var, list_env_vars |
 | **HTTP** | http_request, http_get, http_post, http_put, http_delete, http_head, fetch_json |
 | **Web Search** | web_search, search_web, find_docs, search_github (Tavily API) |
-| **Task Planning** | create_task_plan, get_current_task, complete_step, update_task_progress |
-| **Path Operations** | get_working_directory, set_working_directory, path_join, path_parent, path_absolute |
+| **Task Planning** | create_task_plan, get_current_task, complete_step, update_task_progress, show_remaining_steps, clear_task_tracker |
+| **Path Operations** | get_working_directory, set_working_directory, push_working_directory, pop_working_directory, path_join, path_parent, path_absolute, path_exists, path_is_file, path_is_directory, path_basename, path_extension, path_stem |
 
 ---
 
@@ -244,32 +244,49 @@ YAML or TOML:
 # agloom.yaml
 
 # Model
-model: gpt-4o
-
-# Agent
-name: my-agent
-system_prompt: "You are a Python expert"
+ai:
+  model: gpt-4o
+  name: my-agent
+  system_prompt: "You are a Python expert"
 
 # Memory & Skills
-enable_memory: true
-enable_skills: true
-max_skills: 30
-session_max_turns: 20
+memory:
+  enabled: true
+  max_turns: 50
+
+skills:
+  enabled: true
+  max_skills: 30
+
+# Auto-summarize (top-level, not under memory)
 auto_summarize: true
+summarize_threshold: 200000
 
 # Tools
-tools_dir: ./tools
+tools:
+  dir: ./tools
 
 # MCP
-mcp_servers: filesystem,github
+mcp:
+  servers: ""
 
 # Safety
-require_approval: true
+safety:
+  require_approval: false
+  auto_approve: "read_file,list_directory,get_working_directory"
 
 # Execution
-max_concurrent: 4
-max_retries: 2
-llm_timeout: 120
+execution:
+  max_concurrent: 4
+  max_retries: 2
+  retry_delay: 1.0
+  llm_timeout: 120.0
+  classifier_timeout: 30.0
+
+# Rules
+rules:
+  dir: ""
+  refresh: false
 ```
 
 Config precedence: CLI → config file → env vars → defaults
@@ -330,7 +347,7 @@ pip install agloom
 agloom
 ```
 
-No configuration required. 44 tools ready. 9 patterns available. Memory enabled by default.
+No configuration required. 46 tools ready. 9 patterns available. Memory enabled by default.
 
 ---
 

@@ -18,8 +18,12 @@ A production-ready terminal-based AI programming assistant. Build, test, debug, 
 ## Install
 
 ```bash
-pip install agloom[all]
+pip install agloom
 ```
+
+## Super-Brain (built in)
+
+The CLI always uses [Super-Brain](https://agsuperbrain.readthedocs.io/en/latest/): on each start it runs **`agsuperbrain init`** in the detected project directory and connects the **Super-Brain MCP** server (local graph + tools). It ships with `agloom` (`agsuperbrain` dependency). Override the stdio command in `~/.agloom/agloom.yaml` under `mcp.superbrain` if needed.
 
 ## Quick Start
 
@@ -56,9 +60,9 @@ Auroras are caused by charged particles from the sun...
 # Run a single query and exit
 agloom "What is 2+2?"
 
-# With specific model
-agloom -m groq "Explain quantum computing in 2 sentences"
-agloom -m llama-3.1-70b-versatile "Hello"
+# With specific model (model ID, not provider)
+agloom -m gpt-4o "Explain quantum computing in 2 sentences"
+agloom -m llama-3.3-70b-versatile "Hello"
 ```
 
 ## Configuration
@@ -85,6 +89,9 @@ memory:
   enabled: true
   max_turns: 50
 
+auto_summarize: true
+summarize_threshold: 200000
+
 skills:
   enabled: true
   max_skills: 30
@@ -96,6 +103,7 @@ rules:
 execution:
   max_concurrent: 4
   max_retries: 2
+  retry_delay: 1.0
   llm_timeout: 120.0
   classifier_timeout: 30.0
 
@@ -112,16 +120,16 @@ session:
 
 | Option | Alias | Description | Default |
 |--------|-------|-------------|---------|
-| `--model` | `-m` | Model ID | auto |
+| `--model` | `-m` | Model ID (e.g., gpt-4o, claude-3-5-sonnet-20241022) | auto |
 | `--name` | | Agent name | agloom |
 | `--system-prompt` | | Custom system prompt | (default) |
-| `--tools-dir` | `-t` | Custom tools directory | |
-| `--memory/--no-memory` | | Enable/disable memory | enabled |
+| `--tools` | `-t` | Custom tools directory | |
+| `--memory/--no-memory` | | Enable/disable memory | (config default) |
 | `--memory-path` | | Memory storage path | auto |
-| `--skills/--no-skills` | | Enable/disable skills | enabled |
+| `--skills/--no-skills` | | Enable/disable skills | (config default) |
 | `--max-skills` | | Max skills to learn | 30 |
-| `--max-turns` | | Max session turns | 20 |
-| `--auto-summarize/--no-summarize` | | Auto-summarize conversations | enabled |
+| `--max-turns` | | Max session turns | 50 |
+| `--auto-summarize/--no-summarize` | | Auto-summarize conversations | (config default) |
 | `--summarize-threshold` | | Token threshold for summarize | 200000 |
 | `--mcp` | | MCP servers (comma-separated) | |
 | `--interrupt-before` | | Interrupt before patterns | |
@@ -154,7 +162,7 @@ Create `.agloom.yaml` in your project to override defaults:
 
 ```yaml
 ai:
-  model: groq
+  model: llama-3.3-70b-versatile
 
 tools:
   dir: ./my-tools
@@ -225,20 +233,11 @@ Rules include:
 
 ## Multi-Session Management
 
-Agloom manages multiple project sessions:
+Agloom manages multiple project sessions from the main CLI (no separate subcommands):
 
 ```bash
-# List all sessions
-agloom sessions
-
-# List all projects
-agloom projects
-
-# Switch to a different session
-agloom session-switch abc12345
-
-# Create new session with specific project
-agloom --session new --project /path/to/project
+# Resume or pin a session / project (examples)
+agloom --session <session_id> --project /path/to/project
 ```
 
 Each session keeps:
@@ -268,11 +267,11 @@ Agloom stores data in `~/.agloom`:
 | Category | Tools |
 |----------|-------|
 | **File** | read_file, write_file, list_directory, search_files, create_directory, remove_file, copy_file, move_file, get_file_info, file_exists |
-| **Shell** | run_shell, run_shell_interactive, get_system_info |
-| **HTTP** | http_get, http_post, http_put, http_delete, http_request |
+| **Shell** | run_shell, run_shell_interactive, get_system_info, get_env_var, set_env_var, list_env_vars |
+| **HTTP** | http_get, http_post, http_put, http_delete, http_head, http_request, fetch_json |
 | **Web** | web_search, search_web, find_docs, search_github |
-| **Task** | create_task_plan, get_current_task, complete_step |
-| **Path** | get_working_directory, set_working_directory, path_join, path_parent |
+| **Task** | create_task_plan, get_current_task, complete_step, update_task_progress, show_remaining_steps, clear_task_tracker |
+| **Path** | get_working_directory, set_working_directory, push_working_directory, pop_working_directory, path_join, path_parent, path_absolute, path_exists, path_is_file, path_is_directory, path_basename, path_extension, path_stem |
 
 ## What's Next?
 

@@ -1,9 +1,10 @@
-"""CLI entry point — shell mode by default like opencode/claude code."""
+"""agloom command-line interface."""
 
 from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -17,16 +18,11 @@ from .config import (
     resolve_model,
     start_new_session,
 )
+from .mcp_loader import build_mcp_configs
 from .project import detect_project, get_git_info
 from .project_rules import load_project_rules
 from .repl import run_shell
-from .session_manager import (
-    SessionManager,
-    get_session_context_summary,
-    list_all_projects,
-    switch_session_by_id,
-    update_session_file_summaries,
-)
+from .session_manager import get_session_context_summary, update_session_file_summaries
 from .tool_loader import discover_tools
 
 console = Console(
@@ -157,19 +153,19 @@ def _get_builtin_tools() -> list:
     ]
 
 
-@app.command()
+@app.command(hidden=True)
 def main(
-    model: str | None = typer.Option("auto", "--model", "-m", help="Model ID"),
+    model: str = typer.Option("auto", "--model", "-m", help="Model ID"),
     name: str | None = typer.Option(None, "--name", help="Agent name"),
     system_prompt: str | None = typer.Option(None, "--system-prompt", help="System prompt"),
     tools_dir: Path | None = typer.Option(None, "--tools", "-t", help="Tools directory"),
-    enable_memory: bool = typer.Option(True, "--memory/--no-memory", help="Enable memory"),
+    enable_memory: bool | None = typer.Option(None, "--memory/--no-memory", help="Enable memory"),
     memory_path: Path | None = typer.Option(None, "--memory-path", help="Memory storage path"),
-    enable_skills: bool = typer.Option(True, "--skills/--no-skills", help="Enable skills"),
-    max_skills: int = typer.Option(30, "--max-skills", help="Max skills"),
-    session_max_turns: int = typer.Option(20, "--max-turns", help="Max session turns"),
-    auto_summarize: bool = typer.Option(True, "--auto-summarize/--no-summarize", help="Auto-summarize"),
-    summarize_threshold: int = typer.Option(200000, "--summarize-threshold", help="Summarize threshold"),
+    enable_skills: bool | None = typer.Option(None, "--skills/--no-skills", help="Enable skills"),
+    max_skills: int | None = typer.Option(None, "--max-skills", help="Max skills"),
+    session_max_turns: int | None = typer.Option(None, "--max-turns", help="Max session turns"),
+    auto_summarize: bool | None = typer.Option(None, "--auto-summarize/--no-summarize", help="Auto-summarize"),
+    summarize_threshold: int | None = typer.Option(None, "--summarize-threshold", help="Summarize threshold"),
     mcp_servers: str | None = typer.Option(None, "--mcp", help="MCP servers"),
     interrupt_before: str | None = typer.Option(None, "--interrupt-before", help="Interrupt before patterns"),
     interrupt_after: str | None = typer.Option(None, "--interrupt-after", help="Interrupt after patterns"),
@@ -185,11 +181,11 @@ def main(
         "--auto-approve",
         help="Comma-separated tools to auto-approve (skip approval prompt)",
     ),
-    max_concurrent: int = typer.Option(4, "--max-concurrent", help="Max concurrent workers"),
-    max_retries: int = typer.Option(2, "--max-retries", help="Max retries"),
-    retry_delay: float = typer.Option(1.0, "--retry-delay", help="Retry delay"),
-    llm_timeout: float = typer.Option(120.0, "--llm-timeout", help="LLM timeout"),
-    classifier_timeout: float = typer.Option(30.0, "--classifier-timeout", help="Classifier timeout"),
+    max_concurrent: int | None = typer.Option(None, "--max-concurrent", help="Max concurrent workers"),
+    max_retries: int | None = typer.Option(None, "--max-retries", help="Max retries"),
+    retry_delay: float | None = typer.Option(None, "--retry-delay", help="Retry delay"),
+    llm_timeout: float | None = typer.Option(None, "--llm-timeout", help="LLM timeout"),
+    classifier_timeout: float | None = typer.Option(None, "--classifier-timeout", help="Classifier timeout"),
     fallback_pattern: str | None = typer.Option(None, "--fallback-pattern", help="Fallback pattern"),
     frozen: bool = typer.Option(False, "--frozen", help="Enable frozen mode"),
     frozen_template: str | None = typer.Option(None, "--frozen-template", help="Frozen template"),
@@ -202,7 +198,13 @@ def main(
     refresh_rules: bool = typer.Option(False, "--refresh-rules", help="Force refresh project rules"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose"),
     no_builtins: bool = typer.Option(False, "--no-builtins", help="Disable built-in tools"),
-    version: bool = typer.Option(False, "--version", help="Show version", callback=_version_callback),
+    version: bool = typer.Option(
+        False,
+        "--version",
+        help="Show version and exit",
+        callback=_version_callback,
+        is_eager=True,
+    ),
     prompt: str | None = typer.Argument(None, help="Single prompt (if omitted, shell mode)"),
 ) -> None:
     asyncio.run(
@@ -251,24 +253,24 @@ async def _run(
     name: str | None,
     system_prompt: str | None,
     tools_dir: Path | None,
-    enable_memory: bool,
+    enable_memory: bool | None,
     memory_path: Path | None,
-    enable_skills: bool,
-    max_skills: int,
-    session_max_turns: int,
-    auto_summarize: bool,
-    summarize_threshold: int,
+    enable_skills: bool | None,
+    max_skills: int | None,
+    session_max_turns: int | None,
+    auto_summarize: bool | None,
+    summarize_threshold: int | None,
     mcp_servers: str | None,
     interrupt_before: str | None,
     interrupt_after: str | None,
     interrupt_before_tools: str | None,
     require_approval: bool,
     auto_approve_tools: str | None,
-    max_concurrent: int,
-    max_retries: int,
-    retry_delay: float,
-    llm_timeout: float,
-    classifier_timeout: float,
+    max_concurrent: int | None,
+    max_retries: int | None,
+    retry_delay: float | None,
+    llm_timeout: float | None,
+    classifier_timeout: float | None,
     fallback_pattern: str | None,
     frozen: bool,
     frozen_template: str | None,
@@ -288,7 +290,6 @@ async def _run(
 
     from agloom import LongTermStore, SessionMemory, create_agent
     from agloom.feedback.user_feedback import WebhookFeedbackHandler
-    from agloom.mcp_support import MCPServerConfig
     from agloom.models import PatternType
 
     # Ensure config is ready (auto-create if needed)
@@ -298,6 +299,22 @@ async def _run(
 
     # Detect project context (use --project flag or auto-detect from cwd)
     project_ctx = detect_project(project)
+
+    # Super-Brain: required local graph + MCP — always run init for this project root
+    from . import superbrain_setup
+
+    if not superbrain_setup.agsuperbrain_installed():
+        console.print(
+            "[error]agsuperbrain is required for the agloom CLI but is not importable.[/error]\n"
+            "  [dim]Reinstall: pip install -U agloom[/dim]"
+        )
+        raise typer.Exit(1)
+    init_code = superbrain_setup.run_agsuperbrain_init(project_ctx.root, quiet=not verbose)
+    if init_code != 0:
+        console.print(
+            f"[error]agsuperbrain init failed (exit {init_code}). Fix the project or Super-Brain setup.[/error]"
+        )
+        raise typer.Exit(init_code)
 
     # Load project rules
     rules_config = cfg.get("rules", {})
@@ -337,14 +354,12 @@ async def _run(
     if tools_dir or cfg.get("tools", {}).get("dir"):
         tools.extend(discover_tools(tools_dir or cfg.get("tools", {}).get("dir")))
 
-    # MCP servers
-    mcp_config = cfg.get("mcp", {})
-    mcp_servers_list = mcp_servers or mcp_config.get("servers", "")
-    mcp_configs = (
-        [MCPServerConfig(name=s.strip(), transport="stdio", command=s.strip()) for s in mcp_servers_list.split(",")]
-        if mcp_servers_list
-        else []
-    )
+    # MCP servers (Super-Brain preset, server_list, legacy comma-separated — see mcp_loader.build_mcp_configs)
+    mcp_configs = build_mcp_configs(cfg, mcp_servers)
+
+    # Ensure session directory exists
+    sessions_dir = Path.home() / ".agloom" / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
 
     # Agent identity
     agent_name = name or ai_config.get("name", "agloom")
@@ -381,27 +396,23 @@ async def _run(
     # Memory configuration
     memory_config = cfg.get("memory", {})
     memory_path = memory_path or cfg.get("memory_path")
-    enable_memory = memory_config.get("enabled", True) if enable_memory else enable_memory
-    session_max_turns = memory_config.get("max_turns", 50) if session_max_turns != 20 else session_max_turns
-    auto_summarize = auto_summarize if auto_summarize else cfg.get("auto_summarize", True)
-    summarize_threshold = (
-        summarize_threshold if summarize_threshold != 200000 else cfg.get("summarize_threshold", 200000)
-    )
+    enable_memory = enable_memory if enable_memory is not None else memory_config.get("enabled", True)
+    session_max_turns = session_max_turns if session_max_turns else memory_config.get("max_turns", 50)
+    auto_summarize = auto_summarize if auto_summarize is not None else cfg.get("auto_summarize", True)
+    summarize_threshold = summarize_threshold or cfg.get("summarize_threshold", 200000)
 
     # Skills configuration
     skills_config = cfg.get("skills", {})
-    enable_skills = enable_skills if not enable_skills else skills_config.get("enabled", True)
-    max_skills = max_skills if max_skills != 30 else skills_config.get("max_skills", 30)
+    enable_skills = enable_skills if enable_skills is not None else skills_config.get("enabled", True)
+    max_skills = max_skills or skills_config.get("max_skills", 30)
 
     # Execution configuration
     execution_config = cfg.get("execution", {})
-    max_concurrent = max_concurrent if max_concurrent != 4 else execution_config.get("max_concurrent", 4)
-    max_retries = max_retries if max_retries != 2 else execution_config.get("max_retries", 2)
-    retry_delay = retry_delay if retry_delay != 1.0 else execution_config.get("retry_delay", 1.0)
-    llm_timeout = llm_timeout if llm_timeout != 120.0 else execution_config.get("llm_timeout", 120.0)
-    classifier_timeout = (
-        classifier_timeout if classifier_timeout != 30.0 else execution_config.get("classifier_timeout", 30.0)
-    )
+    max_concurrent = max_concurrent or execution_config.get("max_concurrent", 4)
+    max_retries = max_retries or execution_config.get("max_retries", 2)
+    retry_delay = retry_delay or execution_config.get("retry_delay", 1.0)
+    llm_timeout = llm_timeout or execution_config.get("llm_timeout", 120.0)
+    classifier_timeout = classifier_timeout or execution_config.get("classifier_timeout", 30.0)
 
     # Safety configuration
     safety_config = cfg.get("safety", {})
@@ -452,7 +463,10 @@ async def _run(
             embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
             query_cache = create_cache(embeddings)
         except ImportError:
-            console.print("[warning]Cache requires langchain-huggingface: pip install agloom[huggingface][/warning]")
+            console.print(
+                "[warning]Cache needs HuggingFaceEmbeddings from langchain-huggingface "
+                "(normally installed with agloom): pip install langchain-huggingface[/warning]"
+            )
         except Exception as e:
             console.print(f"[warning]Cache error: {e}")
 
@@ -466,7 +480,7 @@ async def _run(
         "memory": memory,
         "store": store,
         "checkpointer": checkpointer,
-        "mcp_servers": mcp_configs if mcp_configs else None,
+        "mcp_servers": mcp_configs if mcp_configs is not None else [],
         "debug": verbose,
         "enable_memory_tools": enable_memory,
         "user_callback": user_callback,
@@ -495,8 +509,11 @@ async def _run(
         "frozen_template": frozen_template,
     }
 
+    # Pyrefly/Pyright cannot prove dict values match each ``create_agent`` parameter; runtime is correct.
+    agent_kwargs: Any = agent_config
+
     if prompt:
-        agent = create_agent(**agent_config)
+        agent = await create_agent(**agent_kwargs)
         result = await agent.ainvoke(prompt)
         console.print(result.output)
     else:
@@ -528,80 +545,8 @@ async def _run(
                 else:
                     console.print()
         console.print()
-        await run_shell(create_agent(**agent_config))
-
-
-@app.command("sessions")
-def list_sessions_cmd() -> None:
-    """List all sessions."""
-
-    manager = SessionManager()
-    sessions = manager.list_sessions()
-
-    if not sessions:
-        console.print("[warning]No sessions found.[/warning]")
-        raise typer.Exit()
-
-    from rich.table import Table
-
-    table = Table(title="Sessions")
-    table.add_column("ID", style="cyan")
-    table.add_column("Name", style="green")
-    table.add_column("Project", style="blue")
-    table.add_column("Turns", style="yellow")
-    table.add_column("Last Active", style="dim")
-
-    for s in sessions:
-        table.add_row(
-            s.get("id", ""),
-            s.get("name", ""),
-            s.get("project_path", ""),
-            str(s.get("turns", 0)),
-            s.get("last_active", "")[:19],
-        )
-
-    console.print(table)
-
-
-@app.command("session-switch")
-def switch_session_cmd(session_id: str) -> None:
-    """Switch to a different session."""
-    session = switch_session_by_id(session_id)
-
-    if not session:
-        console.print(f"[error]Session {session_id} not found.[/error]")
-        raise typer.Exit(1)
-
-    console.print(f"[success]Switched to session:[/success] {session.get('name')}")
-    console.print(f"[dim]Project:[/dim] {session.get('project_path', 'unknown')}")
-
-
-@app.command("projects")
-def list_projects_cmd() -> None:
-    """List all projects across sessions."""
-    projects = list_all_projects()
-
-    if not projects:
-        console.print("[warning]No projects found.[/warning]")
-        raise typer.Exit()
-
-    from rich.table import Table
-
-    table = Table(title="Projects")
-    table.add_column("Path", style="cyan")
-    table.add_column("Session", style="green")
-    table.add_column("Turns", style="yellow")
-    table.add_column("Last Active", style="dim")
-
-    for p in projects:
-        table.add_row(
-            p.get("project_path", ""),
-            p.get("session_id", ""),
-            str(p.get("turns", 0)),
-            p.get("last_active", "")[:19],
-        )
-
-    console.print(table)
+        agent = await create_agent(**agent_kwargs)
+        await run_shell(agent, verbose=verbose)
 
 
 @app.command("refresh-rules")
@@ -618,5 +563,17 @@ def refresh_rules_cmd(project: Path | None = None) -> None:
     console.print(f"[dim]Test:[/dim] {rules.analysis.get('test_framework', 'unknown')}")
 
 
-if __name__ == "__main__":
+_SUBCOMMANDS = frozenset({"main", "refresh-rules"})
+
+
+def run_cli() -> None:
+    import sys
+
+    argv = sys.argv[1:]
+    if (not argv) or (argv[0] not in _SUBCOMMANDS and argv[0] not in ("-h", "--help")):
+        sys.argv.insert(1, "main")
     app()
+
+
+if __name__ == "__main__":
+    run_cli()

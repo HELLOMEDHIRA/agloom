@@ -1,52 +1,14 @@
-# unified_agent.py
-# ─────────────────────────────────────────────────────────────────────────────
-# UnifiedAgent — Manager in the Manager–Worker architecture.
-#
-# Design decisions:
-#
-# 1. config dict IS the agent dict.
-#    Pattern handlers receive it directly. They read what they need
-#    (llm, tools, name, max_concurrent, etc.) and ignore the rest.
-#    One dict — zero translation layers.
-#
-# 2. run_fresh() is a standalone function, not a method.
-#    UnifiedAgent.ainvoke() assembles a per-run config spread and calls
-#    run_fresh(). Keeps run_fresh() independently testable.
-#
-# 3. Memory is injected into the QUERY (augmented_query), not the
-#    system_prompt. Each run is isolated — no cross-run bleed.
-#
-# 4. Never mutate self.config during a call.
-#    ainvoke() creates a run_config spread with per-run signal_queue
-#    and clarification_queues overrides. self.config is read-only.
-#
-# 5. No graph.py required for run_fresh.
-#    _HANDLERS is defined locally below. graph.py (Stage 3) is used
-#    only by get_state(), get_history(), and resume() — all lazy-imported.
-#    Normal ainvoke() → run_fresh() → direct handler calls. No compiled
-#    graph in the hot path.
-#
-# 6. Auto-resume via Command(resume=...) is NOT in ainvoke().
-#
-# 7. Frozen agents (frozen=True) — compile once, execute many.
-#    create_agent(frozen=True, frozen_template="...", input_key="input")
-#    First ainvoke() runs analyze_query() once and caches pattern + handler
-#    behind an asyncio.Lock (concurrent-safe double-check pattern).
-#    Every subsequent ainvoke() skips Steps 2.5, 3, 7 — no classify LLM call.
-#    ainvoke() accepts str | dict. dict is only valid for frozen=True agents;
-#    each key in input_key must be present or ValueError is raised immediately.
-#    {input_key} placeholders are substituted in: frozen_template (→ query),
-#    system_prompt, and analysis.subtasks[*].task — all via model_copy,
-#    never by mutating the cached frozen_analysis.
-#    The new direct-handler design does not use compiled.ainvoke() in
-#    run_fresh(), so there is no graph state to resume from. L1 HITL is
-#    handled by _check_pattern_interrupt() + user_callback. L2 by
-#    per-worker InMemorySaver inside worker.py. resume() exists for
-#    callers who explicitly invoke the compiled graph via get_state().
-# ─────────────────────────────────────────────────────────────────────────────
+"""Agent runtime: pattern routing, ``run_fresh`` execution, and ``UnifiedAgent`` facade.
+
+``create_agent`` / ``create_agent_sync`` validate configuration and return ``UnifiedAgent``.
+The default execution path is direct handler calls inside ``run_fresh``; a compiled LangGraph
+is only materialized for checkpoint APIs (``get_state``, ``get_history``, ``resume``).
+"""
+
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 import uuid
 from collections.abc import AsyncGenerator, Callable, Sequence
@@ -95,7 +57,6 @@ from .patterns.reflection import handle_reflection
 from .patterns.supervisor import handle_supervisor
 from .patterns.swarm import handle_swarm
 
-# ── Feedback system — optional, gracefully degraded when module absent ────────
 try:
     from .feedback.wireup import (
         apply_user_feedback,
@@ -107,22 +68,61 @@ try:
 except ImportError:
     _FEEDBACK_AVAILABLE = False
 
-    async def build_feedback_system(*_, **__) -> dict:
+    def build_feedback_system(*_, **__) -> dict:
         return {}
 
-    async def run_fresh_feedback_hooks(*_, **__) -> None:
+    def run_fresh_feedback_hooks(*_, **__) -> None:
         pass
 
     async def apply_user_feedback(*_, **__) -> None:
         pass
 
 
+try:
+    from .harness.git import (
+        GitSession,
+        git_checkpoint_tool,
+        git_commit_tool,
+        git_log_tool,
+        git_revert_hint_tool,
+        git_status_tool,
+    )
+    from .harness.initializer import create_initializer_tool
+    from .harness.progress import (
+        ProgressTracker,
+        add_task_tool,
+        bootstrap_progress_tool,
+        get_next_task_tool,
+        get_progress_tracker,
+        save_progress_tool,
+        update_task_tool,
+    )
+
+    _HARNESS_AVAILABLE = True
+except ImportError:
+    _HARNESS_AVAILABLE = False
+
+    ProgressTracker = None
+    GitSession = None
+    create_initializer_tool = None
+
+    def _no_harness(*_, **__):
+        return lambda: None
+
+    get_progress_tracker = _no_harness
+    bootstrap_progress_tool = _no_harness
+    save_progress_tool = _no_harness
+    update_task_tool = _no_harness
+    get_next_task_tool = _no_harness
+    add_task_tool = _no_harness
+    git_status_tool = _no_harness
+    git_log_tool = _no_harness
+    git_commit_tool = _no_harness
+    git_checkpoint_tool = _no_harness
+    git_revert_hint_tool = _no_harness
+
+
 logger = get_logger(__name__)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Built-in DIRECT handler
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 async def _handle_direct(
@@ -131,11 +131,7 @@ async def _handle_direct(
     analysis: QueryAnalysis,
     config: dict | None = None,
 ) -> ExecutionResult:
-    """Fallback for DIRECT when direct_response is missing — simple LLM call.
-
-    When _event_queue is present (astream_events path), streams tokens
-    in real-time via llm.astream() instead of waiting for llm.ainvoke().
-    """
+    """DIRECT handler: use classifier text or a single LLM call; stream if ``_event_queue`` is set."""
     steps: list[AgentStep] = (config or {}).get("_steps", [])
     usage: dict[str, int] = {}
     output = (analysis.direct_response or "").strip()
@@ -204,10 +200,6 @@ async def _handle_direct(
     )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Built-in Pattern Registry
-# ─────────────────────────────────────────────────────────────────────────────
-
 _HANDLERS: dict[PatternType, Any] = {
     PatternType.DIRECT: _handle_direct,
     PatternType.REACT: handle_react,
@@ -219,11 +211,6 @@ _HANDLERS: dict[PatternType, Any] = {
     PatternType.HYBRID_DAG: handle_hybrid_dag,
     PatternType.BLACKBOARD: handle_blackboard,
 }
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Model / Tool / Prompt Helpers
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 @lru_cache(maxsize=32)
@@ -260,12 +247,7 @@ def _step_type_to_event_type(st: StepType) -> str:
 
 
 async def _emit_step_event(config: dict, step: AgentStep) -> None:
-    """Push a live event to the event queue for a completed step.
-
-    Called from run_fresh() and pattern handlers to provide real-time
-    visibility into execution progress. No-op when _event_queue is absent
-    (i.e. caller used ainvoke() rather than astream_events()).
-    """
+    """Emit a step to ``_event_queue`` when present."""
     queue = config.get("_event_queue")
     if queue is None:
         return
@@ -285,11 +267,7 @@ async def _emit_step_event(config: dict, step: AgentStep) -> None:
 
 
 async def _emit_token_event(config: dict, content: str) -> None:
-    """Push a single token chunk to the live event queue.
-
-    Called during LLM streaming within astream_events() to provide
-    real-time token-by-token output to the UI consumer.
-    """
+    """Emit one token chunk to ``_event_queue``."""
     queue = config.get("_event_queue")
     if queue is None:
         return
@@ -304,10 +282,7 @@ RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
-# Tracks (agent_name, store_id) pairs for duplicate-name detection.
-# store_id=None means no shared store, so no namespace collision risk.
 _active_agent_names: dict[tuple[str, int | None], int] = {}
-_active_agent_names_lock = asyncio.Lock()
 
 
 def _check_reserved_tool_names(tools: list[BaseTool]) -> None:
@@ -382,21 +357,11 @@ def resolve_system_prompt(system_prompt: Any) -> str | Callable:
     return system_prompt or DEFAULT_SYSTEM_PROMPT
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Async Helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 async def _maybe_await(value: Any) -> Any:
     """Transparently await coroutines; return sync values as-is."""
-    if asyncio.iscoroutine(value):
+    if inspect.isawaitable(value):
         return await value
     return value
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Middleware Runners
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 async def _run_before_agent(
@@ -427,11 +392,6 @@ async def _run_after_agent(
     return result
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  L1 Pattern-Level HITL
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 async def _check_pattern_interrupt(
     config: dict,
     phase: str,  # "before" | "after"
@@ -453,11 +413,6 @@ async def _check_pattern_interrupt(
     except Exception as exc:
         logger.error(f"[HITL-L1] user_callback raised {exc!r} — continuing (fail-open).")
         return True
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Response Format Post-Processing
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 async def _apply_response_format(
@@ -490,11 +445,6 @@ async def _apply_response_format(
         return result
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Session Turn Recording
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 async def _record_turn(
     memory: SessionMemory | None,
     thread_id: str,
@@ -523,23 +473,13 @@ async def _record_turn(
         logger.warning(f"_record_turn failed (non-fatal): {exc!r}")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Checkpoint Persistence
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 async def _save_checkpoint(
     checkpointer: Any,
     thread_id: str,
     result: ExecutionResult,
     query: str,
 ) -> None:
-    """Write execution state to the user-provided checkpointer.
-
-    Best-effort: failures are logged but never crash the run. Uses the
-    LangGraph Checkpoint TypedDict format so get_tuple() / alist() work
-    natively on the checkpointer without a compiled graph.
-    """
+    """Best-effort checkpoint write for ``get_state`` / ``get_history``."""
     if checkpointer is None:
         return
     try:
@@ -576,15 +516,10 @@ async def _save_checkpoint(
         if hasattr(checkpointer, "aput"):
             await checkpointer.aput(config, checkpoint, metadata, channel_versions)
         elif hasattr(checkpointer, "put"):
-            checkpointer.put(config, checkpoint, metadata, channel_versions)
+            await asyncio.to_thread(checkpointer.put, config, checkpoint, metadata, channel_versions)
         logger.debug(f"Checkpoint saved: thread_id={thread_id} run_id={result.run_id}")
     except Exception as exc:
         logger.warning(f"_save_checkpoint failed ({exc!r}) — non-fatal.")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Lazy MCP Connection
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 async def _ensure_mcp_connected(config: dict) -> None:
@@ -603,11 +538,6 @@ async def _ensure_mcp_connected(config: dict) -> None:
         )
         config["_mcp_client"] = client
         config["_mcp_connected"] = True
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Lazy Skill Bootstrap
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 async def _ensure_skills_bootstrapped(config: dict) -> None:
@@ -654,9 +584,43 @@ async def _ensure_skills_bootstrapped(config: dict) -> None:
         config["_skills_bootstrapped"] = True
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Frozen Agent Helpers
-# ─────────────────────────────────────────────────────────────────────────────
+async def _ensure_harness_bootstrapped(
+    config: dict,
+    effective_thread_id: str,
+    effective_ltns: tuple,
+    query: str,
+) -> None:
+    """Create ``ProgressTracker`` once and bootstrap artifact per ``thread_id``."""
+    if not config.get("_harness_enabled"):
+        return
+    tracker: ProgressTracker | None = config.get("_progress_tracker")
+    if tracker is None:
+        factory: Callable | None = config.get("_progress_tracker_factory")
+        if factory is None:
+            return
+        try:
+            tracker = await factory()
+            config["_progress_tracker"] = tracker
+        except Exception as exc:
+            logger.warning(f"[{config.get('name', 'Agent')}] ProgressTracker creation failed ({exc!r})")
+            return
+
+    if getattr(tracker, "_bootstrapped_for_thread", None) == effective_thread_id:
+        return
+
+    try:
+        await tracker.bootstrap(
+            session_id=effective_thread_id,
+            goal=query if isinstance(query, str) else str(query),
+        )
+        tracker._bootstrapped_for_thread = effective_thread_id
+        logger.event(
+            f"[{config.get('name', 'Agent')}] harness bootstrapped: "
+            f"{len(tracker.artifact.tasks)} tasks, "
+            f"progress={tracker.artifact.completion_ratio:.0%}"
+        )
+    except Exception as exc:
+        logger.warning(f"[{config.get('name', 'Agent')}] harness bootstrap failed ({exc!r}) — proceeding")
 
 
 def _validate_frozen_params(
@@ -770,39 +734,20 @@ def _apply_frozen_substitution(
     return sub_query, sub_system_prompt, sub_analysis
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Delegation Helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 def _extract_delegate_from_analysis(
     analysis: QueryAnalysis,
     targets: list[HandoffTarget],
 ) -> str | None:
-    """
-    Check if the classifier's reasoning mentions a registered delegate name.
-
-    The classifier sees delegate descriptions via _build_delegation_context().
-    If its reasoning references a delegate by [name], we extract and return
-    that name for transparent hand-off routing.
-
-    Returns the delegate name or None if no match.
-    """
+    """Return a delegate name if the classifier reasoning matches a registered target."""
     if not targets:
         return None
     reasoning = (analysis.reasoning or "").lower()
-    # Also check matched_skill — classifier may put the delegate name there
     matched = (getattr(analysis, "matched_skill", None) or "").lower()
     for t in targets:
         t_lower = t.name.lower()
         if t_lower in reasoning or t_lower in matched:
             return t.name
     return None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  13-Step Pipeline
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 async def run_fresh(
@@ -814,40 +759,12 @@ async def run_fresh(
     context: dict,
     user_id: str | None = None,
 ) -> ExecutionResult:
-    """
-    13-step fresh execution pipeline. Called by UnifiedAgent.ainvoke()
-    for every invocation (direct handler path — no compiled graph).
+    """Execute one user turn: middleware, memory, classify (unless frozen), handlers, skills, feedback hooks.
 
-    Steps
-    ─────
-     1   before_agent middleware
-     2   passive memory injection
-     [frozen=True path: substitute {input_key} — skip 2.5, 3, 7]
-     2.5 skill context injection        (dynamic path only)
-     3   classify                       (dynamic path only)
-     4   semantic cache check            cache_get after classify (pattern known)
-     5   L1 interrupt_before gate
-     6   DIRECT short-circuit
-     7   select handler
-     8   execute
-     9   L1 interrupt_after gate
-    10   after_agent middleware
-    11   response_format
-    11.5 skill learning + lifecycle
-    11.6 feedback hooks                 non-blocking background task
-    12   attach run_id + record turn + cache_set
-    13   return
-
-    run_id is generated at the very start so every early-return path carries
-    the same UUID. Attached via model_copy() — never mutated on the object.
-
-    Cache ordering (Step 4 after classify):
-      cache_get uses the pattern as a TTL-bucket key — must classify first.
-      Cost: 1 classify LLM call even on cache hit.
-
-    Feedback hooks (Step 11.6):
-      Never blocks the return path. UserFeedbackHandler fires only when
-      agent.feedback() is called explicitly.
+    ``config`` is the agent dict (see ``create_agent``). ``invoke_config`` carries per-run
+    ``configurable`` (thread id, memory namespace, signal and clarification queues).
+    Pattern-level ``interrupt_before`` is evaluated before the DIRECT short-circuit so it
+    cannot be bypassed by a cached direct response.
     """
     name = config["name"]
     memory = config.get("memory")
@@ -860,14 +777,10 @@ async def run_fresh(
     _steps: list[AgentStep] = []
     _total_usage: dict[str, int] = {}
 
-    # Frozen dict queries are substituted later; middleware and memory always
-    # receive a plain string.
     raw_query_str: str = query if isinstance(query, str) else " ".join(str(v) for v in query.values())
 
-    # ── before_agent middleware ───────────────────────────────────────────────
     processed_query = await _run_before_agent(config.get("middleware", []), raw_query_str, context)
 
-    # ── Resolve callable system_prompt per-run ──────────────────────────────
     sp = config["system_prompt"]
     if callable(sp) and not isinstance(sp, str):
         _sp_state = {
@@ -882,7 +795,6 @@ async def run_fresh(
             resolved_sp = resolved_sp.content if isinstance(resolved_sp.content, str) else str(resolved_sp.content)
         config = {**config, "system_prompt": resolved_sp or DEFAULT_SYSTEM_PROMPT}
 
-    # ── Passive memory injection ────────────────────────────────────────────
     memory_ctx = await build_memory_context(
         session=memory,
         store=store,
@@ -891,8 +803,21 @@ async def run_fresh(
         query=processed_query,
     )
 
-    # ── FROZEN vs DYNAMIC path split ──────────────────────────────────────────
     is_frozen = config.get("frozen") and config.get("frozen_analysis") is not None
+
+    harness_ctx = ""
+    if config.get("_harness_enabled") and not is_frozen:
+        progress_tracker: ProgressTracker | None = config.get("_progress_tracker")
+        if progress_tracker:
+            try:
+                harness_ctx = progress_tracker.get_classifier_context()
+                logger.event(
+                    f"[{name}] harness bootstrap: "
+                    f"{len(progress_tracker.artifact.tasks)} tasks, "
+                    f"progress={progress_tracker.artifact.completion_ratio:.0%}"
+                )
+            except Exception as exc:
+                logger.warning(f"[{name}] harness bootstrap failed ({exc!r}) — proceeding")
 
     if is_frozen:
         sub_query, sub_system_prompt, analysis = _apply_frozen_substitution(
@@ -902,16 +827,18 @@ async def run_fresh(
             analysis=config["frozen_analysis"],
             input_key=config.get("input_key", "input"),
         )
-        # Per-run config spread — never mutates the original agent config.
         config = {**config, "system_prompt": sub_system_prompt}
-        augmented_query = f"{memory_ctx}\n{sub_query}" if memory_ctx else sub_query
+        augmented_query = (
+            f"{memory_ctx}\n{harness_ctx}\n{sub_query}"
+            if memory_ctx
+            else (f"{harness_ctx}\n{sub_query}" if harness_ctx else sub_query)
+        )
         handler = config["_frozen_handler"]
         pattern_val = analysis.pattern.value
         logger.event(
             f"[{name}] frozen path — pattern={pattern_val} (skipped skill injection, classify, handler lookup)"
         )
     else:
-        # ── Skill context injection ──────────────────────────────────────────
         skill_ctx = ""
         skill_injector = config.get("skill_injector")
         if skill_injector:
@@ -920,7 +847,6 @@ async def run_fresh(
             except Exception as exc:
                 logger.warning(f"[{name}] skill_injector failed ({exc!r}) — proceeding without.")
 
-        # ── Delegation context injection ─────────────────────────────────────
         handoff_targets = config.get("_handoff_targets") or []
         delegate_targets = config.get("_delegate_targets") or []
         all_delegation_targets = handoff_targets + delegate_targets
@@ -930,8 +856,12 @@ async def run_fresh(
         elif delegation_ctx:
             skill_ctx = delegation_ctx
 
-        # ── Classify ──────────────────────────────────────────────────────────
-        augmented_query = f"{memory_ctx}\n{processed_query}" if memory_ctx else processed_query
+        harness_block = f"\n\n=== CROSS-SESSION PROGRESS ===\n{harness_ctx}\n" if harness_ctx else ""
+        augmented_query = (
+            f"{memory_ctx}{harness_block}\n{processed_query}"
+            if memory_ctx
+            else (f"{harness_block}\n{processed_query}" if harness_ctx else processed_query)
+        )
         t_classify = time.perf_counter()
         analysis: QueryAnalysis = await analyze_query(
             llm=config["llm"],
@@ -963,9 +893,6 @@ async def run_fresh(
         pattern_val = analysis.pattern.value
         handler = None
 
-        # ── Transparent handoff routing ──────────────────────────────────────
-        # If delegates are registered, check whether the classifier's reasoning
-        # mentions a delegate name → route transparently.
         if all_delegation_targets:
             _delegate_name = _extract_delegate_from_analysis(analysis, all_delegation_targets)
             if _delegate_name:
@@ -977,6 +904,7 @@ async def run_fresh(
                         processed_query,
                         thread_id=effective_thread_id,
                         user_id=user_id,
+                        lt_namespace=effective_ltns,
                         context=context,
                     )
                     handoff_result = handoff_result.model_copy(
@@ -991,7 +919,6 @@ async def run_fresh(
                     )
                     return handoff_result
 
-        # ── Semantic cache check ─────────────────────────────────────────────
     if cache:
         try:
             from .cache import cache_get
@@ -1022,9 +949,6 @@ async def run_fresh(
         except Exception as exc:
             logger.warning(f"[{name}] cache_get failed ({exc!r}) — proceeding.")
 
-    # ── L1 interrupt_before gate ────────────────────────────────────────────
-    # Must come BEFORE the DIRECT short-circuit so interrupt_before=["DIRECT"]
-    # is honoured.
     if pattern_val in config.get("interrupt_before", []):
         should_continue = await _check_pattern_interrupt(config, "before", pattern_val, raw_query_str)
         if not should_continue:
@@ -1048,9 +972,6 @@ async def run_fresh(
                 steps=_steps,
             )
 
-    # ── DIRECT short-circuit (dynamic path only) ────────────────────────────
-    # Frozen mode skips this: direct_response belongs to the template, not the
-    # actual input. Custom handlers via register_pattern() must always run.
     _has_custom_direct = registry.get(PatternType.DIRECT) is not _handle_direct
     if not is_frozen and analysis.pattern == PatternType.DIRECT and analysis.direct_response and not _has_custom_direct:
         direct_step = _make_step(
@@ -1073,7 +994,6 @@ async def run_fresh(
             steps=_steps,
         )
 
-        # L1 interrupt_after — must fire even on DIRECT short-circuit path
         if pattern_val in config.get("interrupt_after", []):
             should_continue = await _check_pattern_interrupt(config, "after", pattern_val, raw_query_str, result)
             if not should_continue:
@@ -1103,14 +1023,12 @@ async def run_fresh(
         logger.event(f"[{name}] DIRECT short-circuit — 1 LLM call total.")
         return result
 
-    # ── Select handler (dynamic path only) ──────────────────────────────────
     if not is_frozen:
         handler = registry.get(analysis.pattern)
         if handler is None:
             logger.warning(f"[{name}] No handler for pattern '{pattern_val}' — falling back to REACT.")
             handler = handle_react
 
-    # ── Execute ──────────────────────────────────────────────────────────────
     logger.event(f"[{name}] execute → {pattern_val}")
     assert handler is not None, "handler must be set by frozen or dynamic path"
     exec_invoke_config = {**(invoke_config or {}), "_steps": _steps}
@@ -1119,7 +1037,6 @@ async def run_fresh(
     exec_ms = round((time.perf_counter() - t_exec) * 1000, 1)
     logger.debug(f"[{name}] pattern execution took {exec_ms}ms")
 
-    # ── L1 interrupt_after gate ─────────────────────────────────────────────
     if pattern_val in config.get("interrupt_after", []):
         should_continue = await _check_pattern_interrupt(config, "after", pattern_val, raw_query_str, result)
         if not should_continue:
@@ -1144,10 +1061,8 @@ async def run_fresh(
                 steps=_steps,
             )
 
-    # ── after_agent middleware ──────────────────────────────────────────────
     result = await _run_after_agent(config.get("middleware", []), result, context)
 
-    # ── Response format ───────────────────────────────────────────────────────
     result = await _apply_response_format(
         config["llm"],
         result,
@@ -1156,7 +1071,6 @@ async def run_fresh(
         structured_max_retries=config.get("structured_max_retries", 2),
     )
 
-    # ── Skill learning + lifecycle ──────────────────────────────────────────
     skill_learner = config.get("skill_learner")
     if skill_learner:
         try:
@@ -1174,9 +1088,6 @@ async def run_fresh(
         except Exception as exc:
             logger.warning(f"[{name}] skill_lifecycle failed ({exc!r}) — non-fatal.")
 
-    # On-demand skill generation: if no skill matched a complex query,
-    # fire a background task to generate a skill template so the NEXT
-    # similar query benefits. Never blocks the current run.
     skill_generator = config.get("skill_generator")
     matched = getattr(analysis, "matched_skill", None)
     if (
@@ -1208,20 +1119,16 @@ async def run_fresh(
 
         safe_create_task(_bg_gen(), name=f"skill-gen-{name[:8]}")
 
-    # ── Feedback hooks (non-blocking) ───────────────────────────────────────
     _maybe_fire_feedback_hooks(config, result, raw_query_str, name, skill_used=analysis.matched_skill)
 
-    # ── Aggregate token usage from workers ──────────────────────────────────
     for wr in result.worker_results:
         if hasattr(wr, "token_usage") and wr.token_usage:
             _total_usage = _merge_token_usage(_total_usage, wr.token_usage)
     if result.token_usage:
         _total_usage = _merge_token_usage(_total_usage, result.token_usage)
 
-    # Merge steps from the result (populated by the handler) with our own
     all_steps = _steps + [s for s in result.steps if s not in _steps]
 
-    # ── Attach run_id + record turn + cache_set ────────────────────────────
     result = result.model_copy(
         update={
             "run_id": run_id,
@@ -1238,16 +1145,10 @@ async def run_fresh(
         except Exception as exc:
             logger.warning(f"[{name}] cache_set failed ({exc!r}) — non-fatal.")
 
-    # ── Return ───────────────────────────────────────────────────────────────
     logger.event(
         f"[{name}] done — run_id={run_id} frozen={is_frozen} success={result.success} output={len(result.output)} chars"
     )
     return result
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Feedback Hook Helper
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _maybe_fire_feedback_hooks(
@@ -1273,52 +1174,24 @@ def _maybe_fire_feedback_hooks(
         logger.warning(f"[{name}] feedback hooks failed ({exc!r}) — non-fatal.")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  UnifiedAgent Class
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 class UnifiedAgent:
-    """
-    Manager agent — drop-in replacement for LangChain's create_agent() return value.
+    """Agent instance produced by ``create_agent`` (Runnable-like API).
 
-    Mirrors the Runnable interface (ainvoke / astream / invoke).
-    Adds: get_state(), get_history(), register_pattern(), resume(), feedback().
+    Public entrypoints: ``ainvoke``, ``invoke``, ``astream``, ``astream_events``, ``abatch``.
 
-    Execution model (Design Decision #5)
-    ────────────────────────────────────
-    Normal ainvoke() → run_fresh() → direct handler calls. No compiled
-    graph in the hot path. This makes run_fresh() independently testable
-    and removes graph compilation overhead per call.
+    Each ``ainvoke`` allocates a new ``signal_queue`` and ``clarification_queues`` in
+    ``invoke_config`` so parallel calls do not mix HITL signals.
 
-    The compiled graph is lazily built only when needed for:
-      get_state()    — LangGraph state inspection
-      get_history()  — time-travel over state snapshots
-      resume()       — Command(resume=...) for graph-based HITL
+    Default execution goes through ``run_fresh`` and pattern handlers. A compiled graph
+    is created on demand for ``resume``, ``get_state``, and ``get_history`` when a
+    ``checkpointer`` is configured.
 
-    Concurrency
-    ───────────
-    Each ainvoke() call creates a fresh signal_queue and clarification_queues
-    injected into invoke_config["configurable"]. Two simultaneous ainvoke()
-    calls are fully isolated — they cannot cross-post signals or answers.
-
-    Memory
-    ──────
-    config["memory"] → SessionMemory (always active)
-    config["store"]  → LongTermStore (optional, cross-session recall)
-    Both are set at create_agent() time — never replaced during a call.
-
-    Feedback
-    ────────
-    config["_feedback"] → feedback system config dict (from build_feedback_system())
-    agent.feedback(run_id, rating, correct=...) → routes to FeedbackStore +
-    UserFeedbackHandler. run_id is surfaced on every ExecutionResult.
+    ``config["memory"]`` holds session turns; ``config["store"]`` is optional long-term
+    storage (skills, feedback, LT memory namespaces).
     """
 
     def __init__(self, config: dict) -> None:
         self.config = config
-
-    # ── Async context manager for graceful shutdown ───────────────────────────
 
     async def __aenter__(self) -> UnifiedAgent:
         return self
@@ -1353,29 +1226,20 @@ class UnifiedAgent:
     def name(self) -> str:
         return self.config["name"]
 
-    # ── ID Resolution ─────────────────────────────────────────────────────────
-
     def resolve_ids(
         self,
         thread_id: str | None,
         user_id: str | None,
         lt_namespace: tuple | None,
     ) -> tuple[str, tuple, dict]:
-        """
-        Resolve effective identifiers for this invocation.
+        """Compute per-run ids and LangGraph ``invoke_config``.
 
-        Returns: (effective_thread_id, effective_ltns, invoke_config)
+        Returns ``(effective_thread_id, effective_lt_namespace, invoke_config)``.
+        Namespace: ``lt_namespace`` if given, else ``(agent_name, user_id)`` when
+        ``user_id`` is set, else ``(agent_name, thread_id)``.
 
-        Namespace priority:
-          1. lt_namespace — explicit override (multi-agent shared state)
-          2. user_id      — stable cross-session namespace → (name, user_id)
-          3. thread_id    — ephemeral fallback             → (name, thread_id)
-
-        invoke_config["configurable"] carries:
-          thread_id            → LangGraph state scoping (checkpointer)
-          memory_namespace     → memory tools store resolution
-          signal_queue         → per-run HALT_ALL / CLARIFICATION isolation
-          clarification_queues → per-worker answer routing dict (CLARIFICATION_REQUEST)
+        ``invoke_config["configurable"]`` includes ``thread_id``, ``memory_namespace``,
+        ``signal_queue``, and ``clarification_queues`` for this call only.
         """
         effective_thread_id = thread_id or str(uuid.uuid4())
         resolved_user_id = user_id or self.config.get("user_id", "default_user")
@@ -1391,13 +1255,11 @@ class UnifiedAgent:
             "configurable": {
                 "thread_id": effective_thread_id,
                 "memory_namespace": effective_ltns,
-                "signal_queue": asyncio.Queue(),  # fresh per-run
-                "clarification_queues": {},  # populated by clarification_tool.py
+                "signal_queue": asyncio.Queue(),
+                "clarification_queues": {},
             }
         }
         return effective_thread_id, effective_ltns, invoke_config
-
-    # ── Public API ────────────────────────────────────────────────────────────
 
     async def ainvoke(
         self,
@@ -1408,29 +1270,14 @@ class UnifiedAgent:
         lt_namespace: tuple | None = None,
         context: dict | None = None,
     ) -> ExecutionResult:
+        """Run a single agent turn and return ``ExecutionResult`` (includes ``run_id`` for ``feedback``).
+
+        ``query`` is normally a string. A ``dict`` is allowed only for frozen agents and
+        must contain every ``input_key`` field.
+
+        Raises:
+            ValueError: dict ``query`` with ``frozen=False``, or missing frozen input keys.
         """
-        Primary async entry point.
-
-        thread_id=None      ephemeral UUID — no cross-call memory
-        thread_id="t1"      stateful session — session memory active
-        user_id="u123"      stable cross-session LT namespace
-        lt_namespace=(...)  explicit shared namespace (multi-agent)
-
-        query accepts str | dict:
-          str  — always valid (frozen and non-frozen agents)
-          dict — only valid when frozen=True; keys must match input_key exactly.
-                 Raises ValueError immediately if a key is missing.
-
-        HITL in the direct-handler path:
-          L1 — _check_pattern_interrupt() calls user_callback before/after pattern.
-          L2 — per-worker InMemorySaver inside worker.py enables tool-level interrupt().
-          L3 — hitl.py gates workers via interrupt_before/after_workers lists.
-          L4 — signal_queue carries HALT_ALL and CLARIFICATION_REQUEST signals.
-
-        The returned ExecutionResult carries a run_id UUID. Pass it to
-        agent.feedback() to submit post-run corrections or ratings.
-        """
-        # ── Frozen contract enforcement ──────────────────────────────────────
         if isinstance(query, dict):
             if not self.config.get("frozen"):
                 raise ValueError(
@@ -1452,11 +1299,16 @@ class UnifiedAgent:
 
         await _ensure_mcp_connected(self.config)
         await _ensure_skills_bootstrapped(self.config)
+        await _ensure_harness_bootstrapped(
+            self.config,
+            effective_thread_id,
+            effective_ltns,
+            query if isinstance(query, str) else str(query),
+        )
 
         if self.config.get("frozen"):
             await _ensure_frozen_analysis(self.config)
 
-        # Per-run config spread — NEVER mutates self.config
         run_config = {
             **self.config,
             "signal_queue": invoke_config["configurable"]["signal_queue"],
@@ -1492,19 +1344,11 @@ class UnifiedAgent:
         context: dict | None = None,
         stream_mode: str = "tokens",
     ) -> AsyncGenerator[Any, None]:
-        """
-        Async streaming entry point.
+        """Stream output chunks.
 
-        For DIRECT pattern: uses LLM's native astream() for real token streaming.
-        For complex patterns: runs full ainvoke() then simulates word-by-word
-        streaming (true token-level streaming for multi-step patterns is a future priority).
-
-        stream_mode="tokens"  → yield str token/word chunks
-        stream_mode="result"  → yield single ExecutionResult at end
-
-        Usage:
-            async for token in agent.astream("Research X", thread_id="t1"):
-                print(token, end="", flush=True)
+        ``stream_mode="tokens"``: uses the chat model's ``astream`` when the request is
+        classified as DIRECT (non-frozen); otherwise falls back to word chunks from
+        ``ainvoke``. ``stream_mode="result"`` yields one ``ExecutionResult``.
         """
         if stream_mode == "tokens" and isinstance(query, str) and not self.config.get("frozen"):
             streamed = await self._try_direct_stream(
@@ -1541,16 +1385,18 @@ class UnifiedAgent:
         lt_namespace: tuple | None,
         context: dict | None,
     ) -> AsyncGenerator[str, None] | None:
-        """
-        Attempt true token streaming for DIRECT-eligible queries.
-        Returns an async generator of string chunks, or None if the query
-        is not DIRECT-eligible (caller should fall back to ainvoke).
-        """
+        """If classification is DIRECT, return an LLM token stream; else ``None``."""
         try:
             await _ensure_mcp_connected(self.config)
             await _ensure_skills_bootstrapped(self.config)
 
             effective_thread_id, effective_ltns, _inv = self.resolve_ids(thread_id, user_id, lt_namespace)
+            await _ensure_harness_bootstrapped(
+                self.config,
+                effective_thread_id,
+                effective_ltns,
+                query if isinstance(query, str) else str(query),
+            )
             ctx = context or {}
 
             raw_query_str = query
@@ -1611,7 +1457,19 @@ class UnifiedAgent:
             async def _stream_direct() -> AsyncGenerator[str, None]:
                 llm = self.config["llm"]
                 messages = [SystemMessage(content=resolved_sp), HumanMessage(content=query)]
-                async for chunk in llm.astream(messages):
+                timeout_s = float(self.config.get("llm_timeout", 120.0))
+                deadline = time.monotonic() + timeout_s
+
+                agen = llm.astream(messages)
+                aiter = agen.__aiter__()
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError(f"Direct stream timed out after {timeout_s} seconds.")
+                    try:
+                        chunk = await asyncio.wait_for(aiter.__anext__(), timeout=remaining)
+                    except StopAsyncIteration:
+                        return
                     content = chunk.content
                     if content:
                         yield content if isinstance(content, str) else str(content)
@@ -1631,15 +1489,7 @@ class UnifiedAgent:
         context: dict | None = None,
         max_concurrent: int = 5,
     ) -> list[ExecutionResult]:
-        """
-        Run multiple queries concurrently through the same agent.
-
-        Each query gets its own isolated signal_queue and thread_id (unless shared
-        thread_id is passed). Concurrency is bounded by max_concurrent.
-
-        Usage:
-            results = await agent.abatch(["Query 1", "Query 2", "Query 3"])
-        """
+        """Concurrent ``ainvoke`` for each query, bounded by ``max_concurrent``."""
         sem = asyncio.Semaphore(max_concurrent)
 
         async def _run_one(q: str | dict) -> ExecutionResult:
@@ -1663,46 +1513,11 @@ class UnifiedAgent:
         lt_namespace: tuple | None = None,
         context: dict | None = None,
     ) -> AsyncGenerator[AgentEvent, None]:
-        """
-        Live event streaming API for ChatGPT-style "thinking" UIs.
+        """Stream structured events for UI instrumentation.
 
-        Events are emitted in real-time as the pipeline executes — not
-        replayed after completion. Token events stream during each LLM
-        call, giving production chat UIs the typing effect users expect.
-
-        Yields AgentEvent objects as the agent executes:
-          type="thinking"      — classify/analysis step
-          type="llm_call"      — LLM call completed (metadata/duration)
-          type="tool_call"     — tool invocation (includes id for correlation)
-          type="tool_result"   — tool response (includes matching id)
-          type="worker_start"  — worker begins
-          type="worker_end"    — worker completes
-          type="token"         — real-time streaming token chunk
-          type="done"          — final result with full ExecutionResult
-
-        Token streaming works for ALL patterns — DIRECT, REACT, SUPERVISOR,
-        etc. Each LLM call in the pipeline streams tokens as they arrive.
-
-        Combined token + event mode: this single API provides BOTH
-        structured step events AND real-time token chunks, matching the
-        industry standard set by LangGraph's astream_events(version="v2").
-
-        Usage:
-            async for event in agent.astream_events("Explain X",
-                                                     thread_id="t1",
-                                                     user_id="u123"):
-                if event.type == "thinking":
-                    print(f"Analyzing: {event.data.get('output', '')}")
-                elif event.type == "token":
-                    print(event.data["content"], end="", flush=True)
-                elif event.type == "tool_call":
-                    tc_id = event.data.get("id", "")
-                    print(f"\\nCalling {event.data['name']} [{tc_id}]...")
-                elif event.type == "tool_result":
-                    tc_id = event.data.get("id", "")
-                    print(f"Result [{tc_id}]: {event.data['output'][:50]}")
-                elif event.type == "done":
-                    final_result = event.data["result"]
+        Events are emitted during ``run_fresh`` (e.g. ``thinking``, ``llm_call``,
+        ``tool_call``, ``tool_result``, ``token``, worker events). The stream ends
+        with ``done`` (payload includes serialized result) or ``error``.
         """
         event_queue: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
 
@@ -1774,14 +1589,7 @@ class UnifiedAgent:
         query: str | dict,
         **kwargs,
     ) -> ExecutionResult:
-        """
-        Synchronous wrapper around ainvoke().
-
-        Handles three scenarios:
-          1. No running loop → asyncio.run() (cleanest)
-          2. Running loop exists (Jupyter, nested frameworks) → thread offload
-          3. Fallback → new loop in current thread
-        """
+        """Synchronous ``ainvoke``. Uses ``asyncio.run`` when no loop is running; otherwise runs in a worker thread."""
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -1805,23 +1613,9 @@ class UnifiedAgent:
         correct: str | None = None,  # correction text when rating="negative"
         metadata: dict | None = None,
     ) -> None:
-        """
-        Submit user feedback for a completed run.
+        """Attach user feedback to a completed run (``rating``: positive / negative / neutral).
 
-        Routing:
-          1. FeedbackStore.record()        — persists rating + correction
-          2. UserFeedbackHandler.handle()  — triggers configured action
-             (NoOp / LTS memory + skill decay / Webhook / Composite)
-
-        run_id comes from result.run_id returned by ainvoke().
-
-        Example:
-            result = await agent.ainvoke("Explain RLHF")
-            await agent.feedback(
-                result.run_id,
-                "negative",
-                correct="RLHF = Reinforcement Learning from Human Feedback",
-            )
+        No-op if ``create_agent`` was called without ``store`` (feedback system disabled).
         """
         feedback_cfg = self.config.get("_feedback")
         if not feedback_cfg:
@@ -1854,14 +1648,10 @@ class UnifiedAgent:
         invoke_config: dict | None = None,
         effective_ltns: tuple = (),
     ) -> ExecutionResult:
-        """
-        Resume a paused COMPILED graph via LangGraph Command(resume=value).
+        """Resume graph execution after an interrupt using LangGraph ``Command(resume=value)``.
 
-        This method applies only to callers using the compiled graph path
-        (e.g. via get_state() / get_history()). Normal ainvoke() runs through
-        run_fresh() and does not produce compilable graph state.
-
-        Requires checkpointer — pass checkpointer=InMemorySaver() to create_agent().
+        Unlike ``ainvoke``, this targets the compiled graph. Requires a ``checkpointer``
+        passed to ``create_agent``.
         """
         from langgraph.types import Command
 
@@ -1921,14 +1711,10 @@ class UnifiedAgent:
             )
 
     async def get_state(self, thread_id: str) -> Any:
-        """
-        Current state snapshot for a thread.
+        """Return the latest checkpoint tuple for ``thread_id``, or ``None`` if missing.
 
-        Returns the latest checkpoint written by ainvoke()/astream_events()
-        via the checkpointer. If no checkpoint exists for this thread,
-        returns None.
-
-        Requires checkpointer — pass checkpointer=MemorySaver() to create_agent().
+        Raises:
+            RuntimeError: if no ``checkpointer`` was configured.
         """
         checkpointer = self.config.get("checkpointer")
         if not checkpointer:
@@ -1946,11 +1732,10 @@ class UnifiedAgent:
         return None
 
     async def get_history(self, thread_id: str) -> Any:
-        """
-        Async iterator over full state history for a thread (time-travel).
+        """Return an async iterator (or sync list) of checkpoints for ``thread_id``.
 
-        Each item is a CheckpointTuple containing the checkpoint data
-        written by ainvoke()/astream_events(). Requires checkpointer.
+        Raises:
+            RuntimeError: if no ``checkpointer`` was configured.
         """
         checkpointer = self.config.get("checkpointer")
         if not checkpointer:
@@ -1969,14 +1754,9 @@ class UnifiedAgent:
         pattern_type: PatternType,
         handler_fn: Callable,
     ) -> None:
-        """
-        Register or override a pattern handler at runtime.
-        Takes effect immediately on the next ainvoke() call.
-        """
+        """Override the handler for ``pattern_type`` on this agent instance (takes effect on next call)."""
         self.config["registry"][pattern_type] = handler_fn
         logger.event(f"[{self.name}] Pattern registered: {pattern_type.value}")
-
-    # ── Delegation API ───────────────────────────────────────────────────────
 
     def as_tool(
         self,
@@ -1984,40 +1764,19 @@ class UnifiedAgent:
         name: str | None = None,
         description: str | None = None,
     ) -> BaseTool:
-        """
-        Wrap this agent as a LangChain tool for use in another agent's tool list.
-
-        Usage:
-            research = create_agent(model=llm, name="researcher", ...)
-            parent = create_agent(model=llm, tools=[research.as_tool()])
-        """
+        """Expose this agent as a LangChain tool (delegates to ``make_agent_tool``)."""
         return make_agent_tool(self, name=name, description=description)
 
     def register_handoff(
         self,
-        target: Any,  # HandoffTarget | UnifiedAgent
+        target: Any,
         *,
         name: str | None = None,
         description: str = "",
         filter_fn: Callable | None = None,
         input_transform: Callable | None = None,
     ) -> None:
-        """
-        Register a transparent hand-off target.
-
-        When registered, the classifier sees the delegate's description and
-        can route queries directly to it. The hand-off is transparent — the
-        caller receives the delegate's result as if the parent handled it.
-
-        Accepts either a HandoffTarget or a raw UnifiedAgent (which gets
-        wrapped automatically).
-
-        Usage:
-            parent.register_handoff(
-                research_agent,
-                description="Research and summarize academic papers",
-            )
-        """
+        """Register a delegate the classifier may route to (append-only list on ``_handoff_targets``)."""
         if isinstance(target, HandoffTarget):
             ht = target
         else:
@@ -2041,14 +1800,10 @@ class UnifiedAgent:
         lt_namespace: tuple | None = None,
         context: dict | None = None,
     ) -> ExecutionResult:
-        """
-        Explicitly delegate a query to a registered delegate.
+        """Delegate ``query`` to a matching handoff/delegate target and await its result.
 
-        If delegate_name is given, routes to that specific delegate.
-        Otherwise, resolves the best match from handoff targets and
-        the delegates list.
-
-        Raises ValueError if no matching delegate is found.
+        Raises:
+            ValueError: No target matches ``delegate_name`` (if given) or filters.
         """
         all_targets = self._all_delegation_targets()
         target = await resolve_handoff(all_targets, query, delegate_name)
@@ -2078,17 +1833,7 @@ class UnifiedAgent:
         lt_namespace: tuple | None = None,
         context: dict | None = None,
     ) -> str:
-        """
-        Fire-and-forget background delegation. Returns task_id immediately.
-
-        Usage:
-            task_id = await parent.adelegate_background(
-                "Research quantum computing",
-                delegate_name="researcher",
-            )
-            # Later:
-            result = await parent.await_background(task_id)
-        """
+        """Start delegation in the background; return id for ``await_background`` / ``cancel_background``."""
         all_targets = self._all_delegation_targets()
         target = await resolve_handoff(all_targets, query, delegate_name)
         if target is None:
@@ -2114,7 +1859,7 @@ class UnifiedAgent:
         *,
         timeout: float | None = None,
     ) -> ExecutionResult | None:
-        """Wait for a background delegation to complete. Returns the result or None."""
+        """Block until the background task completes (see ``BackgroundDelegationManager.await_result``)."""
         mgr: BackgroundDelegationManager = self.config["_bg_delegation_manager"]
         return await mgr.await_result(task_id, timeout=timeout)
 
@@ -2151,12 +1896,7 @@ class UnifiedAgent:
         )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Factory
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def create_agent(
+async def create_agent(
     model: Any,
     tools: Sequence[Any] | None = None,
     system_prompt: Any = None,
@@ -2198,58 +1938,30 @@ def create_agent(
     auto_summarize: bool = True,
     summarize_threshold: int = 200_000,
     summarizer_model: Any = None,
-    # ── Feedback system ──────────────────────────────────────────────────────
-    # feedback_handler: plug-and-play UserFeedbackHandler implementation.
-    # Accepted values (all from feedback/user_feedback.py):
-    #   None                   → NoOpFeedbackHandler (default — zero overhead)
-    #   LTSFeedbackHandler     → saves rating, signals skill decay, stores corrections
-    #   WebhookFeedbackHandler → POSTs payload to a URL
-    #   CompositeHandler       → chains multiple handlers concurrently
-    #   Any custom class implementing UserFeedbackHandler protocol
-    # Only active when store= is also provided (FeedbackStore is LTS-backed).
     feedback_handler: Any | None = None,
-    # ── Delegation ────────────────────────────────────────────────────────────
-    # delegates: list of (UnifiedAgent | HandoffTarget) that this agent can
-    # dispatch work to via run_delegate(). Exposed to the classifier so it
-    # can route transparently. Also accessible via agent.adelegate().
     delegates: Sequence[Any] | None = None,
-    # ── Frozen agent ─────────────────────────────────────────────────────────
-    # frozen=True  → classify once on first ainvoke(), reuse forever.
-    #                ainvoke() accepts str | dict. dict requires input_key list.
-    # frozen=False → full 13-step classify pipeline on every call (default).
     frozen: bool = False,
-    frozen_template: str | None = None,  # required when frozen=True
-    input_key: str | list[str] = "input",  # {placeholder} name(s)
-    frozen_analysis_ttl: float = 0,  # seconds; 0 = never expire
+    frozen_template: str | None = None,
+    input_key: str | list[str] = "input",
+    frozen_analysis_ttl: float = 0,
+    harness: bool = False,
+    harness_project_name: str = "project",
 ) -> UnifiedAgent:
+    """Construct a configured ``UnifiedAgent`` (async).
+
+    Kwargs are validated via ``models.AgentConfig`` before wiring. Important combinations:
+
+    ``store``: LT memory tools, skill registry, feedback (when enabled).
+    ``frozen`` and ``frozen_template``: one-time classification; dict ``query`` must match ``input_key``.
+    ``harness`` with ``store``: adds progress/git tools; ignored without ``store``.
+    ``checkpointer``: enables ``get_state``, ``get_history``, ``resume``.
+    ``mcp_servers``: lazy MCP connect on first ``ainvoke``.
+
+    Also registers the agent name against the store for duplicate-name warnings and may
+    extend ``tools`` (memory load_skill, harness tools).
     """
-    Factory that validates all inputs and returns a fully wired UnifiedAgent.
-
-    Validation:
-      AgentConfig (Pydantic model) validates all inputs at construction time.
-      It is discarded after validation — the internal pipeline is dict-based.
-
-    Frozen mode (frozen=True):
-      Analysis runs once on first ainvoke() — pattern + handler cached forever.
-      Every subsequent call skips Steps 2.5, 3, 7 — saving one LLM classify
-      call (~200-500 ms) per invocation. Ideal for batch workloads where
-      system_prompt and structure are fixed; only the input data changes.
-      Requires frozen_template with {input_key} placeholder(s).
-
-    Feedback:
-      When store= is provided, build_feedback_system() is called automatically.
-      AutoEvaluator runs after every run_fresh() call (mandatory).
-      UserFeedbackHandler is activated by calling agent.feedback() explicitly.
-      When store= is None, the feedback system is silently disabled.
-
-    Skill system:
-      Activated automatically when store= is provided. First ainvoke() call
-      bootstraps skills from disk and runs lifecycle hygiene (lazy init).
-    """
-    # ── Logging configuration (must precede everything else) ───────────────────
     configure_package_logging(debug)
 
-    # ── Input validation (Pydantic) ────────────────────────────────────────────
     from .models import AgentConfig
 
     AgentConfig(
@@ -2294,30 +2006,27 @@ def create_agent(
         summarizer_model=summarizer_model,
     )
 
-    # ── Frozen params validation ─────────────────────────────────────────────
     _validate_frozen_params(frozen, frozen_template, input_key)
 
-    # ── Resolve and normalize inputs ──────────────────────────────────────────
     resolved_llm = resolve_model(model)
     resolved_prompt = resolve_system_prompt(system_prompt)
     agent_name = (name or "UnifiedAgent").strip()
     resolved_tools = normalize_tools(tools or [])
     _check_reserved_tool_names(resolved_tools)
 
-    # ── Long-term store ───────────────────────────────────────────────────────
     resolved_store: LongTermStore | None = None
     if store is not None:
         resolved_store = store if isinstance(store, LongTermStore) else LongTermStore(store=store)
 
-    # ── Duplicate name detection ──────────────────────────────────────────────
     _register_agent_name(agent_name, resolved_store)
 
-    # ── Auto-inject memory tools ──────────────────────────────────────────────
     if resolved_store is not None and enable_memory_tools:
-        mem_tools = create_memory_tools(resolved_store)
-        resolved_tools = mem_tools + resolved_tools  # memory tools first
+        try:
+            mem_tools = create_memory_tools(resolved_store)
+            resolved_tools = mem_tools + resolved_tools  # memory tools first
+        except Exception as exc:
+            logger.warning(f"[{agent_name}] Failed to create memory tools ({exc!r}) — continuing without.")
 
-    # ── Session memory (always active) ────────────────────────────────────────
     resolved_summarizer = resolve_model(summarizer_model) if summarizer_model else resolved_llm
     resolved_memory = memory
     if resolved_memory is None:
@@ -2346,22 +2055,60 @@ def create_agent(
     elif auto_summarize and resolved_memory.summarizer_model is None:
         resolved_memory.summarizer_model = resolved_summarizer
 
-    # ── Core config dict ──────────────────────────────────────────────────────
+    _harness_enabled = False
+    _git_session: Any = None
+    _progress_tracker_factory: Callable | None = None
+
+    if harness and resolved_store is not None and _HARNESS_AVAILABLE:
+        _harness_enabled = True
+        assert GitSession is not None
+        assert create_initializer_tool is not None
+        _git_session = GitSession()
+
+        def _progress_tracker_factory() -> Any:
+            return get_progress_tracker(resolved_store, agent_name, harness_project_name)
+
+        def _make_tool(factory_fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+            fn = factory_fn(*args, **kwargs)
+            tool_name = getattr(fn, "__name__", factory_fn.__name__.replace("_tool", ""))
+            try:
+                return StructuredTool.from_function(
+                    fn,
+                    name=tool_name,
+                    description=fn.__doc__ or "",
+                )
+            except Exception:
+                return fn
+
+        harness_tools = [
+            _make_tool(git_status_tool, _git_session),
+            _make_tool(git_log_tool, _git_session),
+            _make_tool(git_commit_tool, _git_session),
+            _make_tool(git_checkpoint_tool, _git_session, session_id=""),
+            _make_tool(git_revert_hint_tool, _git_session),
+            _make_tool(bootstrap_progress_tool),
+            _make_tool(save_progress_tool),
+            _make_tool(update_task_tool),
+            _make_tool(get_next_task_tool),
+            _make_tool(add_task_tool),
+            _make_tool(create_initializer_tool, resolved_llm, resolved_store, agent_name, harness_project_name),
+        ]
+        resolved_tools = resolved_tools + harness_tools
+        logger.info(f"{agent_name}: Harness enabled — {len(harness_tools)} tools injected (progress + git)")
+
+    elif harness and resolved_store is None:
+        logger.warning(f"{agent_name}: harness=True requires store= to be provided. Harness disabled.")
+
     config: dict = {
-        # Core
         "name": agent_name,
         "llm": resolved_llm,
         "tools": resolved_tools,
         "system_prompt": resolved_prompt,
         "user_id": user_id or "default_user",
-        # Memory
         "memory": resolved_memory,
         "store": resolved_store,
-        # Cache
         "query_cache": query_cache,
-        # Pattern registry — per-instance copy so register_pattern() is isolated
         "registry": dict(_HANDLERS),
-        # Execution tuning
         "max_concurrent": max_concurrent,
         "max_retries": max_retries,
         "retry_delay": retry_delay,
@@ -2375,29 +2122,25 @@ def create_agent(
         "max_skills": max_skills,
         "max_reflection_iterations": max_reflection_iterations,
         "reflection_threshold": reflection_threshold,
-        # HITL — L1 (pattern-level)
         "interrupt_before": list(interrupt_before or []),
         "interrupt_after": list(interrupt_after or []),
-        # HITL — L2 (tool-level)
         "interrupt_before_tools": list(interrupt_before_tools or []),
-        # HITL — L3 (worker-level)
         "interrupt_before_workers": list(interrupt_before_workers or []),
         "interrupt_after_workers": list(interrupt_after_workers or []),
-        # HITL — shared callback
         "user_callback": user_callback,
         "checkpointer": checkpointer,
-        # Advanced
         "middleware": list(middleware),
         "response_format": response_format,
         "debug": debug,
-        # Lazily populated on first get_state() / get_history() / resume()
         "compiled_graph": None,
-        # Agent-level fallback signal_queue — REPLACED per-call in ainvoke().
-        # NEVER read this from run_fresh(); always read from invoke_config["configurable"].
         "signal_queue": asyncio.Queue(),
         "clarification_queues": {},
         "_feedback": {},
-        # ── Frozen agent — analysis cached on first ainvoke() ────────────────
+        "_harness_enabled": _harness_enabled,
+        "_harness_project": harness_project_name,
+        "_progress_tracker": None,
+        "_progress_tracker_factory": _progress_tracker_factory,
+        "_git_session": _git_session,
         "frozen": frozen,
         "frozen_template": frozen_template or "",
         "input_key": input_key,
@@ -2406,23 +2149,18 @@ def create_agent(
         "_frozen_lock": asyncio.Lock(),
         "frozen_analysis_ttl": frozen_analysis_ttl,
         "_frozen_analysis_ts": 0,
-        # Step output truncation (0 = no truncation)
         "max_step_output_length": max_step_output_length,
-        # Classifier fallback pattern override
         "fallback_pattern": fallback_pattern,
-        # ── Delegation ──────────────────────────────────────────────────────
-        "_handoff_targets": [],  # populated by register_handoff()
-        "_delegate_targets": [],  # populated from delegates= param below
+        "_handoff_targets": [],
+        "_delegate_targets": [],
         "_bg_delegation_manager": BackgroundDelegationManager(),
     }
 
-    # ── Delegates (hierarchical delegation) ─────────────────────────────────
     if delegates:
         for d in delegates:
             if isinstance(d, HandoffTarget):
                 config["_delegate_targets"].append(d)
             else:
-                # Assume it's a UnifiedAgent — wrap with auto-generated description
                 config["_delegate_targets"].append(
                     HandoffTarget(
                         d,
@@ -2435,7 +2173,6 @@ def create_agent(
             f"{[t.name for t in config['_delegate_targets']]}"
         )
 
-    # ── MCP ───────────────────────────────────────────────────────────────────
     config["_mcp_servers"] = list(mcp_servers or [])
     config["_mcp_client"] = None
     config["_mcp_connected"] = False
@@ -2443,7 +2180,6 @@ def create_agent(
     config["mcp_prompts"] = {}
     config["mcp_uris"] = {}
 
-    # ── Skill system (active when long-term store is provided) ────────────────
     config["skill_registry"] = None
     config["skill_injector"] = None
     config["skill_learner"] = None
@@ -2494,8 +2230,6 @@ def create_agent(
         config["skill_generator"] = skill_generator
         config["skill_lifecycle"] = skill_lifecycle
 
-    # ── Feedback system (active when long-term store is provided) ─────────────
-    # When store is None, _feedback stays empty and hooks are silently skipped.
     if resolved_store is not None and _FEEDBACK_AVAILABLE:
         try:
             config["_feedback"] = build_feedback_system(
@@ -2533,3 +2267,23 @@ def create_agent(
     )
 
     return UnifiedAgent(config)
+
+
+def create_agent_sync(
+    *args: Any,
+    **kwargs: Any,
+) -> UnifiedAgent:
+    """Synchronous wrapper for ``create_agent`` (``asyncio.run``, or thread pool if a loop runs)."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is None:
+        return asyncio.run(create_agent(*args, **kwargs))
+
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(asyncio.run, create_agent(*args, **kwargs))
+        return future.result()

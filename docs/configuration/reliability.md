@@ -12,11 +12,12 @@ agloom includes production-grade reliability features that would normally take w
 | `classifier_timeout` | `30.0s` | Max time for query classification |
 
 ```python
-agent = create_agent(
-    model=llm,
-    llm_timeout=60.0,         # 60s per LLM call
-    classifier_timeout=15.0,   # 15s for classification
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        llm_timeout=60.0,         # 60s per LLM call
+        classifier_timeout=15.0,   # 15s for classification
+    )
 ```
 
 If a timeout is exceeded, the call fails with a `TimeoutError` — no hanging forever.
@@ -30,12 +31,13 @@ If a timeout is exceeded, the call fails with a `TimeoutError` — no hanging fo
 | `structured_max_retries` | `2` | Structured output retries |
 
 ```python
-agent = create_agent(
-    model=llm,
-    max_retries=3,            # retry failed workers up to 3 times
-    retry_delay=2.0,          # wait 2s between retries
-    structured_max_retries=3, # retry structured output 3 times
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        max_retries=3,            # retry failed workers up to 3 times
+        retry_delay=2.0,          # wait 2s between retries
+        structured_max_retries=3, # retry structured output 3 times
+    )
 ```
 
 ## Concurrency Control
@@ -46,11 +48,12 @@ agent = create_agent(
 | `rate_limit` | `None` | Max LLM calls per second |
 
 ```python
-agent = create_agent(
-    model=llm,
-    max_concurrent=8,   # up to 8 workers in parallel
-    rate_limit=10.0,    # max 10 LLM calls per second
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        max_concurrent=8,   # up to 8 workers in parallel
+        rate_limit=10.0,    # max 10 LLM calls per second
+    )
 ```
 
 ## Circuit Breaker
@@ -71,10 +74,11 @@ This is automatic — no configuration needed.
 Token-bucket rate limiting prevents hitting your LLM provider's rate limits:
 
 ```python
-agent = create_agent(
-    model=llm,
-    rate_limit=5.0,  # max 5 LLM calls per second
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        rate_limit=5.0,  # max 5 LLM calls per second
+    )
 ```
 
 With `rate_limit=None` (default), no rate limiting is applied.

@@ -5,7 +5,8 @@
 Enable detailed logging with `debug=True`:
 
 ```python
-agent = create_agent(model=llm, debug=True, name="my-agent")
+async def main():
+    agent = await create_agent(model=llm, debug=True, name="my-agent")
 ```
 
 ### debug=True output

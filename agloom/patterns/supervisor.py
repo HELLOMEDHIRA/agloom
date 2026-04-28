@@ -11,6 +11,7 @@ from ..models import (
     ExecutionResult,
     PatternType,
     QueryAnalysis,
+    SignalType,
     StepType,
     WorkerPlan,
     WorkerResult,
@@ -177,6 +178,7 @@ async def handle_supervisor(
         )
     )
     total_steps = len(worker_results) + 2
+    any_success = any(wr.signal == SignalType.SUCCESS for wr in worker_results)
     logger.event(f"[Supervisor] Done: {len(worker_results)} workers, {len(output)} chars.")
 
     return ExecutionResult(
@@ -184,7 +186,8 @@ async def handle_supervisor(
         query=query,
         output=output,
         steps_taken=total_steps,
-        success=True,
+        success=any_success,
+        error=None if any_success else "AllWorkersFailed",
         analysis=analysis,
         worker_results=worker_results,
         steps=steps,
@@ -296,6 +299,7 @@ async def aggregate_results(
     llm_messages = list(messages)
     event_queue = agent.get("_event_queue")
     _timeout = agent.get("llm_timeout", 120.0)
+    agg_timeout = _timeout * 0.5  # Give half of available time for aggregation
 
     try:
         if event_queue is not None:
@@ -309,18 +313,27 @@ async def aggregate_results(
                         chunks.append(content)
                         await event_queue.put(AgentEvent(type="token", data={"content": content}))
 
-            await asyncio.wait_for(_stream(), timeout=_timeout)
+            await asyncio.wait_for(_stream(), timeout=agg_timeout)
             output = "".join(chunks)
         else:
             resp = await asyncio.wait_for(
                 agent["llm"].ainvoke(messages),
-                timeout=_timeout,
+                timeout=agg_timeout,
             )
             output = resp.content
             llm_messages.append(resp)
 
         logger.event(f"[Supervisor] Aggregation done: {len(output)} chars.")
         return output, llm_messages
+    except TimeoutError:
+        logger.error(f"[Supervisor] Aggregation timed out after {agg_timeout}s — falling back to concatenation.")
+        output = "\n".join(f"{r.worker_id}: {r.output}" for r in worker_results)
+        if event_queue is not None:
+            await event_queue.put(AgentEvent(type="aggregation_fallback", data={"reason": "timeout"}))
+        return output, llm_messages
     except Exception as e:
         logger.error(f"[Supervisor] Aggregation LLM failed: {e}")
-        return "\n".join(f"{r.worker_id}: {r.output}" for r in worker_results), llm_messages
+        output = "\n".join(f"{r.worker_id}: {r.output}" for r in worker_results)
+        if event_queue is not None:
+            await event_queue.put(AgentEvent(type="aggregation_fallback", data={"reason": "error", "error": str(e)}))
+        return output, llm_messages

@@ -1,4 +1,7 @@
-"""MCP support: tools, resources, and prompts via langchain-mcp-adapters."""
+"""MCP client wiring: ``MCPServerConfig``, connect helpers, capability merge for agents/workers.
+
+Uses ``langchain-mcp-adapters``; ``connect_mcp_servers`` is invoked lazily from ``UnifiedAgent``.
+"""
 
 from __future__ import annotations
 
@@ -199,7 +202,6 @@ def _make_resource_tool(
         uris_preview += f" ... (+{len(uris) - 5} more)"
 
     from langchain_core.tools import StructuredTool
-    from pydantic import BaseModel
 
     class ResourceInput(BaseModel):
         uri: str = Field(description=f"URI of the resource to read. Available: {uris_preview}")

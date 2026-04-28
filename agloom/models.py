@@ -1,3 +1,5 @@
+"""Shared Pydantic types: patterns, analysis, execution results, worker plans, agent config validation."""
+
 from __future__ import annotations
 
 import logging as _logging
@@ -45,7 +47,7 @@ class Signal(BaseModel):
     signal_type: SignalType
     worker_id: str
     message: str
-    metadata: dict[str, Any] = {}
+    metadata: dict[str, Any] = Field(default_factory=dict)
     response_queue: Any | None = None
 
 
@@ -349,6 +351,7 @@ class ResolvedWorkerConfig(BaseModel):
     tools: list[Any] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
+    llm_timeout: float = 120.0
     max_retries: int = 2
     retry_delay: float = 1.0
     interrupt_before_tools: list[str] = Field(default_factory=list)
@@ -587,13 +590,17 @@ def _validate_model_object(model: Any) -> None:
 
 class AgentConfig(BaseModel):
     """
-    Validated input schema for create_agent().
+    Validated input schema for the core kwargs shared with create_agent().
 
     Usage (inside create_agent only — callers never instantiate this directly):
         cfg = AgentConfig(model=model, tools=tools, name=name, ...)
 
-    Construction raises ValueError on invalid arguments. All fields mirror
-    create_agent() kwargs exactly.
+    Construction raises ValueError on invalid arguments. Fields mirror the
+    subset of create_agent() parameters validated here (interrupt lists, MCP,
+    timeouts, memory/store wiring, etc.). Additional factory-only parameters —
+    for example ``delegates``, ``feedback_handler``, ``frozen`` / ``frozen_template``,
+    ``harness``, ``max_step_output_length``, ``fallback_pattern`` — are checked
+    or applied in ``unified_agent.create_agent`` after this model runs.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

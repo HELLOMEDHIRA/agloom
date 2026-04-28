@@ -22,14 +22,14 @@ llm = ChatGroq(
 async def main():
     store = InMemoryStore()
 
-    researcher = create_agent(
+    researcher = await create_agent(
         model=llm,
         store=store,
         name="researcher",
         system_prompt="You are a research specialist. Provide detailed factual information.",
     )
 
-    writer = create_agent(
+    writer = await create_agent(
         model=llm,
         store=store,
         name="writer",

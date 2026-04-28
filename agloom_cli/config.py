@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from rich.console import Console
+
+console = Console()
 
 HomeDir = Path.home() / ".agloom"
 DefaultConfigPath = HomeDir / "agloom.yaml"
@@ -68,6 +71,10 @@ ai:
 
 mcp:
   servers: ""
+  # Super-Brain MCP is always used by the CLI (https://agsuperbrain.readthedocs.io/). Optional: superbrain: { name:, command:, args: }
+  superbrain: {}
+  # Extra MCP servers (listed after Super-Brain unless same name replaces it)
+  server_list: []
 
 tools:
   dir: ""
@@ -76,6 +83,9 @@ tools:
 memory:
   enabled: true
   max_turns: 50
+
+auto_summarize: true
+summarize_threshold: 200000
 
 skills:
   enabled: true
@@ -90,6 +100,7 @@ rules:
 execution:
   max_concurrent: 4
   max_retries: 2
+  retry_delay: 1.0
   llm_timeout: 120.0
   classifier_timeout: 30.0
 
@@ -224,9 +235,12 @@ def load_config(path: Path | None) -> dict[str, Any]:
 
     merged: dict[str, Any] = {}
     for config_path in config_paths:
-        with open(config_path) as f:
-            loaded = yaml.safe_load(f) or {}
-        _deep_merge(merged, loaded)
+        try:
+            with open(config_path) as f:
+                loaded = yaml.safe_load(f) or {}
+            _deep_merge(merged, loaded)
+        except yaml.YAMLError as e:
+            console.print(f"[warning]Warning: Error parsing {config_path}: {e}[/warning]")
 
     return merged
 
@@ -241,13 +255,17 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return base
 
 
-def get_thread_id(config: dict[str, Any] | None = None) -> str:
+def get_thread_id(config: dict[str, Any] | None = None, auto_save: bool = True) -> str:
     """Get thread/session ID from config or generate new one.
 
     Priority:
     1. config.session.current_session
     2. AGLOOM_THREAD_ID env var
     3. Generate new UUID
+
+    Args:
+        config: Optional config dict
+        auto_save: If True, save new session ID to config file
     """
     if config is None:
         config = create_default_config()
@@ -259,8 +277,9 @@ def get_thread_id(config: dict[str, Any] | None = None) -> str:
     if os.environ.get("AGLOOM_THREAD_ID"):
         return os.environ["AGLOOM_THREAD_ID"]
 
-    thread_id = uuid.uuid4().hex[:8]
-    save_session(thread_id)
+    thread_id = uuid.uuid4().hex
+    if auto_save:
+        save_session(thread_id)
     return thread_id
 
 
@@ -283,9 +302,10 @@ def start_new_session(thread_id: str | None = None) -> dict[str, Any]:
     import json
 
     if not thread_id:
-        thread_id = uuid.uuid4().hex[:8]
+        thread_id = uuid.uuid4().hex
 
     sessions_dir = ensure_config_dir() / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
     session_file = sessions_dir / f"{thread_id}.json"
 
     session_data = {
@@ -358,25 +378,6 @@ def add_to_session_history(thread_id: str, role: str, content: str) -> None:
         json.dump(session, f, indent=2)
 
 
-def list_sessions() -> list[dict]:
-    """List all saved sessions."""
-    import json
-
-    sessions_dir = ensure_config_dir() / "sessions"
-    if not sessions_dir.exists():
-        return []
-
-    sessions = []
-    for f in sessions_dir.glob("*.json"):
-        with open(f) as fp:
-            try:
-                sessions.append(json.load(fp))
-            except json.JSONDecodeError:
-                continue
-
-    return sorted(sessions, key=lambda x: x.get("last_active", ""), reverse=True)
-
-
 def resolve_model(model_id: str | None) -> Any:
     """Resolve model from ID or env var.
 
@@ -418,16 +419,15 @@ def add_to_gitignore() -> bool:
     """Add agloom config to .gitignore if not present. Returns True if modified."""
     gitignore = Path(".gitignore")
 
-    if not gitignore.exists():
-        return False
-
-    content = gitignore.read_text()
-
     needed = []
-    if ".agloom" not in content:
-        needed.append(".agloom")
-    if ".agloom.yaml" not in content:
-        needed.append(".agloom.yaml")
+    if gitignore.exists():
+        content = gitignore.read_text()
+        if ".agloom" not in content:
+            needed.append(".agloom")
+        if ".agloom.yaml" not in content:
+            needed.append(".agloom.yaml")
+    else:
+        needed = [".agloom", ".agloom.yaml"]
 
     if not needed:
         return False

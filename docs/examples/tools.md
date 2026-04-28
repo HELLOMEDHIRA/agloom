@@ -36,7 +36,7 @@ def extract_keywords(text: str) -> str:
 
 
 async def main():
-    agent = create_agent(
+    agent = await create_agent(
         model=llm,
         tools=[calculate, extract_keywords],
         name="tool-agent",

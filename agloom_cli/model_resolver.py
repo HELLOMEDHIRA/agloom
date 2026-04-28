@@ -32,7 +32,10 @@ def get_model(model_id: str, **kwargs) -> Any:
     if "claude" in model_id_lower or model_id_lower.startswith("anthropic"):
         return _get_anthropic_model(model_id, **kwargs)
 
-    if "groq" in model_id_lower or "/" in model_id:
+    if "groq" in model_id_lower:
+        return _get_groq_model(model_id, **kwargs)
+
+    if "/" in model_id and not model_id_lower.startswith(("openai/", "anthropic/")):
         return _get_groq_model(model_id, **kwargs)
 
     if "llama" in model_id_lower or "mistral" in model_id_lower:

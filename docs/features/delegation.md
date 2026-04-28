@@ -18,21 +18,22 @@ Wrap any agent as a standard LangChain tool. The parent agent calls it through i
 ```python
 from agloom import create_agent
 
-# Create specialist agents
-researcher = create_agent(model=llm, name="researcher", tools=[search_tool])
-coder = create_agent(model=llm, name="coder", tools=[run_code])
+async def main():
+    # Create specialist agents
+    researcher = await create_agent(model=llm, name="researcher", tools=[search_tool])
+    coder = await create_agent(model=llm, name="coder", tools=[run_code])
 
-# Parent uses them as tools
-parent = create_agent(
-    model=llm,
-    name="coordinator",
-    tools=[
-        researcher.as_tool(description="Research academic papers and summarize findings"),
-        coder.as_tool(description="Write and execute Python code"),
-    ],
-)
+    # Parent uses them as tools
+    parent = await create_agent(
+        model=llm,
+        name="coordinator",
+        tools=[
+            researcher.as_tool(description="Research academic papers and summarize findings"),
+            coder.as_tool(description="Write and execute Python code"),
+        ],
+    )
 
-result = await parent.ainvoke("Find the latest paper on RLHF and implement the algorithm")
+    result = await parent.ainvoke("Find the latest paper on RLHF and implement the algorithm")
 ```
 
 ### Custom tool name
@@ -49,16 +50,17 @@ tool = agent.as_tool(
 Register delegates that the classifier can route to automatically. The hand-off is transparent — the caller receives the delegate's result as if the parent handled it.
 
 ```python
-researcher = create_agent(model=llm, name="researcher", tools=[search_tool])
-coder = create_agent(model=llm, name="coder", tools=[run_code])
+async def main():
+    researcher = await create_agent(model=llm, name="researcher", tools=[search_tool])
+    coder = await create_agent(model=llm, name="coder", tools=[run_code])
 
-parent = create_agent(model=llm, name="coordinator")
-parent.register_handoff(researcher, description="Research and summarize academic papers")
-parent.register_handoff(coder, description="Write, review, and debug code")
+    parent = await create_agent(model=llm, name="coordinator")
+    parent.register_handoff(researcher, description="Research and summarize academic papers")
+    parent.register_handoff(coder, description="Write, review, and debug code")
 
-# Classifier sees delegate descriptions and routes automatically
-result = await parent.ainvoke("Find papers about transformer architectures")
-# → routed to researcher transparently
+    # Classifier sees delegate descriptions and routes automatically
+    result = await parent.ainvoke("Find papers about transformer architectures")
+    # → routed to researcher transparently
 ```
 
 ### Conditional hand-off with filter_fn
@@ -101,33 +103,35 @@ parent.register_handoff(target)
 Pass delegate agents at creation time. They become available for both transparent hand-off (classifier routing) and explicit delegation via `adelegate()`.
 
 ```python
-researcher = create_agent(model=llm, name="researcher", tools=[search_tool])
-coder = create_agent(model=llm, name="coder", tools=[run_code])
+async def main():
+    researcher = await create_agent(model=llm, name="researcher", tools=[search_tool])
+    coder = await create_agent(model=llm, name="coder", tools=[run_code])
 
-parent = create_agent(
-    model=llm,
-    name="coordinator",
-    delegates=[researcher, coder],
-)
+    parent = await create_agent(
+        model=llm,
+        name="coordinator",
+        delegates=[researcher, coder],
+    )
 
-# Explicit delegation
-result = await parent.adelegate("Find RLHF papers", delegate_name="researcher")
+    # Explicit delegation
+    result = await parent.adelegate("Find RLHF papers", delegate_name="researcher")
 
-# Or let the classifier route automatically
-result = await parent.ainvoke("Find papers about transformers")
+    # Or let the classifier route automatically
+    result = await parent.ainvoke("Find papers about transformers")
 ```
 
 ### With HandoffTarget for fine-grained control
 
 ```python
-parent = create_agent(
-    model=llm,
-    name="coordinator",
-    delegates=[
-        HandoffTarget(researcher, description="Academic paper search and analysis"),
-        HandoffTarget(coder, description="Code generation and debugging"),
-    ],
-)
+async def main():
+    parent = await create_agent(
+        model=llm,
+        name="coordinator",
+        delegates=[
+            HandoffTarget(researcher, description="Academic paper search and analysis"),
+            HandoffTarget(coder, description="Code generation and debugging"),
+        ],
+    )
 ```
 
 ## Pattern 4: Background Delegation — `adelegate_background()`
@@ -135,28 +139,29 @@ parent = create_agent(
 Fire-and-forget delegation for long-running tasks. Returns a `task_id` immediately.
 
 ```python
-parent = create_agent(model=llm, name="coordinator", delegates=[researcher])
+async def main():
+    parent = await create_agent(model=llm, name="coordinator", delegates=[researcher])
 
-# Submit background task
-task_id = await parent.adelegate_background(
-    "Comprehensive literature review on quantum computing",
-    delegate_name="researcher",
-)
-print(f"Task submitted: {task_id}")
+    # Submit background task
+    task_id = await parent.adelegate_background(
+        "Comprehensive literature review on quantum computing",
+        delegate_name="researcher",
+    )
+    print(f"Task submitted: {task_id}")
 
-# Do other work...
-result = await parent.ainvoke("What is 2+2?")
+    # Do other work...
+    result = await parent.ainvoke("What is 2+2?")
 
-# Check status
-bg = parent.background_status(task_id)
-print(f"Status: {bg.status}")  # pending, running, completed, failed, cancelled
+    # Check status
+    bg = parent.background_status(task_id)
+    print(f"Status: {bg.status}")  # pending, running, completed, failed, cancelled
 
-# Wait for result when ready
-result = await parent.await_background(task_id, timeout=120.0)
-print(result.output)
+    # Wait for result when ready
+    result = await parent.await_background(task_id, timeout=120.0)
+    print(result.output)
 
-# Cancel if needed
-await parent.cancel_background(task_id)
+    # Cancel if needed
+    await parent.cancel_background(task_id)
 ```
 
 ### Managing background tasks
@@ -176,31 +181,32 @@ removed = mgr.cleanup(max_age_seconds=3600)
 All four patterns work together on the same parent agent:
 
 ```python
-researcher = create_agent(model=llm, name="researcher", tools=[search_tool])
-coder = create_agent(model=llm, name="coder", tools=[run_code])
-reviewer = create_agent(model=llm, name="reviewer")
+async def main():
+    researcher = await create_agent(model=llm, name="researcher", tools=[search_tool])
+    coder = await create_agent(model=llm, name="coder", tools=[run_code])
+    reviewer = await create_agent(model=llm, name="reviewer")
 
-parent = create_agent(
-    model=llm,
-    name="coordinator",
-    # Pattern 1: coder available as a tool in the parent's tool loop
-    tools=[coder.as_tool(description="Write code")],
-    # Pattern 3: researcher as hierarchical delegate
-    delegates=[researcher],
-)
+    parent = await create_agent(
+        model=llm,
+        name="coordinator",
+        # Pattern 1: coder available as a tool in the parent's tool loop
+        tools=[coder.as_tool(description="Write code")],
+        # Pattern 3: researcher as hierarchical delegate
+        delegates=[researcher],
+    )
 
-# Pattern 2: reviewer as transparent handoff
-parent.register_handoff(reviewer, description="Review and critique documents")
+    # Pattern 2: reviewer as transparent handoff
+    parent.register_handoff(reviewer, description="Review and critique documents")
 
-# Pattern 4: long-running background research
-task_id = await parent.adelegate_background(
-    "Deep literature review on RLHF",
-    delegate_name="researcher",
-)
+    # Pattern 4: long-running background research
+    task_id = await parent.adelegate_background(
+        "Deep literature review on RLHF",
+        delegate_name="researcher",
+    )
 
-# Meanwhile, parent handles queries using its tools + handoffs
-result = await parent.ainvoke("Review this document for quality")
-# → transparently handed off to reviewer
+    # Meanwhile, parent handles queries using its tools + handoffs
+    result = await parent.ainvoke("Review this document for quality")
+    # → transparently handed off to reviewer
 ```
 
 ## API Reference

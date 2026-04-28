@@ -5,9 +5,10 @@
 Every `ainvoke` run is automatically scored by the `AutoEvaluator` on relevance, completeness, and accuracy. This happens transparently when `store=` is provided.
 
 ```python
-agent = create_agent(model=llm, store=store, name="eval-agent")
-result = await agent.ainvoke("Explain black holes")
-# Auto-evaluation runs in the background after every call
+async def main():
+    agent = await create_agent(model=llm, store=store, name="eval-agent")
+    result = await agent.ainvoke("Explain black holes")
+    # Auto-evaluation runs in the background after every call
 ```
 
 ## User Feedback
@@ -48,25 +49,27 @@ Saves feedback to the long-term store. Signals skill decay for low-rated runs.
 ```python
 from agloom.feedback.user_feedback import LTSFeedbackHandler
 
-agent = create_agent(
-    model=llm,
-    store=store,
-    feedback_handler=LTSFeedbackHandler(),
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        store=store,
+        feedback_handler=LTSFeedbackHandler(),
+    )
 ```
 
 ### WebhookFeedbackHandler
 
-Posts feedback as JSON to an external URL (requires `agloom[webhook]`):
+Posts feedback as JSON to an external URL (`httpx` is a core dependency of `agloom`):
 
 ```python
 from agloom.feedback.user_feedback import WebhookFeedbackHandler
 
-agent = create_agent(
-    model=llm,
-    store=store,
-    feedback_handler=WebhookFeedbackHandler(url="https://hooks.example.com/feedback"),
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        store=store,
+        feedback_handler=WebhookFeedbackHandler(url="https://hooks.example.com/feedback"),
+    )
 ```
 
 ### CompositeHandler
@@ -81,7 +84,8 @@ handler = CompositeHandler([
     WebhookFeedbackHandler(url="https://hooks.example.com/feedback"),
 ])
 
-agent = create_agent(model=llm, store=store, feedback_handler=handler)
+async def main():
+    agent = await create_agent(model=llm, store=store, feedback_handler=handler)
 ```
 
 !!! info "Error isolation"

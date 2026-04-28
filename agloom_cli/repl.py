@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
 
-import pyfiglet
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
@@ -21,8 +19,13 @@ console = Console()
 def render_banner(text: str = "AGLOOM") -> Panel:
     """Render text as ASCII art using pyfiglet with rich styling."""
     font = "small"
-    fig = pyfiglet.Figlet(font=font, width=120)
-    ascii_art = fig.renderText(text)
+    try:
+        import pyfiglet  # type: ignore[import-not-found]
+
+        fig = pyfiglet.Figlet(font=font, width=120)
+        ascii_art = fig.renderText(text)
+    except Exception:
+        ascii_art = text
 
     t = Text(ascii_art, style="bold cyan")
 
@@ -55,6 +58,7 @@ async def run_shell(
     agent,
     *,
     welcome: str = "Ready to code!",
+    verbose: bool = False,
 ) -> None:
     """Run interactive shell - Deep Agents / Claude Code style UI.
 
@@ -160,37 +164,46 @@ async def run_shell(
             output_parts: list[str] = []
             tool_status: dict = {}
 
-            with console.status("[bold cyan]🤔 Thinking...", spinner="dots") as status:
-                async for event in agent.astream_events(prompt_text):
-                    event_type = event.type
-                    data = event.data
+            if not hasattr(agent, "astream_events"):
+                if not hasattr(agent, "ainvoke"):
+                    raise RuntimeError("Agent supports neither astream_events nor ainvoke — cannot run prompt")
+                console.print(
+                    "[yellow]Warning: Agent does not support streaming events. Using ainvoke instead.[/yellow]"
+                )
+                result = await agent.ainvoke(prompt_text)
+                output_parts.append(result.output)
+            else:
+                with console.status("[bold cyan]🤔 Thinking...", spinner="dots") as status:
+                    async for event in agent.astream_events(prompt_text):
+                        event_type = event.type
+                        data = event.data
 
-                    if event_type == "thinking":
-                        output_preview = data.get("output", "")
-                        if output_preview:
-                            status.update(f"[cyan]🤔 {output_preview[:40]}...")
+                        if event_type == "thinking":
+                            output_preview = data.get("output", "")
+                            if output_preview:
+                                status.update(f"[cyan]🤔 {output_preview[:40]}...")
 
-                    elif event_type == "token":
-                        content = data.get("content", "")
-                        output_parts.append(content)
-                        console.print(content, end="")
+                        elif event_type == "token":
+                            content = data.get("content", "")
+                            output_parts.append(content)
+                            console.print(content, end="")
 
-                    elif event_type == "tool_call":
-                        tool_name = data.get("name", "unknown")
-                        tool_id = data.get("id", "")
-                        tool_status[tool_id] = tool_name
-                        console.print(f"\n[yellow]🔧[/yellow] [bold]{tool_name}[/bold]...", end=" ")
+                        elif event_type == "tool_call":
+                            tool_name = data.get("name", "unknown")
+                            tool_id = data.get("id", "")
+                            tool_status[tool_id] = tool_name
+                            console.print(f"\n[yellow]🔧[/yellow] [bold]{tool_name}[/bold]...", end=" ")
 
-                    elif event_type == "tool_result":
-                        tool_id = data.get("id", "")
-                        tool_name = tool_status.pop(tool_id, "unknown")
-                        result = data.get("output", "")
-                        preview = result[:80] + "..." if len(result) > 80 else result
-                        console.print(f"[green]✓[/green] [dim]{preview}[/dim]")
+                        elif event_type == "tool_result":
+                            tool_id = data.get("id", "")
+                            tool_name = tool_status.pop(tool_id, "unknown")
+                            result = data.get("output", "")
+                            preview = result[:80] + "..." if len(result) > 80 else result
+                            console.print(f"[green]✓[/green] [dim]{preview}[/dim]")
 
-                    elif event_type == "error":
-                        error_msg = data.get("error", "Unknown error")
-                        console.print(f"\n[bold red]✗ Error:[/bold red] {error_msg}")
+                        elif event_type == "error":
+                            error_msg = data.get("error", "Unknown error")
+                            console.print(f"\n[bold red]✗ Error:[/bold red] {error_msg}")
 
             console.print()
 
@@ -225,15 +238,15 @@ async def run_shell(
             console.print("\n[dim]Interrupted (Ctrl+C again to exit)[/dim]")
             try:
                 await asyncio.sleep(0.5)
-            except KeyboardInterrupt:
+            except asyncio.CancelledError:
                 console.print("\n[dim]Goodbye! 👋[/dim]")
                 break
         except Exception as e:
-            console.print(f"\n[bold red]✗ Error:[/bold red] {e}")
-            if "-v" in sys.argv or "--verbose" in sys.argv:
+            if verbose:
                 import traceback
 
                 traceback.print_exc()
+            console.print(f"\n[bold red]✗ Error:[/bold red] {e}")
 
 
 def _show_help() -> None:

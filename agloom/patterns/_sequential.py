@@ -10,9 +10,6 @@ from .worker_gates import drain_for_halt, get_signal_queue
 logger = get_logger(__name__)
 
 
-# ── Context Injectors ─────────────────────────────────────────────────────────
-
-
 def inject_pipeline_input(
     config: ResolvedWorkerConfig,
     prev_result: WorkerResult,
@@ -36,23 +33,10 @@ def inject_planner_context(
     return config.model_copy(update={"task": injected_task})
 
 
-# ── Topological Sort ──────────────────────────────────────────────────────────
-
-
 def topological_sort(
     configs: list[ResolvedWorkerConfig],
 ) -> list[ResolvedWorkerConfig]:
-    """
-    Kahn's algorithm — stable topological sort.
-    Raises ValueError on circular dependency or unknown dependency reference.
-
-    Why topological sort for sequential patterns?
-    ─────────────────────────────────────────────
-    Even though PIPELINE and PLANNER_EXECUTOR are "linear chains", the
-    classifier may emit explicit depends_on edges.  Sorting ensures workers
-    always execute after their declared dependencies, regardless of the
-    order the classifier returned them.
-    """
+    """Topological order of workers by ``depends_on``; raises on cycles or bad refs."""
     id_map = {c.worker_id: c for c in configs}
     in_degree = {c.worker_id: 0 for c in configs}
     children = {c.worker_id: [] for c in configs}
@@ -83,36 +67,23 @@ def topological_sort(
     return result
 
 
-# ── Main Runner ───────────────────────────────────────────────────────────────
-
-
 async def run_sequential_workers(
     agent: dict,
     configs: list[ResolvedWorkerConfig],
-    mode: str,  # "pipeline" | "planner_executor"
+    mode: str,
     stop_on_failure: bool = True,
-    invoke_config: dict | None = None,  # named invoke_config — avoids
-    # shadowing the loop variable 'config'
+    invoke_config: dict | None = None,
 ) -> list[WorkerResult]:
-    """
-    Run workers one at a time in topological order.
+    """Run worker configs in topological order (``depends_on``).
 
-    PIPELINE (stop_on_failure=True):
-      - Each worker gets ONLY the previous step's output (strict pipe)
-      - First upstream failure skips all downstream workers immediately
+    Args:
+        agent: Agent dict (``llm``, ``name``, …).
+        configs: Worker plans with ``worker_id`` and ``depends_on``.
+        mode: ``"pipeline"`` (previous step output only) or ``"planner_executor"`` (full history).
+        stop_on_failure: If True, abort the chain after a failed worker (pipeline default).
+        invoke_config: Forwarded to ``run_worker`` (e.g. LangGraph ``configurable``).
 
-    PLANNER_EXECUTOR (stop_on_failure=False):
-      - Each worker gets the FULL history of all prior steps
-      - Upstream failure is logged; the worker runs anyway with partial history
-
-    L4 HALT_ALL:
-      drain_for_halt() is called before each step except the first.
-      If halt found: all remaining steps marked error="HALT_ALL", loop breaks.
-
-    invoke_config note:
-      Named 'invoke_config' (not 'config') so the for-loop iteration
-      variable 'config' can be freely renamed/modified without accidentally
-      shadowing the LangGraph invoke config.
+    ``HALT_ALL`` on the signal queue skips remaining steps. Returns ordered ``WorkerResult`` list.
     """
     agent_name = agent.get("name", "Agent")
     llm = agent["llm"]
@@ -126,7 +97,6 @@ async def run_sequential_workers(
     logger.event(f"[Sequential/{mode}] {agent_name} — execution order: {[c.worker_id for c in sorted_configs]}")
 
     for idx, config in enumerate(sorted_configs):
-        # ── L4 inter-step check (skip on first step) ──────────────────────────
         if idx > 0 and signal_queue:
             halt = await drain_for_halt(
                 signal_queue,
@@ -150,7 +120,6 @@ async def run_sequential_workers(
                     )
                 break
 
-        # ── Check upstream failures ───────────────────────────────────────────
         upstream_failed = [d for d in config.depends_on if d in failed_ids]
         if upstream_failed:
             if stop_on_failure:
@@ -186,7 +155,6 @@ async def run_sequential_workers(
                 f"running anyway (stop_on_failure=False)."
             )
 
-        # ── Context injection ─────────────────────────────────────────────────
         if mode == "pipeline" and config.depends_on:
             prev_id = config.depends_on[-1]
             prev_result = results_map.get(prev_id)
@@ -198,7 +166,6 @@ async def run_sequential_workers(
             if history:
                 config = inject_planner_context(config, history)
 
-        # ── Execute ───────────────────────────────────────────────────────────
         logger.event(
             f"[Sequential/{mode}] {agent_name} — "
             f"step {idx + 1}/{len(sorted_configs)} "
@@ -208,7 +175,6 @@ async def run_sequential_workers(
         results_map[config.worker_id] = result
         ordered_results.append(result)
 
-        # ── Post-execution failure handling ───────────────────────────────────
         if result.signal == SignalType.FAILED:
             failed_ids.add(config.worker_id)
             if stop_on_failure:

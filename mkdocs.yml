@@ -9,8 +9,8 @@ copyright: "&copy; 2026 MEDHIRA"
 
 theme:
   name: material
-  logo: assets/medhira-logo.png
-  favicon: assets/medhira-logo.png
+  logo: https://raw.githubusercontent.com/HELLOMEDHIRA/agloom/master/docs/assets/medhira-logo.svg
+  favicon: https://raw.githubusercontent.com/HELLOMEDHIRA/agloom/master/docs/assets/medhira-logo.png
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -104,7 +104,6 @@ nav:
       - Errors & Warnings: configuration/errors.md
   - Guides:
       - Production Integration: guides/production.md
-      - CLI Reference: guides/cli.md
   - Examples:
       - Basic Agent: examples/basic.md
       - Tools & REACT: examples/tools.md

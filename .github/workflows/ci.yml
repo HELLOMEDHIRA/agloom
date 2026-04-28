@@ -18,26 +18,26 @@ jobs:
           version: "latest"
 
       - name: Set up Python
-        run: uv python install 3.13
+        run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        run: uv sync --all-extras --group dev
 
       - name: Ruff lint
-        run: uv run ruff check agloom/
+        run: uv run ruff check agloom agloom_cli tests
 
       - name: Ruff format check
-        run: uv run ruff format --check agloom/
+        run: uv run ruff format --check agloom agloom_cli tests
 
       - name: Type check (pyrefly)
-        run: uv run pyrefly check agloom/
+        run: uv run pyrefly check agloom agloom_cli examples tests
 
   test:
     needs: lint
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -51,9 +51,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        run: uv sync --all-extras --group dev
 
       - name: Run tests
-        env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-        run: uv run python test.py
+        run: uv run pytest tests -q

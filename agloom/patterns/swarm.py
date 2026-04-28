@@ -156,17 +156,27 @@ async def handle_swarm(
         ),
         HumanMessage(content=synthesis_prompt),
     ]
-    synthesis_resp = await asyncio.wait_for(
-        llm.ainvoke(synth_input),
-        timeout=_timeout,
-    )
-    raw_messages.extend(synth_input)
-    raw_messages.append(synthesis_resp)
-    synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
-    synth_usage = _extract_token_usage(synthesis_resp)
-    if synth_usage:
-        usage = _merge_token_usage(usage, synth_usage)
-    synthesis = synthesis_resp.content.strip()
+    synthesis_error: str | None = None
+    try:
+        synthesis_resp = await asyncio.wait_for(
+            llm.ainvoke(synth_input),
+            timeout=_timeout,
+        )
+        raw_messages.extend(synth_input)
+        raw_messages.append(synthesis_resp)
+        synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
+        synth_usage = _extract_token_usage(synthesis_resp)
+        if synth_usage:
+            usage = _merge_token_usage(usage, synth_usage)
+        synthesis = synthesis_resp.content.strip()
+    except TimeoutError:
+        synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
+        synthesis_error = "SynthesisTimeout"
+        synthesis = perspectives
+    except Exception:
+        synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
+        synthesis_error = "SynthesisFailed"
+        synthesis = perspectives
     steps.append(
         _make_step(
             StepType.LLM_CALL,
@@ -187,6 +197,7 @@ async def handle_swarm(
         success=True,
         steps_taken=len(results) + 1,
         worker_results=list(results),
+        error=synthesis_error,
         analysis=analysis,
         steps=steps,
         token_usage=usage,

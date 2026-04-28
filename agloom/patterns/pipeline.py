@@ -67,16 +67,13 @@ async def handle_pipeline(
 
     enhanced_configs = []
     for i, wcfg in enumerate(worker_configs):
-        prompt = (
-            wcfg.system_prompt
-            if wcfg.system_prompt
-            not in (
-                agent.get("system_prompt", ""),
-                "You are a helpful AI assistant.",
-            )
-            else (PIPELINE_FIRST_WORKER_PROMPT if i == 0 else PIPELINE_SYSTEM_PROMPT)
-        )
-        enhanced_configs.append(wcfg.model_copy(update={"system_prompt": prompt}))
+        prompt = wcfg.system_prompt
+        if not prompt or prompt in (
+            agent.get("system_prompt", ""),
+            "You are a helpful AI assistant.",
+        ):
+            prompt = PIPELINE_FIRST_WORKER_PROMPT if i == 0 else PIPELINE_SYSTEM_PROMPT
+        enhanced_configs.append(wcfg.model_copy(update={"system_prompt": prompt}, deep=True))
 
     worker_results = await run_sequential_workers(
         agent=agent,
@@ -109,9 +106,11 @@ async def handle_pipeline(
         final_output = successful[-1].output
         success = True
     else:
+        errors = [f"{r.worker_id}: {r.error or 'unknown'}" for r in worker_results if r.error]
         final_output = (
-            f"Pipeline failed — no successful steps completed.\n"
-            f"Last error: {worker_results[-1].error if worker_results else 'unknown'}"
+            "Pipeline failed — no successful steps completed.\nErrors:\n  - " + "\n  - ".join(errors)
+            if errors
+            else "All steps failed without error details."
         )
         success = False
 

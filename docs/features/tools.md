@@ -17,11 +17,12 @@ def calculate(expression: str) -> str:
     """Evaluate a math expression."""
     return str(eval(expression))
 
-agent = create_agent(
-    model=llm,
-    tools=[search_web, calculate],
-    name="tool-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        tools=[search_web, calculate],
+        name="tool-agent",
+    )
 ```
 
 When tools are provided and the query needs them, agloom automatically selects the **REACT** pattern.
@@ -38,12 +39,13 @@ agloom accepts tools in multiple formats:
 | Dict with function | `{"name": "my_tool", "func": my_fn}` |
 
 ```python
-# All of these work:
-agent = create_agent(model=llm, tools=[
-    search_web,              # @tool decorated
-    MyCustomTool(),          # BaseTool subclass
-    lambda x: str(x),       # plain callable (auto-wrapped)
-])
+async def main():
+    # All of these work:
+    agent = await create_agent(model=llm, tools=[
+        search_web,              # @tool decorated
+        MyCustomTool(),          # BaseTool subclass
+        lambda x: str(x),       # plain callable (auto-wrapped)
+    ])
 ```
 
 !!! warning "Unknown types are skipped"
@@ -68,8 +70,8 @@ def save_memory(data: str) -> str:
     """My custom save."""
     return data
 
-# This raises:
-create_agent(model=llm, tools=[save_memory])
+# This raises (when awaited in async code):
+await create_agent(model=llm, tools=[save_memory])
 # ValueError: Tool name(s) save_memory are reserved by agloom
 # for internal use. Please rename your tool(s) to avoid conflicts.
 # Reserved names: ['load_skill', 'recall_memory', 'save_memory']
@@ -89,12 +91,13 @@ def store_data(data: str) -> str:  # renamed from save_memory
 By default, agloom exposes `save_memory` and `recall_memory` as tools the agent can use. To disable this:
 
 ```python
-agent = create_agent(
-    model=llm,
-    tools=[my_tool],
-    enable_memory_tools=False,  # no memory tools exposed
-    name="no-memory-tools",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        tools=[my_tool],
+        enable_memory_tools=False,  # no memory tools exposed
+        name="no-memory-tools",
+    )
 ```
 
 ## Tool Interrupts (HITL)
@@ -106,13 +109,14 @@ async def approve(context):
     print(f"Tool '{context['tool_name']}' wants to run. Approve? (y/n)")
     return True  # or False to block
 
-agent = create_agent(
-    model=llm,
-    tools=[delete_file, read_file],
-    interrupt_before_tools=["delete_file"],
-    user_callback=approve,
-    name="safe-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        tools=[delete_file, read_file],
+        interrupt_before_tools=["delete_file"],
+        user_callback=approve,
+        name="safe-agent",
+    )
 ```
 
 See [Human-in-the-Loop](hitl.md) for all 4 interrupt levels.

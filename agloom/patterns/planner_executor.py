@@ -117,6 +117,7 @@ async def handle_planner_executor(
     )
 
     successful = sum(1 for r in worker_results if r.signal.value == "SUCCESS")
+    all_failed = successful == 0
     logger.event(
         f"[PLANNER_EXECUTOR] ✅ Done — {successful}/{len(worker_results)} steps succeeded, {len(output)} chars."
     )
@@ -126,7 +127,7 @@ async def handle_planner_executor(
         query=query,
         output=output,
         steps_taken=len(worker_results) + 1,
-        success=successful > 0,
+        success=not all_failed,
         analysis=analysis,
         worker_results=worker_results,
         steps=steps,
@@ -171,5 +172,7 @@ async def _synthesize(
         return resp.content, llm_messages
     except Exception as e:
         logger.error(f"[PLANNER_EXECUTOR] Synthesis failed: {e}")
-        successful = [r for r in worker_results if r.signal.value == "SUCCESS"]
-        return (successful[-1].output if successful else "All execution steps failed."), llm_messages
+        successful_workers = [r for r in worker_results if r.signal.value == "SUCCESS"]
+        if not successful_workers:
+            return ("All execution steps failed.", llm_messages)
+        return (successful_workers[-1].output, llm_messages)

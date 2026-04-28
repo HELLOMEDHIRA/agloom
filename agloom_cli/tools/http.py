@@ -10,6 +10,15 @@ import httpx
 from ..tool_loader import tool
 
 
+def _redact_header(name: str, value: str) -> str:
+    n = name.lower()
+    if n in {"authorization", "cookie", "set-cookie"}:
+        return "[REDACTED]"
+    if "token" in n or "secret" in n:
+        return "[REDACTED]"
+    return value
+
+
 @tool
 async def http_request(
     url: str,
@@ -52,16 +61,19 @@ async def http_request(
             if response.headers:
                 result_parts.append("\n[Headers]")
                 for k, v in response.headers.items():
-                    result_parts.append(f"  {k}: {v}")
+                    result_parts.append(f"  {k}: {_redact_header(k, v)}")
 
             if response.text:
                 result_parts.append("\n[Body]")
                 try:
                     parsed = json.loads(response.text)
                     formatted = json.dumps(parsed, indent=2)
+                    if len(formatted) > 5000:
+                        formatted = formatted[:5000] + f"\n... (truncated, {len(formatted)} total chars)"
                     result_parts.append(formatted)
                 except json.JSONDecodeError:
-                    result_parts.append(response.text[:2000])
+                    text = response.text[:2000]
+                    result_parts.append(text)
                     if len(response.text) > 2000:
                         result_parts.append(f"\n... (truncated, {len(response.text)} total chars)")
 

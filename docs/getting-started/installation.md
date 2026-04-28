@@ -8,6 +8,12 @@
     pip install agloom
     ```
 
+    If dependency resolution pulls in **NumPy 2.x** and you hit binary or stack issues, constrain before or with the install (this matches the repo’s `uv` override):
+
+    ```bash
+    pip install "numpy>=1.26.4,<2" agloom
+    ```
+
 === "uv"
 
     ```bash
@@ -29,10 +35,8 @@ agloom supports multiple LLM providers. Install only what you need:
     ```bash
     pip install agloom[groq]         # Groq (Llama, Mixtral)
     pip install agloom[nvidia]       # NVIDIA NIM
-    pip install agloom[huggingface]  # HuggingFace endpoints
-    pip install agloom[webhook]      # Webhook feedback (httpx)
-    pip install agloom[all]          # All providers
-    pip install agloom[docs]         # Documentation tools
+    pip install agloom[all]          # Groq + NVIDIA extras together
+    pip install agloom[docs]         # MkDocs (same stack as dev docs builds)
     ```
 
 === "uv"
@@ -46,7 +50,7 @@ agloom supports multiple LLM providers. Install only what you need:
 
 ```python
 import agloom
-print(agloom.__version__)  # → 0.1.1
+print(agloom.__version__)  # installed version from importlib.metadata
 ```
 
 ## Environment Variables

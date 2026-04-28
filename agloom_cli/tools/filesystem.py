@@ -7,30 +7,33 @@ from pathlib import Path
 
 from ..tool_loader import tool
 
+_MAX_READ_BYTES = 10 * 1024 * 1024  # 10 MB — prevent memory exhaustion
+
 
 @tool
-async def read_file(path: str, encoding: str = "utf-8") -> str:
+async def read_file(path: str, encoding: str = "utf-8", max_size: int = 1024 * 1024) -> str:
     """Read the contents of a file.
 
     Args:
         path: Absolute or relative path to the file
         encoding: File encoding (default: utf-8)
+        max_size: Maximum file size to read in bytes (default: 1MB)
 
     Returns:
         The contents of the file as a string
     """
     try:
         file_path = _resolve_path(path)
+        size = file_path.stat().st_size
+        if size > max_size:
+            return f"Error: File too large ({size} bytes). Max allowed: {max_size} bytes. Use max_size parameter to override."
         return file_path.read_text(encoding=encoding)
     except FileNotFoundError:
         return f"Error: File not found: {path}"
     except PermissionError:
         return f"Error: Permission denied: {path}"
-    except UnicodeDecodeError:
-        try:
-            return file_path.read_text(encoding="latin-1")
-        except Exception as e:
-            return f"Error: Could not decode file: {e}"
+    except UnicodeDecodeError as e:
+        return f"Error: Could not decode file as {encoding}: {e}"
     except Exception as e:
         return f"Error reading file: {e}"
 
@@ -176,15 +179,19 @@ async def copy_file(source: str, destination: str, overwrite: bool = False) -> s
         if not src.exists():
             return f"Error: Source does not exist: {source}"
 
-        if dst.exists() and not overwrite:
-            return f"Error: Destination exists: {destination}"
+        dst.parent.mkdir(parents=True, exist_ok=True)
 
         if src.is_dir():
             if dst.exists():
+                if not overwrite:
+                    return f"Error: Destination exists: {destination}"
                 shutil.rmtree(dst)
             shutil.copytree(src, dst)
             return f"Directory copied: {source} → {destination}"
-        dst.parent.mkdir(parents=True, exist_ok=True)
+
+        if dst.exists() and not overwrite:
+            return f"Error: Destination exists: {destination}"
+
         shutil.copy2(src, dst)
         return f"File copied: {source} → {destination}"
     except Exception as e:
@@ -210,10 +217,11 @@ async def move_file(source: str, destination: str, overwrite: bool = False) -> s
         if not src.exists():
             return f"Error: Source does not exist: {source}"
 
+        dst.parent.mkdir(parents=True, exist_ok=True)
+
         if dst.exists() and not overwrite:
             return f"Error: Destination exists: {destination}"
 
-        dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dst))
         return f"Moved: {source} → {destination}"
     except Exception as e:
@@ -295,17 +303,26 @@ async def search_files(
         return f"Error searching: {e}"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Helpers
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _resolve_path(path: str) -> Path:
-    """Resolve a path relative to the current working directory."""
+    """Resolve a path relative to the current working directory.
+
+    Relative paths are anchored at cwd and are rejected if `..` segments
+    escape that root (mitigates prompt-injection-driven traversal).
+    Absolute paths are returned as-is — user-explicit and out of scope.
+    """
     p = Path(path)
     if p.is_absolute():
         return p
-    return Path.cwd() / p
+    cwd = Path.cwd().resolve()
+    resolved = (cwd / p).resolve()
+    try:
+        resolved.relative_to(cwd)
+    except ValueError as exc:
+        raise ValueError(f"Path traversal blocked: {path!r} resolves outside {cwd}") from exc
+    return resolved
 
 
 def _format_size(size: float) -> str:

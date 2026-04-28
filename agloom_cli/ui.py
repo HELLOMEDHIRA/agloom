@@ -41,9 +41,7 @@ class RichUI:
     def _generate_thread_id(self) -> str:
         return uuid.uuid4().hex[:8]
 
-    # ═══════════════════════════════════════════════════════════════════════════
     # HEADER - ASCII Art Logo
-    # ═══════════════════════════════════════════════════════════════════════════
 
     def render_header(self) -> Panel:
         """Render ASCII art header like Deep Agents."""
@@ -70,9 +68,7 @@ class RichUI:
             padding=(0, 1),
         )
 
-    # ═══════════════════════════════════════════════════════════════════════════
     # STATUS BAR
-    # ═══════════════════════════════════════════════════════════════════════════
 
     def render_status_bar(self, ready_message: str = "Ready to code!") -> Panel:
         """Render status bar with LangSmith, thread ID, MCP tools."""
@@ -100,9 +96,7 @@ class RichUI:
             padding=(0, 1),
         )
 
-    # ═══════════════════════════════════════════════════════════════════════════
     # CHAT AREA
-    # ═══════════════════════════════════════════════════════════════════════════
 
     def render_user_message(self, message: str) -> Panel:
         """Render user message in chat area."""
@@ -142,9 +136,7 @@ class RichUI:
         """Estimate token count (rough ~4 chars per token)."""
         self.token_count += len(text) // 4
 
-    # ═══════════════════════════════════════════════════════════════════════════
     # INPUT SECTION
-    # ═══════════════════════════════════════════════════════════════════════════
 
     def render_input_prompt(self) -> str:
         """Render input prompt (to use with input())."""
@@ -181,9 +173,7 @@ class RichUI:
             padding=(0, 1),
         )
 
-    # ═══════════════════════════════════════════════════════════════════════════
     # THINKING / LOADING
-    # ═══════════════════════════════════════════════════════════════════════════
 
     def render_thinking(self, message: str = "Thinking...") -> Progress:
         """Create a thinking progress indicator."""
@@ -204,9 +194,7 @@ class RichUI:
         color = "green" if success else "red"
         self.console.print(f"[{color}]✓[/{color}] [dim]{preview}[/dim]")
 
-    # ═══════════════════════════════════════════════════════════════════════════
     # FULL RENDER
-    # ═══════════════════════════════════════════════════════════════════════════
 
     def render_welcome(self, tools_count: int = 0) -> None:
         """Render complete welcome screen."""
@@ -239,9 +227,7 @@ class RichUI:
         self.console.print(self.render_bottom_status())
 
 
-# ═══════════════════════════════════════════════════════════════════════════
 # SINGLETON
-# ═══════════════════════════════════════════════════════════════════════════
 
 _ui_instance: RichUI | None = None
 

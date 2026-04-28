@@ -1,29 +1,9 @@
-# delegation.py
-# ─────────────────────────────────────────────────────────────────────────────
-# Task Delegation System for agloom.
-#
-# Four delegation patterns, all composable:
-#
-#   1. as_tool()              — expose an agent as a LangChain tool
-#   2. register_handoff()     — transparent classifier-driven hand-off
-#   3. delegates=[]           — hierarchical delegation via run_delegate()
-#   4. adelegate_background() — fire-and-forget background delegation
-#
-# Design decisions:
-#
-#   - HandoffTarget is the universal descriptor for a delegate agent.
-#     It holds the agent, a name/description for routing, and optional
-#     filter functions for conditional hand-off.
-#
-#   - _build_delegation_context() assembles a description block injected
-#     into the classifier prompt so the LLM can pick the right delegate.
-#
-#   - Background tasks use asyncio.Task with a tracking dict on the parent
-#     config. Status/cancel/await are first-class operations.
-#
-#   - All delegation is async-first; the sync invoke() wrapper on
-#     UnifiedAgent handles the bridge.
-# ─────────────────────────────────────────────────────────────────────────────
+"""Delegation between agents: ``HandoffTarget``, background tasks, ``make_agent_tool``.
+
+Handoff targets feed classifier context; ``run_delegate`` / ``resolve_handoff`` execute
+or select a delegate. ``BackgroundDelegationManager`` lives on ``config["_bg_delegation_manager"]``.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -40,37 +20,22 @@ from .models import ExecutionResult
 logger = get_logger(__name__)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  HandoffTarget — universal delegate descriptor
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 class HandoffTarget:
-    """
-    Describes a delegate agent that can receive work from a parent.
+    """Routes work to another agent (``UnifiedAgent`` or compatible).
 
-    Parameters
-    ----------
-    agent : UnifiedAgent
-        The delegate agent instance.
-    name : str | None
-        Display name for routing/logging. Defaults to agent.name.
-    description : str
-        What this delegate specialises in. Injected into the classifier
-        prompt so the LLM knows when to route here.
-    filter_fn : Callable[[str], bool] | None
-        Optional sync/async predicate. When set, hand-off only occurs
-        if filter_fn(query) returns True. None = always eligible.
-    input_transform : Callable[[str], str] | None
-        Optional query transform before delegation. Useful for
-        stripping prefixes or reformatting.
+    Attributes:
+        agent: Callee with ``ainvoke``.
+        name: Stable id for ``resolve_handoff`` / classifier text (defaults to ``agent.name``).
+        description: Shown in classifier delegate list; should say what to send here.
+        filter_fn: Optional predicate on query (sync or async); if false, target skipped.
+        input_transform: Optional query rewrite before ``ainvoke`` (sync or async).
     """
 
     __slots__ = ("agent", "description", "filter_fn", "input_transform", "name")
 
     def __init__(
         self,
-        agent: Any,  # UnifiedAgent — Any to avoid circular import
+        agent: Any,
         *,
         name: str | None = None,
         description: str = "",
@@ -87,25 +52,8 @@ class HandoffTarget:
         return f"HandoffTarget(name={self.name!r}, description={self.description[:60]!r})"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Delegation Context Builder
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 def _build_delegation_context(targets: list[HandoffTarget]) -> str:
-    """
-    Build a text block describing available delegates for injection
-    into the classifier prompt.
-
-    Format:
-      AVAILABLE DELEGATES
-      ═══════════════════
-        - [research_agent] Research and summarize academic papers
-        - [code_agent] Write, review, and debug code
-
-    The classifier uses this to decide whether to route to a delegate
-    (via HANDOFF pattern) instead of handling locally.
-    """
+    """Classifier prompt fragment listing named delegates."""
     if not targets:
         return ""
 
@@ -118,10 +66,7 @@ def _build_delegation_context(targets: list[HandoffTarget]) -> str:
 
 
 def _build_delegate_tool_descriptions(targets: list[HandoffTarget]) -> str:
-    """
-    Build tool-style descriptions for delegates, used when delegates
-    are exposed as callable tools to the parent agent.
-    """
+    """One-line-per-delegate descriptions for tool-style exposure."""
     if not targets:
         return ""
     parts = []
@@ -129,11 +74,6 @@ def _build_delegate_tool_descriptions(targets: list[HandoffTarget]) -> str:
         desc = t.description or f"Delegate to {t.name}"
         parts.append(f"delegate_{t.name}: {desc}")
     return "\n".join(parts)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Handoff Resolution
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 async def _check_filter(target: HandoffTarget, query: str) -> bool:
@@ -161,31 +101,17 @@ async def resolve_handoff(
     query: str,
     delegate_name: str | None = None,
 ) -> HandoffTarget | None:
-    """
-    Find the best HandoffTarget for a query.
-
-    Priority:
-      1. If delegate_name is specified (from classifier), match by name.
-      2. Otherwise, return the first target whose filter_fn passes.
-
-    Returns None if no target matches.
-    """
+    """Match ``delegate_name`` if set, else first target passing ``filter_fn``."""
     if delegate_name:
         for t in targets:
             if t.name == delegate_name and await _check_filter(t, query):
                 return t
 
-    # Fallback: first eligible target
     for t in targets:
         if await _check_filter(t, query):
             return t
 
     return None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Delegate Execution
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 async def run_delegate(
@@ -197,12 +123,7 @@ async def run_delegate(
     lt_namespace: tuple | None = None,
     context: dict | None = None,
 ) -> ExecutionResult:
-    """
-    Execute a query on a delegate agent.
-
-    Applies input_transform if set, then calls delegate.ainvoke().
-    The result is returned as-is — the parent can wrap/transform it.
-    """
+    """Run ``target.agent.ainvoke`` after optional ``input_transform``."""
     transformed = await _transform_query(target, query)
 
     logger.event(
@@ -224,11 +145,6 @@ async def run_delegate(
         f"[Delegation] ← {target.name}: success={result.success} pattern={result.pattern_used.value} {dur_ms}ms"
     )
     return result
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Background Delegation
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class BackgroundTaskStatus(str, Enum):
@@ -257,12 +173,7 @@ class BackgroundTask:
 
 
 class BackgroundDelegationManager:
-    """
-    Manages fire-and-forget background delegations on a parent agent.
-
-    Stored on the parent config as config["_bg_delegation_manager"].
-    Each background task gets a UUID and is tracked in self._tasks.
-    """
+    """Bookkeeping for ``adelegate_background`` (task ids, status, await/cancel)."""
 
     def __init__(self) -> None:
         self._tasks: dict[str, BackgroundTask] = {}
@@ -278,12 +189,7 @@ class BackgroundDelegationManager:
         lt_namespace: tuple | None = None,
         context: dict | None = None,
     ) -> str:
-        """
-        Submit a background delegation. Returns task_id immediately.
-
-        The delegation runs as an asyncio.Task. Use status(), await_result(),
-        or cancel() to manage it.
-        """
+        """Start delegation in a task; return ``task_id``."""
         task_id = str(uuid.uuid4())
         bg = BackgroundTask(
             task_id=task_id,
@@ -331,12 +237,7 @@ class BackgroundDelegationManager:
         *,
         timeout: float | None = None,
     ) -> ExecutionResult | None:
-        """
-        Wait for a background task to complete and return its result.
-
-        Returns None if task_id not found or task failed/cancelled.
-        Raises asyncio.TimeoutError if timeout expires.
-        """
+        """Block until the task finishes; ``None`` if missing or no result."""
         bg = self._tasks.get(task_id)
         if bg is None:
             return None
@@ -347,11 +248,7 @@ class BackgroundDelegationManager:
         return bg.result
 
     async def cancel(self, task_id: str) -> bool:
-        """
-        Cancel a running background task.
-
-        Returns True if the task was cancelled, False if not found or already done.
-        """
+        """Cancel a running task if possible."""
         bg = self._tasks.get(task_id)
         if bg is None:
             return False
@@ -381,32 +278,13 @@ class BackgroundDelegationManager:
         return len(to_remove)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Tool Factory — as_tool()
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 def make_agent_tool(
-    agent: Any,  # UnifiedAgent
+    agent: Any,
     *,
     name: str | None = None,
     description: str | None = None,
 ) -> Any:
-    """
-    Wrap a UnifiedAgent as a LangChain StructuredTool.
-
-    The resulting tool can be added to another agent's tool list,
-    enabling tool-call-based delegation.
-
-    Parameters
-    ----------
-    agent : UnifiedAgent
-        The agent to wrap.
-    name : str | None
-        Tool name. Defaults to f"ask_{agent.name}".
-    description : str | None
-        Tool description. Defaults to a generic delegation description.
-    """
+    """Return a ``StructuredTool`` that calls ``agent.ainvoke``."""
     from langchain_core.tools import StructuredTool
 
     tool_name = name or f"ask_{agent.name}"
@@ -415,7 +293,6 @@ def make_agent_tool(
     )
 
     async def _invoke(query: str) -> str:
-        """Invoke the delegate agent with a query."""
         result = await agent.ainvoke(query)
         return result.output
 

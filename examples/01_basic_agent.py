@@ -15,7 +15,7 @@ llm = ChatGroq(
 
 
 async def main():
-    agent = create_agent(model=llm, name="basic-agent")
+    agent = await create_agent(model=llm, name="basic-agent")
 
     result = await agent.ainvoke("What are the three laws of thermodynamics?")
 

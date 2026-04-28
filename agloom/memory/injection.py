@@ -25,12 +25,9 @@ async def build_memory_context(
     store_limit: int = 3,
     max_chars: int = DEFAULT_MAX_CHARS,
 ) -> str:
-    """Async — works with all store backends. Hard-caps at max_chars
-    (keeps most recent content when trimming).
-    """
+    """Concatenate session recap and LT search hits; trim to ``max_chars`` (tail preserved)."""
     parts: list[str] = []
 
-    # ── Session history ───────────────────────────────────────────────────────
     if session is not None and thread_id:
         try:
             session_ctx = await session.aformat_context(thread_id, last_n=last_n)
@@ -40,7 +37,6 @@ async def build_memory_context(
             # Never crash run_fresh for a memory read failure
             logger.warning(f"MemoryInjection: session read failed ({exc!r}) — skipping.")
 
-    # ── Long-term store ───────────────────────────────────────────────────────
     if store is not None and namespace and query:
         try:
             store_ctx = await store.aformat_context(namespace, query, limit=store_limit)
@@ -54,7 +50,6 @@ async def build_memory_context(
 
     context = "\n\n".join(parts)
 
-    # ── Hard cap ──────────────────────────────────────────────────────────────
     if len(context) > max_chars:
         original_len = len(context)
         context = context[-max_chars:]  # keep the most recent content

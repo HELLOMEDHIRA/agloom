@@ -1,49 +1,55 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
 
+# Paths checked by CI (ruff + pyrefly). Keep in sync with .github/workflows/ci.yml.
+PY_PKGS := agloom agloom_cli tests
+
 # ── Development ──────────────────────────────────────────────────────────────
 
 .PHONY: install
-install: ## Install all dependencies (dev + docs)
-	uv sync --all-extras
+install: ## Install all dependencies (dev + docs + optional extras)
+	uv sync --all-extras --group dev
 
 .PHONY: install-dev
-install-dev: ## Install dev dependencies only
-	uv sync
+install-dev: ## Install dev dependencies (including pytest, ruff, pyrefly)
+	uv sync --group dev
 
 # ── Quality ──────────────────────────────────────────────────────────────────
 
 .PHONY: lint
-lint: ## Run ruff linter
-	ruff check .
+lint: ## Run ruff linter (same scope as CI)
+	uv run ruff check $(PY_PKGS)
 
 .PHONY: lint-fix
 lint-fix: ## Run ruff linter with auto-fix
-	ruff check . --fix
+	uv run ruff check $(PY_PKGS) --fix
 
 .PHONY: format
 format: ## Auto-format code with ruff
-	ruff format .
+	uv run ruff format $(PY_PKGS)
 
 .PHONY: format-check
 format-check: ## Check formatting without changing files
-	ruff format --check .
+	uv run ruff format --check $(PY_PKGS)
+
+.PHONY: typecheck
+typecheck: ## Run pyrefly on library, CLI, examples, and tests (same as CI)
+	uv run pyrefly check agloom agloom_cli examples tests
+
+.PHONY: pyrefly
+pyrefly: typecheck ## Alias for typecheck
 
 .PHONY: check
-check: lint format-check ## Run all quality checks (lint + format)
+check: lint format-check typecheck ## Lint, format check, and typecheck (matches CI lint job)
 
 .PHONY: fix
-fix: lint-fix format ## Auto-fix lint issues and format code
+fix: lint-fix format ## Auto-fix lint issues and format code (does not run pyrefly)
 
 # ── Testing ──────────────────────────────────────────────────────────────────
 
 .PHONY: test
-test: ## Run full test suite (requires GROQ_API_KEY)
-	python test.py
-
-.PHONY: test-unit
-test-unit: ## Run unit tests only (no API key needed)
-	python -c "from test import *; sec1_models_and_enums(); sec2_agent_config(); sec3_frozen_validation(); sec4_memory(); sec5_helpers(); sec6_skills_models(); sec7_feedback(); sec8_tools(); print('\nUnit tests done.')"
+test: ## Run pytest suite (no API keys required)
+	uv run pytest tests -q
 
 # ── Build & Publish ──────────────────────────────────────────────────────────
 
@@ -63,11 +69,11 @@ publish: build ## Publish to PyPI (requires UV_PUBLISH_TOKEN)
 
 .PHONY: docs
 docs: ## Serve docs locally (http://127.0.0.1:8000)
-	mkdocs serve
+	uv run mkdocs serve
 
 .PHONY: docs-build
 docs-build: ## Build static docs site
-	mkdocs build
+	uv run mkdocs build
 
 # ── Cleanup ──────────────────────────────────────────────────────────────────
 

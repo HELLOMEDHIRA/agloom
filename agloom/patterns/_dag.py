@@ -1,16 +1,4 @@
-"""
-_dag.py — DAG Level Grouping Utility
-
-Shared by HYBRID_DAG pattern.
-
-Converts a flat list of ResolvedWorkerConfig into execution levels:
-  Level 0 → depends_on = []           (no deps — run immediately)
-  Level 1 → all deps are in Level 0   (run after Level 0 completes)
-  Level N → all deps are in Level 0..N-1
-
-Workers in the SAME level run in PARALLEL.
-Workers in DIFFERENT levels run SEQUENTIALLY (level N+1 waits for level N).
-"""
+"""Group ``ResolvedWorkerConfig`` into parallel levels for HYBRID_DAG (same level parallel, levels sequential)."""
 
 from ..logging_utils import get_logger
 from ..models import ResolvedWorkerConfig, SignalType, WorkerResult

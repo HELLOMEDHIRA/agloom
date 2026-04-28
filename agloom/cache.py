@@ -1,10 +1,16 @@
+"""Semantic query cache: Qdrant + embeddings, pattern-scoped TTL, async-safe sync client via thread pool.
+
+Use ``create_cache`` to build the dict passed as ``query_cache`` to ``create_agent``.
+``cache_get`` / ``cache_set`` are invoked from ``run_fresh`` after classification.
+"""
+
 import asyncio
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
-from langchain.embeddings import Embeddings
+from langchain_core.embeddings import Embeddings
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
@@ -23,8 +29,11 @@ CACHE_TTL: dict[str, int] = {
     "DIRECT": 86400,
     "REACT": 3600,
     "SUPERVISOR": 1800,
-    "PLANNER": 1800,
+    "PIPELINE": 3600,
+    "PLANNER_EXECUTOR": 1800,
     "REFLECTION": 0,
+    "SWARM": 1800,
+    "BLACKBOARD": 0,
     "HYBRID_DAG": 0,
 }
 
@@ -38,6 +47,7 @@ def create_cache(
     qdrant_api_key: str | None = None,
     vector_size: int = 384,
 ) -> dict:
+    """Open or create the Qdrant collection and return ``{"client", "embeddings", "threshold"}``."""
     if qdrant_url:
         client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
         logger.event(f"[Cache] Persistent Qdrant at {qdrant_url}")
@@ -184,8 +194,6 @@ async def cache_cleanup(cache: dict) -> int:
 
 async def start_cleanup_loop(cache: dict, interval_seconds: int = 1800) -> None:
     """Background cleanup — wire as asyncio.create_task() at app startup."""
-    import asyncio
-
     logger.event(f"[Cache] Cleanup loop started (interval={interval_seconds}s)")
     while True:
         await asyncio.sleep(interval_seconds)

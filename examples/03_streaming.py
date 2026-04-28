@@ -17,7 +17,7 @@ llm = ChatGroq(
 async def demo_token_stream():
     """Token-level streaming — prints tokens as they arrive."""
     print("=== Token Streaming ===\n")
-    agent = create_agent(model=llm, name="stream-agent")
+    agent = await create_agent(model=llm, name="stream-agent")
 
     async for token in agent.astream(
         "Explain the Pythagorean theorem in 2 sentences",
@@ -30,7 +30,7 @@ async def demo_token_stream():
 async def demo_event_stream():
     """Event streaming — combined token + event streaming for rich UIs."""
     print("=== Event Streaming (tokens + events) ===\n")
-    agent = create_agent(model=llm, name="event-agent")
+    agent = await create_agent(model=llm, name="event-agent")
 
     async for event in agent.astream_events(
         "What causes rainbows?",

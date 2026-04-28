@@ -1,11 +1,19 @@
 # The create_agent API
 
-`create_agent` is the single entry point for creating agloom agents. It validates all inputs, wires up the full pipeline, and returns a ready-to-use `UnifiedAgent`.
+`create_agent` is the single entry point for creating agloom agents. It validates core inputs via `AgentConfig`, applies factory-only options (frozen, harness, delegates, …), wires up the full pipeline, and returns a ready-to-use `UnifiedAgent`.
 
 ## Signature
 
 ```python
-def create_agent(
+# Async usage (recommended)
+agent = await create_agent(model=llm, tools=[...], name="my-agent")
+
+# Sync usage (auto-detects event loop)
+agent = create_agent_sync(model=llm, tools=[...], name="my-agent")
+```
+
+```python
+async def create_agent(
     model,                          # Required: LLM instance
     tools=None,                     # Optional: LangChain tools
     system_prompt=None,             # Optional: str or callable
@@ -110,51 +118,55 @@ The `thread_id` and `user_id` parameters (passed at **call time**) control memor
     `create_agent(user_id="u123")` sets a config default but does **not** automatically scope long-term memory. You must pass `user_id=` on each `ainvoke()` / `astream()` / `astream_events()` call for it to take effect.
 
 ```python
-# Stateful conversation with session memory
-result = await agent.ainvoke("My name is Alice", thread_id="session-1")
-result = await agent.ainvoke("What is my name?", thread_id="session-1")
+async def example(agent):
+    # Stateful conversation with session memory
+    result = await agent.ainvoke("My name is Alice", thread_id="session-1")
+    result = await agent.ainvoke("What is my name?", thread_id="session-1")
 
-# Cross-session user identity — pass user_id at CALL TIME
-result = await agent.ainvoke("I prefer dark mode", user_id="user-42")
-# Later, in a new session:
-result = await agent.ainvoke("What are my preferences?", user_id="user-42")
+    # Cross-session user identity — pass user_id at CALL TIME
+    result = await agent.ainvoke("I prefer dark mode", user_id="user-42")
+    # Later, in a new session:
+    result = await agent.ainvoke("What are my preferences?", user_id="user-42")
 ```
 
 ## Validation
 
-`create_agent` validates **all** inputs at construction time using a Pydantic model (`AgentConfig`). If anything is invalid, you get a clear error immediately — not a cryptic crash during execution.
+`create_agent` validates shared kwargs through `AgentConfig` when you **await** it. Invalid core arguments raise before any LLM runs. Factory-only parameters are checked separately in the factory.
 
-```python
-# These all raise immediately with clear messages:
-create_agent(model=None)           # ValueError: model is required
-create_agent(model=llm, name="")   # ValueError: name must be non-empty
-create_agent(model=llm, max_concurrent=0)  # ValueError: 1 ≤ max_concurrent ≤ 32
-create_agent(model=llm, interrupt_before=["INVALID"])  # ValueError: unknown pattern
-```
+When **awaited** in async code, invalid core kwargs fail immediately with clear messages, for example:
+
+- `await create_agent(model=None)` → `ValueError`: model is required  
+- `await create_agent(model=llm, name="")` → `ValueError`: name must be non-empty  
+- `await create_agent(model=llm, max_concurrent=0)` → `ValueError`: `1 ≤ max_concurrent ≤ 32`  
+- `await create_agent(model=llm, interrupt_before=["INVALID"])` → `ValueError`: unknown pattern  
 
 ## Minimal vs Full Configuration
 
+Minimal:
+
 ```python
-# Minimal — everything has sensible defaults
-agent = create_agent(model=llm)
+async def main():
+    agent = await create_agent(model=llm)
+```
 
-# Full production setup
-agent = create_agent(
-    model=llm,
-    tools=[search, calculate],
-    system_prompt="You are a data analyst.",
-    name="analyst",
-    store=InMemoryStore(),     # enables long-term memory, skills, feedback
-    debug=False,
-    max_concurrent=8,
-    max_retries=3,
-    llm_timeout=60.0,
-    rate_limit=10.0,
-    feedback_handler=LTSFeedbackHandler(),
-)
+Full production setup:
 
-# At call time — pass thread_id and user_id
-result = await agent.ainvoke("Analyze data", thread_id="s1", user_id="analyst-1")
+```python
+async def main():
+    agent = await create_agent(
+        model=llm,
+        tools=[search, calculate],
+        system_prompt="You are a data analyst.",
+        name="analyst",
+        store=InMemoryStore(),     # enables long-term memory, skills, feedback
+        debug=False,
+        max_concurrent=8,
+        max_retries=3,
+        llm_timeout=60.0,
+        rate_limit=10.0,
+        feedback_handler=LTSFeedbackHandler(),
+    )
+    result = await agent.ainvoke("Analyze data", thread_id="s1", user_id="analyst-1")
 ```
 
 ## Lifecycle

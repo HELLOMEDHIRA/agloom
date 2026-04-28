@@ -4,35 +4,37 @@
 
 | Requirement | Version | Notes |
 |------------|---------|-------|
-| **Python** | 3.11+ | Uses `asyncio`, type hints, `StrEnum`, `ExceptionGroup` |
+| **Python** | 3.12.x | Required by `agsuperbrain`; install resolves NumPy 1.x for Super-Brain + `qdrant-client` |
 | **pip** | 21.0+ | For installing from PyPI |
 | **uv** (optional) | 0.4+ | Recommended for faster installs and dev workflow |
 
 ## Runtime Dependencies
 
-These are installed automatically with `pip install agloom`:
+These are installed automatically with `pip install agloom` (see `[project] dependencies` in `pyproject.toml` for exact minimum versions):
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `langchain` | ≥ 1.2.13 | Core LLM abstractions |
-| `langchain-classic` | ≥ 1.0.3 | Legacy compatibility layer |
-| `langchain-mcp-adapters` | ≥ 0.2.2 | MCP server integration |
-| `langgraph` | ≥ 1.1.3 | State graphs, stores, checkpointing |
-| `qdrant-client` | ≥ 1.17.1 | Semantic query cache (via `create_cache()`, uses Qdrant for vector similarity) |
-| `requests` | ≥ 2.33.0 | HTTP utilities |
-| `sentence-transformers` | ≥ 5.3.0 | Embedding-based skill matching |
+| Package | Purpose |
+|---------|---------|
+| `langchain`, `langgraph` | Core agent graphs and LLM abstractions |
+| `langchain-mcp-adapters` | MCP server integration |
+| `langchain-huggingface` | HuggingFace Inference API chat models |
+| `qdrant-client` | Semantic query cache (`create_cache()`), vector similarity |
+| `sentence-transformers` | Embeddings for CLI smart context / skill matching |
+| `typer`, `rich`, `pyfiglet` | `agloom` CLI |
+| `pyyaml`, `tomli` | Config and project metadata |
+| `httpx` | Async HTTP (CLI tools, webhook feedback handler) |
+| `tiktoken` | Token counting when available (`session` memory helpers) |
+| `agsuperbrain` | Super-Brain local graph + MCP for the CLI ([docs](https://agsuperbrain.readthedocs.io/)) |
 
 ## Optional Dependencies
 
 Installed via extras (e.g., `pip install agloom[groq]`):
 
-| Extra | Package | Version | Purpose |
-|-------|---------|---------|---------|
-| `groq` | `langchain-groq` | ≥ 1.1.2 | Groq Cloud (Llama, Mixtral) |
-| `huggingface` | `langchain-huggingface` | ≥ 1.2.1 | HuggingFace Inference |
-| `nvidia` | `langchain-nvidia-ai-endpoints` | ≥ 1.2.1 | NVIDIA NIM |
-| `webhook` | `httpx` | ≥ 0.27.0 | Async webhook feedback handler |
-| `docs` | `mkdocs`, `mkdocs-material` | latest | Documentation generation |
+| Extra | Adds | Purpose |
+|-------|------|---------|
+| `groq` | `langchain-groq` | Groq Cloud (Llama, Mixtral, …) |
+| `nvidia` | `langchain-nvidia-ai-endpoints` | NVIDIA NIM |
+| `all` | both of the above | Convenience meta-extra |
+| `docs` | MkDocs stack | Local documentation builds (`pip install agloom[docs]`) |
 
 ## Development Dependencies
 
@@ -45,10 +47,10 @@ For contributing to agloom:
 | `pre-commit` | Git hooks for code quality |
 | `commitizen` | Conventional commit enforcement |
 
-Install all dev dependencies:
+Install dev dependencies (from the repo, using the lockfile):
 
 ```bash
-uv sync --all-extras
+uv sync --group dev
 ```
 
 ## Operating System Support

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/HELLOMEDHIRA/agloom/master/assets/medhira-logo.png" width="140" alt="MEDHIRA">
+<img src="https://raw.githubusercontent.com/HELLOMEDHIRA/agloom/master/docs/assets/medhira-logo.png" width="140" alt="agloom">
 
 <br>
 
@@ -14,7 +14,7 @@ Drop-in replacement for LangChain's `create_agent` — with superpowers.
 <br>
 
 [![PyPI version](https://img.shields.io/pypi/v/agloom)](https://pypi.org/project/agloom/)
-[![Python 3.11+](https://img.shields.io/pypi/pyversions/agloom)](https://pypi.org/project/agloom/)
+[![Python 3.12](https://img.shields.io/pypi/pyversions/agloom)](https://pypi.org/project/agloom/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Docs](https://readthedocs.org/projects/agloom/badge/?version=latest)](https://agloom.readthedocs.io)
 
@@ -26,9 +26,14 @@ Drop-in replacement for LangChain's `create_agent` — with superpowers.
 
 ## You write this:
 
+`create_agent` is **async** (like the rest of the stack). Use `await`, or `create_agent_sync` if you are not in an async context.
+
 ```python
-agent = create_agent(model=llm, tools=[search, calculate], name="analyst")
-result = await agent.ainvoke("Analyze Q3 sales across 3 regions and recommend strategy")
+from agloom import create_agent
+
+async def main():
+    agent = await create_agent(model=llm, tools=[search, calculate], name="analyst")
+    result = await agent.ainvoke("Analyze Q3 sales across 3 regions and recommend strategy")
 ```
 
 ## agloom does this:
@@ -42,7 +47,7 @@ result = await agent.ainvoke("Analyze Q3 sales across 3 regions and recommend st
 6. Auto-evaluates quality    → Scored, tracked, trend-detected
 ```
 
-**Total code you wrote: 2 lines.** Everything else — classification, routing, parallelism, synthesis, learning, evaluation — is handled automatically.
+**A short async function — two core calls (`create_agent`, `ainvoke`).** Everything else — classification, routing, parallelism, synthesis, learning, evaluation — is handled automatically.
 
 <br>
 
@@ -79,14 +84,14 @@ result = await agent.ainvoke("Analyze Q3 sales across 3 regions and recommend st
 ```python
 from agloom import create_agent
 
-agent = create_agent(
-    model=llm,
-    tools=[search, calculate],
-    name="analyst",
-)
-
-result = await agent.ainvoke("Your query here")
-# That's it. Everything else is automatic.
+async def main():
+    agent = await create_agent(
+        model=llm,
+        tools=[search, calculate],
+        name="analyst",
+    )
+    result = await agent.ainvoke("Your query here")
+    # That's it. Everything else is automatic.
 ```
 
 </td>
@@ -156,18 +161,20 @@ Now here's the same thing with agloom:
 ```python
 # ✅ With agloom — same result, zero orchestration code
 
-agent = create_agent(
-    model=llm,
-    tools=[search_tool, calc_tool, format_tool],
-    name="research-team",
-)
-
-result = await agent.ainvoke("Research renewable energy trends, analyze the economics, and write a summary")
-# agloom auto-selects SUPERVISOR, spawns parallel workers,
-# synthesizes results, tracks tokens, and learns the pattern.
+async def main():
+    agent = await create_agent(
+        model=llm,
+        tools=[search_tool, calc_tool, format_tool],
+        name="research-team",
+    )
+    result = await agent.ainvoke(
+        "Research renewable energy trends, analyze the economics, and write a summary"
+    )
+    # agloom auto-selects SUPERVISOR, spawns parallel workers,
+    # synthesizes results, tracks tokens, and learns the pattern.
 ```
 
-**300+ lines of orchestration code → 3 lines.** The supervisor logic, worker management, parallel execution, failure handling, result synthesis, and pattern learning are all handled internally. You focus on what your agent should *do*. agloom figures out *how*.
+**300+ lines of orchestration code → a tiny async setup.** The supervisor logic, worker management, parallel execution, failure handling, result synthesis, and pattern learning are all handled internally. You focus on what your agent should *do*. agloom figures out *how*.
 
 <br>
 
@@ -199,7 +206,8 @@ result = await agent.ainvoke("Research renewable energy trends, analyze the econ
 ```bash
 pip install agloom          # or: uv add agloom
 pip install agloom[groq]    # with Groq provider
-pip install agloom[all]     # all providers
+pip install agloom[all]     # optional: Groq + NVIDIA provider packages
+# If pip resolves NumPy 2.x and you see wheel/import issues: pip install "numpy>=1.26.4,<2" agloom
 ```
 
 ### Run
@@ -211,7 +219,7 @@ from agloom import create_agent
 
 async def main():
     llm = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct")
-    agent = create_agent(model=llm, name="my-first-agent")
+    agent = await create_agent(model=llm, name="my-first-agent")
 
     result = await agent.ainvoke("What causes auroras?")
     print(result.output)
@@ -227,9 +235,9 @@ asyncio.run(main())
 ### CLI — Interactive Shell
 
 ```bash
-pip install agloom[all]         # Install with CLI dependencies
-agloom                        # Start interactive shell
-agloom -m groq "What is 2+2?"  # Single prompt mode
+pip install agloom              # CLI is included (typer, rich, …)
+agloom                          # Start interactive shell
+agloom -m llama-3.3-70b-versatile "What is 2+2?"  # Single prompt mode
 agloom -c config.yaml         # Load from config file
 ```
 
@@ -251,7 +259,7 @@ Auroras are caused by charged particles from the sun...
 
 ```bash
 # Single prompt example
-$ agloom -m groq "Explain quantum computing in 2 sentences"
+$ agloom -m llama-3.3-70b-versatile "Explain quantum computing in 2 sentences"
 Quantum computing uses quantum mechanical phenomena...
 ```
 
@@ -307,7 +315,8 @@ async for event in agent.astream_events("Research renewable energy"):
 ## Battle-Tested Reliability
 
 ```python
-agent = create_agent(
+# Inside async code — create_agent is async
+agent = await create_agent(
     model=llm,
     tools=[...],
     name="production-agent",
@@ -329,7 +338,7 @@ agent = create_agent(
 )
 ```
 
-Every parameter has a sensible default. Start with `create_agent(model=llm)` and add what you need.
+Every parameter has a sensible default. Start with `await create_agent(model=llm)` (or `create_agent_sync(model=llm)` from synchronous code) and add what you need.
 
 <br>
 
@@ -366,7 +375,7 @@ Everything you need at **[agloom.readthedocs.io](https://agloom.readthedocs.io)*
 
 ## Requirements
 
-- **Python** 3.11+
+- **Python** 3.12.x only (matches current `agsuperbrain` + NumPy 1.x for Super-Brain and `qdrant-client`)
 - **LLM API key** — Groq, OpenAI, NVIDIA, HuggingFace, or any LangChain-compatible provider
 
 <br>
@@ -374,19 +383,11 @@ Everything you need at **[agloom.readthedocs.io](https://agloom.readthedocs.io)*
 ## Testing
 
 ```bash
-# Run CLI tests
-python test_cli.py
-
-# With specific API key
-GROQ_API_KEY="gsk_..." python test_cli.py
+uv sync --all-extras --group dev
+uv run pytest tests
 ```
 
-Tests cover:
-- Config loading (YAML/TOML)
-- Model resolution (auto/Groq/OpenAI)
-- Tool discovery and loading
-- Built-in tools (file, shell, HTTP, task tracking)
-- Module imports
+The suite covers core models, agent configuration, memory helpers, and CLI config/tool loading without requiring API keys.
 
 <br>
 
@@ -404,7 +405,7 @@ We welcome contributions. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and g
 
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/HELLOMEDHIRA/agloom/master/assets/medhira-logo.png" width="80" alt="MEDHIRA">
+<img src="https://raw.githubusercontent.com/HELLOMEDHIRA/agloom/master/docs/assets/medhira-logo.png" width="80" alt="agloom">
 
 Built with care by **[MEDHIRA](https://github.com/HELLOMEDHIRA)**
 

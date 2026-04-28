@@ -71,19 +71,30 @@ def load_tools_from_file(path: Path) -> list:
 
 
 def _function_to_tool(func: Any, name: str) -> Any:
-    """Convert a function to a LangChain tool."""
+    """Convert a function to a LangChain tool.
+
+    Functions explicitly marked with @tool are always wrapped. Otherwise
+    the function must have type hints to be picked up. Sync and async
+    functions are both supported.
+    """
     from langchain_core.tools import StructuredTool
 
-    if hasattr(func, "_tool_marker") and func._tool_marker:
-        pass
-    elif not _has_type_hints(func):
-        return None
+    if not (hasattr(func, "_tool_marker") and func._tool_marker):
+        if not _has_type_hints(func):
+            return None
 
     description = getattr(func, "__doc__", None) or f"Tool: {name}"
+    is_async = inspect.iscoroutinefunction(func)
 
     try:
+        if is_async:
+            return StructuredTool.from_function(
+                coroutine=func,
+                name=name,
+                description=description,
+            )
         return StructuredTool.from_function(
-            coroutine=func,
+            func=func,
             name=name,
             description=description,
         )

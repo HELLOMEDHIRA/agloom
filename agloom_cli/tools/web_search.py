@@ -29,6 +29,9 @@ async def web_search(
     if not api_key:
         return "Error: TAVILY_API_KEY not set. Get one at https://tavily.com/"
 
+    if max_results < 1 or max_results > 10:
+        return f"Error: max_results must be between 1 and 10, got {max_results}"
+
     try:
         import httpx
 
@@ -61,9 +64,14 @@ async def web_search(
                 title = result.get("title", "No title")
                 url = result.get("url", "")
                 score = result.get("score", 0)
+                try:
+                    score = float(score)
+                    score_str = f"{score:.2f}"
+                except (TypeError, ValueError):
+                    score_str = "N/A"
                 content = result.get("content", "")[:300]
 
-                result_parts.append(f"\n{i}. {title}\n   URL: {url}\n   Score: {score:.2f}\n   {content}...")
+                result_parts.append(f"\n{i}. {title}\n   URL: {url}\n   Score: {score_str}\n   {content}...")
 
             return "\n".join(result_parts)
 

@@ -21,7 +21,7 @@ llm = ChatGroq(
 
 
 async def main():
-    agent = create_agent(model=llm, name="basic-agent")
+    agent = await create_agent(model=llm, name="basic-agent")
 
     result = await agent.ainvoke("What are the three laws of thermodynamics?")
 
@@ -67,7 +67,7 @@ Pass `thread_id` to maintain context across calls:
 
 ```python
 async def chat_example():
-    agent = create_agent(model=llm, name="chat-agent")
+    agent = await create_agent(model=llm, name="chat-agent")
 
     # First turn
     r1 = await agent.ainvoke("My name is Alice", thread_id="chat-1")

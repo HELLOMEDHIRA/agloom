@@ -21,17 +21,17 @@ Complete reference for every `create_agent` parameter. All parameters except `mo
 - **Object without `ainvoke`/`invoke` methods** → emits a **warning** that the object doesn't look like a valid LLM
 
 ```python
-# These raise ValueError at creation time:
-create_agent(model=None)     # ValueError: model is required
-create_agent(model="")       # ValueError: model string is empty
+# These raise ValueError when awaited (async code):
+await create_agent(model=None)     # ValueError: model is required
+await create_agent(model="")       # ValueError: model string is empty
 
 # These emit a warning but still create the agent:
-create_agent(model="gpt-4o")  # WARNING: looks like a bare model name. Did you mean 'openai:gpt-4o'?
-create_agent(model=42)        # WARNING: no 'ainvoke' or 'invoke' method
+await create_agent(model="gpt-4o")  # WARNING: looks like a bare model name. Did you mean 'openai:gpt-4o'?
+await create_agent(model=42)        # WARNING: no 'ainvoke' or 'invoke' method
 
 # Correct usage — no warnings:
-create_agent(model="openai:gpt-4o")
-create_agent(model=ChatGroq(model="llama-3.3-70b-versatile"))
+await create_agent(model="openai:gpt-4o")
+await create_agent(model=ChatGroq(model="llama-3.3-70b-versatile"))
 ```
 
 ## Memory & Storage
@@ -163,28 +163,30 @@ await agent.abatch(queries, *, thread_id=None, user_id=None,
 ## Example: Minimal
 
 ```python
-agent = create_agent(model=llm)
+async def main():
+    agent = await create_agent(model=llm)
 ```
 
 ## Example: Production
 
 ```python
-agent = create_agent(
-    model=llm,
-    tools=[search, calculate],
-    system_prompt="You are a data analyst. Be precise and cite sources.",
-    name="analyst",
-    store=InMemoryStore(),          # enables long-term memory, skills, feedback
-    # memory= is auto-created; session_max_turns controls its size
-    debug=False,
-    max_concurrent=8,
-    max_retries=3,
-    llm_timeout=60.0,
-    rate_limit=10.0,
-    feedback_handler=LTSFeedbackHandler(),
-    session_max_turns=50,
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        tools=[search, calculate],
+        system_prompt="You are a data analyst. Be precise and cite sources.",
+        name="analyst",
+        store=InMemoryStore(),          # enables long-term memory, skills, feedback
+        # memory= is auto-created; session_max_turns controls its size
+        debug=False,
+        max_concurrent=8,
+        max_retries=3,
+        llm_timeout=60.0,
+        rate_limit=10.0,
+        feedback_handler=LTSFeedbackHandler(),
+        session_max_turns=50,
+    )
 
-# At call time — pass thread_id for session continuity
-result = await agent.ainvoke("Analyze Q3 data", thread_id="session-1", user_id="analyst-42")
+    # At call time — pass thread_id for session continuity
+    result = await agent.ainvoke("Analyze Q3 data", thread_id="session-1", user_id="analyst-42")
 ```

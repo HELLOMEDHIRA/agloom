@@ -20,7 +20,7 @@ body:
     id: python-version
     attributes:
       label: Python version
-      placeholder: "3.13.0"
+      placeholder: "3.12.8"
     validations:
       required: true
 

@@ -7,6 +7,7 @@ import asyncio
 from .. import worker as worker_module
 from ..logging_utils import get_logger
 from ..models import ResolvedWorkerConfig, Signal, SignalType, WorkerResult
+from .worker_gates import get_signal_queue
 
 logger = get_logger(__name__)
 
@@ -22,8 +23,7 @@ async def run_workers_with_hitl(
     If halt_event is None, creates a local one; HYBRID_DAG shares one across levels.
     Returns (results, skipped_ids).
     """
-    _owns_halt_event = halt_event is None
-    if _owns_halt_event:
+    if halt_event is None:
         halt_event = asyncio.Event()
 
     if halt_event.is_set():
@@ -148,9 +148,7 @@ async def _listen_for_halt(
     CLARIFICATION_REQUEST routes through user_callback to per-worker queues
     without blocking other workers.
     """
-    signal_queue: asyncio.Queue | None = agent.get("signal_queue")
-    if signal_queue is None and invoke_config:
-        signal_queue = invoke_config.get("configurable", {}).get("signal_queue")
+    signal_queue = get_signal_queue(agent, invoke_config)
     if signal_queue is None:
         return
 

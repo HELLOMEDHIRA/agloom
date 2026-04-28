@@ -33,16 +33,17 @@ Short-term, per-thread memory that tracks the current conversation.
 ```python
 from agloom import create_agent, SessionMemory
 
-# Option 1: Use defaults — session memory auto-created (ephemeral)
-agent = create_agent(model=llm, name="chat-agent")
+async def main():
+    # Option 1: Use defaults — session memory auto-created (ephemeral)
+    agent = await create_agent(model=llm, name="chat-agent")
 
-# Option 2: Explicit session memory (same behavior, but explicit)
-agent = create_agent(
-    model=llm,
-    memory=SessionMemory(),
-    session_max_turns=20,  # keep last 20 turns (default)
-    name="chat-agent",
-)
+    # Option 2: Explicit session memory (same behavior, but explicit)
+    agent = await create_agent(
+        model=llm,
+        memory=SessionMemory(),
+        session_max_turns=20,  # keep last 20 turns (default)
+        name="chat-agent",
+    )
 ```
 
 ### The key: passing `thread_id`
@@ -50,14 +51,15 @@ agent = create_agent(
 Session memory only works across calls if you pass the **same `thread_id`**. Without `thread_id`, each call gets a random UUID and can't find previous turns:
 
 ```python
-# WITHOUT thread_id — each call is isolated (ephemeral UUID)
-await agent.ainvoke("My name is Alice")
-await agent.ainvoke("What is my name?")  # → agent does NOT remember
+async def example(agent):
+    # WITHOUT thread_id — each call is isolated (ephemeral UUID)
+    await agent.ainvoke("My name is Alice")
+    await agent.ainvoke("What is my name?")  # → agent does NOT remember
 
-# WITH thread_id — calls share session history
-await agent.ainvoke("My name is Alice", thread_id="session-1")
-await agent.ainvoke("What is my name?", thread_id="session-1")
-# → "Your name is Alice"
+    # WITH thread_id — calls share session history
+    await agent.ainvoke("My name is Alice", thread_id="session-1")
+    await agent.ainvoke("What is my name?", thread_id="session-1")
+    # → "Your name is Alice"
 ```
 
 ### How it works
@@ -72,27 +74,30 @@ await agent.ainvoke("What is my name?", thread_id="session-1")
 Pass `thread_id` and `user_id` as keyword arguments to **any** runtime method (`ainvoke`, `astream`, `astream_events`, `abatch`):
 
 ```python
-# Stateful conversation with session memory
-result = await agent.ainvoke("My name is Alice", thread_id="session-1")
-result = await agent.ainvoke("What is my name?", thread_id="session-1")
-# → "Your name is Alice"
+async def example(agent):
+    # Stateful conversation with session memory
+    result = await agent.ainvoke("My name is Alice", thread_id="session-1")
+    result = await agent.ainvoke("What is my name?", thread_id="session-1")
+    # → "Your name is Alice"
 
-# Streaming with session context
-async for token in agent.astream("Tell me more", thread_id="session-1"):
-    print(token, end="")
+    # Streaming with session context
+    async for token in agent.astream("Tell me more", thread_id="session-1"):
+        print(token, end="")
 
-# Event streaming with session context
-async for event in agent.astream_events("Explain X",
-                                         thread_id="session-1",
-                                         user_id="user-42"):
-    ...
+    # Event streaming with session context
+    async for event in agent.astream_events(
+        "Explain X",
+        thread_id="session-1",
+        user_id="user-42",
+    ):
+        ...
 
-# Batch — all queries share the same thread (or omit for isolated)
-results = await agent.abatch(
-    ["Question 1", "Question 2"],
-    thread_id="session-1",
-    user_id="user-42",
-)
+    # Batch — all queries share the same thread (or omit for isolated)
+    results = await agent.abatch(
+        ["Question 1", "Question 2"],
+        thread_id="session-1",
+        user_id="user-42",
+    )
 ```
 
 ### Identity resolution priority
@@ -109,12 +114,13 @@ Long-term memory namespace is resolved in this order:
     Setting `user_id` on `create_agent()` sets a **config default** but does **not** activate user-scoped namespacing. You must pass `user_id=` on each `ainvoke()` / `astream()` / `astream_events()` / `abatch()` call for it to take effect:
 
     ```python
-    # This does NOT scope LT memory to "alice" at call time:
-    agent = create_agent(model=llm, store=store, user_id="alice")
-    await agent.ainvoke("Hello")  # namespace = (agent_name, random_uuid)
+    async def example():
+        # This does NOT scope LT memory to "alice" at call time:
+        agent = await create_agent(model=llm, store=store, user_id="alice")
+        await agent.ainvoke("Hello")  # namespace = (agent_name, random_uuid)
 
-    # This DOES scope LT memory to "alice":
-    await agent.ainvoke("Hello", user_id="alice")  # namespace = (agent_name, "alice")
+        # This DOES scope LT memory to "alice":
+        await agent.ainvoke("Hello", user_id="alice")  # namespace = (agent_name, "alice")
     ```
 
 ### Configuration
@@ -152,8 +158,9 @@ flowchart LR
 Auto-summarization is **enabled by default**. No configuration needed:
 
 ```python
-agent = create_agent(model=llm, name="chat-agent")
-# Auto-summarization will trigger when conversation history exceeds 200k tokens
+async def main():
+    agent = await create_agent(model=llm, name="chat-agent")
+    # Auto-summarization will trigger when conversation history exceeds 200k tokens
 ```
 
 ### Disabling auto-summarization
@@ -161,11 +168,12 @@ agent = create_agent(model=llm, name="chat-agent")
 For latency-sensitive or cost-sensitive scenarios, disable it:
 
 ```python
-agent = create_agent(
-    model=llm,
-    name="fast-agent",
-    auto_summarize=False,  # oldest turns are dropped instead of summarized
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        name="fast-agent",
+        auto_summarize=False,  # oldest turns are dropped instead of summarized
+    )
 ```
 
 ### Using a cheaper model for summarization
@@ -173,11 +181,12 @@ agent = create_agent(
 By default, the agent's own model handles summarization. For cost savings, use a separate faster/cheaper model:
 
 ```python
-agent = create_agent(
-    model=ChatGPT(model="gpt-4o"),            # main model for agent tasks
-    summarizer_model=ChatGPT(model="gpt-4o-mini"),  # cheaper model for summarization
-    name="cost-efficient-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=ChatGPT(model="gpt-4o"),            # main model for agent tasks
+        summarizer_model=ChatGPT(model="gpt-4o-mini"),  # cheaper model for summarization
+        name="cost-efficient-agent",
+    )
 ```
 
 ### Custom threshold
@@ -185,11 +194,12 @@ agent = create_agent(
 Adjust when summarization triggers:
 
 ```python
-agent = create_agent(
-    model=llm,
-    summarize_threshold=100_000,  # trigger earlier (default: 200,000)
-    name="agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        summarize_threshold=100_000,  # trigger earlier (default: 200,000)
+        name="agent",
+    )
 ```
 
 ### How summaries appear in conversation history
@@ -218,17 +228,18 @@ Persistent, user-scoped memory backed by a LangGraph `BaseStore`:
 ```python
 from langgraph.store.memory import InMemoryStore
 
-agent = create_agent(
-    model=llm,
-    store=InMemoryStore(),
-    name="memory-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        store=InMemoryStore(),
+        name="memory-agent",
+    )
 
-# Memories persist across sessions for this user
-await agent.ainvoke("I prefer dark mode and Python", user_id="user-123")
+    # Memories persist across sessions for this user
+    await agent.ainvoke("I prefer dark mode and Python", user_id="user-123")
 
-# Later — the agent recalls user preferences
-await agent.ainvoke("Set up my environment", user_id="user-123")
+    # Later — the agent recalls user preferences
+    await agent.ainvoke("Set up my environment", user_id="user-123")
 ```
 
 ### What the store enables
@@ -255,16 +266,17 @@ Relevant memories are automatically retrieved and injected into the system promp
 Multiple agents can share the same `store`:
 
 ```python
-store = InMemoryStore()
+async def main():
+    store = InMemoryStore()
 
-researcher = create_agent(model=llm, store=store, name="researcher")
-writer = create_agent(model=llm, store=store, name="writer")
+    researcher = await create_agent(model=llm, store=store, name="researcher")
+    writer = await create_agent(model=llm, store=store, name="writer")
 
-# Researcher stores findings
-await researcher.ainvoke("Research quantum computing", user_id="team")
+    # Researcher stores findings
+    await researcher.ainvoke("Research quantum computing", user_id="team")
 
-# Writer can access the researcher's findings
-await writer.ainvoke("Write a summary", user_id="team")
+    # Writer can access the researcher's findings
+    await writer.ainvoke("Write a summary", user_id="team")
 ```
 
 !!! warning "Duplicate agent names"
@@ -276,12 +288,13 @@ await writer.ainvoke("Write a summary", user_id="team")
 ## Disabling Memory Tools
 
 ```python
-agent = create_agent(
-    model=llm,
-    store=store,
-    enable_memory_tools=False,  # agent can't call save/recall
-    name="passive-only",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        store=store,
+        enable_memory_tools=False,  # agent can't call save/recall
+        name="passive-only",
+    )
 ```
 
 With `enable_memory_tools=False`, the agent still benefits from passive injection but cannot explicitly save or recall memories.
@@ -296,23 +309,24 @@ agloom includes an optional **semantic query cache** backed by Qdrant. When enab
 from agloom import create_agent, create_cache
 from sentence_transformers import SentenceTransformer
 
-# Create an embedding model for semantic similarity
-embeddings = SentenceTransformer("all-MiniLM-L6-v2")
+async def main():
+    # Create an embedding model for semantic similarity
+    embeddings = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Create the cache (in-memory Qdrant by default)
-cache = create_cache(embeddings=embeddings)
+    # Create the cache (in-memory Qdrant by default)
+    cache = create_cache(embeddings=embeddings)
 
-agent = create_agent(
-    model=llm,
-    query_cache=cache,
-    name="cached-agent",
-)
+    agent = await create_agent(
+        model=llm,
+        query_cache=cache,
+        name="cached-agent",
+    )
 
-# First call — runs full pipeline
-result = await agent.ainvoke("What is photosynthesis?")
+    # First call — runs full pipeline
+    result = await agent.ainvoke("What is photosynthesis?")
 
-# Second call with similar wording — cache hit, returns instantly
-result = await agent.ainvoke("Explain photosynthesis")
+    # Second call with similar wording — cache hit, returns instantly
+    result = await agent.ainvoke("Explain photosynthesis")
 ```
 
 ### `create_cache` parameters

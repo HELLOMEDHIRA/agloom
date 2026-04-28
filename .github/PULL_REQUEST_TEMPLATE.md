@@ -20,10 +20,10 @@
 
 ## Checklist
 
-- [ ] Tests pass (`uv run python test.py`)
-- [ ] Linting passes (`uv run ruff check agloom/`)
-- [ ] Formatting is correct (`uv run ruff format --check agloom/`)
-- [ ] Type checking passes (`uv run pyrefly check agloom/`)
+- [ ] Tests pass (`uv run pytest tests`)
+- [ ] Linting passes (`uv run ruff check agloom agloom_cli tests`)
+- [ ] Formatting is correct (`uv run ruff format --check agloom agloom_cli tests`)
+- [ ] Type checking passes (`uv run pyrefly check agloom agloom_cli`)
 - [ ] Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)
 - [ ] Documentation updated (if applicable)
 - [ ] CHANGELOG.md updated (if applicable)

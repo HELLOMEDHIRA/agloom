@@ -13,7 +13,7 @@ llm = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct")
 
 
 async def main():
-    agent = create_agent(model=llm, name="stream-agent")
+    agent = await create_agent(model=llm, name="stream-agent")
 
     print("=== Token Streaming ===\n")
     async for token in agent.astream("Explain the Pythagorean theorem in 2 sentences"):
@@ -30,7 +30,7 @@ asyncio.run(main())
 
 ```python
 async def main():
-    agent = create_agent(model=llm, name="event-agent")
+    agent = await create_agent(model=llm, name="event-agent")
 
     print("=== Event Streaming ===\n")
     async for event in agent.astream_events("What causes rainbows?"):
@@ -65,7 +65,7 @@ Pass `thread_id` and `user_id` to maintain conversation context:
 
 ```python
 async def main():
-    agent = create_agent(model=llm, name="chat-agent")
+    agent = await create_agent(model=llm, name="chat-agent")
 
     # First turn — establish context
     async for event in agent.astream_events(
@@ -114,7 +114,7 @@ def calculate(expression: str) -> str:
 
 
 async def main():
-    agent = create_agent(model=llm, tools=[search, calculate], name="tool-agent")
+    agent = await create_agent(model=llm, tools=[search, calculate], name="tool-agent")
     pending = {}
 
     async for event in agent.astream_events("Search for Pi and calculate Pi*2"):

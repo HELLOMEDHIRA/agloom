@@ -211,7 +211,7 @@ class SkillLifecycleManager:
             await self._store.asave(
                 namespace=ns,
                 key=name,
-                value=meta.get("memory", name),
+                value=meta.get("memory", ""),
                 metadata=meta,
             )
 
@@ -271,7 +271,7 @@ class SkillLifecycleManager:
                     await self._store.asave(
                         namespace=ns,
                         key=name,
-                        value=meta.get("memory", name),
+                        value=meta.get("memory", ""),
                         metadata=meta,
                     )
                     logger.debug(
@@ -345,7 +345,7 @@ class SkillLifecycleManager:
                 await self._store.asave(
                     namespace=ns,
                     key=skill_name,
-                    value=meta.get("memory", skill_name),
+                    value=meta.get("memory", ""),
                     metadata=meta,
                 )
             break

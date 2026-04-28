@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from ..tool_loader import tool
 
 _task_tracker: dict[str, Any] = {}
+_tracker_lock = asyncio.Lock()
 
 
 @tool
@@ -77,8 +79,9 @@ async def get_current_task() -> str:
         else:
             result.append(f"  ⏳ {idx + 1}. {desc}")
 
-    progress = len(task["completed"]) / len(task["steps"]) * 100
-    result.append(f"\nProgress: {len(task['completed'])}/{len(task['steps'])} ({progress:.0f}%)")
+    total_steps = len(task["steps"])
+    progress = (len(task["completed"]) / total_steps * 100) if total_steps > 0 else 0
+    result.append(f"\nProgress: {len(task['completed'])}/{total_steps} ({progress:.0f}%)")
 
     return "\n".join(result)
 
@@ -105,8 +108,8 @@ async def complete_step(step_index: int | None = None) -> str:
 
     idx = step_index if step_index is not None else task["current_step"]
 
-    if idx >= len(task["steps"]):
-        return f"Invalid step index. Max: {len(task['steps']) - 1}"
+    if idx < 0 or idx >= len(task["steps"]):
+        return f"Invalid step index {idx}. Valid range: 0-{len(task['steps']) - 1}"
 
     task["steps"][idx]["status"] = "completed"
     if idx not in task["completed"]:

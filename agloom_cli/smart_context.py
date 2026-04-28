@@ -72,6 +72,7 @@ class FileChunk:
             "start_line": self.start_line,
             "end_line": self.end_line,
             "keywords": self.keywords,
+            "embedding": self.embedding,
         }
 
     @classmethod

@@ -21,7 +21,7 @@ agent = None
 async def lifespan(app: FastAPI):
     global agent
     llm = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct")
-    agent = create_agent(model=llm, name="api-agent")
+    agent = await create_agent(model=llm, name="api-agent")
     yield
     await agent.aclose()
 
@@ -93,12 +93,13 @@ By default, agloom uses `InMemoryStore` which loses all data on restart. For pro
 from langgraph.store.memory import InMemoryStore
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-agent = create_agent(
-    model=llm,
-    store=InMemoryStore(),
-    checkpointer=AsyncSqliteSaver.from_conn_string("agent.db"),
-    name="persistent-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        store=InMemoryStore(),
+        checkpointer=AsyncSqliteSaver.from_conn_string("agent.db"),
+        name="persistent-agent",
+    )
 ```
 
 ### Session memory persistence
@@ -106,11 +107,12 @@ agent = create_agent(
 ```python
 from agloom import SessionMemory
 
-agent = create_agent(
-    model=llm,
-    memory=SessionMemory(store=your_persistent_store, max_turns=50),
-    name="persistent-chat",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        memory=SessionMemory(store=your_persistent_store, max_turns=50),
+        name="persistent-chat",
+    )
 ```
 
 !!! info "InMemoryStore for long-term features"
@@ -129,14 +131,15 @@ class AnalysisResult(BaseModel):
     confidence: float
     key_points: list[str]
 
-agent = create_agent(
-    model=llm,
-    response_format=AnalysisResult,
-    name="analyzer",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        response_format=AnalysisResult,
+        name="analyzer",
+    )
 
-result = await agent.ainvoke("Analyze this customer review: Great product, fast shipping!")
-print(result.output)  # JSON string matching AnalysisResult schema
+    result = await agent.ainvoke("Analyze this customer review: Great product, fast shipping!")
+    print(result.output)  # JSON string matching AnalysisResult schema
 ```
 
 !!! info "How it works"
@@ -160,11 +163,12 @@ async def dynamic_prompt(state: dict) -> str:
         base += "\nFormat code responses with syntax highlighting."
     return base
 
-agent = create_agent(
-    model=llm,
-    system_prompt=dynamic_prompt,
-    name="adaptive-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        system_prompt=dynamic_prompt,
+        name="adaptive-agent",
+    )
 ```
 
 The callable receives a state dict with these keys:
@@ -221,14 +225,15 @@ Pass a `checkpointer` to automatically persist execution state after every `ainv
 ```python
 from langgraph.checkpoint.memory import MemorySaver
 
-agent = create_agent(
-    model=llm,
-    checkpointer=MemorySaver(),
-    name="persistent-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        checkpointer=MemorySaver(),
+        name="persistent-agent",
+    )
 
-# Every call writes a checkpoint keyed by thread_id
-result = await agent.ainvoke("Explain RLHF", thread_id="session-1")
+    # Every call writes a checkpoint keyed by thread_id
+    result = await agent.ainvoke("Explain RLHF", thread_id="session-1")
 ```
 
 ### Inspecting state
@@ -279,9 +284,10 @@ mock_llm = FakeListChatModel(
     responses=["The answer is 42."]
 )
 
-agent = create_agent(model=mock_llm, name="test-agent")
-result = await agent.ainvoke("What is the answer?")
-assert "42" in result.output
+async def main():
+    agent = await create_agent(model=mock_llm, name="test-agent")
+    result = await agent.ainvoke("What is the answer?")
+    assert "42" in result.output
 ```
 
 ### Testing with tools
@@ -294,23 +300,25 @@ def search(query: str) -> str:
     """Search the web."""
     return "Mock search result for: " + query
 
-agent = create_agent(model=mock_llm, tools=[search], name="test-tool-agent")
+async def main():
+    agent = await create_agent(model=mock_llm, tools=[search], name="test-tool-agent")
 ```
 
 ### Asserting step traces
 
 ```python
-result = await agent.ainvoke("Calculate 2+2")
+async def test_steps(agent):
+    result = await agent.ainvoke("Calculate 2+2")
 
-step_types = [s.type.value for s in result.steps]
-assert "classify" in step_types
-assert result.pattern_used.value in ("DIRECT", "REACT")
+    step_types = [s.type.value for s in result.steps]
+    assert "classify" in step_types
+    assert result.pattern_used.value in ("DIRECT", "REACT")
 ```
 
 ## Docker Deployment
 
 ```dockerfile
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 COPY requirements.txt .

@@ -40,7 +40,8 @@ agloom ships with built-in structured logging:
 ### Enable Debug Logging
 
 ```python
-agent = create_agent(model=llm, debug=True, name="debug-agent")
+async def main():
+    agent = await create_agent(model=llm, debug=True, name="debug-agent")
 ```
 
 With `debug=True`, you see detailed logs for every pipeline step:

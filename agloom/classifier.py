@@ -1,12 +1,7 @@
-"""
-Query routing (`analyze_query`).
+"""Query classification: ``analyze_query`` maps user text to ``QueryAnalysis`` (pattern, subtasks, DIRECT answer).
 
-Works with any LangChain-compatible chat model (`BaseChatModel`). The classifier
-uses structured output / tool-calling, which is validated against a JSON Schema
-at the provider boundary *before* Python sees the payload. Many models return
-booleans and integers as strings in that layer; we accept a permissive wire
-model (`QueryAnalysisToolPayload`) and map it to the canonical `QueryAnalysis`
-used everywhere else in the package.
+Uses structured output / tool-calling on ``BaseChatModel``. Provider payloads are normalized through
+``QueryAnalysisToolPayload`` before building canonical ``QueryAnalysis``.
 """
 
 import asyncio

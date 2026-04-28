@@ -2,10 +2,11 @@
 
 import asyncio
 import time
-from typing import Any
+from typing import Any, cast
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.errors import GraphRecursionError
 
 from ..logging_utils import get_logger
@@ -276,10 +277,10 @@ async def _handle_react_streaming(
         system_prompt=system_prompt,
     )
 
-    invoke_config = {
-        **(config or {}),
-        "recursion_limit": REACT_RECURSION_LIMIT,
-    }
+    invoke_config = cast(
+        RunnableConfig,  # noqa: TC006
+        {**(config or {}), "recursion_limit": REACT_RECURSION_LIMIT},
+    )
     state = {"messages": [{"role": "user", "content": query}]}
 
     t0 = time.perf_counter()
@@ -435,7 +436,10 @@ async def _handle_react_ainvoke_fallback(
     ml = agent.get("max_step_output_length", 0)
 
     react_agent = create_agent(model=llm, tools=tools, system_prompt=system_prompt)
-    invoke_config = {**(config or {}), "recursion_limit": REACT_RECURSION_LIMIT}
+    invoke_config = cast(
+        RunnableConfig,  # noqa: TC006
+        {**(config or {}), "recursion_limit": REACT_RECURSION_LIMIT},
+    )
     state = {"messages": [{"role": "user", "content": query}]}
 
     try:

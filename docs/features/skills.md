@@ -31,11 +31,12 @@ Skills activate automatically when you provide a `store`:
 ```python
 from langgraph.store.memory import InMemoryStore
 
-agent = create_agent(
-    model=llm,
-    store=InMemoryStore(),
-    name="learning-agent",
-)
+async def main():
+    agent = await create_agent(
+        model=llm,
+        store=InMemoryStore(),
+        name="learning-agent",
+    )
 ```
 
 That's it. No extra configuration needed.
@@ -83,8 +84,9 @@ Each skill stores:
 If you don't need learning, don't provide a `store`:
 
 ```python
-agent = create_agent(model=llm, name="stateless")
-# Each query starts fresh — no skill extraction or injection
+async def main():
+    agent = await create_agent(model=llm, name="stateless")
+    # Each query starts fresh — no skill extraction or injection
 ```
 
 !!! info "Seed generation"

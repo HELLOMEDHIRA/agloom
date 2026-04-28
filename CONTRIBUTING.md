@@ -1,10 +1,10 @@
 # Contributing to agloom
 
-Thank you for considering contributing to agloom! This guide will help you get set up and familiar with our development workflow.
+Thank you for considering contributing to agloom. This guide covers setup and workflow.
 
 ## Prerequisites
 
-- Python 3.11 or later
+- Python 3.12.x (required by the bundled `agsuperbrain` CLI dependency)
 - [uv](https://docs.astral.sh/uv/) package manager
 - Git
 
@@ -17,10 +17,10 @@ git clone https://github.com/HELLOMEDHIRA/agloom.git
 cd agloom
 ```
 
-2. Install all dependencies (including dev tools and optional extras):
+2. Install dependencies (library extras + development tools):
 
 ```bash
-uv sync --all-extras
+uv sync --all-extras --group dev
 ```
 
 3. Install pre-commit hooks:
@@ -30,48 +30,48 @@ uv run pre-commit install
 uv run pre-commit install --hook-type commit-msg
 ```
 
-4. Verify everything works:
+4. Verify locally:
 
 ```bash
-uv run ruff check agloom/
-uv run ruff format --check agloom/
-uv run pyrefly check agloom/
+uv run ruff check agloom agloom_cli tests
+uv run ruff format --check agloom agloom_cli tests
+uv run pyrefly check agloom agloom_cli examples tests
+uv run pytest tests -q
 ```
 
 ## Running Tests
 
-The test suite uses stdlib `asyncio` and `assert` (no pytest). It requires a `GROQ_API_KEY` environment variable for integration tests with a real LLM:
+Tests live under `tests/` and use **pytest** (with **pytest-asyncio** for async cases). They do not require API keys or network access.
 
 ```bash
-export GROQ_API_KEY="your-key-here"  # pragma: allowlist secret
-uv run python test.py
+uv run pytest tests
 ```
-
-Tests cover: models, validation, frozen agents, memory, tools, classifier, all 9 patterns, feedback, skills, multi-agent isolation, HITL, streaming, middleware, error handling, and real-user scenarios.
 
 ## Code Quality
 
 ### Linting (ruff)
 
 ```bash
-uv run ruff check agloom/          # Check for lint errors
-uv run ruff check agloom/ --fix    # Auto-fix what's possible
+uv run ruff check agloom agloom_cli tests
+uv run ruff check agloom agloom_cli tests --fix
 ```
 
 ### Formatting (ruff)
 
 ```bash
-uv run ruff format agloom/          # Format code
-uv run ruff format --check agloom/  # Check without changing
+uv run ruff format agloom agloom_cli tests
+uv run ruff format --check agloom agloom_cli tests
 ```
 
 ### Type Checking (pyrefly)
 
+Pyrefly targets the published packages (`agloom`, `agloom_cli`). The `tests/` tree is linted with ruff and executed with pytest.
+
 ```bash
-uv run pyrefly check agloom/
+uv run pyrefly check agloom agloom_cli examples tests
 ```
 
-### All checks at once (pre-commit)
+### Pre-commit (all hooks)
 
 ```bash
 uv run pre-commit run --all-files
@@ -79,21 +79,23 @@ uv run pre-commit run --all-files
 
 ## Commit Conventions
 
-We use [Conventional Commits](https://www.conventionalcommits.org/) enforced by [commitizen](https://commitizen-tools.github.io/commitizen/). The pre-commit hook validates your commit messages automatically.
+We use [Conventional Commits](https://www.conventionalcommits.org/) via [commitizen](https://commitizen-tools.github.io/commitizen/). The commit-msg hook validates messages.
 
 Format: `<type>(<scope>): <description>`
 
 Types:
+
 - `feat` — new feature
 - `fix` — bug fix
 - `docs` — documentation only
-- `refactor` — code change that neither fixes a bug nor adds a feature
+- `refactor` — change that neither fixes a bug nor adds a feature
 - `perf` — performance improvement
 - `test` — adding or correcting tests
 - `ci` — CI/CD changes
 - `chore` — maintenance tasks
 
 Examples:
+
 ```
 feat(patterns): add step tracing to REACT handler
 fix(memory): prevent session memory overflow beyond max_turns
@@ -103,49 +105,41 @@ docs: add streaming examples to README
 ## Pull Request Process
 
 1. Create a feature branch from `main`:
+
    ```bash
    git checkout -b feat/your-feature
    ```
 
-2. Make your changes. Ensure:
-   - All tests pass (`uv run python test.py`)
-   - Linting passes (`uv run ruff check agloom/`)
-   - Formatting is correct (`uv run ruff format --check agloom/`)
-   - Type checking passes (`uv run pyrefly check agloom/`)
+2. Before opening a PR, ensure:
+
+   - Tests pass: `uv run pytest tests`
+   - Lint: `uv run ruff check agloom agloom_cli tests`
+   - Format: `uv run ruff format --check agloom agloom_cli tests`
+   - Types: `uv run pyrefly check agloom agloom_cli examples tests`
 
 3. Commit with a conventional commit message.
 
 4. Push and open a PR against `main`.
 
-5. Describe your changes clearly in the PR description. Include:
-   - What the change does
-   - Why it's needed
-   - How to test it
+5. Describe what changed, why, and how reviewers can verify.
 
 ## Project Structure
 
 ```
 agloom/
-├── agloom/              # Package source
-│   ├── __init__.py         # Public API exports
-│   ├── unified_agent.py    # create_agent + UnifiedAgent
-│   ├── models.py           # Pydantic models and enums
-│   ├── classifier.py       # Query analysis / pattern selection
-│   ├── worker.py           # Ephemeral worker execution
-│   ├── patterns/           # 9 execution pattern handlers
-│   ├── memory/             # Session + long-term memory
-│   ├── skills/             # Skill learning, registry, lifecycle
-│   ├── feedback/           # Auto-eval, user feedback, trends
-│   ├── llm_utils.py        # Robust LLM calls, circuit breaker
-│   ├── logging_utils.py    # Structured logging
-│   ├── cache.py            # Semantic query cache
-│   └── mcp_support.py      # MCP server integration
-├── test.py                 # Comprehensive test suite
-├── examples/               # Usage examples
-├── pyproject.toml          # Project metadata and tool config
-└── .github/workflows/      # CI/CD
+├── agloom/              # Core library
+├── agloom_cli/          # CLI package (`agloom` command)
+├── tests/               # Pytest suite
+├── examples/            # Usage examples
+├── docs/                # MkDocs sources
+├── pyproject.toml       # Metadata and tool configuration
+└── .github/workflows/   # CI/CD
 ```
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting and tooling risk notes.
 
 ## Questions?
 
-Open an issue on GitHub if you have questions about contributing or need help getting set up.
+Open an issue on GitHub if you need help with setup or contribution workflow.

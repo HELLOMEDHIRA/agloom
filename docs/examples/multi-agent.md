@@ -24,14 +24,14 @@ llm = ChatGroq(
 async def main():
     store = InMemoryStore()
 
-    researcher = create_agent(
+    researcher = await create_agent(
         model=llm,
         store=store,
         name="researcher",
         system_prompt="You are a research specialist. Provide detailed factual information.",
     )
 
-    writer = create_agent(
+    writer = await create_agent(
         model=llm,
         store=store,
         name="writer",
@@ -105,59 +105,63 @@ Beyond shared memory, agloom supports direct agent-to-agent delegation with 4 pa
 ```python
 from agloom import create_agent
 
-researcher = create_agent(model=llm, name="researcher", tools=[search_tool])
+async def example():
+    researcher = await create_agent(model=llm, name="researcher", tools=[search_tool])
 
-# Parent uses researcher as a tool in its own tool loop
-parent = create_agent(
-    model=llm,
-    name="coordinator",
-    tools=[researcher.as_tool(description="Research academic papers")],
-)
+    # Parent uses researcher as a tool in its own tool loop
+    parent = await create_agent(
+        model=llm,
+        name="coordinator",
+        tools=[researcher.as_tool(description="Research academic papers")],
+    )
 
-result = await parent.ainvoke("Find papers about transformers")
+    result = await parent.ainvoke("Find papers about transformers")
 ```
 
 ### Hierarchical Delegation
 
 ```python
-researcher = create_agent(model=llm, name="researcher", tools=[search_tool])
-writer = create_agent(model=llm, name="writer")
+async def example():
+    researcher = await create_agent(model=llm, name="researcher", tools=[search_tool])
+    writer = await create_agent(model=llm, name="writer")
 
-# Pass delegates at creation time
-parent = create_agent(
-    model=llm,
-    name="coordinator",
-    delegates=[researcher, writer],
-)
+    # Pass delegates at creation time
+    parent = await create_agent(
+        model=llm,
+        name="coordinator",
+        delegates=[researcher, writer],
+    )
 
-# Explicit delegation
-result = await parent.adelegate("Summarize RLHF papers", delegate_name="researcher")
+    # Explicit delegation
+    result = await parent.adelegate("Summarize RLHF papers", delegate_name="researcher")
 ```
 
 ### Transparent Hand-off
 
 ```python
-parent = create_agent(model=llm, name="coordinator")
-parent.register_handoff(researcher, description="Research and summarize academic papers")
+async def example():
+    parent = await create_agent(model=llm, name="coordinator")
+    parent.register_handoff(researcher, description="Research and summarize academic papers")
 
-# Classifier sees the description and routes automatically
-result = await parent.ainvoke("Find papers about attention mechanisms")
-# → transparently handed off to researcher
+    # Classifier sees the description and routes automatically
+    result = await parent.ainvoke("Find papers about attention mechanisms")
+    # → transparently handed off to researcher
 ```
 
 ### Background Delegation
 
 ```python
-parent = create_agent(model=llm, name="coordinator", delegates=[researcher])
+async def example():
+    parent = await create_agent(model=llm, name="coordinator", delegates=[researcher])
 
-# Fire-and-forget
-task_id = await parent.adelegate_background(
-    "Deep literature review on quantum computing",
-    delegate_name="researcher",
-)
+    # Fire-and-forget
+    task_id = await parent.adelegate_background(
+        "Deep literature review on quantum computing",
+        delegate_name="researcher",
+    )
 
-# Do other work, then collect the result
-result = await parent.await_background(task_id, timeout=120.0)
+    # Do other work, then collect the result
+    result = await parent.await_background(task_id, timeout=120.0)
 ```
 
 See the full [Task Delegation guide](../features/delegation.md) for details.
