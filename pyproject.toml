@@ -1,6 +1,6 @@
 [project]
 name = "agloom"
-version = "0.1.18"
+version = "0.1.19"
 description = "The intelligent fabric for AI agents — 9 execution patterns, auto-classified, self-learning, production-ready. Drop-in replacement for LangChain's create_agent."
 readme = "README.md"
 license = {text = "Apache-2.0"}

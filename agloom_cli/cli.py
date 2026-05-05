@@ -533,7 +533,7 @@ async def _run(
 
     from .persistence import cli_langgraph_sqlite
 
-    with cli_langgraph_sqlite(enable_memory, storage_dir()) as (checkpointer, shared_graph_store):
+    async with cli_langgraph_sqlite(enable_memory, storage_dir()) as (checkpointer, shared_graph_store):
         memory = None
         store = None
         if enable_memory:
