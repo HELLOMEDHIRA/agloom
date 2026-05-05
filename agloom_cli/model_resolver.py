@@ -51,6 +51,29 @@ class MissingProviderDependency(ImportError):
             )
 
 
+class MissingProviderApiKey(ValueError):
+    """Required API key for the resolved provider is not set (avoid SDK tracebacks)."""
+
+
+def _require_env(name: str, *, for_provider: str) -> str:
+    v = os.environ.get(name)
+    if v:
+        return v
+    raise MissingProviderApiKey(
+        f"{name} is not set. Export it to use {for_provider} models "
+        f"(e.g. `set {name}=...` on Windows or `export {name}=...` in bash)."
+    )
+
+
+def _require_google_api_key() -> str:
+    k = _google_api_key()
+    if k:
+        return k
+    raise MissingProviderApiKey(
+        "GOOGLE_API_KEY or GEMINI_API_KEY must be set for Gemini models."
+    )
+
+
 def get_model(model_id: str, **kwargs) -> Any:
     """Get a LangChain chat model by ID (CLI-curated routing only).
 
@@ -164,7 +187,7 @@ def _get_openai_model(model_id: str, **kwargs) -> Any:
     return ChatOpenAI(
         model=model_id,
         temperature=kwargs.get("temperature", 0),
-        api_key=os.environ.get("OPENAI_API_KEY"),
+        api_key=_require_env("OPENAI_API_KEY", for_provider="OpenAI"),
     )
 
 
@@ -186,7 +209,7 @@ def _get_anthropic_model(model_id: str, **kwargs) -> Any:
     return ChatAnthropic(
         model=actual_model,
         temperature=kwargs.get("temperature", 0),
-        anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY"),
+        anthropic_api_key=_require_env("ANTHROPIC_API_KEY", for_provider="Anthropic"),
     )
 
 
@@ -196,7 +219,7 @@ def _get_google_genai_model(model_id: str, **kwargs) -> Any:
     except ImportError as e:
         raise MissingProviderDependency("google-genai", "'agloom[google-genai]'") from e
 
-    key = _google_api_key()
+    key = _require_google_api_key()
     return ChatGoogleGenerativeAI(
         model=model_id,
         temperature=kwargs.get("temperature", 0),
@@ -213,7 +236,7 @@ def _get_mistral_model(model_id: str, **kwargs) -> Any:
     return ChatMistralAI(
         model=model_id,
         temperature=kwargs.get("temperature", 0),
-        api_key=os.environ.get("MISTRAL_API_KEY"),
+        api_key=_require_env("MISTRAL_API_KEY", for_provider="Mistral AI"),
     )
 
 
@@ -226,7 +249,7 @@ def _get_xai_model(model_id: str, **kwargs) -> Any:
     return ChatXAI(
         model=model_id,
         temperature=kwargs.get("temperature", 0),
-        api_key=os.environ.get("XAI_API_KEY"),
+        api_key=_require_env("XAI_API_KEY", for_provider="xAI"),
     )
 
 
@@ -239,7 +262,7 @@ def _get_groq_model(model_id: str, **kwargs) -> Any:
     return ChatGroq(
         model=model_id,
         temperature=kwargs.get("temperature", 0),
-        api_key=os.environ.get("GROQ_API_KEY"),
+        api_key=_require_env("GROQ_API_KEY", for_provider="Groq"),
     )
 
 

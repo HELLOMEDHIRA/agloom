@@ -66,6 +66,12 @@ def test_resolve_model_env_skips_openai_model_id_when_extra_missing(monkeypatch:
     assert cfg.resolve_model("auto") == "groq-ok"
 
 
+def test_require_env_raises_for_missing_groq_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    with pytest.raises(mr.MissingProviderApiKey, match="GROQ_API_KEY"):
+        mr._require_env("GROQ_API_KEY", for_provider="Groq")
+
+
 def test_resolve_model_config_gpt_falls_back_to_key_scan(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pinned ``ai.model: gpt-4o`` should not hard-fail when only other providers are installed."""
     monkeypatch.setattr(

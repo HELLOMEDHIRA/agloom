@@ -19,10 +19,10 @@ from .config import (
     start_new_session,
 )
 from .mcp_loader import build_mcp_configs
-from .model_resolver import MissingProviderDependency
+from .model_resolver import MissingProviderApiKey, MissingProviderDependency
 from .project import detect_project, get_git_info
 from .project_rules import load_project_rules
-from .repl import run_shell
+from .repl import render_banner, run_shell
 from .session_manager import get_session_context_summary, update_session_file_summaries
 from .tool_loader import discover_tools
 
@@ -296,6 +296,11 @@ async def _run(
     # Ensure config is ready (auto-create if needed)
     ensure_config_ready()
 
+    # Same ASCII banner as interactive shell — show early for one-shot prompts so branding isn’t REPL-only.
+    if prompt:
+        console.print(render_banner("AGLOOM"))
+        console.print()
+
     cfg = load_config(config) if config else load_config(None)
 
     # Detect project context (use --project flag or auto-detect from cwd)
@@ -343,6 +348,9 @@ async def _run(
     try:
         llm = resolve_model(model or config_model)
     except MissingProviderDependency as e:
+        console.print(f"[error]{e}[/error]")
+        raise typer.Exit(1) from None
+    except MissingProviderApiKey as e:
         console.print(f"[error]{e}[/error]")
         raise typer.Exit(1) from None
     if llm is None:
