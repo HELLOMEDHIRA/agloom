@@ -221,7 +221,12 @@ def _init_chat_model(model_id: str) -> BaseChatModel:
 
 
 def resolve_model(model: Any) -> BaseChatModel:
-    """Accept a BaseChatModel instance or a model-id string. String IDs are LRU-cached (max 32)."""
+    """Accept a BaseChatModel instance or a model-id string. String IDs are LRU-cached (max 32).
+
+    String ids are delegated to ``langchain.chat_models.init_chat_model``; install the matching
+    ``langchain-*`` integration from https://docs.langchain.com/oss/python/integrations/chat
+    for providers beyond the default stack (AWS Bedrock, xAI, Mistral, …).
+    """
     if isinstance(model, str):
         return _init_chat_model(model)
     return model

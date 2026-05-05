@@ -206,7 +206,7 @@ async def main():
 ```bash
 pip install agloom          # or: uv add agloom
 pip install agloom[groq]    # with Groq provider
-pip install agloom[all]     # optional: Groq + NVIDIA provider packages
+pip install 'agloom[groq,nvidia]'   # Groq + NVIDIA provider packages together
 # If pip resolves NumPy 2.x and you see wheel/import issues: pip install "numpy>=1.26.4,<2" agloom
 ```
 

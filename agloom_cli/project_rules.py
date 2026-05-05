@@ -100,7 +100,11 @@ class ProjectRules:
 
     def get_text(self) -> str:
         """Get rules as formatted text for system prompt."""
-        if self._cached_text:
+        if self._cached_text is not None:
+            return self._cached_text
+
+        if not self.rules:
+            self._cached_text = ""
             return self._cached_text
 
         parts = ["# Project Rules\n"]
@@ -178,6 +182,8 @@ class ProjectRules:
 
     def get_relevant_rules(self, query: str) -> str:
         """Get only rules relevant to the query."""
+        if not self.rules:
+            return ""
         query_lower = query.lower()
 
         # Map keywords to rule sections
@@ -218,9 +224,27 @@ class ProjectRules:
         return "".join(parts)
 
 
+# Cheap, single-file markers for known languages. First match wins.
+# Order matters only when a directory is polyglot — picks the most specific.
+_LANGUAGE_MARKERS: tuple[tuple[str, str], ...] = (
+    ("pyproject.toml", "python"),
+    ("requirements.txt", "python"),
+    ("setup.py", "python"),
+    ("package.json", "javascript"),
+    ("tsconfig.json", "typescript"),
+    ("go.mod", "go"),
+    ("Cargo.toml", "rust"),
+    ("Gemfile", "ruby"),
+    ("composer.json", "php"),
+    ("pom.xml", "java"),
+    ("build.gradle", "java"),
+    ("build.gradle.kts", "kotlin"),
+)
+
+
 def analyze_project(project_path: Path) -> dict[str, Any]:
-    """Full analysis of project for best practices."""
-    analysis = {
+    """Detect what kind of project this is. Never raises on non-code dirs."""
+    analysis: dict[str, Any] = {
         "language": None,
         "framework": None,
         "test_framework": None,
@@ -229,111 +253,152 @@ def analyze_project(project_path: Path) -> dict[str, Any]:
         "package_manager": None,
         "has_readme": False,
         "has_docker": False,
-        "git_workflow": None,
+        "has_git": False,
         "ci_cd": None,
     }
 
-    # Check key files
-    files = list(project_path.iterdir())
-    file_names = {f.name for f in files if f.is_file()}
+    try:
+        file_names = {f.name for f in project_path.iterdir() if f.is_file()}
+    except (OSError, PermissionError):
+        return analysis
 
-    # Language detection
-    if "pyproject.toml" in file_names:
-        analysis["language"] = "python"
-    elif "package.json" in file_names:
-        analysis["language"] = "javascript"
-    elif "go.mod" in file_names:
-        analysis["language"] = "go"
+    for marker, lang in _LANGUAGE_MARKERS:
+        if marker in file_names:
+            analysis["language"] = lang
+            break
 
-    # Framework detection
+    # Python-specific deeper inspection — only when we're sure it's Python.
     if analysis["language"] == "python":
-        if (project_path / "manage.py").exists():
-            if (project_path / "settings.py").exists():
-                analysis["framework"] = "django"
+        if (project_path / "manage.py").exists() and (project_path / "settings.py").exists():
+            analysis["framework"] = "django"
         elif (project_path / "main.py").exists():
-            content = (project_path / "main.py").read_text()
-            if "FastAPI" in content:
-                analysis["framework"] = "fastapi"
-            elif "Flask" in content:
-                analysis["framework"] = "flask"
+            try:
+                content = (project_path / "main.py").read_text(encoding="utf-8", errors="replace")
+                if "FastAPI" in content:
+                    analysis["framework"] = "fastapi"
+                elif "Flask" in content:
+                    analysis["framework"] = "flask"
+            except OSError:
+                pass
 
-    # Test framework
-    if analysis["language"] == "python":
         if "pytest.ini" in file_names or "pyproject.toml" in file_names:
             analysis["test_framework"] = "pytest"
         elif (project_path / "tests").exists():
             analysis["test_framework"] = "unittest"
 
-    # Package manager
-    if "requirements.txt" in file_names:
-        analysis["package_manager"] = "pip"
-    elif "pyproject.toml" in file_names:
-        analysis["package_manager"] = "poetry"
-    elif "package.json" in file_names:
-        analysis["package_manager"] = "npm"
+        if "requirements.txt" in file_names:
+            analysis["package_manager"] = "pip"
+        elif "uv.lock" in file_names:
+            analysis["package_manager"] = "uv"
+        elif "poetry.lock" in file_names:
+            analysis["package_manager"] = "poetry"
 
-    # Lint tools
-    if "pyproject.toml" in file_names:
-        try:
-            content = (project_path / "pyproject.toml").read_text()
-            if "[tool.ruff]" in content:
-                analysis["lint_tools"].append("ruff")
-            if "[tool.mypy]" in content:
-                analysis["type_checker"] = "mypy"
-            if "[tool.black]" in content:
-                analysis["format_tool"] = "black"
-        except Exception:
-            pass
+        if "pyproject.toml" in file_names:
+            try:
+                content = (project_path / "pyproject.toml").read_text(encoding="utf-8", errors="replace")
+                if "[tool.ruff]" in content:
+                    analysis["lint_tools"].append("ruff")
+                if "[tool.mypy]" in content:
+                    analysis["type_checker"] = "mypy"
+                if "[tool.pyrefly]" in content:
+                    analysis["type_checker"] = "pyrefly"
+                if "[tool.black]" in content:
+                    analysis["format_tool"] = "black"
+            except OSError:
+                pass
+    elif analysis["language"] in ("javascript", "typescript"):
+        if "package-lock.json" in file_names:
+            analysis["package_manager"] = "npm"
+        elif "yarn.lock" in file_names:
+            analysis["package_manager"] = "yarn"
+        elif "pnpm-lock.yaml" in file_names:
+            analysis["package_manager"] = "pnpm"
 
-    # Git workflow
     if (project_path / ".github" / "workflows").exists():
         analysis["ci_cd"] = "github-actions"
 
-    # Docs
-    analysis["has_readme"] = "README.md" in file_names
+    analysis["has_git"] = (project_path / ".git").exists()
+    analysis["has_readme"] = "README.md" in file_names or "readme.md" in file_names
     analysis["has_docker"] = "Dockerfile" in file_names or "docker-compose.yml" in file_names
 
     return analysis
 
 
-def generate_rules(project_path: Path, analysis: dict) -> dict[str, Any]:
-    """Generate rules based on analysis."""
-    rules = {
-        "code_style": {
-            "naming": {
-                "files": "snake_case",
-                "classes": "PascalCase",
-                "functions": "snake_case",
-            },
-            "formatting": {
-                "indent": "4 spaces",
-                "max_line_length": "100",
-            },
-        },
-        "testing": {
-            "framework": analysis.get("test_framework", "pytest"),
-            "patterns": ["test_*.py", "*_test.py"],
-        },
-        "validation": {
-            "lint": {
-                "tool": analysis.get("lint_tools", ["ruff"])[0] if analysis.get("lint_tools") else "ruff",
-            },
-        },
-        "git": {
+# Per-language style defaults. Only emitted when the language is detected —
+# we don't impose snake_case / 100-col rules on a notes folder.
+_LANGUAGE_STYLE: dict[str, dict[str, Any]] = {
+    "python": {
+        "naming": {"files": "snake_case", "classes": "PascalCase", "functions": "snake_case"},
+        "formatting": {"indent": "4 spaces", "max_line_length": "100"},
+    },
+    "javascript": {
+        "naming": {"files": "kebab-case", "classes": "PascalCase", "functions": "camelCase"},
+        "formatting": {"indent": "2 spaces", "max_line_length": "100"},
+    },
+    "typescript": {
+        "naming": {"files": "kebab-case", "classes": "PascalCase", "functions": "camelCase"},
+        "formatting": {"indent": "2 spaces", "max_line_length": "100"},
+    },
+    "go": {
+        "naming": {"files": "snake_case", "types": "PascalCase", "functions": "camelCase"},
+        "formatting": {"indent": "tab", "max_line_length": "120"},
+    },
+    "rust": {
+        "naming": {"files": "snake_case", "types": "PascalCase", "functions": "snake_case"},
+        "formatting": {"indent": "4 spaces", "max_line_length": "100"},
+    },
+}
+
+_TEST_PATTERNS: dict[str, list[str]] = {
+    "python": ["test_*.py", "*_test.py"],
+    "javascript": ["*.test.js", "*.spec.js"],
+    "typescript": ["*.test.ts", "*.spec.ts"],
+    "go": ["*_test.go"],
+    "rust": ["tests/*.rs"],
+}
+
+
+def generate_rules(analysis: dict) -> dict[str, Any]:
+    """Build rules from what we actually detected. Returns {} for unknown projects."""
+    rules: dict[str, Any] = {}
+    language = analysis.get("language")
+
+    if isinstance(language, str) and language in _LANGUAGE_STYLE:
+        rules["code_style"] = dict(_LANGUAGE_STYLE[language])
+
+    if analysis.get("test_framework"):
+        patterns = _TEST_PATTERNS.get(language, []) if isinstance(language, str) else []
+        rules["testing"] = {
+            "framework": analysis["test_framework"],
+            "patterns": patterns,
+        }
+
+    lint_tools = analysis.get("lint_tools") or []
+    if lint_tools or analysis.get("type_checker"):
+        validation: dict[str, Any] = {}
+        if lint_tools:
+            validation["lint"] = {"tool": lint_tools[0]}
+        if analysis.get("type_checker"):
+            validation["typecheck"] = analysis["type_checker"]
+        rules["validation"] = validation
+
+    # Git rules apply to anything in a git repo, code or not.
+    if analysis.get("has_git"):
+        rules["git"] = {
             "commits": {
                 "format": "type(scope): description",
                 "types": ["feat", "fix", "docs", "style", "refactor", "test", "chore"],
             },
-            "branch": "main",
-        },
-    }
+        }
 
-    # Customize based on framework
-    if analysis.get("framework") == "django":
-        rules["code_style"]["naming"]["models"] = "PascalCase"
-        rules["code_style"]["naming"]["views"] = "snake_case"
-    elif analysis.get("framework") == "fastapi":
-        rules["code_style"]["naming"]["routers"] = "snake_case"
+    # Framework-specific tweaks (only meaningful when code_style exists).
+    if "code_style" in rules:
+        framework = analysis.get("framework")
+        if framework == "django":
+            rules["code_style"]["naming"]["models"] = "PascalCase"
+            rules["code_style"]["naming"]["views"] = "snake_case"
+        elif framework == "fastapi":
+            rules["code_style"]["naming"]["routers"] = "snake_case"
 
     return rules
 
@@ -359,7 +424,7 @@ def load_project_rules(
     # Analyze and generate new rules
     if force_refresh or not existing:
         analysis = analyze_project(project_path)
-        rules_dict = generate_rules(project_path, analysis)
+        rules_dict = generate_rules(analysis)
         rules = ProjectRules(
             project_path=project_path,
             rules=rules_dict,

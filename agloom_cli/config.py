@@ -381,13 +381,18 @@ def add_to_session_history(thread_id: str, role: str, content: str) -> None:
 def resolve_model(model_id: str | None) -> Any:
     """Resolve model from ID or env var.
 
+    CLI auto-wiring covers a subset (see ``model_resolver``). Optional extras for LangChain’s
+    first-party packages live in ``pyproject.toml`` under ``[project.optional-dependencies]``.
+    Integrations without their own ``langchain-*`` wheel typically need ``agloom[community]``.
+    Doc index: https://docs.langchain.com/oss/python/integrations/chat
+
     Priority:
     1. Explicit model_id
     2. Config model setting
     3. Environment variables
     4. Auto-detect from available API keys
     """
-    from .model_resolver import get_model
+    from .model_resolver import get_model, try_resolve_llm_from_api_keys
 
     if model_id and model_id != "auto":
         return get_model(model_id)
@@ -397,22 +402,19 @@ def resolve_model(model_id: str | None) -> Any:
         return get_model(config["ai"]["model"])
 
     env_model = (
-        os.environ.get("OPENAI_MODEL_ID") or os.environ.get("ANTHROPIC_MODEL_ID") or os.environ.get("GROQ_MODEL_ID")
+        os.environ.get("OPENAI_MODEL_ID")
+        or os.environ.get("ANTHROPIC_MODEL_ID")
+        or os.environ.get("GROQ_MODEL_ID")
+        or os.environ.get("GOOGLE_MODEL_ID")
+        or os.environ.get("GEMINI_MODEL_ID")
+        or os.environ.get("MISTRAL_MODEL_ID")
+        or os.environ.get("XAI_MODEL_ID")
     )
 
     if env_model:
         return get_model(env_model)
 
-    if os.environ.get("OPENAI_API_KEY"):
-        return get_model("gpt-4o")
-
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return get_model("claude-3-5-sonnet-20241022")
-
-    if os.environ.get("GROQ_API_KEY"):
-        return get_model("meta-llama/llama-4-scout-17b-16e-instruct")
-
-    return None
+    return try_resolve_llm_from_api_keys()
 
 
 def add_to_gitignore() -> bool:

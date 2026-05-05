@@ -19,6 +19,7 @@ from .config import (
     start_new_session,
 )
 from .mcp_loader import build_mcp_configs
+from .model_resolver import MissingProviderDependency
 from .project import detect_project, get_git_info
 from .project_rules import load_project_rules
 from .repl import run_shell
@@ -339,9 +340,16 @@ async def _run(
     # Get model - check config AI section
     ai_config = cfg.get("ai", {})
     config_model = ai_config.get("model", "auto")
-    llm = resolve_model(model or config_model)
+    try:
+        llm = resolve_model(model or config_model)
+    except MissingProviderDependency as e:
+        console.print(f"[error]{e}[/error]")
+        raise typer.Exit(1) from None
     if llm is None:
-        console.print("[error]No model configured. Set GROQ_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY.[/error]")
+        console.print(
+            "[error]No model configured. Set an API key for a supported provider (e.g. OPENAI_API_KEY, "
+            "GROQ_API_KEY, GOOGLE_API_KEY) and install the matching extra (e.g. pip install 'agloom[groq]').[/error]"
+        )
         raise typer.Exit(1)
 
     # Get or create session (--session flag overrides config/auto-generated ID)

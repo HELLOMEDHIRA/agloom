@@ -35,7 +35,7 @@ agloom supports multiple LLM providers. Install only what you need:
     ```bash
     pip install agloom[groq]         # Groq (Llama, Mixtral)
     pip install agloom[nvidia]       # NVIDIA NIM
-    pip install agloom[all]          # Groq + NVIDIA extras together
+    pip install 'agloom[groq,nvidia]'   # Groq + NVIDIA extras together
     pip install agloom[docs]         # MkDocs (same stack as dev docs builds)
     ```
 
@@ -43,7 +43,7 @@ agloom supports multiple LLM providers. Install only what you need:
 
     ```bash
     uv add agloom[groq]
-    uv add agloom[all]
+    uv add 'agloom[groq,nvidia]'
     ```
 
 ## Verify Installation
