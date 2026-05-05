@@ -1,4 +1,4 @@
-"""Session JSON files under ~/.agloom/sessions for the CLI."""
+"""Session JSON files under ``<storage>/sessions`` (see ``agloom_cli.config.storage_dir``)."""
 
 from __future__ import annotations
 
@@ -6,11 +6,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .config import HomeDir
+from .config import storage_dir
 
 
 def _session_file(session_id: str, home_dir: Path | None = None) -> Path:
-    base = home_dir or HomeDir
+    base = home_dir or storage_dir()
     return base / "sessions" / f"{session_id}.json"
 
 

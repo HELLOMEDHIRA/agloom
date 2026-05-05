@@ -23,7 +23,7 @@ pip install agloom
 
 ## Super-Brain (built in)
 
-The CLI always uses [Super-Brain](https://agsuperbrain.readthedocs.io/en/latest/): on each start it runs **`agsuperbrain init`** in the detected project directory and connects the **Super-Brain MCP** server (local graph + tools). It ships with `agloom` (`agsuperbrain` dependency). Override the stdio command in `~/.agloom/agloom.yaml` under `mcp.superbrain` if needed.
+The CLI always uses [Super-Brain](https://agsuperbrain.readthedocs.io/en/latest/): on each start it runs **`agsuperbrain init`** in the detected project directory and connects the **Super-Brain MCP** server (local graph + tools). It ships with `agloom` (`agsuperbrain` dependency). Override the stdio command in `<project>/.agloom/agloom.yaml` under `mcp.superbrain` if needed.
 
 ## Quick Start
 
@@ -34,7 +34,7 @@ agloom
 
 ```
 $ agloom
-[agloom] Config created at ~/.agloom/agloom.yaml
+[agloom] Config created at <project>/.agloom/agloom.yaml
 [agloom] Session: abc12345
 [agloom] Added to .gitignore
 
@@ -69,7 +69,7 @@ agloom -m llama-3.3-70b-versatile "Hello"
 
 ### Auto-created Config
 
-On first run, agloom creates `~/.agloom/agloom.yaml`:
+On first run, agloom creates `<project>/.agloom/agloom.yaml` (under the detected project root):
 
 ```yaml
 ai:
@@ -248,11 +248,11 @@ Each session keeps:
 
 ## Data Storage
 
-Agloom stores data in `~/.agloom`:
+The CLI stores config and caches in **`<project>/.agloom/`** (next to your repo), not under your home directory:
 
 ```
-~/.agloom/
-├── agloom.yaml           # User config
+<project>/.agloom/
+├── agloom.yaml           # Config for this project
 ├── sessions/
 │   ├── abc12345.json    # Session data
 │   └── xyz789.json
@@ -261,6 +261,8 @@ Agloom stores data in `~/.agloom`:
 ├── skills/              # Learned skills
 └── logs/
 ```
+
+Optional: a `.agloom.yaml` in the project root is merged on top of `agloom.yaml`. If you import `agloom_cli` from Python without the CLI, the library may create `~/.agloom/` with the same layout as a fallback.
 
 ## Built-in Tools (46)
 

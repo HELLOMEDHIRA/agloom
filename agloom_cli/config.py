@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -14,8 +15,118 @@ from rich.console import Console
 console = Console()
 
 HomeDir = Path.home() / ".agloom"
+_cli_storage_dir: Path | None = None
 DefaultConfigPath = HomeDir / "agloom.yaml"
 ProjectConfigPath = Path(".agloom.yaml")
+
+_STORAGE_README = """# Agloom data (this directory)
+
+The **agloom CLI** stores config and cached state **only** here — ``<project>/.agloom/`` — not under your user profile.
+
+| Path | Purpose |
+|------|---------|
+| ``agloom.yaml`` | Configuration |
+| ``sessions/`` | Session state |
+| ``indexes/`` | Smart-context index cache |
+| ``rules/`` | Cached project rules |
+| ``skills/`` | Learned skills |
+| ``logs/`` | Log files |
+
+Optional: a ``.agloom.yaml`` in the **project root** (parent of this folder) is merged on top of ``agloom.yaml``; later files override earlier ones.
+
+If you use ``agloom_cli`` from Python without ``set_cli_project_root``, the first touch creates ``~/.agloom`` with the same layout instead.
+
+https://agloom.readthedocs.io
+"""
+
+
+def storage_dir() -> Path:
+    """Root directory for config, sessions, indexes, rules, skills, and logs.
+
+    When the CLI has bound a project via ``set_cli_project_root``, this is
+    ``<project>/.agloom``. Otherwise (library / tests) it falls back to ``~/.agloom``.
+    """
+    return _cli_storage_dir if _cli_storage_dir is not None else HomeDir
+
+
+def set_cli_project_root(project_root: Path) -> Path:
+    """Bind all CLI storage to ``<project_root>/.agloom`` and ensure layout exists."""
+    global _cli_storage_dir, DefaultConfigPath
+
+    root = project_root.resolve()
+    ag = root / ".agloom"
+    ag.mkdir(parents=True, exist_ok=True)
+    for sub in ("sessions", "indexes", "rules", "skills", "logs"):
+        (ag / sub).mkdir(exist_ok=True)
+
+    _cli_storage_dir = ag
+    DefaultConfigPath = ag / "agloom.yaml"
+    _migrate_legacy_home_config(ag)
+
+    readme = ag / "README.md"
+    if not readme.exists():
+        readme.write_text(_STORAGE_README.strip() + "\n", encoding="utf-8")
+    return ag
+
+
+def _migrate_legacy_home_config(project_agloom: Path) -> None:
+    """Copy ``~/.agloom/agloom.yaml`` into the project store if the latter is missing."""
+    dest = project_agloom / "agloom.yaml"
+    if dest.exists():
+        return
+    legacy = HomeDir / "agloom.yaml"
+    if legacy.exists():
+        try:
+            shutil.copy2(legacy, dest)
+        except OSError:
+            pass
+
+
+def config_yaml_path() -> Path:
+    """Path to the active ``agloom.yaml`` (under ``storage_dir()``)."""
+    return storage_dir() / "agloom.yaml"
+
+
+_CLEANUP_DIR_NAMES = (".agloom", ".agsuperbrain")
+
+
+def list_project_cleanup_dirs(project_root: Path) -> list[Path]:
+    """Return existing ``.agloom`` and ``.agsuperbrain`` directories under *project_root*."""
+    root = project_root.resolve()
+    found: list[Path] = []
+    for name in _CLEANUP_DIR_NAMES:
+        p = (root / name).resolve(strict=False)
+        if not p.is_dir():
+            continue
+        try:
+            p.relative_to(root)
+        except ValueError:
+            continue
+        if p.name != name:
+            continue
+        found.append(p)
+    return found
+
+
+def remove_project_cleanup_dirs(project_root: Path) -> list[Path]:
+    """Remove ``.agloom`` and ``.agsuperbrain`` under *project_root*. Returns removed paths."""
+    global _cli_storage_dir, DefaultConfigPath
+
+    removed: list[Path] = []
+    for p in list_project_cleanup_dirs(project_root):
+        shutil.rmtree(p)
+        removed.append(p)
+
+    if _cli_storage_dir is not None and removed:
+        try:
+            cur = _cli_storage_dir.resolve()
+            if any(cur == r.resolve() for r in removed):
+                _cli_storage_dir = None
+                DefaultConfigPath = HomeDir / "agloom.yaml"
+        except OSError:
+            pass
+    return removed
+
 
 DEFAULT_CONFIG = """# agloom configuration file
 # Generated on first run - edit this file to customize your environment
@@ -113,24 +224,6 @@ session:
   last_updated: ""
 """
 
-_USER_AGLOOM_README = """# ~/.agloom — user data directory
-
-Agloom stores cross-session data here (see **Data Storage** in the docs):
-
-| Path | Purpose |
-|------|---------|
-| ``agloom.yaml`` | User configuration |
-| ``sessions/`` | Session state (``<thread_id>.json``) |
-| ``indexes/`` | Embeddings / smart-context project index cache |
-| ``rules/`` | Cached project rules (``<project_hash>.json``) |
-| ``skills/`` | Learned skills |
-| ``logs/`` | Log files |
-
-Your git repo may also contain ``./.agloom/`` (workspace notes); that is separate from this folder.
-
-https://agloom.readthedocs.io
-"""
-
 CONFIG_HEADER = """# agloom configuration
 #
 # This file is auto-created on first CLI run.
@@ -140,39 +233,44 @@ CONFIG_HEADER = """# agloom configuration
 #
 # Config precedence:
 #   1. CLI arguments
-#   2. Project .agloom.yaml
-#   3. ~/.agloom/agloom.yaml
-#   4. Environment variables
-#   5. Default values
+#   2. Explicit -c/--config file
+#   3. Project-root .agloom.yaml
+#   4. <project>/.agloom/agloom.yaml (or ~/.agloom/agloom.yaml if no CLI project)
+#   5. Environment variables
+#   6. Default values
 """
 
 
-def ensure_config_dir() -> Path:
-    """Ensure ``~/.agloom`` exists with the documented subdirectories.
-
-    Matches the Data Storage layout: ``agloom.yaml``, ``sessions/``, ``indexes/``,
-    ``rules/``, ``skills/``, ``logs/``.
-    """
-    HomeDir.mkdir(parents=True, exist_ok=True)
+def ensure_storage_layout() -> Path:
+    """Ensure ``storage_dir()`` exists with the documented subdirectories."""
+    root = storage_dir()
+    root.mkdir(parents=True, exist_ok=True)
     for sub in ("sessions", "indexes", "rules", "skills", "logs"):
-        (HomeDir / sub).mkdir(exist_ok=True)
-    home_readme = HomeDir / "README.md"
-    if not home_readme.exists():
-        home_readme.write_text(_USER_AGLOOM_README.strip() + "\n", encoding="utf-8")
-    return HomeDir
+        (root / sub).mkdir(exist_ok=True)
+    readme = root / "README.md"
+    if not readme.exists():
+        readme.write_text(_STORAGE_README.strip() + "\n", encoding="utf-8")
+    return root
+
+
+def ensure_config_dir() -> Path:
+    """Backward-compatible alias for :func:`ensure_storage_layout`."""
+    return ensure_storage_layout()
 
 
 def create_default_config() -> dict[str, Any]:
     """Create default config and save to file if not exists."""
-    if DefaultConfigPath.exists():
-        return load_config(DefaultConfigPath)
+    ensure_storage_layout()
+    cfgp = config_yaml_path()
+    if cfgp.exists():
+        with open(cfgp, encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
 
-    ensure_config_dir()
-
-    with open(DefaultConfigPath, "w") as f:
+    with open(cfgp, "w", encoding="utf-8") as f:
         f.write(CONFIG_HEADER + "\n\n" + DEFAULT_CONFIG)
 
-    return load_config(DefaultConfigPath)
+    with open(cfgp, encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
 
 
 def get_system_prompt() -> str:
@@ -230,29 +328,34 @@ Remember: You're collaborating with a human. They control the session, you assis
 
 
 def load_config(path: Path | None) -> dict[str, Any]:
-    """Load configuration from yaml or toml file.
+    """Load configuration from YAML files and merge.
 
-    Config search order:
-    1. Current directory .agloom.yaml (project override)
-    2. Home ~/.agloom/agloom.yaml (user defaults)
-    3. Auto-create default config
+    Files are merged in order; later files override earlier keys (see ``_deep_merge``).
 
-    Config precedence (highest to lowest):
-    1. CLI flags
-    2. Project config file
-    3. Home config file
-    4. Environment variables
-    5. Defaults
+    1. ``storage_dir()/agloom.yaml`` if it exists
+    2. Project-root ``.agloom.yaml`` if it exists (and is not the same path)
+    3. Explicit ``path`` if given and exists
+
+    If no files exist, :func:`create_default_config` is used.
     """
-    config_paths = []
+    storage_yaml = config_yaml_path()
+    seen: set[Path] = set()
+    config_paths: list[Path] = []
 
-    if path and path.exists():
-        config_paths.append(path)
-    elif ProjectConfigPath.exists():
-        config_paths.append(ProjectConfigPath)
+    def _append(cfg_path: Path) -> None:
+        try:
+            key = cfg_path.resolve()
+        except OSError:
+            key = cfg_path
+        if key in seen or not cfg_path.exists():
+            return
+        seen.add(key)
+        config_paths.append(cfg_path)
 
-    if DefaultConfigPath.exists():
-        config_paths.append(DefaultConfigPath)
+    _append(storage_yaml)
+    _append(ProjectConfigPath)
+    if path is not None:
+        _append(path)
 
     if not config_paths:
         return create_default_config()
@@ -260,7 +363,7 @@ def load_config(path: Path | None) -> dict[str, Any]:
     merged: dict[str, Any] = {}
     for config_path in config_paths:
         try:
-            with open(config_path) as f:
+            with open(config_path, encoding="utf-8") as f:
                 loaded = yaml.safe_load(f) or {}
             _deep_merge(merged, loaded)
         except yaml.YAMLError as e:
@@ -317,7 +420,7 @@ def save_session(thread_id: str, metadata: dict | None = None) -> None:
     config["session"]["current_session"] = thread_id
     config["session"]["last_updated"] = datetime.now().isoformat()
 
-    with open(DefaultConfigPath, "w") as f:
+    with open(config_yaml_path(), "w", encoding="utf-8") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
 
@@ -328,7 +431,7 @@ def start_new_session(thread_id: str | None = None) -> dict[str, Any]:
     if not thread_id:
         thread_id = uuid.uuid4().hex
 
-    sessions_dir = ensure_config_dir() / "sessions"
+    sessions_dir = ensure_storage_layout() / "sessions"
     sessions_dir.mkdir(parents=True, exist_ok=True)
     session_file = sessions_dir / f"{thread_id}.json"
 
@@ -347,7 +450,7 @@ def start_new_session(thread_id: str | None = None) -> dict[str, Any]:
     config.setdefault("session", {})["current_session"] = thread_id
     config.setdefault("session", {})["last_updated"] = datetime.now().isoformat()
 
-    with open(DefaultConfigPath, "w") as f:
+    with open(config_yaml_path(), "w", encoding="utf-8") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
     return session_data
@@ -360,13 +463,13 @@ def get_session_history(thread_id: str) -> list[dict]:
     if not thread_id:
         return []
 
-    sessions_dir = ensure_config_dir() / "sessions"
+    sessions_dir = ensure_storage_layout() / "sessions"
     session_file = sessions_dir / f"{thread_id}.json"
 
     if not session_file.exists():
         return []
 
-    with open(session_file) as f:
+    with open(session_file, encoding="utf-8") as f:
         session = json.load(f)
 
     return session.get("messages", [])
@@ -379,13 +482,13 @@ def add_to_session_history(thread_id: str, role: str, content: str) -> None:
     if not thread_id:
         return
 
-    sessions_dir = ensure_config_dir() / "sessions"
+    sessions_dir = ensure_storage_layout() / "sessions"
     session_file = sessions_dir / f"{thread_id}.json"
 
     session: dict[str, Any] = {"id": thread_id, "messages": [], "turns": 0}
 
     if session_file.exists():
-        with open(session_file) as f:
+        with open(session_file, encoding="utf-8") as f:
             session = json.load(f)
 
     session["messages"].append(
@@ -491,40 +594,6 @@ def add_to_gitignore() -> bool:
         f.write("\n" + "\n".join(entries))
 
     return True
-
-
-_DOT_AGLOOM_README = """# Project ``./.agloom/`` (workspace)
-
-This folder under your **repo root** is optional workspace metadata (e.g. this README).
-**Most agloom data lives in your user home**, not here:
-
-``~/.agloom/`` (created on first CLI run)
-
-- ``agloom.yaml`` — user config
-- ``sessions/`` — session JSON per thread
-- ``indexes/`` — embeddings / smart-context cache
-- ``rules/`` — cached project rules
-- ``skills/`` — learned skills
-- ``logs/`` — logs
-
-**Project overrides:** add ``.agloom.yaml`` in the repo root (merged over ``~/.agloom/agloom.yaml``).
-
-**Multiple API keys:** set ``AGLOOM_PROVIDER`` to ``openai``, ``groq``, ``anthropic``, ``google``, ``mistralai``, or ``xai``.
-
-Docs: https://agloom.readthedocs.io
-"""
-
-
-def ensure_project_dot_agloom(project_root: Path) -> None:
-    """Create ``<project>/.agloom/`` so local CLI state matches documented/gitignored paths.
-
-    Home config lives under ``~/.agloom/``; project scope uses ``./.agloom/`` for workspace-local files.
-    """
-    ag_dir = project_root / ".agloom"
-    ag_dir.mkdir(parents=True, exist_ok=True)
-    readme = ag_dir / "README.md"
-    if not readme.exists():
-        readme.write_text(_DOT_AGLOOM_README.strip() + "\n", encoding="utf-8")
 
 
 def ensure_config_ready() -> dict[str, Any]:

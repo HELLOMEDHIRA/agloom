@@ -17,7 +17,7 @@ Agloom uses intelligent context injection to provide relevant code without overw
 When you first run Agloom in a project, it builds an index:
 
 ```
-~/.agloom/
+<project>/.agloom/
 ├── indexes/
 │   ├── abc12345.json    # Project index
 │   └── chunks: [file1, file2, ...]
@@ -129,7 +129,7 @@ Each session stores:
 - **Modified files** - changes during session
 
 ```
-~/.agloom/sessions/
+<project>/.agloom/sessions/
 ├── abc12345.json    # Session data
 └── messages: [...]
 ```

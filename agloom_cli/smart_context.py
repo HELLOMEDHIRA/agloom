@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .config import HomeDir
+from .config import storage_dir
 
 # Supported languages for chunking
 LANGUAGE_EXTENSIONS = {
@@ -117,7 +117,7 @@ class ProjectIndex:
     def save(self, home_dir: Path | None = None) -> None:
         """Save index to disk."""
 
-        home_dir = home_dir or HomeDir
+        home_dir = home_dir or storage_dir()
         index_dir = home_dir / "indexes"
         index_dir.mkdir(exist_ok=True)
 
@@ -137,7 +137,7 @@ class ProjectIndex:
     @classmethod
     def load(cls, root: Path, home_dir: Path | None = None) -> ProjectIndex | None:
         """Load index from disk if exists."""
-        home_dir = home_dir or HomeDir
+        home_dir = home_dir or storage_dir()
         root_hash = hashlib.md5(str(root.resolve()).encode(), usedforsecurity=False).hexdigest()[:8]
         index_dir = home_dir / "indexes"
         index_file = index_dir / f"{root_hash}.json"

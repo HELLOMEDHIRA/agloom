@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from .config import HomeDir
+from .config import storage_dir
 
 DEFAULT_RULES = """
 # Default rules - always available if no project rules
@@ -155,7 +155,7 @@ class ProjectRules:
 
     def save(self, home_dir: Path | None = None) -> None:
         """Save rules to disk."""
-        home_dir = home_dir or HomeDir
+        home_dir = home_dir or storage_dir()
         rules_dir = home_dir / "rules"
         rules_dir.mkdir(exist_ok=True)
 
@@ -167,7 +167,7 @@ class ProjectRules:
     @classmethod
     def load(cls, project_path: Path, home_dir: Path | None = None) -> ProjectRules | None:
         """Load rules from disk if exists."""
-        home_dir = home_dir or HomeDir
+        home_dir = home_dir or storage_dir()
         project_hash = hashlib.md5(str(project_path.resolve()).encode(), usedforsecurity=False).hexdigest()[:8]
         rules_dir = home_dir / "rules"
         rules_file = rules_dir / f"{project_hash}.json"

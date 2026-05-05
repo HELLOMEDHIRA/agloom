@@ -7,20 +7,42 @@ from pathlib import Path
 
 import pytest
 
-from agloom_cli.config import ensure_project_dot_agloom, get_system_prompt, get_thread_id, load_config
+from agloom_cli.config import (
+    get_system_prompt,
+    get_thread_id,
+    list_project_cleanup_dirs,
+    load_config,
+    remove_project_cleanup_dirs,
+    set_cli_project_root,
+)
 from agloom_cli.tool_loader import discover_tools, tool
 from agloom_cli.tools import read_file, write_file
 
 
-def test_ensure_project_dot_agloom_creates_dir(tmp_path: Path) -> None:
-    ensure_project_dot_agloom(tmp_path)
-    assert (tmp_path / ".agloom").is_dir()
+def test_set_cli_project_root_creates_layout(tmp_path: Path) -> None:
+    ag = set_cli_project_root(tmp_path)
+    assert ag == tmp_path / ".agloom"
+    assert (tmp_path / ".agloom" / "sessions").is_dir()
     assert (tmp_path / ".agloom" / "README.md").is_file()
 
 
+def test_remove_project_cleanup_dirs(tmp_path: Path) -> None:
+    (tmp_path / ".agloom").mkdir()
+    (tmp_path / ".agsuperbrain").mkdir()
+    (tmp_path / ".agloom" / "agloom.yaml").write_text("ai:\n  name: x\n", encoding="utf-8")
+    found = list_project_cleanup_dirs(tmp_path)
+    assert {p.name for p in found} == {".agloom", ".agsuperbrain"}
+    removed = remove_project_cleanup_dirs(tmp_path)
+    assert len(removed) == 2
+    assert not (tmp_path / ".agloom").exists()
+    assert not (tmp_path / ".agsuperbrain").exists()
+
+
 def test_load_explicit_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Isolate from ~/.agloom and project `.agloom.yaml` so merge order is deterministic."""
-    monkeypatch.setattr("agloom_cli.config.DefaultConfigPath", tmp_path / "no_home" / "agloom.yaml")
+    """Isolate storage and project yaml so only the explicit file is merged."""
+    isolated = tmp_path / "store"
+    isolated.mkdir()
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", isolated)
     monkeypatch.setattr("agloom_cli.config.ProjectConfigPath", tmp_path / "no_project.yaml")
     cfg_path = tmp_path / "explicit.yaml"
     cfg_path.write_text("ai:\n  name: from-temp-file\n", encoding="utf-8")
@@ -28,7 +50,11 @@ def test_load_explicit_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert cfg.get("ai", {}).get("name") == "from-temp-file"
 
 
-def test_load_missing_config_returns_defaults() -> None:
+def test_load_missing_config_returns_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    isolated = tmp_path / "store"
+    isolated.mkdir()
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", isolated)
+    monkeypatch.setattr("agloom_cli.config.ProjectConfigPath", tmp_path / "no_project.yaml")
     cfg = load_config(Path("/non/existent/agloom-config-does-not-exist.yaml"))
     assert "ai" in cfg
 

@@ -12,11 +12,13 @@ from rich.theme import Theme
 
 from .config import (
     ensure_config_ready,
-    ensure_project_dot_agloom,
     get_system_prompt,
     get_thread_id,
+    list_project_cleanup_dirs,
     load_config,
+    remove_project_cleanup_dirs,
     resolve_model,
+    set_cli_project_root,
     start_new_session,
 )
 from .mcp_loader import build_mcp_configs
@@ -294,6 +296,10 @@ async def _run(
     from agloom.feedback.user_feedback import WebhookFeedbackHandler
     from agloom.models import PatternType
 
+    # Detect project first so all config/session paths use <project>/.agloom
+    project_ctx = detect_project(project)
+    set_cli_project_root(project_ctx.root)
+
     # Ensure config is ready (auto-create if needed)
     ensure_config_ready()
 
@@ -302,10 +308,6 @@ async def _run(
     console.print()
 
     cfg = load_config(config) if config else load_config(None)
-
-    # Detect project context (use --project flag or auto-detect from cwd)
-    project_ctx = detect_project(project)
-    ensure_project_dot_agloom(project_ctx.root)
 
     # Super-Brain: required local graph + MCP — always run init for this project root
     from . import superbrain_setup
@@ -373,10 +375,6 @@ async def _run(
 
     # MCP servers (Super-Brain preset, server_list, legacy comma-separated — see mcp_loader.build_mcp_configs)
     mcp_configs = build_mcp_configs(cfg, mcp_servers)
-
-    # Ensure session directory exists
-    sessions_dir = Path.home() / ".agloom" / "sessions"
-    sessions_dir.mkdir(parents=True, exist_ok=True)
 
     # Agent identity
     agent_name = name or ai_config.get("name", "agloom")
@@ -569,21 +567,57 @@ async def _run(
         await run_shell(agent, verbose=verbose, llm_status=f"{prov}:{mid}")
 
 
+@app.command("clean")
+def clean_cmd(
+    project: Path | None = typer.Option(
+        None,
+        "--project",
+        "-p",
+        help="Project root (default: auto-detect from current directory)",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Delete without confirmation",
+    ),
+) -> None:
+    """Remove ``.agloom`` and ``.agsuperbrain`` from the project (config, caches, Super-Brain index)."""
+    project_ctx = detect_project(project)
+    root = project_ctx.root
+    targets = list_project_cleanup_dirs(root)
+    if not targets:
+        console.print("[dim]Nothing to remove — no .agloom or .agsuperbrain directory here.[/dim]")
+        raise typer.Exit(0)
+
+    console.print("[warning]This will permanently delete:[/warning]")
+    for t in targets:
+        console.print(f"  [path]{t}[/path]")
+    if not yes and not typer.confirm("Delete these directories?", default=False):
+        console.print("[dim]Cancelled.[/dim]")
+        raise typer.Exit(0)
+
+    removed = remove_project_cleanup_dirs(root)
+    for t in removed:
+        console.print(f"[success]Removed[/success] {t}")
+
+
 @app.command("refresh-rules")
 def refresh_rules_cmd(project: Path | None = None) -> None:
     """Force refresh project rules."""
     from .project_rules import load_project_rules
 
-    proj = project or Path.cwd()
-    rules = load_project_rules(proj, force_refresh=True)
+    project_ctx = detect_project(project)
+    set_cli_project_root(project_ctx.root)
+    rules = load_project_rules(project_ctx.root, force_refresh=True)
 
-    console.print(f"[success]Rules refreshed for:[/success] {proj}")
+    console.print(f"[success]Rules refreshed for:[/success] {project_ctx.root}")
     console.print(f"[dim]Source:[/dim] {rules.source_file}")
     console.print(f"[dim]Framework:[/dim] {rules.analysis.get('framework', 'unknown')}")
     console.print(f"[dim]Test:[/dim] {rules.analysis.get('test_framework', 'unknown')}")
 
 
-_SUBCOMMANDS = frozenset({"main", "refresh-rules"})
+_SUBCOMMANDS = frozenset({"main", "refresh-rules", "clean"})
 
 
 def run_cli() -> None:

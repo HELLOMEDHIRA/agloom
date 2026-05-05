@@ -112,7 +112,8 @@ async def load_mcp_capabilities(
 
     Returns:
         (capabilities_list, client)
-        client must be kept alive — call await client.__aexit__() when done.
+        ``client`` is a ``MultiServerMCPClient`` (langchain-mcp-adapters ≥0.1.0): it is **not**
+        an async context manager; keep the reference until the agent shuts down.
 
     Flow per server:
         1. client.get_tools()                  → tools list
@@ -125,10 +126,9 @@ async def load_mcp_capabilities(
         raise ImportError("langchain-mcp-adapters is required.\nInstall: uv add langchain-mcp-adapters") from exc
 
     server_dict = {cfg.name: cfg.to_client_dict() for cfg in servers}
+    # langchain-mcp-adapters 0.1.0+: no ``async with MultiServerMCPClient`` — construct and use ``get_tools`` / ``session``.
     client = MultiServerMCPClient(server_dict)  # type: ignore[arg-type]
-
-    await client.__aenter__()
-    logger.info(f"MCP: connected to {list(server_dict)}")
+    logger.info(f"MCP: client ready for {list(server_dict)}")
 
     capabilities: list[MCPCapabilities] = []
 

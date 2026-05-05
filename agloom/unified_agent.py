@@ -1209,8 +1209,12 @@ class UnifiedAgent:
         if self.config.get("_mcp_client") is not None:
             try:
                 client = self.config["_mcp_client"]
+                # MultiServerMCPClient (langchain-mcp-adapters ≥0.1.0) does not support ``__aexit__``.
                 if hasattr(client, "__aexit__"):
-                    await client.__aexit__(None, None, None)
+                    try:
+                        await client.__aexit__(None, None, None)
+                    except NotImplementedError:
+                        pass
             except Exception as exc:
                 logger.debug(f"[{self.name}] MCP client cleanup: {exc!r}")
             self.config["_mcp_client"] = None
