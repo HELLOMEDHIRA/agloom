@@ -451,6 +451,15 @@ async def _apply_response_format(
         return result
 
 
+def _memory_injection_last_n(config: dict) -> int:
+    """Cap injected session turns so prompts stay bounded."""
+    try:
+        n = int(config.get("session_max_turns", 20))
+    except (TypeError, ValueError):
+        n = 20
+    return max(1, min(n, 50))
+
+
 async def _record_turn(
     memory: SessionMemory | None,
     thread_id: str,
@@ -807,6 +816,7 @@ async def run_fresh(
         thread_id=effective_thread_id,
         namespace=effective_ltns,
         query=processed_query,
+        last_n=_memory_injection_last_n(config),
     )
 
     is_frozen = config.get("frozen") and config.get("frozen_analysis") is not None
@@ -1437,6 +1447,7 @@ class UnifiedAgent:
                 thread_id=effective_thread_id,
                 namespace=effective_ltns,
                 query=processed_query,
+                last_n=_memory_injection_last_n(self.config),
             )
 
             skill_ctx = ""

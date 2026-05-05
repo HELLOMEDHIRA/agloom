@@ -19,6 +19,7 @@ from agloom_cli.config import (
     set_cli_project_root,
     start_new_session,
 )
+from agloom_cli.session_resume import _cli_messages_to_turns
 from agloom_cli.tool_loader import discover_tools, tool
 from agloom_cli.tools import read_file, write_file
 
@@ -148,6 +149,28 @@ def test_session_record_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr("agloom_cli.config._cli_storage_dir", tmp_path)
     p = session_record_path("abc123")
     assert p == tmp_path / "sessions" / "abc123.json"
+
+
+def test_cli_messages_to_turns_pairs_roles() -> None:
+    msgs = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+        {"role": "user", "content": "bye"},
+    ]
+    turns = _cli_messages_to_turns(msgs)
+    assert turns[0]["q"] == "hi" and turns[0]["a"] == "hello"
+    assert turns[1]["q"] == "bye" and "no assistant" in turns[1]["a"].lower()
+
+
+def test_start_new_session_skip_config_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = tmp_path / ".agloom"
+    store.mkdir()
+    (store / "agloom.yaml").write_text("session:\n  current_session: 'keep-me'\n", encoding="utf-8")
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
+    start_new_session("brandnewid", update_config_current_session=False)
+    txt = (store / "agloom.yaml").read_text(encoding="utf-8")
+    assert "keep-me" in txt
+    assert "brandnewid" not in txt
 
 
 def test_get_system_prompt_nonempty() -> None:

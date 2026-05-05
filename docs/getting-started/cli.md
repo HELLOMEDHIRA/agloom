@@ -54,13 +54,16 @@ Auroras are caused by charged particles from the sun...
 > exit
 ```
 
+**Interactive shell:** the **Thinking** pane is the live **agent event** stream (classify, tools, steps, …) from the runtime — not Python `logging` INFO lines. Framework INFO (`httpx`, `agloom.*`, LangChain, …) is **filtered off the console** by default so the layout stays like Claude Code / Cursor; use **`--verbose`** to see those logs again. After each reply you get a compact **Thinking** summary unless **`thinking on`**, **`thinking off`**, **`thinking`** (toggle), or **`AGLOOM_EXPAND_THINKING=1`** says otherwise.
+
 ## Single Prompt Mode
 
 ```bash
 # Run a single query and exit
 agloom "What is 2+2?"
 
-# With specific model (model ID, not provider)
+# Default: ``ai.model`` in ``.agloom/agloom.yaml``, then provider auto-detect (no ``-m``).
+# Per-run override (model id for your installed provider, e.g. Groq):
 agloom -m gpt-4o "Explain quantum computing in 2 sentences"
 agloom -m llama-3.3-70b-versatile "Hello"
 ```
@@ -120,7 +123,7 @@ session:
 
 | Option | Alias | Description | Default |
 |--------|-------|-------------|---------|
-| `--model` | `-m` | Model ID (e.g., gpt-4o, claude-3-5-sonnet-20241022) | auto |
+| `--model` | `-m` | Model ID (e.g. `llama-3.3-70b-versatile`, `gpt-4o`). Overrides `ai.model` in `.agloom/agloom.yaml`. | from config, then auto-detect |
 | `--name` | | Agent name | agloom |
 | `--system-prompt` | | Custom system prompt | (default) |
 | `--tools` | `-t` | Custom tools directory | |
@@ -244,7 +247,9 @@ agloom --session <session_id> --project /path/to/project
 agloom --session <session_id> --strict-session --project /path/to/project
 ```
 
-Session IDs are validated (no path characters). Hyphenated UUIDs are normalized to the same 32-character hex form used for filenames. If you pass `--session` and there is no `sessions/<id>.json` yet, the CLI warns and continues (new session file); use `--strict-session` to abort instead.
+**Default:** each `agloom` run starts a **new** thread id (fresh chat). **`--session` / `-s`** is how you **resume** a previous thread (checkpoints, session memory, and `sessions/<id>.json` messages).
+
+Session IDs are validated (no path characters). Hyphenated UUIDs are normalized to the same 32-character hex form used for filenames. If you pass `--session` and there is no `sessions/<id>.json` yet, the CLI warns and continues (new session file); use `--strict-session` to abort instead. `agloom.yaml`’s `session.current_session` is updated **only** when you pass **`--session`**.
 
 Each session keeps:
 - Conversation history
@@ -252,7 +257,7 @@ Each session keeps:
 - Modified files tracking
 - Turn count
 
-With **memory enabled**, the CLI also persists LangGraph checkpoints and store data under `.agloom/` (`checkpoints.sqlite`, `graph_store.sqlite`) so the same `--session` / `session.current_session` **thread id** survives process restarts. `create_agent` itself is unchanged; only the CLI passes a durable checkpointer and store.
+With **memory enabled**, the CLI also persists LangGraph checkpoints and store data under `.agloom/` (`checkpoints.sqlite`, `graph_store.sqlite`) so the same **`--session`** thread id survives process restarts. `create_agent` itself is unchanged; only the CLI passes a durable checkpointer and store.
 
 ## Data Storage
 

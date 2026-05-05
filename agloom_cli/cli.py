@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -14,10 +14,10 @@ from rich.console import Console
 from rich.theme import Theme
 
 from .config import (
+    add_to_session_history,
     config_source_fingerprints,
     ensure_config_ready,
     get_system_prompt,
-    get_thread_id,
     list_project_cleanup_dirs,
     load_config,
     normalize_cli_session_id,
@@ -34,6 +34,7 @@ from .project import detect_project, get_git_info
 from .project_rules import load_project_rules
 from .repl import render_banner, run_shell
 from .session_manager import get_session_context_summary, update_session_file_summaries
+from .session_resume import seed_session_memory_from_cli_json_if_empty
 from .tool_loader import discover_tools
 
 console = Console(
@@ -166,7 +167,12 @@ def _get_builtin_tools() -> list:
 
 @app.command(hidden=True)
 def main(
-    model: str = typer.Option("auto", "--model", "-m", help="Model ID"),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help="Model ID (overrides config ai.model). Omit to use .agloom/agloom.yaml ai.model, then auto-detect.",
+    ),
     name: str | None = typer.Option(None, "--name", help="Agent name"),
     system_prompt: str | None = typer.Option(None, "--system-prompt", help="System prompt"),
     tools_dir: Path | None = typer.Option(None, "--tools", "-t", help="Tools directory"),
@@ -307,6 +313,10 @@ async def _run(
     from agloom.feedback.user_feedback import WebhookFeedbackHandler
     from agloom.models import PatternType
 
+    from .quiet_logs import install_cli_log_filter
+
+    install_cli_log_filter(verbose=verbose)
+
     # Detect project first so all config/session paths use <project>/.agloom
     project_ctx = detect_project(project)
     set_cli_project_root(project_ctx.root)
@@ -356,11 +366,19 @@ async def _run(
 
     project_rules = rules.get_relevant_rules(prompt or "general") if rules else ""
 
-    # Get model - check config AI section
+    # Model: explicit -m overrides; otherwise use config ai.model (then resolve_model auto chain).
     ai_config = cfg.get("ai", {})
-    config_model = ai_config.get("model", "auto")
+    cm_raw = ai_config.get("model", "auto")
+    config_model = str(cm_raw).strip() if cm_raw is not None else "auto"
+    if not config_model:
+        config_model = "auto"
+    if model is None:
+        effective_model = config_model
+    else:
+        cli_m = model.strip()
+        effective_model = cli_m if cli_m else config_model
     try:
-        llm = resolve_model(model or config_model)
+        llm = resolve_model(effective_model)
     except MissingProviderDependency as e:
         console.print(f"[error]{e}[/error]")
         raise typer.Exit(1) from None
@@ -374,12 +392,14 @@ async def _run(
         )
         raise typer.Exit(1)
 
-    # Get or create session (--session flag overrides config/auto-generated ID)
+    # Session: explicit --session resumes that id; otherwise always a new thread (no config/env auto-resume).
     try:
         if session is not None:
             thread_id = normalize_cli_session_id(session)
+            tid_disp = f"{thread_id[:8]}…" if len(thread_id) > 8 else thread_id
+            console.print(f"[dim]Resuming session [cyan]{tid_disp}[/cyan].[/dim]")
         else:
-            thread_id = get_thread_id(cfg)
+            thread_id = uuid.uuid4().hex
     except ValueError as exc:
         console.print(f"[error]Invalid session id:[/error] {exc}")
         raise typer.Exit(1) from None
@@ -395,11 +415,6 @@ async def _run(
                 console.print(f"[error]{msg}[/error]")
                 raise typer.Exit(1)
             console.print(f"[warning]{msg}[/warning]")
-    elif os.environ.get("AGLOOM_THREAD_ID") and not session_json.exists():
-        console.print(
-            f"[warning]AGLOOM_THREAD_ID is set but there is no session file yet at "
-            f"[path]{session_json.name}[/path]; it will be created on this run.[/warning]"
-        )
 
     agent_name = name or ai_config.get("name", "agloom")
     prov, mid = describe_llm(llm)
@@ -423,7 +438,11 @@ async def _run(
         "cli": cli_payload,
         "resolved": {"model": f"{prov}:{mid}", "agent_name": agent_name},
     }
-    start_new_session(thread_id, run_metadata=run_meta)
+    start_new_session(
+        thread_id,
+        run_metadata=run_meta,
+        update_config_current_session=session is not None,
+    )
 
     tools = []
     if not no_builtins:
@@ -545,6 +564,8 @@ async def _run(
                 summarize_threshold=summarize_threshold,
                 summarizer_model=llm,
             )
+            if session is not None:
+                await seed_session_memory_from_cli_json_if_empty(memory, thread_id)
 
         if enable_skills and store is not None:
             set_extra_skill_dirs([str((storage_dir() / "skills").resolve())])
@@ -599,11 +620,16 @@ async def _run(
             agent = await create_agent(**agent_kwargs)
             result = await agent.ainvoke(prompt, thread_id=thread_id)
             console.print(result.output)
+            try:
+                add_to_session_history(thread_id, "user", prompt)
+                add_to_session_history(thread_id, "assistant", result.output or "")
+            except Exception:
+                pass
         else:
             git_info = get_git_info(project_ctx.root)
 
             console.print("[success]agloom shell[/success] — type 'exit' to quit")
-            console.print(f"Model: [info]{model or config_model}[/info]")
+            console.print(f"Model: [info]{effective_model}[/info]")
             console.print(f"Tools: [info]{len(tools)}[/info]")
             if enable_memory:
                 console.print("[info]Memory: enabled (SQLite resume under .agloom)[/info]")

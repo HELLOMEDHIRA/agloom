@@ -135,6 +135,7 @@ DEFAULT_CONFIG = """# agloom configuration file
 
 ai:
   name: agloom
+  # Default when you run ``agloom`` without ``-m``. Override per run: ``agloom -m llama-3.3-70b-versatile``
   model: auto
   system_prompt: |
     You are an autonomous AI programming assistant built with agloom.
@@ -512,11 +513,15 @@ def start_new_session(
     thread_id: str | None = None,
     *,
     run_metadata: dict[str, Any] | None = None,
+    update_config_current_session: bool = True,
 ) -> dict[str, Any]:
     """Create or update the session JSON and optionally record ``last_run`` audit metadata.
 
     If the session file already exists, ``messages``, ``turns``, and other fields are
     preserved; ``last_active`` and ``last_run`` are updated.
+
+    If ``update_config_current_session`` is False, ``agloom.yaml``'s ``session.current_session``
+    is left unchanged (CLI uses this for auto-generated sessions).
     """
     import json
 
@@ -552,12 +557,13 @@ def start_new_session(
     with open(session_file, "w", encoding="utf-8") as f:
         json.dump(session_data, f, indent=2)
 
-    config = create_default_config()
-    config.setdefault("session", {})["current_session"] = thread_id
-    config.setdefault("session", {})["last_updated"] = datetime.now().isoformat()
+    if update_config_current_session:
+        config = create_default_config()
+        config.setdefault("session", {})["current_session"] = thread_id
+        config.setdefault("session", {})["last_updated"] = datetime.now().isoformat()
 
-    with open(config_yaml_path(), "w", encoding="utf-8") as f:
-        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        with open(config_yaml_path(), "w", encoding="utf-8") as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
     return session_data
 
