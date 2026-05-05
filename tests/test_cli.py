@@ -8,12 +8,16 @@ from pathlib import Path
 import pytest
 
 from agloom_cli.config import (
+    config_source_fingerprints,
     get_system_prompt,
     get_thread_id,
     list_project_cleanup_dirs,
     load_config,
+    normalize_cli_session_id,
     remove_project_cleanup_dirs,
+    session_record_path,
     set_cli_project_root,
+    start_new_session,
 )
 from agloom_cli.tool_loader import discover_tools, tool
 from agloom_cli.tools import read_file, write_file
@@ -26,6 +30,41 @@ def test_set_cli_project_root_creates_layout(tmp_path: Path) -> None:
     assert (tmp_path / ".agloom" / "skills").is_dir()
     assert not (tmp_path / ".agloom" / "indexes").exists()
     assert (tmp_path / ".agloom" / "README.md").is_file()
+
+
+def test_config_source_fingerprints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = tmp_path / ".agloom"
+    store.mkdir()
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
+    y = store / "agloom.yaml"
+    y.write_text("ai:\n  name: t\n", encoding="utf-8")
+    fps = config_source_fingerprints(None)
+    assert len(fps) == 1
+    assert fps[0]["path"] == str(y.resolve())
+    assert len(fps[0]["sha256"]) == 64
+
+
+def test_start_new_session_preserves_history_and_sets_last_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = tmp_path / ".agloom"
+    store.mkdir()
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
+    (store / "agloom.yaml").write_text("session:\n  current_session: 'abc'\n", encoding="utf-8")
+    sid = "deadbeef"
+    sf = store / "sessions" / f"{sid}.json"
+    sf.parent.mkdir(parents=True)
+    sf.write_text(
+        '{"id":"deadbeef","started_at":"t0","turns":3,"messages":[{"role":"user","content":"hi"}]}',
+        encoding="utf-8",
+    )
+    meta = {"at": "2026-01-01T00:00:00+00:00", "resolved": {"model": "groq:test"}}
+    start_new_session(sid, run_metadata=meta)
+    import json
+
+    data = json.loads(sf.read_text(encoding="utf-8"))
+    assert data["turns"] == 3
+    assert len(data["messages"]) == 1
+    assert data["last_run"] == meta
+    assert "last_active" in data
 
 
 def test_remove_project_cleanup_dirs(tmp_path: Path) -> None:
@@ -78,6 +117,37 @@ def test_thread_id_default_length() -> None:
     tid = get_thread_id({}, auto_save=False)
     assert len(tid) == 32
     int(tid, 16)
+
+
+def test_normalize_cli_session_id_hex_and_uuid() -> None:
+    assert normalize_cli_session_id("AbCdEf0123456789AbCdEf0123456789") == "abcdef0123456789abcdef0123456789"
+    u = "550E8400-E29b-41D4-A716-446655440000"
+    assert normalize_cli_session_id(u) == "550e8400e29b41d4a716446655440000"
+    assert normalize_cli_session_id(f"  {u}  ") == "550e8400e29b41d4a716446655440000"
+
+
+def test_normalize_cli_session_id_rejects_pathlike() -> None:
+    with pytest.raises(ValueError, match="path"):
+        normalize_cli_session_id("../evil")
+    with pytest.raises(ValueError, match="path"):
+        normalize_cli_session_id("bad/id")
+
+
+def test_get_thread_id_hyphenated_uuid_from_config() -> None:
+    cfg = {"session": {"current_session": "550E8400-E29b-41D4-A716-446655440000"}}
+    assert get_thread_id(cfg) == "550e8400e29b41d4a716446655440000"
+
+
+def test_get_thread_id_invalid_raises() -> None:
+    cfg = {"session": {"current_session": "oops spaces"}}
+    with pytest.raises(ValueError):
+        get_thread_id(cfg)
+
+
+def test_session_record_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", tmp_path)
+    p = session_record_path("abc123")
+    assert p == tmp_path / "sessions" / "abc123.json"
 
 
 def test_get_system_prompt_nonempty() -> None:

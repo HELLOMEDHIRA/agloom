@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -11,13 +14,16 @@ from rich.console import Console
 from rich.theme import Theme
 
 from .config import (
+    config_source_fingerprints,
     ensure_config_ready,
     get_system_prompt,
     get_thread_id,
     list_project_cleanup_dirs,
     load_config,
+    normalize_cli_session_id,
     remove_project_cleanup_dirs,
     resolve_model,
+    session_record_path,
     set_cli_project_root,
     start_new_session,
     storage_dir,
@@ -198,6 +204,11 @@ def main(
     cache_dir: Path | None = typer.Option(None, "--cache-dir", help="Cache directory"),
     config: Path | None = typer.Option(None, "--config", "-c", help="Config file"),
     session: str | None = typer.Option(None, "--session", "-s", help="Session ID to use"),
+    strict_session: bool = typer.Option(
+        False,
+        "--strict-session",
+        help="With --session: exit if sessions/<id>.json is missing (resume typo guard)",
+    ),
     project: Path | None = typer.Option(None, "--project", "-p", help="Project directory (auto-detect context)"),
     rules_dir: Path | None = typer.Option(None, "--rules-dir", help="Custom rules directory (YAML files)"),
     refresh_rules: bool = typer.Option(False, "--refresh-rules", help="Force refresh project rules"),
@@ -243,6 +254,7 @@ def main(
             cache_dir,
             config,
             session,
+            strict_session,
             verbose,
             no_builtins,
             project,
@@ -283,6 +295,7 @@ async def _run(
     cache_dir: Path | None,
     config: Path | None,
     session: str | None,
+    strict_session: bool,
     verbose: bool,
     no_builtins: bool,
     project: Path | None,
@@ -290,9 +303,6 @@ async def _run(
     refresh_rules: bool,
     prompt: str | None,
 ) -> None:
-    from langgraph.checkpoint.memory import MemorySaver
-    from langgraph.store.memory import InMemoryStore
-
     from agloom import LongTermStore, SessionMemory, create_agent
     from agloom.feedback.user_feedback import WebhookFeedbackHandler
     from agloom.models import PatternType
@@ -365,8 +375,55 @@ async def _run(
         raise typer.Exit(1)
 
     # Get or create session (--session flag overrides config/auto-generated ID)
-    thread_id = session or get_thread_id(cfg)
-    start_new_session(thread_id)
+    try:
+        if session is not None:
+            thread_id = normalize_cli_session_id(session)
+        else:
+            thread_id = get_thread_id(cfg)
+    except ValueError as exc:
+        console.print(f"[error]Invalid session id:[/error] {exc}")
+        raise typer.Exit(1) from None
+
+    session_json = session_record_path(thread_id)
+    if session is not None:
+        if not session_json.exists():
+            msg = (
+                f"No session record at [path]{session_json}[/path] — "
+                "nothing to resume on disk; a new session file will be created for this id."
+            )
+            if strict_session:
+                console.print(f"[error]{msg}[/error]")
+                raise typer.Exit(1)
+            console.print(f"[warning]{msg}[/warning]")
+    elif os.environ.get("AGLOOM_THREAD_ID") and not session_json.exists():
+        console.print(
+            f"[warning]AGLOOM_THREAD_ID is set but there is no session file yet at "
+            f"[path]{session_json.name}[/path]; it will be created on this run.[/warning]"
+        )
+
+    agent_name = name or ai_config.get("name", "agloom")
+    prov, mid = describe_llm(llm)
+    sources = config_source_fingerprints(config)
+    bundle = "|".join(f"{s['path']}:{s['sha256']}" for s in sources)
+    bundle_hash = hashlib.sha256(bundle.encode()).hexdigest() if bundle else ""
+    cli_payload: dict[str, Any] = {}
+    if model is not None:
+        cli_payload["model"] = model
+    if config is not None:
+        cli_payload["config"] = str(config)
+    if name is not None:
+        cli_payload["name"] = name
+    if session is not None:
+        cli_payload["session"] = thread_id
+    run_meta = {
+        "at": datetime.now(UTC).isoformat(),
+        "project_root": str(project_ctx.root.resolve()),
+        "config_bundle_sha256": bundle_hash,
+        "config_sources": sources,
+        "cli": cli_payload,
+        "resolved": {"model": f"{prov}:{mid}", "agent_name": agent_name},
+    }
+    start_new_session(thread_id, run_metadata=run_meta)
 
     tools = []
     if not no_builtins:
@@ -376,9 +433,6 @@ async def _run(
 
     # MCP servers (Super-Brain preset, server_list, legacy comma-separated — see mcp_loader.build_mcp_configs)
     mcp_configs = build_mcp_configs(cfg, mcp_servers)
-
-    # Agent identity
-    agent_name = name or ai_config.get("name", "agloom")
     base_system_prompt = system_prompt or ai_config.get("system_prompt") or get_system_prompt()
 
     # Get session context for smart injection
@@ -451,20 +505,7 @@ async def _run(
         user_callback = create_user_callback(auto_approve_tools=auto_list)
         console.print("[yellow]Human approval enabled for sensitive operations[/yellow]")
 
-    memory = store = checkpointer = feedback_handler = query_cache = None
-
-    if enable_memory:
-        # SessionMemory requires a LangGraph BaseStore (``aput`` / ``aget``). LongTermStore is only a wrapper.
-        shared_graph_store = InMemoryStore()
-        store = LongTermStore(shared_graph_store)
-        checkpointer = MemorySaver()
-        memory = SessionMemory(
-            store=shared_graph_store,
-            max_turns=session_max_turns,
-            auto_summarize=auto_summarize,
-            summarize_threshold=summarize_threshold,
-            summarizer_model=llm,
-        )
+    feedback_handler = query_cache = None
 
     if feedback_webhook:
         try:
@@ -490,92 +531,104 @@ async def _run(
 
     from agloom.skills.registry import set_extra_skill_dirs
 
-    if enable_skills and store is not None:
-        set_extra_skill_dirs([str((storage_dir() / "skills").resolve())])
-    else:
-        set_extra_skill_dirs([])
+    from .persistence import cli_langgraph_sqlite
 
-    fallback = PatternType(fallback_pattern.upper()) if fallback_pattern else None
-
-    agent_config = {
-        "model": llm,
-        "name": agent_name,
-        "tools": tools,
-        "system_prompt": agent_system_prompt,
-        "memory": memory,
-        "store": store,
-        "checkpointer": checkpointer,
-        "mcp_servers": mcp_configs if mcp_configs is not None else [],
-        "debug": verbose,
-        "enable_memory_tools": enable_memory,
-        "user_callback": user_callback,
-        "interrupt_before_tools": (
-            [t.strip() for t in interrupt_before_tools.split(",")]
-            if interrupt_before_tools
-            else ["run_shell", "write_file", "remove_file"]
-            if require_approval
-            else None
-        ),
-        "max_concurrent": max_concurrent,
-        "max_retries": max_retries,
-        "retry_delay": retry_delay,
-        "llm_timeout": llm_timeout,
-        "classifier_timeout": classifier_timeout,
-        "session_max_turns": session_max_turns,
-        "auto_summarize": auto_summarize,
-        "summarize_threshold": summarize_threshold,
-        "max_skills": max_skills if enable_skills else 0,
-        "feedback_handler": feedback_handler,
-        "fallback_pattern": fallback,
-        "interrupt_before": [p.strip() for p in interrupt_before.split(",")] if interrupt_before else None,
-        "interrupt_after": [p.strip() for p in interrupt_after.split(",")] if interrupt_after else None,
-        "query_cache": query_cache,
-        "frozen": frozen,
-        "frozen_template": frozen_template,
-        "skills_disk_mirror": (storage_dir() / "skills")
-        if (enable_skills and store is not None)
-        else None,
-    }
-
-    # Pyrefly/Pyright cannot prove dict values match each ``create_agent`` parameter; runtime is correct.
-    agent_kwargs: Any = agent_config
-
-    if prompt:
-        agent = await create_agent(**agent_kwargs)
-        result = await agent.ainvoke(prompt)
-        console.print(result.output)
-    else:
-        git_info = get_git_info(project_ctx.root)
-
-        console.print("[success]agloom shell[/success] — type 'exit' to quit")
-        console.print(f"Model: [info]{model or config_model}[/info]")
-        console.print(f"Tools: [info]{len(tools)}[/info]")
+    with cli_langgraph_sqlite(enable_memory, storage_dir()) as (checkpointer, shared_graph_store):
+        memory = None
+        store = None
         if enable_memory:
-            console.print("[info]Memory: enabled[/info]")
-        if enable_skills:
-            console.print(f"[info]Skills: enabled (max: {max_skills})[/info]")
+            store = LongTermStore(shared_graph_store)
+            memory = SessionMemory(
+                store=shared_graph_store,
+                max_turns=session_max_turns,
+                auto_summarize=auto_summarize,
+                summarize_threshold=summarize_threshold,
+                summarizer_model=llm,
+            )
 
-        # Show project context
-        console.print()
-        if project_ctx.language != "unknown":
-            console.print(f"[dim]Project:[/dim] [path]{project_ctx.root}[/path]")
-            console.print(f"[dim]Language:[/dim] [info]{project_ctx.language}[/info]", end="")
-            if project_ctx.frameworks:
-                console.print(f" [dim]({', '.join(project_ctx.frameworks)})[/dim]")
-            else:
-                console.print()
-            if project_ctx.project_type != "library":
-                console.print(f"[dim]Type:[/dim] [warning]{project_ctx.project_type}[/warning]")
-            if git_info.get("branch"):
-                console.print(f"[dim]Git:[/dim] [success]{git_info['branch']}[/success]", end="")
-                if git_info.get("status") == "dirty":
-                    console.print(" [warning]dirty[/warning]")
+        if enable_skills and store is not None:
+            set_extra_skill_dirs([str((storage_dir() / "skills").resolve())])
+        else:
+            set_extra_skill_dirs([])
+
+        fallback = PatternType(fallback_pattern.upper()) if fallback_pattern else None
+
+        agent_config = {
+            "model": llm,
+            "name": agent_name,
+            "tools": tools,
+            "system_prompt": agent_system_prompt,
+            "memory": memory,
+            "store": store,
+            "checkpointer": checkpointer,
+            "mcp_servers": mcp_configs if mcp_configs is not None else [],
+            "debug": verbose,
+            "enable_memory_tools": enable_memory,
+            "user_callback": user_callback,
+            "interrupt_before_tools": (
+                [t.strip() for t in interrupt_before_tools.split(",")]
+                if interrupt_before_tools
+                else ["run_shell", "write_file", "remove_file"]
+                if require_approval
+                else None
+            ),
+            "max_concurrent": max_concurrent,
+            "max_retries": max_retries,
+            "retry_delay": retry_delay,
+            "llm_timeout": llm_timeout,
+            "classifier_timeout": classifier_timeout,
+            "session_max_turns": session_max_turns,
+            "auto_summarize": auto_summarize,
+            "summarize_threshold": summarize_threshold,
+            "max_skills": max_skills if enable_skills else 0,
+            "feedback_handler": feedback_handler,
+            "fallback_pattern": fallback,
+            "interrupt_before": [p.strip() for p in interrupt_before.split(",")] if interrupt_before else None,
+            "interrupt_after": [p.strip() for p in interrupt_after.split(",")] if interrupt_after else None,
+            "query_cache": query_cache,
+            "frozen": frozen,
+            "frozen_template": frozen_template,
+            "skills_disk_mirror": (storage_dir() / "skills")
+            if (enable_skills and store is not None)
+            else None,
+        }
+
+        agent_kwargs: Any = agent_config
+
+        if prompt:
+            agent = await create_agent(**agent_kwargs)
+            result = await agent.ainvoke(prompt, thread_id=thread_id)
+            console.print(result.output)
+        else:
+            git_info = get_git_info(project_ctx.root)
+
+            console.print("[success]agloom shell[/success] — type 'exit' to quit")
+            console.print(f"Model: [info]{model or config_model}[/info]")
+            console.print(f"Tools: [info]{len(tools)}[/info]")
+            if enable_memory:
+                console.print("[info]Memory: enabled (SQLite resume under .agloom)[/info]")
+            if enable_skills:
+                console.print(f"[info]Skills: enabled (max: {max_skills})[/info]")
+
+            console.print()
+            if project_ctx.language != "unknown":
+                console.print(f"[dim]Project:[/dim] [path]{project_ctx.root}[/path]")
+                console.print(f"[dim]Language:[/dim] [info]{project_ctx.language}[/info]", end="")
+                if project_ctx.frameworks:
+                    console.print(f" [dim]({', '.join(project_ctx.frameworks)})[/dim]")
                 else:
                     console.print()
-        console.print()
-        agent = await create_agent(**agent_kwargs)
-        prov, mid = describe_llm(llm)
-        await run_shell(agent, verbose=verbose, llm_status=f"{prov}:{mid}")
+                if project_ctx.project_type != "library":
+                    console.print(f"[dim]Type:[/dim] [warning]{project_ctx.project_type}[/warning]")
+                if git_info.get("branch"):
+                    console.print(f"[dim]Git:[/dim] [success]{git_info['branch']}[/success]", end="")
+                    if git_info.get("status") == "dirty":
+                        console.print(" [warning]dirty[/warning]")
+                    else:
+                        console.print()
+            console.print()
+            agent = await create_agent(**agent_kwargs)
+            await run_shell(agent, verbose=verbose, llm_status=f"{prov}:{mid}", thread_id=thread_id)
 
 
 @app.command("clean")

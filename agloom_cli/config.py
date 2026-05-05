@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import shutil
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,9 +29,10 @@ The **agloom CLI** stores config and cached state **only** here — ``<project>/
 |------|---------|
 | ``agloom.yaml`` | Configuration |
 | ``sessions/`` | Session state |
+| ``checkpoints.sqlite`` | LangGraph checkpoints (CLI session resume when memory is on) |
+| ``graph_store.sqlite`` | LangGraph store backing long-term / session memory |
 | ``rules/`` | Cached project rules |
 | ``skills/`` | Skills (``SKILL.md`` trees, including learned skills) |
-| ``logs/`` | Log files |
 
 Optional: a ``.agloom.yaml`` in the **project root** (parent of this folder) is merged on top of ``agloom.yaml``; later files override earlier ones.
 
@@ -40,7 +43,7 @@ https://agloom.readthedocs.io
 
 
 def storage_dir() -> Path:
-    """Root directory for config, sessions, rules, skills, and logs.
+    """Root directory for config, sessions, rules, and skills.
 
     When the CLI has bound a project via ``set_cli_project_root``, this is
     ``<project>/.agloom``. Otherwise (library / tests) it falls back to ``~/.agloom``.
@@ -55,7 +58,7 @@ def set_cli_project_root(project_root: Path) -> Path:
     root = project_root.resolve()
     ag = root / ".agloom"
     ag.mkdir(parents=True, exist_ok=True)
-    for sub in ("sessions", "rules", "skills", "logs"):
+    for sub in ("sessions", "rules", "skills"):
         (ag / sub).mkdir(exist_ok=True)
 
     _cli_storage_dir = ag
@@ -244,7 +247,7 @@ def ensure_storage_layout() -> Path:
     """Ensure ``storage_dir()`` exists with the documented subdirectories."""
     root = storage_dir()
     root.mkdir(parents=True, exist_ok=True)
-    for sub in ("sessions", "rules", "skills", "logs"):
+    for sub in ("sessions", "rules", "skills"):
         (root / sub).mkdir(exist_ok=True)
     readme = root / "README.md"
     if not readme.exists():
@@ -371,6 +374,45 @@ def load_config(path: Path | None) -> dict[str, Any]:
     return merged
 
 
+def collect_loaded_config_paths(explicit: Path | None = None) -> list[Path]:
+    """Config files that :func:`load_config` merges, in order (existing files only)."""
+    storage_yaml = config_yaml_path()
+    seen: set[Path] = set()
+    paths: list[Path] = []
+
+    def _append(cfg_path: Path) -> None:
+        try:
+            key = cfg_path.resolve()
+        except OSError:
+            key = cfg_path
+        if key in seen or not cfg_path.is_file():
+            return
+        seen.add(key)
+        paths.append(cfg_path)
+
+    _append(storage_yaml)
+    _append(ProjectConfigPath)
+    if explicit is not None:
+        _append(explicit)
+    return paths
+
+
+def config_source_fingerprints(explicit: Path | None = None) -> list[dict[str, Any]]:
+    """Per-file SHA-256 and mtime for each config layer (for session audit metadata)."""
+    out: list[dict[str, Any]] = []
+    for p in collect_loaded_config_paths(explicit):
+        raw = p.read_bytes()
+        st = p.stat()
+        out.append(
+            {
+                "path": str(p.resolve()),
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "mtime_utc": datetime.fromtimestamp(st.st_mtime, tz=UTC).isoformat(),
+            }
+        )
+    return out
+
+
 def _deep_merge(base: dict, override: dict) -> dict:
     """Deep merge override into base."""
     for key, value in override.items():
@@ -379,6 +421,47 @@ def _deep_merge(base: dict, override: dict) -> dict:
         else:
             base[key] = value
     return base
+
+
+_SESSION_UUID_HYPHEN = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_SESSION_HEX32 = re.compile(r"^[0-9a-fA-F]{32}$")
+_SESSION_SAFE_CUSTOM = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
+
+
+def normalize_cli_session_id(raw: str) -> str:
+    """Normalize and validate a session / thread id for CLI and storage filenames.
+
+    Accepts 32-char hex (as produced by ``uuid.uuid4().hex``), hyphenated UUIDs
+    (normalized to lowercase hex without hyphens), or 1–128 ASCII letters,
+    digits, underscores, or hyphens.
+
+    Raises:
+        ValueError: empty, too long, path-like input, or disallowed characters.
+    """
+    s = raw.strip()
+    if not s:
+        raise ValueError("Session id is empty.")
+    if len(s) > 128:
+        raise ValueError("Session id must be at most 128 characters.")
+    if ".." in s or "/" in s or "\\" in s:
+        raise ValueError("Session id must not contain path segments (/ , \\, or ..).")
+    if _SESSION_UUID_HYPHEN.fullmatch(s):
+        return s.replace("-", "").lower()
+    if _SESSION_HEX32.fullmatch(s):
+        return s.lower()
+    if _SESSION_SAFE_CUSTOM.fullmatch(s):
+        return s
+    raise ValueError(
+        "Session id must be 32 hex characters, a hyphenated UUID, "
+        "or 1–128 ASCII letters, digits, underscores, or hyphens."
+    )
+
+
+def session_record_path(thread_id: str) -> Path:
+    """Path to ``sessions/<thread_id>.json`` under the active storage root."""
+    return ensure_storage_layout() / "sessions" / f"{thread_id}.json"
 
 
 def get_thread_id(config: dict[str, Any] | None = None, auto_save: bool = True) -> str:
@@ -398,10 +481,11 @@ def get_thread_id(config: dict[str, Any] | None = None, auto_save: bool = True) 
 
     session_config = config.get("session", {})
     if session_config.get("current_session"):
-        return session_config["current_session"]
+        return normalize_cli_session_id(str(session_config["current_session"]))
 
-    if os.environ.get("AGLOOM_THREAD_ID"):
-        return os.environ["AGLOOM_THREAD_ID"]
+    env_tid = os.environ.get("AGLOOM_THREAD_ID")
+    if env_tid:
+        return normalize_cli_session_id(env_tid)
 
     thread_id = uuid.uuid4().hex
     if auto_save:
@@ -411,6 +495,7 @@ def get_thread_id(config: dict[str, Any] | None = None, auto_save: bool = True) 
 
 def save_session(thread_id: str, metadata: dict | None = None) -> None:
     """Save session info to config file."""
+    thread_id = normalize_cli_session_id(thread_id)
     config = create_default_config()
 
     if "session" not in config:
@@ -423,26 +508,48 @@ def save_session(thread_id: str, metadata: dict | None = None) -> None:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
 
-def start_new_session(thread_id: str | None = None) -> dict[str, Any]:
-    """Start a new session, creating session file."""
+def start_new_session(
+    thread_id: str | None = None,
+    *,
+    run_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Create or update the session JSON and optionally record ``last_run`` audit metadata.
+
+    If the session file already exists, ``messages``, ``turns``, and other fields are
+    preserved; ``last_active`` and ``last_run`` are updated.
+    """
     import json
 
     if not thread_id:
         thread_id = uuid.uuid4().hex
+    else:
+        thread_id = normalize_cli_session_id(thread_id)
 
     sessions_dir = ensure_storage_layout() / "sessions"
     sessions_dir.mkdir(parents=True, exist_ok=True)
     session_file = sessions_dir / f"{thread_id}.json"
 
-    session_data = {
-        "id": thread_id,
-        "started_at": datetime.now().isoformat(),
-        "last_active": datetime.now().isoformat(),
-        "turns": 0,
-        "messages": [],
-    }
+    now = datetime.now(UTC).isoformat()
 
-    with open(session_file, "w") as f:
+    if session_file.exists():
+        with open(session_file, encoding="utf-8") as f:
+            session_data: dict[str, Any] = json.load(f)
+        session_data.setdefault("id", thread_id)
+        session_data["last_active"] = now
+        if run_metadata is not None:
+            session_data["last_run"] = run_metadata
+    else:
+        session_data = {
+            "id": thread_id,
+            "started_at": now,
+            "last_active": now,
+            "turns": 0,
+            "messages": [],
+        }
+        if run_metadata is not None:
+            session_data["last_run"] = run_metadata
+
+    with open(session_file, "w", encoding="utf-8") as f:
         json.dump(session_data, f, indent=2)
 
     config = create_default_config()
@@ -462,6 +569,7 @@ def get_session_history(thread_id: str) -> list[dict]:
     if not thread_id:
         return []
 
+    thread_id = normalize_cli_session_id(thread_id)
     sessions_dir = ensure_storage_layout() / "sessions"
     session_file = sessions_dir / f"{thread_id}.json"
 
@@ -481,6 +589,7 @@ def add_to_session_history(thread_id: str, role: str, content: str) -> None:
     if not thread_id:
         return
 
+    thread_id = normalize_cli_session_id(thread_id)
     sessions_dir = ensure_storage_layout() / "sessions"
     session_file = sessions_dir / f"{thread_id}.json"
 

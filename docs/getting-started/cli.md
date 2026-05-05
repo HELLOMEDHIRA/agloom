@@ -148,7 +148,8 @@ session:
 | `--feedback-webhook` | | Feedback webhook URL | |
 | `--cache-dir` | | Cache directory | |
 | `--config` | `-c` | Config file path | |
-| `--session` | `-s` | Session ID | |
+| `--session` | `-s` | Session / thread ID (32-char hex, hyphenated UUID, or safe alnum/`_`/`-`) | |
+| `--strict-session` | | With `--session`: exit with error if `sessions/<id>.json` does not exist | disabled |
 | `--project` | `-p` | Project directory | auto-detect |
 | `--rules-dir` | | Custom rules directory | |
 | `--refresh-rules` | | Force refresh rules | disabled |
@@ -238,13 +239,20 @@ Agloom manages multiple project sessions from the main CLI (no separate subcomma
 ```bash
 # Resume or pin a session / project (examples)
 agloom --session <session_id> --project /path/to/project
+
+# Fail fast if you mistyped the id (no session JSON under .agloom/sessions/)
+agloom --session <session_id> --strict-session --project /path/to/project
 ```
+
+Session IDs are validated (no path characters). Hyphenated UUIDs are normalized to the same 32-character hex form used for filenames. If you pass `--session` and there is no `sessions/<id>.json` yet, the CLI warns and continues (new session file); use `--strict-session` to abort instead.
 
 Each session keeps:
 - Conversation history
 - Project structure + file summaries
 - Modified files tracking
 - Turn count
+
+With **memory enabled**, the CLI also persists LangGraph checkpoints and store data under `.agloom/` (`checkpoints.sqlite`, `graph_store.sqlite`) so the same `--session` / `session.current_session` **thread id** survives process restarts. `create_agent` itself is unchanged; only the CLI passes a durable checkpointer and store.
 
 ## Data Storage
 
@@ -254,12 +262,13 @@ The CLI stores config and caches in **`<project>/.agloom/`** (next to your repo)
 <project>/.agloom/
 ├── agloom.yaml           # Config for this project
 ├── sessions/
-│   ├── abc12345.json    # Session data
+│   ├── abc12345.json    # Session data (+ optional ``last_run`` audit: config hashes, CLI flags, resolved model)
 │   └── xyz789.json
+├── checkpoints.sqlite   # LangGraph checkpoints (memory on — session resume)
+├── graph_store.sqlite   # LangGraph store (memory on — namespaces / session memory)
 ├── context_index_*.json # Smart-context index (when built)
 ├── rules/               # Project rules cache
-├── skills/              # SKILL.md trees (learned + optional static)
-└── logs/
+└── skills/              # SKILL.md trees (learned + optional static)
 ```
 
 Optional: a `.agloom.yaml` in the project root is merged on top of `agloom.yaml`. If you import `agloom_cli` from Python without the CLI, the library may create `~/.agloom/` with the same layout as a fallback.

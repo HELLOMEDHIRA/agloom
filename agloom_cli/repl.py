@@ -60,6 +60,7 @@ async def run_shell(
     welcome: str = "Ready to code!",
     verbose: bool = False,
     llm_status: str | None = None,
+    thread_id: str | None = None,
 ) -> None:
     """Run interactive shell - Deep Agents / Claude Code style UI.
 
@@ -78,7 +79,8 @@ async def run_shell(
     state.ui.working_dir = working_dir
     state.ui.langsmith_enabled = bool(os.environ.get("LANGCHAIN_TRACING_V2"))
 
-    thread_id = state.ui.thread_id
+    invoke_tid = thread_id or state.ui.thread_id
+    state.ui.thread_id = invoke_tid[:8] if len(invoke_tid) > 8 else invoke_tid
     langsmith_status = (
         "[bold green]✓[/bold green] [dim]LangSmith: enabled (agloom-cli)[/dim]"
         if state.ui.langsmith_enabled
@@ -88,7 +90,7 @@ async def run_shell(
     console.print(
         Panel(
             f"{langsmith_status}\n"
-            f"[dim]Thread: [cyan]{thread_id}[/cyan][/dim]\n"
+            f"[dim]Thread: [cyan]{state.ui.thread_id}[/cyan][/dim]\n"
             f"[bold green]✓[/bold green] [bold green]{welcome}[/bold green]",
             border_style="green",
             padding=(0, 2),
@@ -166,11 +168,11 @@ async def run_shell(
                 console.print(
                     "[yellow]Warning: Agent does not support streaming events. Using ainvoke instead.[/yellow]"
                 )
-                result = await agent.ainvoke(prompt_text)
+                result = await agent.ainvoke(prompt_text, thread_id=invoke_tid)
                 output_parts.append(result.output)
             else:
                 with console.status("[bold cyan]🤔 Thinking...", spinner="dots") as status:
-                    async for event in agent.astream_events(prompt_text):
+                    async for event in agent.astream_events(prompt_text, thread_id=invoke_tid):
                         event_type = event.type
                         data = event.data
 
