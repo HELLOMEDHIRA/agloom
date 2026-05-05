@@ -4,8 +4,9 @@
 ``astream_events`` (classify / pattern / tool_start / tool_end / tokens, etc.) — the same
 class of signal a product shell would show as “reasoning” or tool activity.
 
-**INFO logs** from frameworks and ``agloom.*`` (including during ``create_agent``) are **filtered
-off the console** for the whole CLI run unless ``--verbose`` — see ``agloom_cli.quiet_logs``.
+**Framework** INFO/DEBUG (HTTP, Groq SDK, SQLite drivers, LangGraph store, …) stays **off** the
+console below WARNING for the whole CLI run (including ``--verbose``). **``agloom.*``** INFO/DEBUG
+is hidden by default and shown when ``--verbose`` — see ``agloom_cli.quiet_logs``.
 """
 
 from __future__ import annotations
@@ -20,7 +21,11 @@ from rich.prompt import Prompt
 from rich.text import Text
 
 from . import __version__
-from .config import add_to_session_history, get_session_history
+from .config import add_to_session_history
+from .session_resume import (
+    hydrate_repl_history_from_agent_memory,
+    hydrate_repl_history_from_session_json,
+)
 from .ui import RichUI, get_ui, reset_ui
 
 console = Console()
@@ -182,15 +187,9 @@ async def run_shell(
     invoke_tid = thread_id or state.ui.thread_id
     state.ui.thread_id = invoke_tid[:8] if len(invoke_tid) > 8 else invoke_tid
 
-    pending_u: str | None = None
-    for m in get_session_history(invoke_tid):
-        role = str(m.get("role") or "").lower()
-        content = str(m.get("content") or "")
-        if role == "user":
-            pending_u = content
-        elif role == "assistant" and pending_u is not None:
-            state.add_turn(pending_u, content)
-            pending_u = None
+    # Prefer SessionMemory (SQLite graph store); fall back to sessions/*.json messages.
+    if not await hydrate_repl_history_from_agent_memory(agent, invoke_tid, state):
+        hydrate_repl_history_from_session_json(invoke_tid, state)
 
     langsmith_status = (
         "[bold green]✓[/bold green] [dim]LangSmith: enabled (agloom-cli)[/dim]"

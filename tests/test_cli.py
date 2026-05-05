@@ -19,7 +19,10 @@ from agloom_cli.config import (
     set_cli_project_root,
     start_new_session,
 )
-from agloom_cli.session_resume import _cli_messages_to_turns
+from agloom_cli.session_resume import (
+    _cli_messages_to_turns,
+    hydrate_repl_history_from_session_json,
+)
 from agloom_cli.tool_loader import discover_tools, tool
 from agloom_cli.tools import read_file, write_file
 
@@ -160,6 +163,32 @@ def test_cli_messages_to_turns_pairs_roles() -> None:
     turns = _cli_messages_to_turns(msgs)
     assert turns[0]["q"] == "hi" and turns[0]["a"] == "hello"
     assert turns[1]["q"] == "bye" and "no assistant" in turns[1]["a"].lower()
+
+
+class _FakeReplState:
+    def __init__(self) -> None:
+        self.turns: list[tuple[str, str]] = []
+
+    def add_turn(self, query: str, output: str) -> None:
+        self.turns.append((query, output))
+
+
+def test_hydrate_repl_history_from_session_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = tmp_path / ".agloom"
+    store.mkdir()
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
+    (store / "sessions").mkdir(parents=True)
+    sid = "abc123"
+    (store / "sessions" / f"{sid}.json").write_text(
+        '{"id":"abc123","messages":['
+        '{"role":"user","content":"hi"},'
+        '{"role":"assistant","content":"hello"}'
+        "]}",
+        encoding="utf-8",
+    )
+    st = _FakeReplState()
+    hydrate_repl_history_from_session_json(sid, st)
+    assert st.turns == [("hi", "hello")]
 
 
 def test_start_new_session_skip_config_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

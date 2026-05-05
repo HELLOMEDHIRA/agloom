@@ -54,7 +54,7 @@ Auroras are caused by charged particles from the sun...
 > exit
 ```
 
-**Interactive shell:** the **Thinking** pane is the live **agent event** stream (classify, tools, steps, …) from the runtime — not Python `logging` INFO lines. Framework INFO (`httpx`, `agloom.*`, LangChain, …) is **filtered off the console** by default so the layout stays like Claude Code / Cursor; use **`--verbose`** to see those logs again. After each reply you get a compact **Thinking** summary unless **`thinking on`**, **`thinking off`**, **`thinking`** (toggle), or **`AGLOOM_EXPAND_THINKING=1`** says otherwise.
+**Interactive shell:** the **Thinking** pane is the live **agent event** stream (classify, tools, steps, …) from the runtime — not Python `logging` INFO lines. **Framework** chatter (`httpx`, Groq SDK, `aiosqlite`, LangGraph store, …) stays **off the console** below WARNING even with **`--verbose`**, so the layout stays readable. Default mode also hides **`agloom.*`** INFO/DEBUG; **`--verbose`** turns on **agloom** package debug logging only. After each reply you get a compact **Thinking** summary unless **`thinking on`**, **`thinking off`**, **`thinking`** (toggle), or **`AGLOOM_EXPAND_THINKING=1`** says otherwise.
 
 ## Single Prompt Mode
 

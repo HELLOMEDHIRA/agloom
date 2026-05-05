@@ -1,8 +1,12 @@
-"""When resuming with ``--session``, hydrate LangGraph SessionMemory from ``sessions/<id>.json``."""
+"""Session resume helpers: JSON audit trail ↔ SessionMemory (graph store)."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol
+
+
+class _ReplHistorySink(Protocol):
+    def add_turn(self, query: str, output: str) -> None: ...
 
 
 def _cli_messages_to_turns(messages: list[dict]) -> list[dict]:
@@ -56,3 +60,53 @@ async def seed_session_memory_from_cli_json_if_empty(memory: Any, thread_id: str
         turns = turns[-max_turns:]
 
     await memory.store.aput(ns, "turns", {"turns": turns})
+
+
+async def hydrate_repl_history_from_agent_memory(
+    agent: Any,
+    thread_id: str,
+    state: _ReplHistorySink,
+) -> bool:
+    """Load prior turns into the REPL from ``SessionMemory`` (persistent store).
+
+    Returns True if any turns were applied (then callers should skip JSON-only hydration).
+    """
+    cfg = getattr(agent, "config", None)
+    if not isinstance(cfg, dict) or not thread_id:
+        return False
+    memory = cfg.get("memory")
+    if memory is None:
+        return False
+    try:
+        item = await memory.store.aget(memory._ns(thread_id), "turns")
+        turns: list = item.value.get("turns", []) if item else []
+    except Exception:
+        return False
+    if not turns:
+        return False
+
+    from agloom.memory.session import _SUMMARY_MARKER
+
+    for t in turns:
+        q = str(t.get("q", ""))
+        a = str(t.get("a", ""))
+        if q == _SUMMARY_MARKER:
+            state.add_turn("(summary)", a)
+            continue
+        state.add_turn(q or "(user)", a or "")
+    return True
+
+
+def hydrate_repl_history_from_session_json(thread_id: str, state: _ReplHistorySink) -> None:
+    """Load ``sessions/<id>.json`` ``messages`` into the REPL when store has no turns."""
+    from .config import get_session_history
+
+    pending_u: str | None = None
+    for m in get_session_history(thread_id):
+        role = str(m.get("role") or "").lower()
+        content = str(m.get("content") or "")
+        if role == "user":
+            pending_u = content
+        elif role == "assistant" and pending_u is not None:
+            state.add_turn(pending_u, content)
+            pending_u = None
