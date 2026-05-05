@@ -387,33 +387,54 @@ def resolve_model(model_id: str | None) -> Any:
     Doc index: https://docs.langchain.com/oss/python/integrations/chat
 
     Priority:
-    1. Explicit model_id
-    2. Config model setting
-    3. Environment variables
-    4. Auto-detect from available API keys
+    1. Explicit model_id (non-``auto``) — strict; fails if the matching extra is missing.
+    2. Config ``ai.model`` — if the integration is not installed, falls through.
+    3. ``*_MODEL_ID`` environment variables — each is tried in order; missing extras are skipped
+       (so ``OPENAI_MODEL_ID`` does not block ``GROQ_MODEL_ID`` when only ``agloom[groq]`` is installed).
+    4. Auto-detect from available API keys (see ``try_resolve_llm_from_api_keys``).
     """
-    from .model_resolver import get_model, try_resolve_llm_from_api_keys
+    from .model_resolver import MissingProviderDependency, get_model, try_resolve_llm_from_api_keys
 
-    if model_id and model_id != "auto":
-        return get_model(model_id)
+    def _is_auto(value: object | None) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return not value.strip() or value.strip().lower() == "auto"
+        return str(value).strip().lower() == "auto"
+
+    # 1. Explicit override — must match installed integration.
+    if model_id is not None and not _is_auto(model_id):
+        return get_model(model_id.strip())
 
     config = create_default_config()
-    if config.get("ai", {}).get("model") and config["ai"]["model"] != "auto":
-        return get_model(config["ai"]["model"])
+    cm_raw = config.get("ai", {}).get("model")
+    # 2. Config file — optional fallback when e.g. ``model: gpt-4o`` but only Groq extra is installed.
+    if not _is_auto(cm_raw):
+        cm_str = cm_raw.strip() if isinstance(cm_raw, str) else str(cm_raw).strip()
+        try:
+            return get_model(cm_str)
+        except MissingProviderDependency:
+            pass
 
-    env_model = (
-        os.environ.get("OPENAI_MODEL_ID")
-        or os.environ.get("ANTHROPIC_MODEL_ID")
-        or os.environ.get("GROQ_MODEL_ID")
-        or os.environ.get("GOOGLE_MODEL_ID")
-        or os.environ.get("GEMINI_MODEL_ID")
-        or os.environ.get("MISTRAL_MODEL_ID")
-        or os.environ.get("XAI_MODEL_ID")
-    )
+    # 3. Per-provider model env vars (do not let OPENAI_* alone block later providers).
+    for env_key in (
+        "OPENAI_MODEL_ID",
+        "ANTHROPIC_MODEL_ID",
+        "GROQ_MODEL_ID",
+        "GOOGLE_MODEL_ID",
+        "GEMINI_MODEL_ID",
+        "MISTRAL_MODEL_ID",
+        "XAI_MODEL_ID",
+    ):
+        mid = os.environ.get(env_key)
+        if _is_auto(mid):
+            continue
+        try:
+            return get_model(str(mid).strip())
+        except MissingProviderDependency:
+            continue
 
-    if env_model:
-        return get_model(env_model)
-
+    # 4. Infer from API keys.
     return try_resolve_llm_from_api_keys()
 
 
