@@ -117,6 +117,14 @@ def get_session_context_summary(session: dict) -> str:
     """Short summary of session context for the system prompt."""
     parts: list[str] = []
 
+    shell_cwd = session.get("shell_cwd")
+    if shell_cwd:
+        parts.append(
+            f"Shell cwd: {shell_cwd} — **read_file**, **write_file**, and other file tools resolve "
+            "relative paths against this directory (not necessarily the project line below). "
+            "If a file is missing, call **get_working_directory** or use an absolute path."
+        )
+
     project_struct = session.get("project_structure", {})
     if project_struct:
         parts.append(f"Project: {project_struct.get('root')}")

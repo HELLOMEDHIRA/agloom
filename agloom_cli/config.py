@@ -33,6 +33,7 @@ The **agloom CLI** stores config and cached state **only** here — ``<project>/
 | ``graph_store.sqlite`` | LangGraph store backing long-term / session memory |
 | ``rules/`` | Cached project rules |
 | ``skills/`` | Skills (``SKILL.md`` trees, including learned skills) |
+| ``tool_allowlist.json`` (or ``safety.allowlist_file`` basename) | Per-project HITL allowlist; lives only under this folder |
 
 Optional: a ``.agloom.yaml`` in the **project root** (parent of this folder) is merged on top of ``agloom.yaml``; later files override earlier ones.
 
@@ -154,10 +155,15 @@ ai:
 
     1. Always prefer existing code - Don't suggest rewriting unless necessary
     2. Be concise - Give focused answers, not lengthy explanations
-    3. Think step-by-step - For complex tasks, plan before executing
+    3. Think step-by-step internally — in the **final reply**, summarize outcomes; do not narrate "Step 1/2" after tools already ran
     4. Use tools wisely - Check file context before modifying
     5. Handle errors - gracefully explain what went wrong
     6. Respect user privacy - Don't log or store sensitive data
+
+    ## Terminal agent style (CLI)
+
+    - After a successful tool action, confirm in **1–3 short sentences** (paths, result). Do **not** teach how to do what you already did.
+    - The session UI shows tool traces; avoid duplicating tool payloads or tutorial markdown unless asked.
 
     ## Code Style
 
@@ -185,7 +191,7 @@ ai:
 
 mcp:
   servers: ""
-  # Super-Brain MCP is always used by the CLI (https://agsuperbrain.readthedocs.io/). Optional: superbrain: { name:, command:, args: }
+  # Super-Brain MCP is always used by the CLI (https://agsuperbrain.readthedocs.io/). Default args: [-u, -m, agsuperbrain, mcp]. Optional: superbrain: { name:, command:, args: }
   superbrain: {}
   # Extra MCP servers (listed after Super-Brain unless same name replaces it)
   server_list: []
@@ -219,8 +225,15 @@ execution:
   classifier_timeout: 30.0
 
 safety:
-  require_approval: false
+  require_approval: true
   auto_approve: "read_file,list_directory,get_working_directory"
+  # HITL "always allow" is stored only under project .agloom/ (basename only; default tool_allowlist.json).
+  # When true (default): if that file exists, only its "tools" list applies — safety.auto_approve is ignored.
+  # When false: yaml auto_approve and JSON tools are unioned. If the file does not exist yet, yaml applies alone.
+  allowlist_strict_tools: true
+  allowlist_file: ""
+  # When true, "Always allow" during HITL appends to the allowlist file under .agloom
+  persist_tool_allowlist: true
 
 session:
   current_session: ""
@@ -300,10 +313,15 @@ You have access to tools for:
 
 1. **Always prefer existing code** - Don't suggest rewriting unless necessary
 2. **Be concise** - Give focused answers, not lengthy explanations
-3. **Think step-by-step** - For complex tasks, plan before executing
+3. **Plan internally** — for complex tasks, think before acting; in your **final reply**, give outcomes, not a "Step 1 / Step 2" tutorial after tools already ran
 4. **Use tools wisely** - Check file context before modifying
 5. **Handle errors** - gracefully explain what went wrong and suggest fixes
 6. **Respect user privacy** - Don't log or store sensitive data
+
+## Terminal agent style (agloom CLI)
+
+- You run in a **coding-agent shell** (like Cursor / Claude Code). When tools succeeded, reply **briefly**: what changed (paths, commands), errors if any, optional one-line follow-up.
+- **Never** re-explain how to perform work you already completed with tools. Do not dump long tool JSON or full file contents unless the user asked to review them.
 
 ## Code Style
 

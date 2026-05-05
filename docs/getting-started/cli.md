@@ -23,7 +23,7 @@ pip install agloom
 
 ## Super-Brain (built in)
 
-The CLI always uses [Super-Brain](https://agsuperbrain.readthedocs.io/en/latest/): on each start it runs **`agsuperbrain init`** in the detected project directory and connects the **Super-Brain MCP** server (local graph + tools). It ships with `agloom` (`agsuperbrain` dependency). Override the stdio command in `<project>/.agloom/agloom.yaml` under `mcp.superbrain` if needed.
+The CLI always uses [Super-Brain](https://agsuperbrain.readthedocs.io/en/latest/): on each start it runs **`agsuperbrain init`** in the detected project directory and connects the **Super-Brain MCP** server (local graph + tools). The default stdio process is **`python -u -m agsuperbrain mcp`** (same entrypoint as a typical Cursor MCP config). It ships with `agloom` (`agsuperbrain` dependency). Override `command` / `args` in `<project>/.agloom/agloom.yaml` under `mcp.superbrain` if needed.
 
 ## Quick Start
 
@@ -54,7 +54,7 @@ Auroras are caused by charged particles from the sun...
 > exit
 ```
 
-**Interactive shell:** the **Thinking** pane is the live **agent event** stream (classify, tools, steps, …) from the runtime — not Python `logging` INFO lines. **Framework** chatter (`httpx`, Groq SDK, `aiosqlite`, LangGraph store, …) stays **off the console** below WARNING even with **`--verbose`**, so the layout stays readable. Default mode also hides **`agloom.*`** INFO/DEBUG; **`--verbose`** turns on **agloom** package debug logging only. After each reply you get a compact **Thinking** summary unless **`thinking on`**, **`thinking off`**, **`thinking`** (toggle), or **`AGLOOM_EXPAND_THINKING=1`** says otherwise.
+**Interactive shell:** the **Thinking** pane is the live **agent event** stream (classify, tools, steps, …) from the runtime — not Python `logging` INFO lines. **Framework** chatter (`httpx`, Groq SDK, `aiosqlite`, LangGraph store, …) stays **off the console** below WARNING even with **`--verbose`**, so the layout stays readable. Default mode also hides **`agloom.*`** INFO/DEBUG; **`--verbose`** turns on **agloom** package debug logging only. After each reply you get the **full reasoning trace** by default (no env var). Use **`thinking`**, **`thinking on`**, or **`thinking off`** to toggle compact vs full on later turns, or set **`AGLOOM_EXPAND_THINKING=0`** to start in compact mode (e.g. scripts). In a normal TTY, the shell uses **Textual**: a **scrollable transcript** on the left and a **fixed session card** on the right (session id, turns, cumulative token estimate, model, tools, cwd) for the whole session. Set **`AGLOOM_REPL_PLAIN=1`** for the previous line-at-a-time Rich shell (pipes, CI, or narrow needs).
 
 ## Single Prompt Mode
 
@@ -111,8 +111,10 @@ execution:
   classifier_timeout: 30.0
 
 safety:
-  require_approval: false
+  require_approval: true
   auto_approve: "read_file,list_directory,get_working_directory"
+  # When tool_allowlist.json exists, only its tools apply (yaml auto_approve ignored). Set false to union both.
+  allowlist_strict_tools: true
 
 session:
   current_session: ""
@@ -138,7 +140,7 @@ session:
 | `--interrupt-before` | | Interrupt before patterns | |
 | `--interrupt-after` | | Interrupt after patterns | |
 | `--interrupt-before-tools` | | Interrupt before specific tools | |
-| `--require-approval` | | Require approval for shell/file ops | disabled |
+| `--require-approval` / `--no-require-approval` | | Force HITL on or off | from `safety.require_approval` in config |
 | `--auto-approve` | | Tools to auto-approve | |
 | `--max-concurrent` | | Max concurrent workers | 4 |
 | `--max-retries` | | Max retries | 2 |

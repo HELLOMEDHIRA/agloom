@@ -328,6 +328,20 @@ def _unregister_agent_name(agent_name: str, store: Any) -> None:
         _active_agent_names[key] = count - 1
 
 
+def _structured_tool_from_callable(
+    fn: Callable[..., Any],
+    *,
+    name: str | None = None,
+    description: str = "",
+) -> StructuredTool:
+    """Wrap a sync or async callable so LangChain awaits coroutine tools correctly."""
+    nm = name or getattr(fn, "__name__", "tool")
+    desc = (description or "").strip() or (getattr(fn, "__doc__", None) or "").strip() or f"Tool: {nm}"
+    if inspect.iscoroutinefunction(fn):
+        return StructuredTool.from_function(coroutine=fn, name=nm, description=desc)
+    return StructuredTool.from_function(func=fn, name=nm, description=desc)
+
+
 def normalize_tools(tools: Sequence[Any]) -> list[BaseTool]:
     """Normalise a mixed list (BaseTool, callable, dict) to BaseTool instances."""
     normalised: list[BaseTool] = []
@@ -335,15 +349,15 @@ def normalize_tools(tools: Sequence[Any]) -> list[BaseTool]:
         if isinstance(t, BaseTool):
             normalised.append(t)
         elif callable(t):
-            normalised.append(StructuredTool.from_function(t))
+            normalised.append(_structured_tool_from_callable(t))
         elif isinstance(t, dict):
             fn = t.get("function") or t.get("func")
             if fn:
                 normalised.append(
-                    StructuredTool.from_function(
-                        func=fn,
-                        name=t.get("name", fn.__name__),
-                        description=t.get("description", ""),
+                    _structured_tool_from_callable(
+                        fn,
+                        name=t.get("name", getattr(fn, "__name__", "tool")),
+                        description=str(t.get("description", "")),
                     )
                 )
             else:
@@ -878,6 +892,20 @@ async def run_fresh(
             if memory_ctx
             else (f"{harness_block}\n{processed_query}" if harness_ctx else processed_query)
         )
+        eq = config.get("_event_queue")
+        if eq is not None:
+            await eq.put(
+                AgentEvent(
+                    type="thinking",
+                    data={
+                        "name": "analyze_query",
+                        "input": (augmented_query[:300] + "…")
+                        if len(augmented_query) > 300
+                        else augmented_query,
+                        "output": "Running classifier…",
+                    },
+                )
+            )
         t_classify = time.perf_counter()
         analysis: QueryAnalysis = await analyze_query(
             llm=config["llm"],

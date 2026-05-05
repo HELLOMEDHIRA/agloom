@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from ..tool_loader import tool
+from .filesystem import BoolLike, _boolish
 
 _cwd_stack: list[str] = []
 
@@ -38,7 +39,7 @@ async def set_working_directory(path: str, create_if_missing: bool = False) -> s
             target = Path.cwd() / target
 
         if not target.exists():
-            if create_if_missing:
+            if _boolish(create_if_missing, default=False):
                 target.mkdir(parents=True, exist_ok=True)
             else:
                 return f"Error: Directory does not exist: {path}"

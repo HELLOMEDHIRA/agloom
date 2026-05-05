@@ -210,6 +210,8 @@ Features:
 
 ```bash
 agloom --require-approval
+# or bypass config for one run:
+agloom --no-require-approval
 ```
 
 Prompts for confirmation before:
@@ -272,8 +274,9 @@ mcp:
 
 # Safety
 safety:
-  require_approval: false
+  require_approval: true
   auto_approve: "read_file,list_directory,get_working_directory"
+  allowlist_strict_tools: true
 
 # Execution
 execution:

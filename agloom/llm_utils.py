@@ -22,6 +22,56 @@ logger = get_logger(__name__)
 _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```")
 _JSON_OBJECT_RE = re.compile(r"\{[\s\S]*\}")
 
+# Groq: only some models accept ``response_format`` with ``json_schema`` (Structured Outputs).
+# See https://console.groq.com/docs/structured-outputs#supported-models — expand when Groq adds models.
+_GROQ_JSON_SCHEMA_MODEL_IDS: frozenset[str] = frozenset(
+    {
+        "meta-llama/llama-4-scout-17b-16e-instruct",
+        "llama-4-scout-17b-16e-instruct",
+        "openai/gpt-oss-20b",
+        "gpt-oss-20b",
+        "openai/gpt-oss-120b",
+        "gpt-oss-120b",
+        "openai/gpt-oss-safeguard-20b",
+        "gpt-oss-safeguard-20b",
+    }
+)
+
+
+def _is_groq_chat_llm(llm: Any) -> bool:
+    cls = type(llm)
+    name = getattr(cls, "__name__", "")
+    mod = getattr(cls, "__module__", "") or ""
+    return name == "ChatGroq" or mod.startswith("langchain_groq")
+
+
+def _groq_model_id(llm: Any) -> str | None:
+    mid = getattr(llm, "model_name", None) or getattr(llm, "model", None)
+    if mid is None:
+        return None
+    if isinstance(mid, str):
+        return mid.strip()
+    return str(mid).strip()
+
+
+def _groq_allows_json_schema_first(llm: Any) -> bool:
+    """True only for Groq models documented as supporting Structured Outputs / json_schema."""
+    mid = _groq_model_id(llm)
+    if not mid:
+        return False
+    key = mid.lower()
+    if key in _GROQ_JSON_SCHEMA_MODEL_IDS:
+        return True
+    tail = key.split("/")[-1]
+    return tail in _GROQ_JSON_SCHEMA_MODEL_IDS
+
+
+def _llm_skips_json_schema_mode(llm: Any) -> bool:
+    """Skip ``json_schema`` when the provider+model rejects it (e.g. Groq Llama 3.3)."""
+    if not _is_groq_chat_llm(llm):
+        return False
+    return not _groq_allows_json_schema_first(llm)
+
 
 class LLMSemaphore:
     """Lazy ``asyncio.Semaphore`` limiting concurrent LLM calls (per event loop).
@@ -71,20 +121,22 @@ async def robust_structured_call[T: BaseModel](
     """Parse ``schema`` from ``llm`` via json_schema → tool calling → raw JSON fallback; returns None if all fail."""
     tag = f"[{caller}] " if caller else ""
     errors: list[str] = []
+    skip_json_schema = _llm_skips_json_schema_mode(llm)
 
-    structured = _build_structured(llm, schema, method="json_schema")
-    if structured is not None:
-        result = await _try_invoke(
-            structured,
-            messages,
-            timeout,
-            rate_limiter,
-            tag,
-            "json_schema",
-            errors,
-        )
-        if result is not None:
-            return result
+    if not skip_json_schema:
+        structured = _build_structured(llm, schema, method="json_schema")
+        if structured is not None:
+            result = await _try_invoke(
+                structured,
+                messages,
+                timeout,
+                rate_limiter,
+                tag,
+                "json_schema",
+                errors,
+            )
+            if result is not None:
+                return result
 
     structured = _build_structured(llm, schema, method=None)
     if structured is not None:

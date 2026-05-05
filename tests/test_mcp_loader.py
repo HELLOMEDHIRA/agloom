@@ -13,7 +13,7 @@ def test_superbrain_always_present() -> None:
     assert servers[0].name == "agsuperbrain"
     assert servers[0].transport == "stdio"
     assert servers[0].command == sys.executable
-    assert servers[0].args == ["-m", "agsuperbrain"]
+    assert servers[0].args == ["-u", "-m", "agsuperbrain", "mcp"]
 
 
 def test_server_list_after_superbrain() -> None:
@@ -56,7 +56,11 @@ def test_server_list_can_replace_superbrain_by_name() -> None:
 
 def test_legacy_skips_duplicate_superbrain_argv() -> None:
     sb = superbrain_stdio_config({})
-    cfg: dict = {"mcp": {"servers": f"{sb.command} -m agsuperbrain,node script.js"}}
+    cfg: dict = {
+        "mcp": {
+            "servers": f'{sb.command} -u -m agsuperbrain mcp,node script.js',
+        }
+    }
     servers = build_mcp_configs(cfg, None)
     assert len(servers) == 2
     assert servers[0].name == "agsuperbrain"

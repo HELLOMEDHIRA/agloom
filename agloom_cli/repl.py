@@ -13,11 +13,17 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 
+from rich import box
+from rich.align import Align
+from rich.columns import Columns
 from rich.console import Console, Group
 from rich.live import Live
 from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.spinner import Spinner
+from rich.table import Table
 from rich.text import Text
 
 from . import __version__
@@ -31,10 +37,197 @@ from .ui import RichUI, get_ui, reset_ui
 console = Console()
 
 _THINKING_SCROLL_LINES = 16
+# Reasoning panel: Cursor / Claude Code–style single surface (one Live region, no stacked borders).
+_LIVE_REFRESH_HZ = 12
+# Side card width: readable on narrow terminals; scales slightly with console width.
+_SESSION_CARD_MIN_W = 34
+_SESSION_CARD_MAX_W = 46
+
+# Textual “glass” preset: rounded boxes, muted borders (easier on the eyes than neon panels).
+_SOFT_BOX = box.ROUNDED
+_SOFT_BORDER_SESSION = "rgb(92,118,148)"
+_SOFT_BORDER_LIVE = "rgb(88,128,158)"
+_SOFT_BORDER_USER = "rgb(130,105,145)"
+_SOFT_BORDER_ANSWER = "rgb(95,145,125)"
+_SOFT_BORDER_META = "rgb(85,110,135)"
+_SOFT_BORDER_OK = "rgb(100,140,115)"
+_SOFT_BORDER_HELP = "rgb(95,125,155)"
+_SOFT_BORDER_WARN = "rgb(155,135,95)"
 
 
-def _env_truthy(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+def _ellipsize_middle(path: str, max_len: int = 42) -> str:
+    """Shorten long paths for the session card (prefer keeping head and tail)."""
+    if len(path) <= max_len:
+        return path
+    head = max_len // 2 - 1
+    tail = max_len - head - 1
+    return f"{path[:head]}…{path[-tail:]}"
+
+
+def _session_side_card(
+    *,
+    session_id_full: str,
+    turns: int,
+    tokens_est: int,
+    model: str,
+    tools_count: int | None,
+    cwd: str,
+    langsmith_on: bool,
+    card_width: int,
+    tui_soft: bool = False,
+) -> Panel:
+    """Right-column session summary (tokens, turns, id, model) — printed at shell start."""
+    sid_short = session_id_full[:8] if len(session_id_full) >= 8 else session_id_full
+    tbl = Table(show_header=False, box=None, pad_edge=False, collapse_padding=True)
+    tbl.add_column("k", style="dim", justify="right", width=10, no_wrap=True)
+    tbl.add_column("v", overflow="fold")
+
+    sid_style = "bold #b8d4f0" if tui_soft else "bold bright_cyan"
+    model_style = "italic #a8c8e0" if tui_soft else "cyan"
+    tbl.add_row("Session", Text(sid_short, style=sid_style))
+    if len(session_id_full) > len(sid_short):
+        tbl.add_row("", Text(session_id_full, style="dim"))
+    tbl.add_row("Turns", str(turns))
+    tbl.add_row("Tokens", Text.assemble((f"{tokens_est:,}", "bold"), ("  ≈ est.", "dim")))
+    tbl.add_row("Model", Text(_ellipsize_middle(model, card_width - 2), style=model_style))
+    if tools_count is not None:
+        tbl.add_row("Tools", str(tools_count))
+    tbl.add_row("CWD", Text(_ellipsize_middle(cwd.replace("\\", "/"), card_width + 8), style="dim"))
+
+    trace_st = "italic #8fb89a" if tui_soft else "green"
+    trace = Text("✓ ", style=trace_st) if langsmith_on else Text("○ ", style="dim")
+    trace.append("LangSmith", style="dim")
+    body = Group(tbl, Text(""), trace)
+
+    title = "[italic #c5d8ec]Session[/italic #c5d8ec]" if tui_soft else "[bold white]Session[/bold white]"
+    bstyle = _SOFT_BORDER_SESSION if tui_soft else "bright_blue"
+    return Panel(
+        body,
+        title=title,
+        title_align="left",
+        border_style=bstyle,
+        box=_SOFT_BOX if tui_soft else box.SQUARE,
+        width=card_width,
+        padding=(0, 1),
+    )
+
+
+def _print_startup_panels(left: Panel, right: Panel) -> None:
+    """STATUS (left) + Session card (right); stack when the terminal is too narrow."""
+    term_w = console.width or 80
+    if term_w >= 86:
+        console.print(
+            Columns(
+                [left, right],
+                equal=False,
+                expand=True,
+                padding=(0, 1),
+            )
+        )
+    else:
+        console.print(left)
+        console.print(right)
+
+
+def tui_soft_user_message(message: str) -> Panel:
+    """Rounded user bubble for the Textual transcript (plain text safe)."""
+    body = Text("› ", style="bold #d4c0e4")
+    body.append(message, style="#e8ecf4")
+    return Panel(
+        body,
+        title="[italic dim #8f8498]You[/]",
+        title_align="left",
+        border_style=_SOFT_BORDER_USER,
+        box=_SOFT_BOX,
+        padding=(0, 1),
+    )
+
+
+def tui_soft_answer(text: str) -> Panel:
+    return Panel(
+        text,
+        title="[italic #a8d4c0]Answer[/]",
+        title_align="left",
+        border_style=_SOFT_BORDER_ANSWER,
+        box=_SOFT_BOX,
+        padding=(0, 1),
+    )
+
+
+def tui_soft_status_banner(welcome: str) -> Panel:
+    return Panel(
+        f"[#8fb89a]✓[/] [#d0dae8]{welcome}[/]\n"
+        "[dim #7a8899]Scroll the chat on the left — session glass card on the right.[/]",
+        title="[italic #a8c0d8]Ready[/]",
+        border_style=_SOFT_BORDER_OK,
+        box=_SOFT_BOX,
+        padding=(0, 1),
+    )
+
+
+def tui_soft_done_banner(turns: int) -> Panel:
+    return Panel(
+        f"[#8fb89a]✓[/] [dim]Completed · {turns} turn(s)[/]",
+        border_style=_SOFT_BORDER_OK,
+        box=_SOFT_BOX,
+        padding=(0, 1),
+    )
+
+
+def tui_soft_help_panel() -> Panel:
+    return Panel(
+        "[#b8c8e0]Commands:[/] exit · clear · history · help · thinking (toggle)\n"
+        "[#b8c8e0]Keys:[/] [dim]ctrl+shift+q[/] or [dim]F10[/] exit (VS Code terminal)\n"
+        "[#b8c8e0]Env:[/] AGLOOM_REPL_PLAIN=1 line shell · AGLOOM_EXPAND_THINKING=0 compact reasoning",
+        title="[italic #a8c0e0]Help[/]",
+        border_style=_SOFT_BORDER_HELP,
+        box=_SOFT_BOX,
+        padding=(0, 1),
+    )
+
+
+def tui_soft_warn_banner(text: str) -> Panel:
+    return Panel(
+        Text(text, style="#d8c8a0"),
+        border_style=_SOFT_BORDER_WARN,
+        box=_SOFT_BOX,
+        padding=(0, 1),
+        title="[dim italic]Notice[/]",
+    )
+
+
+def _session_info_strip(
+    *,
+    working_dir: str,
+    status_model: str,
+    turns: int,
+    tokens_est: int,
+) -> Panel:
+    """Footer strip after each turn — cumulative tokens and turn count."""
+    return Panel(
+        f"[green]●[/green] [green]session[/green]  "
+        f"[dim]turns[/dim] [cyan]{turns}[/cyan]  "
+        f"[dim]tokens[/dim] [cyan]{tokens_est:,}[/cyan] [dim]≈[/dim]  "
+        f"[dim]{_ellipsize_middle(working_dir, 36)}[/dim]  "
+        f"[cyan]{status_model}[/cyan]",
+        border_style="dim",
+        padding=(0, 1),
+        title="[dim]INFO[/dim]",
+    )
+
+
+def _default_expand_thinking() -> bool:
+    """Show full reasoning after each reply by default (no env needed).
+
+    Set ``AGLOOM_EXPAND_THINKING=0`` (or ``false`` / ``off``) for a compact summary by default
+    (e.g. scripts or narrow terminals).
+    """
+    v = os.environ.get("AGLOOM_EXPAND_THINKING", "").strip().lower()
+    if v in ("0", "false", "no", "off"):
+        return False
+    if v in ("1", "true", "yes", "on"):
+        return True
+    return True
 
 
 def _append_trace_line(thinking_lines: list[str], event_type: str, data: dict) -> None:
@@ -63,61 +256,146 @@ def _append_trace_line(thinking_lines: list[str], event_type: str, data: dict) -
         thinking_lines.append(f"• fallback: {str(o)[:200]}")
 
 
-def _thinking_panel(thinking_lines: list[str]) -> Panel:
-    chunk = thinking_lines[-_THINKING_SCROLL_LINES:] if thinking_lines else []
-    body = "\n".join(chunk) if chunk else "[dim]…[/dim]"
-    extra = len(thinking_lines) - len(chunk)
-    sub = f"[dim]↑ {extra} earlier step(s)[/dim]" if extra > 0 else None
+def _thinking_body_text(lines: list[str]) -> Text:
+    """Merge trace lines; lines may contain Rich markup (tool highlights)."""
+    if not lines:
+        return Text("…", style="italic dim")
+    chunk = lines[-_THINKING_SCROLL_LINES:]
+    body = Text()
+    for i, raw in enumerate(chunk):
+        if i:
+            body.append("\n")
+        try:
+            body.append_text(Text.from_markup(raw))
+        except Exception:
+            body.append(raw)
+    return body
+
+
+def _live_agent_panel(thinking_lines: list[str], stream: Text, *, tui_soft: bool = False) -> Panel:
+    """One bordered region: reasoning (spinner until first step) + optional streaming answer."""
+    n = len(thinking_lines)
+    extra = n - min(n, _THINKING_SCROLL_LINES)
+    subtitle = f"[dim]{n} step(s)[/dim]" + (f" · [dim]↑ {extra} earlier[/dim]" if extra > 0 else "")
+
+    inner: list = []
+    if not thinking_lines and not stream.plain:
+        spin_style = "italic rgb(140,170,200)" if tui_soft else "bold dim cyan"
+        inner.append(
+            Align.left(Spinner("dots2", text="Reasoning", style=spin_style)),
+        )
+    else:
+        hdr_style = "bold italic #9ec5e0" if tui_soft else "bold dim cyan"
+        inner.append(Text("Reasoning", style=hdr_style))
+        inner.append(Text("\n"))
+        inner.append(_thinking_body_text(thinking_lines))
+
+    if stream.plain:
+        inner.append(Text("\n"))
+        w = console.width or 80
+        rule_style = "dim #4a5a6e" if tui_soft else "dim"
+        inner.append(Text("─" * max(12, min(w - 4, 56)), style=rule_style))
+        inner.append(Text("\n"))
+        ans_style = "bold #a8d4b4" if tui_soft else "bold green"
+        inner.append(Text("Answer", style=ans_style))
+        inner.append(Text("\n"))
+        inner.append(stream)
+
+    title = (
+        "[dim]#5a6d82━━[/] [#c5d8ec]agloom[/] [dim]#5a6d82━━[/]"
+        if tui_soft
+        else "[dim]━━[/dim] [bold white]agloom[/bold white] [dim]━━[/dim]"
+    )
+    bstyle = _SOFT_BORDER_LIVE if tui_soft else "cyan"
     return Panel(
-        body,
-        title="[bold cyan]Thinking[/bold cyan]",
-        border_style="dim",
-        subtitle=sub,
-        subtitle_align="left",
+        Group(*inner),
+        title=title,
+        subtitle=subtitle,
+        subtitle_align="right",
+        border_style=bstyle,
+        box=_SOFT_BOX if tui_soft else box.SQUARE,
         padding=(0, 1),
     )
 
 
-def _live_layout(thinking_lines: list[str], stream: Text) -> Group:
-    parts: list = [_thinking_panel(thinking_lines)]
-    if stream.plain:
-        parts.append(
-            Panel(
-                stream,
-                title="[bold green]Assistant[/bold green]",
-                border_style="green",
-                padding=(0, 1),
-            )
+def _thinking_footer_panel(
+    thinking_lines: list[str], *, expanded: bool, tui_soft: bool = False
+) -> Panel | None:
+    """After a turn: compact or full reasoning as a Rich panel (for console or Textual)."""
+    if not thinking_lines:
+        return None
+    if expanded:
+        try:
+            body = Text()
+            for i, raw in enumerate(thinking_lines):
+                if i:
+                    body.append("\n")
+                body.append_text(Text.from_markup(raw))
+        except Exception:
+            body = Text("\n".join(thinking_lines))
+        title = (
+            "[italic #b0c8e0]Reasoning[/] [dim](full)[/dim]"
+            if tui_soft
+            else "[bold dim]Reasoning[/bold dim] [cyan](full)[/cyan]"
         )
-    return Group(*parts)
+        bstyle = _SOFT_BORDER_LIVE if tui_soft else "dim cyan"
+        return Panel(
+            body,
+            title=title,
+            border_style=bstyle,
+            box=_SOFT_BOX if tui_soft else box.SQUARE,
+            padding=(0, 1),
+        )
+    last = thinking_lines[-1]
+    preview = last if len(last) <= 88 else last[:88] + "…"
+    try:
+        preview_text = Text.from_markup(preview)
+    except Exception:
+        preview_text = Text(preview)
+    summary = Text()
+    summary.append("▸ ", style="dim")
+    rstyle = "bold italic #8a9cad" if tui_soft else "bold dim"
+    summary.append("Reasoning", style=rstyle)
+    summary.append(f" · {len(thinking_lines)} step", style="dim")
+    if len(thinking_lines) != 1:
+        summary.append("s", style="dim")
+    summary.append("\n", style="dim")
+    summary.append_text(preview_text)
+    summary.append("\n", style="dim")
+    summary.append_text(
+        Text.from_markup(
+            "[dim]Tip:[/dim] [#9ec5e0]thinking[/] "
+            "[dim]· compact vs full on later turns[/dim]"
+            if tui_soft
+            else "[dim]Tip:[/dim] [cyan]thinking[/cyan] [dim]· compact vs full on later turns[/dim]"
+        )
+    )
+    bstyle = _SOFT_BORDER_META if tui_soft else "dim"
+    return Panel(
+        summary,
+        border_style=bstyle,
+        box=_SOFT_BOX if tui_soft else box.SQUARE,
+        padding=(0, 1),
+    )
 
 
 def _print_thinking_footer(thinking_lines: list[str], *, expanded: bool) -> None:
-    """After a turn, show a compact or full trace (collapsible-style default)."""
-    if not thinking_lines:
-        return
-    if expanded:
-        console.print(
-            Panel(
-                "\n".join(thinking_lines),
-                title="[bold cyan]Thinking[/bold cyan] [dim](full)[/dim]",
-                border_style="dim",
-                padding=(0, 1),
-            )
-        )
-    else:
-        last = thinking_lines[-1]
-        preview = last if len(last) <= 100 else last[:100] + "…"
-        console.print(
-            Panel(
-                f"[dim]▶[/dim] [bold]Thinking[/bold] — {len(thinking_lines)} step(s)\n"
-                f"[dim]{preview}[/dim]\n"
-                f"[dim]Full trace:[/dim] [cyan]thinking on[/cyan] [dim]· env[/dim] "
-                f"[cyan]AGLOOM_EXPAND_THINKING=1[/cyan]",
-                border_style="dim",
-                padding=(0, 1),
-            )
-        )
+    """After a turn: one summary strip (collapsed) or full reasoning (expanded)."""
+    p = _thinking_footer_panel(thinking_lines, expanded=expanded, tui_soft=False)
+    if p is not None:
+        console.print(p)
+
+
+def _use_textual_repl() -> bool:
+    """Use Textual split layout (scrollable chat + fixed session card) when possible."""
+    if os.environ.get("AGLOOM_REPL_PLAIN", "").strip().lower() in ("1", "true", "yes", "on"):
+        return False
+    try:
+        stdin_ok = bool(getattr(sys.stdin, "isatty", lambda: False)())
+        stdout_ok = bool(getattr(sys.stdout, "isatty", lambda: False)())
+    except Exception:
+        return False
+    return stdin_ok and stdout_ok
 
 
 def render_banner(text: str = "AGLOOM") -> Panel:
@@ -148,11 +426,14 @@ class ShellState:
     def __init__(self):
         self.history: list[tuple[str, str]] = []
         self.session_id: str | None = None
+        self.total_tokens_est: int = 0
         self.ui: RichUI = get_ui(console)
-        self.expand_thinking: bool = _env_truthy("AGLOOM_EXPAND_THINKING")
+        self.expand_thinking: bool = _default_expand_thinking()
 
     def add_turn(self, query: str, output: str) -> None:
         self.history.append((query, output))
+        self.total_tokens_est += max(0, len(query) + len(output)) // 4
+        self.ui.token_count = self.total_tokens_est
         self.ui.add_to_history(query, output)
 
     def get_history(self) -> list[tuple[str, str]]:
@@ -166,16 +447,49 @@ async def run_shell(
     verbose: bool = False,
     llm_status: str | None = None,
     thread_id: str | None = None,
+    tools_count: int | None = None,
 ) -> None:
-    """Run interactive shell - Deep Agents / Claude Code style UI.
+    """Interactive shell: Textual split view (scrollable chat + fixed session card) when possible."""
+    if _use_textual_repl():
+        try:
+            from .repl_tui import run_shell_tui
+        except ImportError:
+            pass
+        else:
+            await run_shell_tui(
+                agent,
+                welcome=welcome,
+                verbose=verbose,
+                llm_status=llm_status,
+                thread_id=thread_id,
+                tools_count=tools_count,
+            )
+            return
+    await run_shell_plain(
+        agent,
+        welcome=welcome,
+        verbose=verbose,
+        llm_status=llm_status,
+        thread_id=thread_id,
+        tools_count=tools_count,
+    )
+
+
+async def run_shell_plain(
+    agent,
+    *,
+    welcome: str = "Ready to code!",
+    verbose: bool = False,
+    llm_status: str | None = None,
+    thread_id: str | None = None,
+    tools_count: int | None = None,
+) -> None:
+    """Rich line-based shell (``AGLOOM_REPL_PLAIN=1`` or no Textual / non-TTY).
 
     Features:
-    - Status bar with LangSmith, thread ID, MCP tools (banner printed by CLI before ``run_shell``)
+    - Status bar with LangSmith (banner printed by CLI before ``run_shell``)
     - Chat-style message display
-    - Blue bordered input with bottom status
-    - Keyboard shortcut hints
-    - Rich thinking indicator
-    - Tool call visualization
+    - Rich thinking indicator and tool visualization
     """
     reset_ui()
     state = ShellState()
@@ -197,29 +511,40 @@ async def run_shell(
         else "[dim]○ LangSmith: disabled[/dim]"
     )
 
-    console.print(
-        Panel(
-            f"{langsmith_status}\n"
-            f"[dim]Thread: [cyan]{state.ui.thread_id}[/cyan][/dim]\n"
-            f"[bold green]✓[/bold green] [bold green]{welcome}[/bold green]",
-            border_style="green",
-            padding=(0, 2),
-            title="[bold]STATUS[/bold]",
-        )
+    status_model = llm_status or "auto:auto"
+    term_w = console.width or 80
+    card_w = min(
+        _SESSION_CARD_MAX_W,
+        max(_SESSION_CARD_MIN_W, min(_SESSION_CARD_MAX_W, term_w // 3 + 8)),
     )
+
+    left_status = Panel(
+        f"{langsmith_status}\n"
+        f"[bold green]✓[/bold green] [bold green]{welcome}[/bold green]\n"
+        f"[dim]Session details →[/dim]",
+        border_style="green",
+        padding=(0, 2),
+        title="[bold]STATUS[/bold]",
+    )
+    right_card = _session_side_card(
+        session_id_full=invoke_tid,
+        turns=len(state.history),
+        tokens_est=state.total_tokens_est,
+        model=status_model,
+        tools_count=tools_count,
+        cwd=working_dir,
+        langsmith_on=state.ui.langsmith_enabled,
+        card_width=card_w,
+    )
+    _print_startup_panels(left_status, right_card)
     console.print()
 
-    status_model = llm_status or "auto:auto"
     console.print(
-        Panel(
-            f"[green]●[/green] [green]session[/green]  "
-            f"[dim]shift+tab to cycle[/dim]  "
-            f"[dim]{working_dir}[/dim]  "
-            f"[dim]0 tokens[/dim]  "
-            f"[cyan]{status_model}[/cyan]",
-            border_style="dim",
-            padding=(0, 1),
-            title="[dim]INFO[/dim]",
+        _session_info_strip(
+            working_dir=working_dir,
+            status_model=status_model,
+            turns=len(state.history),
+            tokens_est=state.total_tokens_est,
         )
     )
     console.print()
@@ -298,11 +623,12 @@ async def run_shell(
                 stream_text.append(result.output or "")
             else:
                 with Live(
-                    _live_layout(thinking_lines, stream_text),
+                    _live_agent_panel(thinking_lines, stream_text),
                     console=console,
-                    refresh_per_second=12,
+                    refresh_per_second=_LIVE_REFRESH_HZ,
                     transient=True,
-                    vertical_overflow="visible",
+                    # "visible" stacks duplicate frames on some Windows terminals with Group+Panel.
+                    vertical_overflow="crop",
                 ) as live:
                     async for event in agent.astream_events(prompt_text, thread_id=invoke_tid):
                         event_type = event.type
@@ -318,13 +644,13 @@ async def run_shell(
                             "fallback",
                         ):
                             _append_trace_line(thinking_lines, event_type, data)
-                            live.update(_live_layout(thinking_lines, stream_text))
+                            live.update(_live_agent_panel(thinking_lines, stream_text))
 
                         elif event_type == "token":
                             content = data.get("content", "")
                             if content:
                                 stream_text.append(str(content))
-                                live.update(_live_layout(thinking_lines, stream_text))
+                            live.update(_live_agent_panel(thinking_lines, stream_text))
 
                         elif event_type == "tool_call":
                             tool_name = data.get("name", "unknown")
@@ -333,7 +659,7 @@ async def run_shell(
                             tin = data.get("input", "")
                             tin_s = str(tin)[:120] + "…" if len(str(tin)) > 120 else str(tin)
                             thinking_lines.append(f"→ [yellow]{tool_name}[/yellow] {tin_s}")
-                            live.update(_live_layout(thinking_lines, stream_text))
+                            live.update(_live_agent_panel(thinking_lines, stream_text))
 
                         elif event_type == "tool_result":
                             tool_id = data.get("id", "")
@@ -341,12 +667,20 @@ async def run_shell(
                             res = data.get("output", "")
                             preview = str(res)[:100] + "…" if len(str(res)) > 100 else str(res)
                             thinking_lines.append(f"  [green]✓[/green] {tool_name}: {preview}")
-                            live.update(_live_layout(thinking_lines, stream_text))
+                            live.update(_live_agent_panel(thinking_lines, stream_text))
 
                         elif event_type == "error":
                             error_msg = data.get("error", "Unknown error")
                             thinking_lines.append(f"✗ {error_msg}")
-                            live.update(_live_layout(thinking_lines, stream_text))
+                            live.update(_live_agent_panel(thinking_lines, stream_text))
+
+                        elif event_type == "done":
+                            # DIRECT short-circuit and other paths may never emit token chunks; use final output.
+                            result = data.get("result") or {}
+                            out = result.get("output", "")
+                            if out and not stream_text.plain.strip():
+                                stream_text.append(str(out))
+                            live.update(_live_agent_panel(thinking_lines, stream_text))
 
             console.print()
 
@@ -356,7 +690,7 @@ async def run_shell(
                 console.print(
                     Panel(
                         full_output,
-                        title="[bold green]Assistant[/bold green]",
+                        title="[bold green]Answer[/bold green]",
                         border_style="green",
                         padding=(0, 1),
                     )
@@ -368,8 +702,6 @@ async def run_shell(
             except Exception:
                 pass
 
-            token_count = len(prompt_text + full_output) // 4
-
             console.print(
                 Panel(
                     f"[green]✓[/green] [dim]Completed • {len(state.history)} turn(s)[/dim]",
@@ -380,14 +712,11 @@ async def run_shell(
             console.print()
 
             console.print(
-                Panel(
-                    f"[green]●[/green] [green]session[/green]  "
-                    f"[dim]shift+tab to cycle[/dim]  "
-                    f"[dim]{working_dir}[/dim]  "
-                    f"[dim]{token_count:,} tokens[/dim]  "
-                    f"[cyan]{status_model}[/cyan]",
-                    border_style="dim",
-                    padding=(0, 1),
+                _session_info_strip(
+                    working_dir=working_dir,
+                    status_model=status_model,
+                    turns=len(state.history),
+                    tokens_est=state.total_tokens_est,
                 )
             )
             console.print()
@@ -418,8 +747,11 @@ def _show_help() -> None:
   clear           Clear the screen
   history         View conversation history
   help            Show this help message
-  thinking on|off | toggle   Show full vs compact [dim]Thinking[/dim] trace after each reply
-                    (or env [cyan]AGLOOM_EXPAND_THINKING=1[/cyan])
+  thinking on|off | toggle   Compact vs full [dim]Reasoning[/dim] trace after each reply
+                    (default: full; env [cyan]AGLOOM_EXPAND_THINKING=0[/cyan] for compact default)
+
+  [dim]TTY shell uses Textual (scrollable chat + fixed session card). Line-only mode:[/dim]
+                    [cyan]AGLOOM_REPL_PLAIN=1[/cyan]
 
 [cyan]Built-in Tools:[/cyan]
   📁 Files:   read_file, write_file, list_directory, search_files

@@ -33,6 +33,7 @@ from .model_resolver import MissingProviderApiKey, MissingProviderDependency, de
 from .project import detect_project, get_git_info
 from .project_rules import load_project_rules
 from .repl import render_banner, run_shell
+from .session_list import get_config_current_session_id, list_session_rows
 from .session_manager import get_session_context_summary, update_session_file_summaries
 from .session_resume import seed_session_memory_from_cli_json_if_empty
 from .tool_loader import discover_tools
@@ -48,6 +49,13 @@ console = Console(
         }
     )
 )
+
+# Suffix for all CLI runs — nudges models toward Cursor/Claude Code–style brevity after tool use.
+_AGLOOM_CLI_REPLY_EPILOG = """
+
+---
+[agloom CLI] Final replies: **short** and outcome-first. After tools succeed, state what changed (paths, results) — do not add tutorial-style "Step 1 / Step 2" prose for work you already completed with tools.
+"""
 
 app = typer.Typer(
     name="agloom",
@@ -187,11 +195,11 @@ def main(
     interrupt_before: str | None = typer.Option(None, "--interrupt-before", help="Interrupt before patterns"),
     interrupt_after: str | None = typer.Option(None, "--interrupt-after", help="Interrupt after patterns"),
     interrupt_before_tools: str | None = typer.Option(None, "--interrupt-before-tools", help="Interrupt before tools"),
-    # Human approval
-    require_approval: bool = typer.Option(
-        False,
-        "--require-approval",
-        help="Require human approval for sensitive operations (shell, delete, write)",
+    # Human approval (omit both flags → use agloom.yaml safety.require_approval)
+    require_approval: bool | None = typer.Option(
+        None,
+        "--require-approval/--no-require-approval",
+        help="Force HITL on or off; default from config (safety.require_approval)",
     ),
     auto_approve_tools: str | None = typer.Option(
         None,
@@ -271,6 +279,169 @@ def main(
     )
 
 
+def _run_resume_picked_session(
+    session_id: str,
+    *,
+    project: Path | None,
+    config: Path | None,
+    model: str | None,
+    verbose: bool,
+    prompt: str | None,
+) -> None:
+    """Invoke the main agent run with a chosen session id (strict session file guard)."""
+    asyncio.run(
+        _run(
+            model,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            False,
+            None,
+            None,
+            None,
+            config,
+            session_id,
+            True,
+            verbose,
+            False,
+            project,
+            None,
+            False,
+            prompt,
+        )
+    )
+
+
+@app.command("sessions")
+def sessions_cmd(
+    project: Path | None = typer.Option(None, "--project", "-p", help="Project directory"),
+    config: Path | None = typer.Option(None, "--config", "-c", help="Config file"),
+    model: str | None = typer.Option(None, "--model", "-m", help="Model (overrides config)"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging"),
+    list_only: bool = typer.Option(
+        False,
+        "--list",
+        "-l",
+        help="Only print the session table; do not prompt or resume",
+    ),
+    pick: int | None = typer.Option(
+        None,
+        "--pick",
+        help="Resume session by table row number (1 = newest). Implies resume without prompting.",
+    ),
+    prompt: str | None = typer.Argument(None, help="Optional one-shot prompt after resume"),
+) -> None:
+    """List saved CLI sessions and resume one by number (no session id copy-paste)."""
+    import sys
+
+    from rich.markup import escape
+    from rich.prompt import Prompt
+    from rich.table import Table
+
+    from .config import ensure_config_ready
+
+    project_ctx = detect_project(project)
+    set_cli_project_root(project_ctx.root)
+    ensure_config_ready()
+
+    cfg = load_config(config) if config else load_config(None)
+    current_sid = get_config_current_session_id(cfg)
+    rows = list_session_rows(storage_dir() / "sessions")
+
+    if not rows:
+        console.print(
+            f"[dim]No sessions under[/dim] [path]{storage_dir() / 'sessions'}[/path][dim]. "
+            "Run [cyan]agloom[/cyan] once to create one.[/dim]"
+        )
+        raise typer.Exit(0)
+
+    table = Table(title="agloom sessions (newest first)", show_lines=False)
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("id (short)", style="cyan")
+    table.add_column("last active", style="dim")
+    table.add_column("turns", justify="right")
+    table.add_column("model", max_width=24, overflow="ellipsis")
+    table.add_column("preview", max_width=36, overflow="ellipsis")
+
+    for i, row in enumerate(rows, start=1):
+        sid = row["id"]
+        short = f"{sid[:8]}…" if len(sid) > 8 else sid
+        mark = " *" if current_sid and sid == current_sid else ""
+        table.add_row(
+            str(i),
+            f"{short}{mark}",
+            escape(str(row.get("last_active") or "—")[:19]),
+            str(row.get("turns", 0)),
+            escape(str(row.get("model") or "—")),
+            escape(str(row.get("preview") or "—")),
+        )
+
+    console.print(table)
+    if current_sid:
+        console.print("[dim]* = session.current_session in agloom.yaml[/dim]")
+    console.print()
+
+    chosen: str | None = None
+    if pick is not None:
+        if pick < 1 or pick > len(rows):
+            console.print(f"[error]--pick must be between 1 and {len(rows)}[/error]")
+            raise typer.Exit(1)
+        chosen = str(rows[pick - 1]["id"])
+    elif list_only:
+        raise typer.Exit(0)
+    elif not sys.stdin.isatty():
+        console.print(
+            "[dim]stdin is not a TTY — use[/dim] [cyan]agloom sessions --pick N[/cyan] "
+            "[dim]to resume without prompting.[/dim]"
+        )
+        raise typer.Exit(0)
+    else:
+        raw = Prompt.ask(
+            f"Resume session [1–{len(rows)}] or [bold]q[/bold] to quit",
+            default="q",
+        ).strip()
+        if raw.lower() in ("q", "quit", ""):
+            raise typer.Exit(0)
+        try:
+            n = int(raw)
+        except ValueError:
+            console.print("[error]Enter a number or q.[/error]")
+            raise typer.Exit(1) from None
+        if n < 1 or n > len(rows):
+            console.print(f"[error]Choose 1–{len(rows)}.[/error]")
+            raise typer.Exit(1)
+        chosen = str(rows[n - 1]["id"])
+
+    assert chosen is not None
+    _run_resume_picked_session(
+        chosen,
+        project=project,
+        config=config,
+        model=model,
+        verbose=verbose,
+        prompt=prompt,
+    )
+
+
 async def _run(
     model: str | None,
     name: str | None,
@@ -287,7 +458,7 @@ async def _run(
     interrupt_before: str | None,
     interrupt_after: str | None,
     interrupt_before_tools: str | None,
-    require_approval: bool,
+    require_approval: bool | None,
     auto_approve_tools: str | None,
     max_concurrent: int | None,
     max_retries: int | None,
@@ -313,7 +484,7 @@ async def _run(
     from agloom.feedback.user_feedback import WebhookFeedbackHandler
     from agloom.models import PatternType
 
-    from .quiet_logs import install_cli_log_filter
+    from .quiet_logs import cli_reassert_framework_log_levels, install_cli_log_filter
 
     install_cli_log_filter(verbose=verbose)
 
@@ -457,11 +628,12 @@ async def _run(
     # Get session context for smart injection
     session_context = get_session_context_summary(
         {
+            "shell_cwd": str(Path.cwd().resolve()),
             "project_structure": {
                 "root": str(project_ctx.root),
                 "language": project_ctx.language,
                 "frameworks": project_ctx.frameworks,
-            }
+            },
         }
     )
 
@@ -476,7 +648,7 @@ async def _run(
         prompt_parts.append("\n")
         prompt_parts.append(project_rules)
 
-    agent_system_prompt = "".join(prompt_parts)
+    agent_system_prompt = "".join(prompt_parts) + _AGLOOM_CLI_REPLY_EPILOG
 
     # Update file summaries for session
     if thread_id:
@@ -512,16 +684,35 @@ async def _run(
     interrupt_before = interrupt_before or cfg.get("interrupt_before")
     interrupt_after = interrupt_after or cfg.get("interrupt_after")
     interrupt_before_tools = interrupt_before_tools or cfg.get("interrupt_before_tools")
-    require_approval = require_approval or safety_config.get("require_approval", False)
+    if require_approval is None:
+        require_approval = bool(safety_config.get("require_approval", True))
     auto_approve_tools = auto_approve_tools or safety_config.get("auto_approve", "")
 
     # Human approval callback
     user_callback = None
     if require_approval:
         from .hitl import create_user_callback
+        from .hitl_allowlist import resolve_allowlist_path
 
         auto_list = [t.strip() for t in auto_approve_tools.split(",")] if auto_approve_tools else []
-        user_callback = create_user_callback(auto_approve_tools=auto_list)
+        persist_al = safety_config.get("persist_tool_allowlist", True)
+        raw_al_base = safety_config.get("allowlist_file")
+        al_basename: str | None = (
+            str(raw_al_base).strip() if raw_al_base is not None and str(raw_al_base).strip() else None
+        )
+        try:
+            al_path = resolve_allowlist_path(storage_dir(), al_basename)
+        except ValueError as exc:
+            console.print(f"[error]Invalid safety.allowlist_file:[/error] {exc}")
+            raise typer.Exit(1) from None
+        strict_al = bool(safety_config.get("allowlist_strict_tools", True))
+        user_callback = create_user_callback(
+            auto_approve_tools=auto_list,
+            persist_allowlist=bool(persist_al),
+            allowlist_path=al_path,
+            storage_root=storage_dir(),
+            allowlist_strict_tools=strict_al,
+        )
         console.print("[yellow]Human approval enabled for sensitive operations[/yellow]")
 
     feedback_handler = query_cache = None
@@ -618,6 +809,7 @@ async def _run(
 
         if prompt:
             agent = await create_agent(**agent_kwargs)
+            cli_reassert_framework_log_levels()
             result = await agent.ainvoke(prompt, thread_id=thread_id)
             console.print(result.output)
             try:
@@ -654,7 +846,14 @@ async def _run(
                         console.print()
             console.print()
             agent = await create_agent(**agent_kwargs)
-            await run_shell(agent, verbose=verbose, llm_status=f"{prov}:{mid}", thread_id=thread_id)
+            cli_reassert_framework_log_levels()
+            await run_shell(
+                agent,
+                verbose=verbose,
+                llm_status=f"{prov}:{mid}",
+                thread_id=thread_id,
+                tools_count=len(tools),
+            )
 
 
 @app.command("clean")
@@ -707,7 +906,7 @@ def refresh_rules_cmd(project: Path | None = None) -> None:
     console.print(f"[dim]Test:[/dim] {rules.analysis.get('test_framework', 'unknown')}")
 
 
-_SUBCOMMANDS = frozenset({"main", "refresh-rules", "clean"})
+_SUBCOMMANDS = frozenset({"main", "refresh-rules", "clean", "sessions"})
 
 
 def run_cli() -> None:

@@ -22,7 +22,8 @@ def superbrain_stdio_config(mcp: dict[str, Any] | None = None) -> MCPServerConfi
     cmd = str(sb.get("command") or sys.executable)
     args = sb.get("args")
     if args is None:
-        args = ["-m", "agsuperbrain"]
+        # Match Super-Brain MCP entrypoint (same as Cursor): stdio JSON-RPC server is ``mcp``, not module root.
+        args = ["-u", "-m", "agsuperbrain", "mcp"]
     elif isinstance(args, str):
         args = shlex.split(args, posix=os.name != "nt")
     else:

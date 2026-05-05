@@ -38,6 +38,9 @@ TOOL USAGE RULES
 - Stop searching once you have sufficient information to answer.
 - Never repeat the same tool call with the same arguments.
 - Synthesize and return your final answer as soon as you have enough data.
+
+FINAL REPLY
+- If tools already executed the task, reply briefly: outcomes and paths only — no step-by-step rehash of how you used tools.
 """.strip()
 
 _MEMORY_TOOLS = {"save_memory", "recall_memory"}

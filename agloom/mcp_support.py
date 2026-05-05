@@ -152,7 +152,8 @@ async def load_mcp_capabilities(
                     )
                     logger.info(f"MCP [{cfg.name}]: {len(uris)} resource(s) → tool 'read_resource_{cfg.name}'")
             except Exception as e:
-                logger.warning(f"MCP [{cfg.name}]: list_resources failed: {e}")
+                # Many stdio MCP servers expose tools only (no resources); adapters may still error on list_resources.
+                logger.debug(f"MCP [{cfg.name}]: no resources or list_resources unsupported — {e}")
 
             try:
                 async with client.session(cfg.name) as session:
@@ -168,7 +169,7 @@ async def load_mcp_capabilities(
                     )
                     logger.info(f"MCP [{cfg.name}]: {len(names)} prompt(s) {names} → tool 'get_prompt_{cfg.name}'")
             except Exception as e:
-                logger.warning(f"MCP [{cfg.name}]: list_prompts failed: {e}")
+                logger.debug(f"MCP [{cfg.name}]: no prompts or list_prompts unsupported — {e}")
 
         except Exception as e:
             logger.error(f"MCP [{cfg.name}]: capability load failed: {e}")

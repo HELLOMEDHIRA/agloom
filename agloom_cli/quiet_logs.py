@@ -40,6 +40,15 @@ def _silence_framework_loggers() -> None:
         logging.getLogger(prefix).setLevel(logging.WARNING)
 
 
+def cli_reassert_framework_log_levels() -> None:
+    """Re-apply framework logger caps after ``create_agent`` / ``configure_package_logging``.
+
+    Verbose mode sets the root logger to DEBUG; child loggers under noisy namespaces must stay
+    at WARNING or logs corrupt Rich ``Live`` (Thinking panel) on Windows terminals.
+    """
+    _silence_framework_loggers()
+
+
 class CliConsoleNoiseFilter(logging.Filter):
     """Drop INFO/DEBUG from noisy frameworks always; drop agloom INFO/DEBUG unless verbose."""
 

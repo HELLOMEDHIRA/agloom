@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 from ..tool_loader import tool
+from .filesystem import BoolLike, _boolish
 
 
 @tool
@@ -32,6 +33,9 @@ async def web_search(
     if max_results < 1 or max_results > 10:
         return f"Error: max_results must be between 1 and 10, got {max_results}"
 
+    inc_ans = _boolish(include_answer, default=True)
+    inc_raw = _boolish(include_raw_content, default=False)
+
     try:
         import httpx
 
@@ -43,8 +47,8 @@ async def web_search(
                     "api_key": api_key,
                     "query": query,
                     "max_results": max_results,
-                    "include_answer": include_answer,
-                    "include_raw_content": include_raw_content,
+                    "include_answer": inc_ans,
+                    "include_raw_content": inc_raw,
                     "include_images": False,
                 },
             )

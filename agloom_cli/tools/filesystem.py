@@ -4,8 +4,29 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import TypeAlias
 
 from ..tool_loader import tool
+
+# Groq (and some models) often emit "true"/"false" strings for booleans; JSON Schema must allow them.
+BoolLike: TypeAlias = bool | str | int
+
+
+def _boolish(value: BoolLike | None, *, default: bool = False) -> bool:
+    """Coerce LLM/tool JSON booleans that arrive as strings or ints."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in ("0", "false", "no", "off", ""):
+            return False
+        if s in ("1", "true", "yes", "on"):
+            return True
+    return default
 
 _MAX_READ_BYTES = 10 * 1024 * 1024  # 10 MB — prevent memory exhaustion
 
@@ -13,6 +34,10 @@ _MAX_READ_BYTES = 10 * 1024 * 1024  # 10 MB — prevent memory exhaustion
 @tool
 async def read_file(path: str, encoding: str = "utf-8", max_size: int = 1024 * 1024) -> str:
     """Read the contents of a file.
+
+    Relative paths resolve against the process working directory (see session **Shell cwd** in the
+    prompt). If you get "File not found", call **get_working_directory**, **list_directory**, or use
+    an absolute path — do not invent file contents.
 
     Args:
         path: Absolute or relative path to the file
@@ -39,14 +64,16 @@ async def read_file(path: str, encoding: str = "utf-8", max_size: int = 1024 * 1
 
 
 @tool
-async def write_file(path: str, content: str, encoding: str = "utf-8", append: bool = False) -> str:
+async def write_file(
+    path: str, content: str, encoding: str = "utf-8", append: BoolLike = False
+) -> str:
     """Write content to a file.
 
     Args:
         path: Absolute or relative path to the file
         content: Content to write
         encoding: File encoding (default: utf-8)
-        append: If True, append to file instead of overwriting (default: False)
+        append: If true, append to file instead of overwriting (default: false)
 
     Returns:
         Success or error message
@@ -55,7 +82,7 @@ async def write_file(path: str, content: str, encoding: str = "utf-8", append: b
         file_path = _resolve_path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        mode = "a" if append else "w"
+        mode = "a" if _boolish(append, default=False) else "w"
         with open(file_path, mode, encoding=encoding) as f:
             f.write(content)
 
@@ -115,31 +142,31 @@ async def file_exists(path: str) -> str:
 
 
 @tool
-async def create_directory(path: str, parents: bool = True) -> str:
+async def create_directory(path: str, parents: BoolLike = True) -> str:
     """Create a directory.
 
     Args:
         path: Directory path to create
-        parents: Create parent directories if needed (default: True)
+        parents: Create parent directories if needed (default: true)
 
     Returns:
         Success or error message
     """
     try:
         dir_path = _resolve_path(path)
-        dir_path.mkdir(parents=parents, exist_ok=True)
+        dir_path.mkdir(parents=_boolish(parents, default=True), exist_ok=True)
         return f"Directory created: {path}"
     except Exception as e:
         return f"Error creating directory: {e}"
 
 
 @tool
-async def remove_file(path: str, recursive: bool = False) -> str:
+async def remove_file(path: str, recursive: BoolLike = False) -> str:
     """Remove a file or directory.
 
     Args:
         path: Path to remove
-        recursive: If True, remove directories recursively (default: False)
+        recursive: If true, remove directories recursively (default: false). Accepts boolean or "true"/"false".
 
     Returns:
         Success or error message
@@ -149,8 +176,9 @@ async def remove_file(path: str, recursive: bool = False) -> str:
         if not file_path.exists():
             return f"Error: Path does not exist: {path}"
 
+        rec = _boolish(recursive, default=False)
         if file_path.is_dir():
-            if recursive:
+            if rec:
                 shutil.rmtree(file_path)
                 return f"Directory removed: {path}"
             return f"Error: Use recursive=True to remove directory: {path}"
@@ -161,7 +189,7 @@ async def remove_file(path: str, recursive: bool = False) -> str:
 
 
 @tool
-async def copy_file(source: str, destination: str, overwrite: bool = False) -> str:
+async def copy_file(source: str, destination: str, overwrite: BoolLike = False) -> str:
     """Copy a file or directory.
 
     Args:
@@ -175,6 +203,7 @@ async def copy_file(source: str, destination: str, overwrite: bool = False) -> s
     try:
         src = _resolve_path(source)
         dst = _resolve_path(destination)
+        ow = _boolish(overwrite, default=False)
 
         if not src.exists():
             return f"Error: Source does not exist: {source}"
@@ -183,13 +212,13 @@ async def copy_file(source: str, destination: str, overwrite: bool = False) -> s
 
         if src.is_dir():
             if dst.exists():
-                if not overwrite:
+                if not ow:
                     return f"Error: Destination exists: {destination}"
                 shutil.rmtree(dst)
             shutil.copytree(src, dst)
             return f"Directory copied: {source} → {destination}"
 
-        if dst.exists() and not overwrite:
+        if dst.exists() and not ow:
             return f"Error: Destination exists: {destination}"
 
         shutil.copy2(src, dst)
@@ -199,7 +228,7 @@ async def copy_file(source: str, destination: str, overwrite: bool = False) -> s
 
 
 @tool
-async def move_file(source: str, destination: str, overwrite: bool = False) -> str:
+async def move_file(source: str, destination: str, overwrite: BoolLike = False) -> str:
     """Move a file or directory.
 
     Args:
@@ -213,13 +242,14 @@ async def move_file(source: str, destination: str, overwrite: bool = False) -> s
     try:
         src = _resolve_path(source)
         dst = _resolve_path(destination)
+        ow = _boolish(overwrite, default=False)
 
         if not src.exists():
             return f"Error: Source does not exist: {source}"
 
         dst.parent.mkdir(parents=True, exist_ok=True)
 
-        if dst.exists() and not overwrite:
+        if dst.exists() and not ow:
             return f"Error: Destination exists: {destination}"
 
         shutil.move(str(src), str(dst))
@@ -264,8 +294,8 @@ async def get_file_info(path: str) -> str:
 async def search_files(
     path: str = ".",
     pattern: str = "*",
-    recursive: bool = True,
-    file_only: bool = True,
+    recursive: BoolLike = True,
+    file_only: BoolLike = True,
 ) -> str:
     """Search for files matching a pattern.
 
@@ -283,11 +313,13 @@ async def search_files(
         if not search_path.is_dir():
             return f"Error: Not a directory: {path}"
 
-        matches = search_path.rglob(pattern) if recursive else search_path.glob(pattern)
+        rec = _boolish(recursive, default=True)
+        files_only = _boolish(file_only, default=True)
+        matches = search_path.rglob(pattern) if rec else search_path.glob(pattern)
 
         results = []
         for match in sorted(matches):
-            if file_only and match.is_dir():
+            if files_only and match.is_dir():
                 continue
             try:
                 rel = match.relative_to(search_path)
