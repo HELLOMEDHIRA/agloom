@@ -504,8 +504,7 @@ Skills with model_reset_at set recently had their stats reset due to a model cha
 
     async def _hard_delete(self, ns: tuple, name: str) -> None:
         """Permanent deletion — only after TTL expiry or review cycle."""
-        await self._store.adelete(ns, name)
-        self._registry._cache.pop(name, None)
+        await self._registry.remove_skill_at(ns, name)
 
     async def _find_ns(self, name: str) -> tuple | None:
         """Find which namespace a skill lives in."""

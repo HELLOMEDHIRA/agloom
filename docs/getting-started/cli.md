@@ -256,9 +256,9 @@ The CLI stores config and caches in **`<project>/.agloom/`** (next to your repo)
 ├── sessions/
 │   ├── abc12345.json    # Session data
 │   └── xyz789.json
-├── indexes/             # Embeddings cache
+├── context_index_*.json # Smart-context index (when built)
 ├── rules/               # Project rules cache
-├── skills/              # Learned skills
+├── skills/              # SKILL.md trees (learned + optional static)
 └── logs/
 ```
 

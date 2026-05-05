@@ -12,6 +12,7 @@ import inspect
 import time
 import uuid
 from collections.abc import AsyncGenerator, Callable, Sequence
+from pathlib import Path
 from functools import lru_cache
 from typing import Any
 
@@ -1955,6 +1956,7 @@ async def create_agent(
     frozen_analysis_ttl: float = 0,
     harness: bool = False,
     harness_project_name: str = "project",
+    skills_disk_mirror: Path | str | None = None,
 ) -> UnifiedAgent:
     """Construct a configured ``UnifiedAgent`` (async).
 
@@ -2016,6 +2018,8 @@ async def create_agent(
     )
 
     _validate_frozen_params(frozen, frozen_template, input_key)
+
+    skills_mirror_path: Path | None = Path(skills_disk_mirror).resolve() if skills_disk_mirror is not None else None
 
     resolved_llm = resolve_model(model)
     resolved_prompt = resolve_system_prompt(system_prompt)
@@ -2205,7 +2209,11 @@ async def create_agent(
         from .skills.loader import make_load_skill_tool
         from .skills.registry import SkillRegistry
 
-        skill_registry = SkillRegistry(resolved_store, agent_name)
+        skill_registry = SkillRegistry(
+            resolved_store,
+            agent_name,
+            disk_mirror=skills_mirror_path,
+        )
         skill_injector = SkillInjector(skill_registry)
         skill_learner = SkillLearner(
             resolved_llm,

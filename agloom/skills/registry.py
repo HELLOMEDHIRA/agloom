@@ -13,8 +13,10 @@ from ..logging_utils import get_logger
 from .skill import (
     SkillContent,
     SkillManifest,
+    erase_skill_md_tree,
     load_skill_content,
     parse_skill_md,
+    write_skill_md,
 )
 
 logger = get_logger(__name__)
@@ -35,10 +37,11 @@ _DEFAULT_SKILL_DIRS = [
 class SkillRegistry:
     """Process-safe skill registry backed by LongTermStore."""
 
-    def __init__(self, store: Any, agent_name: str) -> None:
+    def __init__(self, store: Any, agent_name: str, *, disk_mirror: Path | None = None) -> None:
         self._store = store
         self._agent_name = agent_name
         self._agent_ns = ("skills", agent_name)
+        self._disk_mirror = disk_mirror.resolve() if disk_mirror is not None else None
         self._cache: dict[str, SkillContent] = {}
         self._cache_lock = asyncio.Lock()
 
@@ -213,9 +216,41 @@ class SkillRegistry:
             index=(f"learned-skill:{name} | {description} | {body[:200]}"),
             metadata=metadata,
         )
+        if self._disk_mirror is not None:
+            try:
+                write_skill_md(self._disk_mirror, manifest, body, skill_data=skill_data)
+            except OSError as exc:
+                logger.warning(
+                    f"SkillRegistry [{self._agent_name}]: could not mirror skill '{name}' to disk: {exc}"
+                )
         async with self._cache_lock:
             self._cache.pop(name, None)
         logger.info(f"SkillRegistry [{self._agent_name}]: saved learned skill '{name}' → ns={ns}")
+
+    async def remove_skill_at(self, ns: tuple, name: str) -> None:
+        """Delete a skill from the store and optional disk mirror (internal / lifecycle)."""
+        await self._store.adelete(ns, name)
+        async with self._cache_lock:
+            self._cache.pop(name, None)
+        self._erase_disk_skill(name)
+
+    async def remove_skill(self, name: str, scope: str = "global") -> bool:
+        """Delete skill by name and scope. Returns False if not found in store."""
+        ns = GLOBAL_NS if scope == "global" else self._agent_ns
+        if await self._fetch_raw_meta(ns, name) is None:
+            return False
+        await self.remove_skill_at(ns, name)
+        return True
+
+    def _erase_disk_skill(self, name: str) -> None:
+        if self._disk_mirror is None:
+            return
+        try:
+            erase_skill_md_tree(self._disk_mirror, name)
+        except OSError as exc:
+            logger.warning(
+                f"SkillRegistry [{self._agent_name}]: could not remove skill '{name}' from disk: {exc}"
+            )
 
     async def update_skill_usage(
         self,
@@ -248,8 +283,7 @@ class SkillRegistry:
 
             if skill.should_prune():
                 ns = GLOBAL_NS if skill.scope == "global" else self._agent_ns
-                await self._store.adelete(ns, name)
-                self._cache.pop(name, None)
+                await self.remove_skill_at(ns, name)
                 logger.info(
                     f"SkillRegistry [{self._agent_name}]: "
                     f"pruned low-confidence skill '{name}' "
@@ -333,6 +367,14 @@ def _build_index_text(manifest: SkillManifest, content: SkillContent) -> str:
 
 
 _cached_skill_dirs: list[str] | None = None
+_EXTRA_SKILL_DIRS: list[str] = []
+
+
+def set_extra_skill_dirs(dirs: list[str] | None) -> None:
+    """Prepend these directories to skill bootstrap search (e.g. ``<project>/.agloom/skills``)."""
+    global _cached_skill_dirs, _EXTRA_SKILL_DIRS
+    _EXTRA_SKILL_DIRS = list(dirs or [])
+    _cached_skill_dirs = None
 
 
 def _resolve_skill_dirs() -> list[str]:
@@ -340,9 +382,11 @@ def _resolve_skill_dirs() -> list[str]:
     if _cached_skill_dirs is not None:
         return _cached_skill_dirs
 
-    dirs = list(_DEFAULT_SKILL_DIRS)
+    dirs: list[str] = []
+    dirs.extend(_EXTRA_SKILL_DIRS)
     if env_dir := os.environ.get("AGENT_SKILLS_DIR"):
-        dirs.insert(0, env_dir)
+        dirs.append(env_dir)
+    dirs.extend(_DEFAULT_SKILL_DIRS)
 
     pkg_skills = Path(__file__).parent.parent / "bundled_skills"
     if pkg_skills.exists():

@@ -23,6 +23,8 @@ def test_set_cli_project_root_creates_layout(tmp_path: Path) -> None:
     ag = set_cli_project_root(tmp_path)
     assert ag == tmp_path / ".agloom"
     assert (tmp_path / ".agloom" / "sessions").is_dir()
+    assert (tmp_path / ".agloom" / "skills").is_dir()
+    assert not (tmp_path / ".agloom" / "indexes").exists()
     assert (tmp_path / ".agloom" / "README.md").is_file()
 
 

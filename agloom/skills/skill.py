@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -71,6 +72,7 @@ class SkillContent:
     references: list[str] = field(default_factory=list)
     assets: list[str] = field(default_factory=list)
     examples: list[str] = field(default_factory=list)
+    skill_data: dict[str, Any] | None = None
 
     def to_system_prompt_block(self) -> str:
         """Format for injection into worker system_prompt."""
@@ -88,7 +90,7 @@ class SkillContent:
         return "\n".join(lines)
 
     def to_lts_metadata(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             **self.manifest.to_metadata(),
             "body": self.body,
             "scripts": self.scripts,
@@ -96,6 +98,9 @@ class SkillContent:
             "assets": self.assets,
             "examples": self.examples,
         }
+        if self.skill_data:
+            out["skill_data"] = self.skill_data
+        return out
 
     @classmethod
     def from_lts_metadata(cls, meta: dict[str, Any]) -> SkillContent | None:
@@ -109,6 +114,7 @@ class SkillContent:
             references=meta.get("references", []),
             assets=meta.get("assets", []),
             examples=meta.get("examples", []),
+            skill_data=meta.get("skill_data"),
         )
 
 
@@ -198,6 +204,13 @@ Query: "{self.example_query}"
         }
 
 
+def skill_dir_slug(name: str) -> str:
+    """Filesystem-safe directory name for a skill (under a skills root)."""
+    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", name.strip())
+    s = re.sub(r"-+", "-", s).strip("-")
+    return s or "skill"
+
+
 def parse_skill_md(path: Path) -> SkillManifest | None:
     """Parse YAML frontmatter only (not the body) from a SKILL.md file."""
     try:
@@ -214,6 +227,12 @@ def parse_skill_md(path: Path) -> SkillManifest | None:
         # Block scalars can span lines; classifier expects a single line.
         desc = " ".join(desc.split())
 
+        ver = front.get("version", 1)
+        try:
+            version = int(ver)
+        except (TypeError, ValueError):
+            version = 1
+
         return SkillManifest(
             name=name,
             description=desc,
@@ -221,7 +240,9 @@ def parse_skill_md(path: Path) -> SkillManifest | None:
             compatibility=str(front.get("compatibility", "")),
             tags=list(front.get("tags", [])),
             scope=str(front.get("scope", "global")),
-            source="static",
+            source=str(front.get("source", "static")),
+            status=str(front.get("status", "active")),
+            version=version,
         )
     except Exception:
         return None
@@ -230,6 +251,13 @@ def parse_skill_md(path: Path) -> SkillManifest | None:
 def load_skill_content(manifest: SkillManifest) -> SkillContent:
     """Load the full SKILL.md body and scan sibling directories."""
     text = manifest.path.read_text(encoding="utf-8") if manifest.path != Path("") else ""
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n", text, re.DOTALL)
+    skill_data: dict[str, Any] | None = None
+    if match:
+        front = yaml.safe_load(match.group(1)) or {}
+        raw_sd = front.get("skill_data")
+        if isinstance(raw_sd, dict):
+            skill_data = raw_sd
     body = re.sub(r"^---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL).strip()
     root = manifest.path.parent
 
@@ -244,4 +272,45 @@ def load_skill_content(manifest: SkillManifest) -> SkillContent:
         references=_list_dir("references"),
         assets=_list_dir("assets"),
         examples=_list_dir("examples"),
+        skill_data=skill_data,
     )
+
+
+def write_skill_md(
+    skills_root: Path,
+    manifest: SkillManifest,
+    body: str,
+    skill_data: dict[str, Any] | None = None,
+) -> Path:
+    """Write ``<skills_root>/<slug>/SKILL.md`` and return the file path."""
+    slug = skill_dir_slug(manifest.name)
+    dir_path = skills_root / slug
+    dir_path.mkdir(parents=True, exist_ok=True)
+    path = dir_path / "SKILL.md"
+    front: dict[str, Any] = {
+        "name": manifest.name,
+        "description": manifest.description,
+        "scope": manifest.scope,
+        "source": manifest.source,
+        "tags": manifest.tags,
+        "version": manifest.version,
+    }
+    if manifest.compatibility:
+        front["compatibility"] = manifest.compatibility
+    if manifest.status and manifest.status != "active":
+        front["status"] = manifest.status
+    if skill_data:
+        front["skill_data"] = skill_data
+    yaml_body = yaml.safe_dump(front, default_flow_style=False, allow_unicode=True, sort_keys=False).strip()
+    path.write_text(f"---\n{yaml_body}\n---\n\n{body.strip()}\n", encoding="utf-8")
+    return path
+
+
+def erase_skill_md_tree(skills_root: Path, skill_name: str) -> bool:
+    """Remove ``<skills_root>/<slug>/`` if it exists. Returns True if a directory was removed."""
+    slug = skill_dir_slug(skill_name)
+    target = skills_root / slug
+    if target.is_dir():
+        shutil.rmtree(target)
+        return True
+    return False

@@ -114,14 +114,16 @@ class ProjectIndex:
                     self._keyword_index[keyword] = []
                 self._keyword_index[keyword].append(i)
 
+    def _index_file(self, home_dir: Path) -> Path:
+        """Single JSON file under ``.agloom`` (no ``indexes/`` subfolder)."""
+        return home_dir / f"context_index_{self.root_hash}.json"
+
     def save(self, home_dir: Path | None = None) -> None:
         """Save index to disk."""
 
         home_dir = home_dir or storage_dir()
-        index_dir = home_dir / "indexes"
-        index_dir.mkdir(exist_ok=True)
-
-        index_file = index_dir / f"{self.root_hash}.json"
+        home_dir.mkdir(parents=True, exist_ok=True)
+        index_file = self._index_file(home_dir)
 
         data = {
             "root": str(self.root),
@@ -131,7 +133,7 @@ class ProjectIndex:
             "embeddings": self.embeddings_data,
         }
 
-        with open(index_file, "w") as f:
+        with open(index_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
     @classmethod
@@ -139,13 +141,14 @@ class ProjectIndex:
         """Load index from disk if exists."""
         home_dir = home_dir or storage_dir()
         root_hash = hashlib.md5(str(root.resolve()).encode(), usedforsecurity=False).hexdigest()[:8]
-        index_dir = home_dir / "indexes"
-        index_file = index_dir / f"{root_hash}.json"
+        index_file = home_dir / f"context_index_{root_hash}.json"
+        legacy = home_dir / "indexes" / f"{root_hash}.json"
+        path = index_file if index_file.exists() else legacy
 
-        if not index_file.exists():
+        if not path.exists():
             return None
 
-        with open(index_file) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
 
         chunks = [FileChunk.from_dict(c) for c in data.get("chunks", [])]
@@ -365,6 +368,7 @@ def build_index(
         except Exception:
             pass
 
+    index.save()
     return index
 
 

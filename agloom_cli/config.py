@@ -27,9 +27,8 @@ The **agloom CLI** stores config and cached state **only** here — ``<project>/
 |------|---------|
 | ``agloom.yaml`` | Configuration |
 | ``sessions/`` | Session state |
-| ``indexes/`` | Smart-context index cache |
 | ``rules/`` | Cached project rules |
-| ``skills/`` | Learned skills |
+| ``skills/`` | Skills (``SKILL.md`` trees, including learned skills) |
 | ``logs/`` | Log files |
 
 Optional: a ``.agloom.yaml`` in the **project root** (parent of this folder) is merged on top of ``agloom.yaml``; later files override earlier ones.
@@ -41,7 +40,7 @@ https://agloom.readthedocs.io
 
 
 def storage_dir() -> Path:
-    """Root directory for config, sessions, indexes, rules, skills, and logs.
+    """Root directory for config, sessions, rules, skills, and logs.
 
     When the CLI has bound a project via ``set_cli_project_root``, this is
     ``<project>/.agloom``. Otherwise (library / tests) it falls back to ``~/.agloom``.
@@ -56,7 +55,7 @@ def set_cli_project_root(project_root: Path) -> Path:
     root = project_root.resolve()
     ag = root / ".agloom"
     ag.mkdir(parents=True, exist_ok=True)
-    for sub in ("sessions", "indexes", "rules", "skills", "logs"):
+    for sub in ("sessions", "rules", "skills", "logs"):
         (ag / sub).mkdir(exist_ok=True)
 
     _cli_storage_dir = ag
@@ -245,7 +244,7 @@ def ensure_storage_layout() -> Path:
     """Ensure ``storage_dir()`` exists with the documented subdirectories."""
     root = storage_dir()
     root.mkdir(parents=True, exist_ok=True)
-    for sub in ("sessions", "indexes", "rules", "skills", "logs"):
+    for sub in ("sessions", "rules", "skills", "logs"):
         (root / sub).mkdir(exist_ok=True)
     readme = root / "README.md"
     if not readme.exists():

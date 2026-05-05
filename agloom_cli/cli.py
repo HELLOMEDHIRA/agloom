@@ -20,6 +20,7 @@ from .config import (
     resolve_model,
     set_cli_project_root,
     start_new_session,
+    storage_dir,
 )
 from .mcp_loader import build_mcp_configs
 from .model_resolver import MissingProviderApiKey, MissingProviderDependency, describe_llm
@@ -487,6 +488,13 @@ async def _run(
         except Exception as e:
             console.print(f"[warning]Cache error: {e}")
 
+    from agloom.skills.registry import set_extra_skill_dirs
+
+    if enable_skills and store is not None:
+        set_extra_skill_dirs([str((storage_dir() / "skills").resolve())])
+    else:
+        set_extra_skill_dirs([])
+
     fallback = PatternType(fallback_pattern.upper()) if fallback_pattern else None
 
     agent_config = {
@@ -524,6 +532,9 @@ async def _run(
         "query_cache": query_cache,
         "frozen": frozen,
         "frozen_template": frozen_template,
+        "skills_disk_mirror": (storage_dir() / "skills")
+        if (enable_skills and store is not None)
+        else None,
     }
 
     # Pyrefly/Pyright cannot prove dict values match each ``create_agent`` parameter; runtime is correct.

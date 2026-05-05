@@ -18,9 +18,7 @@ When you first run Agloom in a project, it builds an index:
 
 ```
 <project>/.agloom/
-├── indexes/
-│   ├── abc12345.json    # Project index
-│   └── chunks: [file1, file2, ...]
+├── context_index_abc12345.json   # Serialized project index (per project hash)
 ```
 
 ### 2. Code Chunking
