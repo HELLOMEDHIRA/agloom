@@ -39,13 +39,16 @@ def _looks_like_mistral_ai_cloud(model_id: str) -> bool:
 class MissingProviderDependency(ImportError):
     """Optional LangChain provider package is not installed (``agloom[extra]``)."""
 
-    def __init__(self, extra: str, pip_hint: str) -> None:
+    def __init__(self, extra: str, pip_hint: str, *, detail: str | None = None) -> None:
         self.extra = extra
         self.pip_hint = pip_hint
-        super().__init__(
-            f"Missing optional LLM integration (install extra '{extra}'). "
-            f"Example: pip install {pip_hint}"
-        )
+        if detail is not None:
+            super().__init__(detail)
+        else:
+            super().__init__(
+                f"Missing optional LLM integration (install extra '{extra}'). "
+                f"Example: pip install {pip_hint}"
+            )
 
 
 def get_model(model_id: str, **kwargs) -> Any:
@@ -118,17 +121,37 @@ def try_resolve_llm_from_api_keys() -> Any | None:
         ("GROQ_API_KEY", "meta-llama/llama-4-scout-17b-16e-instruct"),
         ("XAI_API_KEY", "grok-3-latest"),
     ]
-    last_missing: MissingProviderDependency | None = None
+    # Skip MissingProviderDependency instead of surfacing the *first* failing provider:
+    # e.g. OPENAI_API_KEY may be set globally while only ``agloom[groq]`` is installed —
+    # later candidates (GROQ_API_KEY, …) must still be tried.
+    missing_for_configured_keys: list[MissingProviderDependency] = []
     for env_spec, default_model in candidates:
         if not _env_configured(env_spec):
             continue
         try:
             return get_model(default_model)
         except MissingProviderDependency as e:
-            last_missing = e
+            missing_for_configured_keys.append(e)
             continue
-    if last_missing is not None:
-        raise last_missing
+    if missing_for_configured_keys:
+        by_extra: dict[str, MissingProviderDependency] = {}
+        for e in missing_for_configured_keys:
+            by_extra[e.extra] = e
+        if len(by_extra) == 1:
+            e = next(iter(by_extra.values()))
+            raise e
+        parts = " ".join(
+            f"For extra '{e.extra}': pip install {e.pip_hint}." for e in by_extra.values()
+        )
+        raise MissingProviderDependency(
+            "multiple",
+            "'agloom[<provider>]'",
+            detail=(
+                "API keys are set but the matching LangChain integrations are not installed. "
+                + parts
+                + " Or unset unused API_KEY variables so another provider can be used."
+            ),
+        )
     return None
 
 
