@@ -18,6 +18,13 @@ class LongTermStore:
     def __init__(self, store: Any) -> None:
         self.store = store
 
+    # Passthroughs so ``LongTermStore`` can stand in for LangGraph ``BaseStore`` where callers use raw APIs.
+    def put(self, namespace: tuple[str, ...], key: str, value: Any) -> None:
+        self.store.put(namespace, key, value)
+
+    async def aput(self, namespace: tuple[str, ...], key: str, value: Any) -> None:
+        await self.store.aput(namespace, key, value)
+
     def save(
         self,
         namespace: tuple,

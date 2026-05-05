@@ -7,9 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from agloom_cli.config import get_system_prompt, get_thread_id, load_config
+from agloom_cli.config import ensure_project_dot_agloom, get_system_prompt, get_thread_id, load_config
 from agloom_cli.tool_loader import discover_tools, tool
 from agloom_cli.tools import read_file, write_file
+
+
+def test_ensure_project_dot_agloom_creates_dir(tmp_path: Path) -> None:
+    ensure_project_dot_agloom(tmp_path)
+    assert (tmp_path / ".agloom").is_dir()
 
 
 def test_load_explicit_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

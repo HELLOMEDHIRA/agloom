@@ -468,6 +468,15 @@ def add_to_gitignore() -> bool:
     return True
 
 
+def ensure_project_dot_agloom(project_root: Path) -> None:
+    """Create ``<project>/.agloom/`` so local CLI state matches documented/gitignored paths.
+
+    Home config lives under ``~/.agloom/``; project scope uses ``./.agloom/`` for workspace-local files.
+    """
+    ag_dir = project_root / ".agloom"
+    ag_dir.mkdir(parents=True, exist_ok=True)
+
+
 def ensure_config_ready() -> dict[str, Any]:
     """Ensure config is ready: create if needed, add to gitignore."""
     config = create_default_config()

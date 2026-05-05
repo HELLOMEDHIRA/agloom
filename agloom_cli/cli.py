@@ -12,6 +12,7 @@ from rich.theme import Theme
 
 from .config import (
     ensure_config_ready,
+    ensure_project_dot_agloom,
     get_system_prompt,
     get_thread_id,
     load_config,
@@ -296,15 +297,15 @@ async def _run(
     # Ensure config is ready (auto-create if needed)
     ensure_config_ready()
 
-    # Same ASCII banner as interactive shell — show early for one-shot prompts so branding isn’t REPL-only.
-    if prompt:
-        console.print(render_banner("AGLOOM"))
-        console.print()
+    # ASCII banner first for both one-shot and interactive (Super-Brain / logs come after).
+    console.print(render_banner("AGLOOM"))
+    console.print()
 
     cfg = load_config(config) if config else load_config(None)
 
     # Detect project context (use --project flag or auto-detect from cwd)
     project_ctx = detect_project(project)
+    ensure_project_dot_agloom(project_ctx.root)
 
     # Super-Brain: required local graph + MCP — always run init for this project root
     from . import superbrain_setup
@@ -454,10 +455,12 @@ async def _run(
     memory = store = checkpointer = feedback_handler = query_cache = None
 
     if enable_memory:
-        store = LongTermStore(InMemoryStore())
+        # SessionMemory requires a LangGraph BaseStore (``aput`` / ``aget``). LongTermStore is only a wrapper.
+        shared_graph_store = InMemoryStore()
+        store = LongTermStore(shared_graph_store)
         checkpointer = MemorySaver()
         memory = SessionMemory(
-            store=store,
+            store=shared_graph_store,
             max_turns=session_max_turns,
             auto_summarize=auto_summarize,
             summarize_threshold=summarize_threshold,

@@ -63,8 +63,7 @@ async def run_shell(
     """Run interactive shell - Deep Agents / Claude Code style UI.
 
     Features:
-    - ASCII art header with logo
-    - Status bar with LangSmith, thread ID, MCP tools
+    - Status bar with LangSmith, thread ID, MCP tools (banner printed by CLI before ``run_shell``)
     - Chat-style message display
     - Blue bordered input with bottom status
     - Keyboard shortcut hints
@@ -77,10 +76,6 @@ async def run_shell(
     working_dir = os.getcwd()
     state.ui.working_dir = working_dir
     state.ui.langsmith_enabled = bool(os.environ.get("LANGCHAIN_TRACING_V2"))
-
-    ascii_banner = render_banner("AGLOOM")
-    console.print(ascii_banner)
-    console.print()
 
     thread_id = state.ui.thread_id
     langsmith_status = (
