@@ -20,7 +20,7 @@ from .config import (
     start_new_session,
 )
 from .mcp_loader import build_mcp_configs
-from .model_resolver import MissingProviderApiKey, MissingProviderDependency
+from .model_resolver import MissingProviderApiKey, MissingProviderDependency, describe_llm
 from .project import detect_project, get_git_info
 from .project_rules import load_project_rules
 from .repl import render_banner, run_shell
@@ -565,7 +565,8 @@ async def _run(
                     console.print()
         console.print()
         agent = await create_agent(**agent_kwargs)
-        await run_shell(agent, verbose=verbose)
+        prov, mid = describe_llm(llm)
+        await run_shell(agent, verbose=verbose, llm_status=f"{prov}:{mid}")
 
 
 @app.command("refresh-rules")

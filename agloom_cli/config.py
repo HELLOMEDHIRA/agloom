@@ -113,6 +113,24 @@ session:
   last_updated: ""
 """
 
+_USER_AGLOOM_README = """# ~/.agloom — user data directory
+
+Agloom stores cross-session data here (see **Data Storage** in the docs):
+
+| Path | Purpose |
+|------|---------|
+| ``agloom.yaml`` | User configuration |
+| ``sessions/`` | Session state (``<thread_id>.json``) |
+| ``indexes/`` | Embeddings / smart-context project index cache |
+| ``rules/`` | Cached project rules (``<project_hash>.json``) |
+| ``skills/`` | Learned skills |
+| ``logs/`` | Log files |
+
+Your git repo may also contain ``./.agloom/`` (workspace notes); that is separate from this folder.
+
+https://agloom.readthedocs.io
+"""
+
 CONFIG_HEADER = """# agloom configuration
 #
 # This file is auto-created on first CLI run.
@@ -130,11 +148,17 @@ CONFIG_HEADER = """# agloom configuration
 
 
 def ensure_config_dir() -> Path:
-    """Ensure home config directory exists with subdirectories."""
+    """Ensure ``~/.agloom`` exists with the documented subdirectories.
+
+    Matches the Data Storage layout: ``agloom.yaml``, ``sessions/``, ``indexes/``,
+    ``rules/``, ``skills/``, ``logs/``.
+    """
     HomeDir.mkdir(parents=True, exist_ok=True)
-    (HomeDir / "sessions").mkdir(exist_ok=True)
-    (HomeDir / "skills").mkdir(exist_ok=True)
-    (HomeDir / "logs").mkdir(exist_ok=True)
+    for sub in ("sessions", "indexes", "rules", "skills", "logs"):
+        (HomeDir / sub).mkdir(exist_ok=True)
+    home_readme = HomeDir / "README.md"
+    if not home_readme.exists():
+        home_readme.write_text(_USER_AGLOOM_README.strip() + "\n", encoding="utf-8")
     return HomeDir
 
 
@@ -378,7 +402,7 @@ def add_to_session_history(thread_id: str, role: str, content: str) -> None:
         json.dump(session, f, indent=2)
 
 
-def resolve_model(model_id: str | None) -> Any:
+def resolve_model(model_id: str | None, *, interactive_providers: bool | None = None) -> Any:
     """Resolve model from ID or env var.
 
     CLI auto-wiring covers a subset (see ``model_resolver``). Optional extras for LangChain’s
@@ -391,7 +415,8 @@ def resolve_model(model_id: str | None) -> Any:
     2. Config ``ai.model`` — if the integration is not installed, falls through.
     3. ``*_MODEL_ID`` environment variables — each is tried in order; missing extras are skipped
        (so ``OPENAI_MODEL_ID`` does not block ``GROQ_MODEL_ID`` when only ``agloom[groq]`` is installed).
-    4. Auto-detect from available API keys (see ``try_resolve_llm_from_api_keys``).
+    4. Auto-detect from available API keys (see ``try_resolve_llm_from_api_keys``). If several keys
+       are set, a TTY prompts unless ``interactive_providers=False`` or ``AGLOOM_PROVIDER`` is set.
     """
     from .model_resolver import MissingProviderDependency, get_model, try_resolve_llm_from_api_keys
 
@@ -435,7 +460,7 @@ def resolve_model(model_id: str | None) -> Any:
             continue
 
     # 4. Infer from API keys.
-    return try_resolve_llm_from_api_keys()
+    return try_resolve_llm_from_api_keys(interactive=interactive_providers)
 
 
 def add_to_gitignore() -> bool:
@@ -468,6 +493,28 @@ def add_to_gitignore() -> bool:
     return True
 
 
+_DOT_AGLOOM_README = """# Project ``./.agloom/`` (workspace)
+
+This folder under your **repo root** is optional workspace metadata (e.g. this README).
+**Most agloom data lives in your user home**, not here:
+
+``~/.agloom/`` (created on first CLI run)
+
+- ``agloom.yaml`` — user config
+- ``sessions/`` — session JSON per thread
+- ``indexes/`` — embeddings / smart-context cache
+- ``rules/`` — cached project rules
+- ``skills/`` — learned skills
+- ``logs/`` — logs
+
+**Project overrides:** add ``.agloom.yaml`` in the repo root (merged over ``~/.agloom/agloom.yaml``).
+
+**Multiple API keys:** set ``AGLOOM_PROVIDER`` to ``openai``, ``groq``, ``anthropic``, ``google``, ``mistralai``, or ``xai``.
+
+Docs: https://agloom.readthedocs.io
+"""
+
+
 def ensure_project_dot_agloom(project_root: Path) -> None:
     """Create ``<project>/.agloom/`` so local CLI state matches documented/gitignored paths.
 
@@ -475,6 +522,9 @@ def ensure_project_dot_agloom(project_root: Path) -> None:
     """
     ag_dir = project_root / ".agloom"
     ag_dir.mkdir(parents=True, exist_ok=True)
+    readme = ag_dir / "README.md"
+    if not readme.exists():
+        readme.write_text(_DOT_AGLOOM_README.strip() + "\n", encoding="utf-8")
 
 
 def ensure_config_ready() -> dict[str, Any]:

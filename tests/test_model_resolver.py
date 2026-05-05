@@ -9,7 +9,9 @@ from agloom_cli import model_resolver as mr
 
 
 def test_try_resolve_skips_first_provider_when_extra_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """OPENAI_API_KEY alone must not block GROQ when only Groq extra is installed."""
+    """OPENAI_API_KEY alone must not block GROQ when only Groq integration is usable."""
+
+    monkeypatch.setattr(mr, "_integration_importable", lambda slug: slug == "groq")
 
     def fake_get_model(model_id: str, **kwargs: object) -> object:
         if model_id == "gpt-4o":
@@ -27,14 +29,7 @@ def test_try_resolve_skips_first_provider_when_extra_missing(monkeypatch: pytest
 
 
 def test_try_resolve_multiple_missing_extras_aggregate(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_get_model(model_id: str, **kwargs: object) -> object:
-        if model_id == "gpt-4o":
-            raise mr.MissingProviderDependency("openai", "'agloom[openai]'")
-        if model_id == "meta-llama/llama-4-scout-17b-16e-instruct":
-            raise mr.MissingProviderDependency("groq", "'agloom[groq]'")
-        raise AssertionError(model_id)
-
-    monkeypatch.setattr(mr, "get_model", fake_get_model)
+    monkeypatch.setattr(mr, "_integration_importable", lambda _slug: False)
     monkeypatch.setenv("OPENAI_API_KEY", "a")
     monkeypatch.setenv("GROQ_API_KEY", "b")
 
@@ -64,6 +59,23 @@ def test_resolve_model_env_skips_openai_model_id_when_extra_missing(monkeypatch:
 
     monkeypatch.setattr(mr, "get_model", fake_get_model)
     assert cfg.resolve_model("auto") == "groq-ok"
+
+
+def test_try_resolve_agloom_provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mr, "_integration_importable", lambda slug: slug in ("openai", "groq"))
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.setenv("GROQ_API_KEY", "y")
+    monkeypatch.setenv("AGLOOM_PROVIDER", "groq")
+    seen: list[str] = []
+
+    def fake_get_model(model_id: str, **kwargs: object) -> str:
+        seen.append(model_id)
+        return f"ok:{model_id}"
+
+    monkeypatch.setattr(mr, "get_model", fake_get_model)
+    out = mr.try_resolve_llm_from_api_keys(interactive=False)
+    assert out.startswith("ok:")
+    assert "llama" in seen[-1]
 
 
 def test_require_env_raises_for_missing_groq_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -96,5 +108,5 @@ def test_resolve_model_config_gpt_falls_back_to_key_scan(monkeypatch: pytest.Mon
         raise AssertionError(model_id)
 
     monkeypatch.setattr(mr, "get_model", fake_get_model)
-    monkeypatch.setattr(mr, "try_resolve_llm_from_api_keys", lambda: "from-keys")
+    monkeypatch.setattr(mr, "try_resolve_llm_from_api_keys", lambda **kwargs: "from-keys")
     assert cfg.resolve_model("auto") == "from-keys"

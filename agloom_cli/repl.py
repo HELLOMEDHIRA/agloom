@@ -59,6 +59,7 @@ async def run_shell(
     *,
     welcome: str = "Ready to code!",
     verbose: bool = False,
+    llm_status: str | None = None,
 ) -> None:
     """Run interactive shell - Deep Agents / Claude Code style UI.
 
@@ -96,14 +97,14 @@ async def run_shell(
     )
     console.print()
 
-    model_name = "auto"
+    status_model = llm_status or "auto:auto"
     console.print(
         Panel(
-            f"[green]●[/green] [green]auto[/green]  "
+            f"[green]●[/green] [green]session[/green]  "
             f"[dim]shift+tab to cycle[/dim]  "
             f"[dim]{working_dir}[/dim]  "
             f"[dim]0 tokens[/dim]  "
-            f"[dim]openai:{model_name}[/dim]",
+            f"[cyan]{status_model}[/cyan]",
             border_style="dim",
             padding=(0, 1),
             title="[dim]INFO[/dim]",
@@ -218,11 +219,11 @@ async def run_shell(
 
             console.print(
                 Panel(
-                    f"[green]●[/green] [green]auto[/green]  "
+                    f"[green]●[/green] [green]session[/green]  "
                     f"[dim]shift+tab to cycle[/dim]  "
                     f"[dim]{working_dir}[/dim]  "
                     f"[dim]{token_count:,} tokens[/dim]  "
-                    f"[dim]openai:{model_name}[/dim]",
+                    f"[cyan]{status_model}[/cyan]",
                     border_style="dim",
                     padding=(0, 1),
                 )

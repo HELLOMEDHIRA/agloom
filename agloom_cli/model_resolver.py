@@ -15,7 +15,37 @@ Other backends: ``pip install 'agloom[aws]'`` / ``'agloom[litellm]'`` / … (or 
 from __future__ import annotations
 
 import os
+import sys
+from importlib import util
 from typing import Any
+
+# CLI auto-pick order: (slug for ``AGLOOM_PROVIDER``, Rich label, env var(s), default model id).
+_CLI_PROVIDER_ROWS: list[tuple[str, str, str | tuple[str, ...], str]] = [
+    ("openai", "OpenAI", "OPENAI_API_KEY", "gpt-4o"),
+    ("anthropic", "Anthropic", "ANTHROPIC_API_KEY", "claude-3-5-sonnet-20241022"),
+    ("google", "Google Gemini", ("GOOGLE_API_KEY", "GEMINI_API_KEY"), "gemini-2.0-flash"),
+    ("mistralai", "Mistral AI", "MISTRAL_API_KEY", "mistral-large-latest"),
+    ("groq", "Groq", "GROQ_API_KEY", "meta-llama/llama-4-scout-17b-16e-instruct"),
+    ("xai", "xAI", "XAI_API_KEY", "grok-3-latest"),
+]
+
+_SLUG_TO_EXTRA: dict[str, tuple[str, str]] = {
+    "openai": ("openai", "'agloom[openai]'"),
+    "anthropic": ("anthropic", "'agloom[anthropic]'"),
+    "google": ("google-genai", "'agloom[google-genai]'"),
+    "mistralai": ("mistralai", "'agloom[mistralai]'"),
+    "groq": ("groq", "'agloom[groq]'"),
+    "xai": ("xai", "'agloom[xai]'"),
+}
+
+_SLUG_TO_IMPORT: dict[str, str] = {
+    "openai": "langchain_openai",
+    "anthropic": "langchain_anthropic",
+    "google": "langchain_google_genai",
+    "mistralai": "langchain_mistralai",
+    "groq": "langchain_groq",
+    "xai": "langchain_xai",
+}
 
 
 def _env_configured(names: str | tuple[str, ...]) -> bool:
@@ -130,52 +160,112 @@ def get_model(model_id: str, **kwargs) -> Any:
     return _get_default_model(model_id, **kwargs)
 
 
-def try_resolve_llm_from_api_keys() -> Any | None:
-    """Pick the first usable default model from API keys in priority order.
+def _integration_importable(slug: str) -> bool:
+    mod = _SLUG_TO_IMPORT.get(slug)
+    if not mod:
+        return False
+    return util.find_spec(mod) is not None
 
-    Skips providers whose optional packages are not installed (so e.g. a stray
-    ``OPENAI_API_KEY`` does not block ``GROQ_API_KEY`` when only ``agloom[groq]`` is installed).
-    """
-    candidates: list[tuple[str | tuple[str, ...], str]] = [
-        ("OPENAI_API_KEY", "gpt-4o"),
-        ("ANTHROPIC_API_KEY", "claude-3-5-sonnet-20241022"),
-        (("GOOGLE_API_KEY", "GEMINI_API_KEY"), "gemini-2.0-flash"),
-        ("MISTRAL_API_KEY", "mistral-large-latest"),
-        ("GROQ_API_KEY", "meta-llama/llama-4-scout-17b-16e-instruct"),
-        ("XAI_API_KEY", "grok-3-latest"),
-    ]
-    # Skip MissingProviderDependency instead of surfacing the *first* failing provider:
-    # e.g. OPENAI_API_KEY may be set globally while only ``agloom[groq]`` is installed —
-    # later candidates (GROQ_API_KEY, …) must still be tried.
-    missing_for_configured_keys: list[MissingProviderDependency] = []
-    for env_spec, default_model in candidates:
+
+def _usable_cli_provider_triples() -> tuple[list[tuple[str, str, str]], list[MissingProviderDependency]]:
+    """Providers with env key(s) set **and** integration importable → one ``get_model`` call each later."""
+    usable: list[tuple[str, str, str]] = []
+    missing: list[MissingProviderDependency] = []
+    for slug, label, env_spec, default_model in _CLI_PROVIDER_ROWS:
         if not _env_configured(env_spec):
             continue
-        try:
-            return get_model(default_model)
-        except MissingProviderDependency as e:
-            missing_for_configured_keys.append(e)
+        if not _integration_importable(slug):
+            ex, hint = _SLUG_TO_EXTRA[slug]
+            missing.append(MissingProviderDependency(ex, hint))
             continue
-    if missing_for_configured_keys:
-        by_extra: dict[str, MissingProviderDependency] = {}
-        for e in missing_for_configured_keys:
-            by_extra[e.extra] = e
-        if len(by_extra) == 1:
-            e = next(iter(by_extra.values()))
-            raise e
-        parts = " ".join(
-            f"For extra '{e.extra}': pip install {e.pip_hint}." for e in by_extra.values()
+        usable.append((slug, label, default_model))
+    return usable, missing
+
+
+def try_resolve_llm_from_api_keys(*, interactive: bool | None = None) -> Any | None:
+    """Pick a default model from API keys.
+
+    - If exactly one provider is usable (key set + extra installed), use it.
+    - If several are usable and stdin/stdout are TTYs, prompt for a choice (override with ``AGLOOM_PROVIDER``).
+    - If several are usable but not interactive, use the first in priority order (same as before).
+
+    Skips providers whose optional packages are not installed.
+    """
+    usable, missing_for_configured_keys = _usable_cli_provider_triples()
+    if not usable:
+        if missing_for_configured_keys:
+            by_extra: dict[str, MissingProviderDependency] = {}
+            for e in missing_for_configured_keys:
+                by_extra[e.extra] = e
+            if len(by_extra) == 1:
+                raise next(iter(by_extra.values()))
+            parts = " ".join(
+                f"For extra '{e.extra}': pip install {e.pip_hint}." for e in by_extra.values()
+            )
+            raise MissingProviderDependency(
+                "multiple",
+                "'agloom[<provider>]'",
+                detail=(
+                    "API keys are set but the matching LangChain integrations are not installed. "
+                    + parts
+                    + " Or unset unused API_KEY variables so another provider can be used."
+                ),
+            )
+        return None
+
+    pref = (os.environ.get("AGLOOM_PROVIDER") or "").strip().lower()
+    if pref:
+        for slug, _label, default_model in usable:
+            if slug == pref:
+                return get_model(default_model)
+
+    if interactive is None:
+        interactive = sys.stdin.isatty() and sys.stdout.isatty()
+
+    if len(usable) == 1:
+        return get_model(usable[0][2])
+
+    if interactive and len(usable) > 1:
+        from rich.console import Console
+        from rich.prompt import IntPrompt
+
+        slug_hint = ", ".join(s for s, _, __ in usable)
+        Console().print(
+            f"\n[bold cyan]Multiple LLM API keys detected. Choose provider:[/bold cyan] "
+            f"[dim](or set AGLOOM_PROVIDER to one of: {slug_hint})[/dim]\n",
         )
-        raise MissingProviderDependency(
-            "multiple",
-            "'agloom[<provider>]'",
-            detail=(
-                "API keys are set but the matching LangChain integrations are not installed. "
-                + parts
-                + " Or unset unused API_KEY variables so another provider can be used."
-            ),
-        )
-    return None
+        for i, (slug, label, default_model) in enumerate(usable, start=1):
+            Console().print(
+                f"  {i}. [green]{label}[/green] [dim]({slug})[/dim] — default model [cyan]{default_model}[/cyan]"
+            )
+        choice = IntPrompt.ask("Enter number", default=1)
+        idx = max(1, min(choice, len(usable))) - 1
+        return get_model(usable[idx][2])
+
+    return get_model(usable[0][2])
+
+
+def describe_llm(llm: Any) -> tuple[str, str]:
+    """Return ``(provider_slug, model_id)`` for status lines (e.g. REPL INFO panel)."""
+    cls_name = type(llm).__name__.lower()
+    mid = getattr(llm, "model_name", None) or getattr(llm, "model", None)
+    mid_s = str(mid).strip() if mid else "auto"
+
+    if "groq" in cls_name:
+        return "groq", mid_s
+    if "openai" in cls_name or cls_name == "chatopenai":
+        return "openai", mid_s
+    if "anthropic" in cls_name or "claude" in cls_name:
+        return "anthropic", mid_s
+    if "google" in cls_name or "gemini" in cls_name:
+        return "google", mid_s
+    if "mistral" in cls_name:
+        return "mistralai", mid_s
+    if "xai" in cls_name or "grok" in cls_name:
+        return "xai", mid_s
+    if "ollama" in cls_name:
+        return "ollama", mid_s
+    return type(llm).__name__.replace("Chat", "").lower() or "llm", mid_s
 
 
 def _get_openai_model(model_id: str, **kwargs) -> Any:

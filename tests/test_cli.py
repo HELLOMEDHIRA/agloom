@@ -15,6 +15,7 @@ from agloom_cli.tools import read_file, write_file
 def test_ensure_project_dot_agloom_creates_dir(tmp_path: Path) -> None:
     ensure_project_dot_agloom(tmp_path)
     assert (tmp_path / ".agloom").is_dir()
+    assert (tmp_path / ".agloom" / "README.md").is_file()
 
 
 def test_load_explicit_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
