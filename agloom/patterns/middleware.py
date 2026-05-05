@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
+from langchain_core.messages import HumanMessage
 
 from ..logging_utils import get_logger
 
@@ -15,6 +16,48 @@ logger = get_logger(__name__)
 
 class UserAbort(Exception):
     """Raised when user aborts a tool call. Not a failure — treated as success=True."""
+
+
+class ReactUserTurnToolChoiceMiddleware(AgentMiddleware):
+    """Align LangChain agent ``tool_choice`` with conversation state for ReAct.
+
+    LangChain's ``create_agent`` defaults ``tool_choice=None`` on every model call. Providers
+    such as Groq then allow plain-text assistant turns that *look* like tool output, which
+    triggers ``tool_use_failed``. After a **HumanMessage** (user turn or retry nudge), set
+    ``tool_choice="required"`` so the model must emit a structured tool call when tools exist.
+    After **ToolMessage** / other turns, use ``tool_choice=None`` so the model can answer
+    with plain text.
+    """
+
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        user_turn_choice: str = "required",
+    ) -> None:
+        super().__init__()
+        self._enabled = enabled
+        self._user_turn_choice = user_turn_choice
+
+    def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+        if not self._enabled or not request.tools:
+            return handler(request)
+        last = request.messages[-1] if request.messages else None
+        if isinstance(last, HumanMessage):
+            return handler(request.override(tool_choice=self._user_turn_choice))
+        return handler(request.override(tool_choice=None))
+
+    async def awrap_model_call(
+        self,
+        request: Any,
+        handler: Callable[[Any], Awaitable[Any]],
+    ) -> Any:
+        if not self._enabled or not request.tools:
+            return await handler(request)
+        last = request.messages[-1] if request.messages else None
+        if isinstance(last, HumanMessage):
+            return await handler(request.override(tool_choice=self._user_turn_choice))
+        return await handler(request.override(tool_choice=None))
 
 
 class HumanApprovalMiddleware(AgentMiddleware):

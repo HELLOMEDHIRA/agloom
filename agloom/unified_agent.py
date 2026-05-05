@@ -1996,6 +1996,7 @@ async def create_agent(
     harness: bool = False,
     harness_project_name: str = "project",
     skills_disk_mirror: Path | str | None = None,
+    react_force_tool_choice_on_user_turn: bool = True,
 ) -> UnifiedAgent:
     """Construct a configured ``UnifiedAgent`` (async).
 
@@ -2006,6 +2007,9 @@ async def create_agent(
     ``harness`` with ``store``: adds progress/git tools; ignored without ``store``.
     ``checkpointer``: enables ``get_state``, ``get_history``, ``resume``.
     ``mcp_servers``: lazy MCP connect on first ``ainvoke``.
+    ``react_force_tool_choice_on_user_turn``: when True (default), ReAct uses LangChain
+    ``tool_choice=required`` after each user message so providers like Groq must emit a
+    structured tool call instead of prose (avoids ``tool_use_failed``).
 
     Also registers the agent name against the store for duplicate-name warnings and may
     extend ``tools`` (memory load_skill, harness tools).
@@ -2051,6 +2055,7 @@ async def create_agent(
         max_reflection_iterations=max_reflection_iterations,
         reflection_threshold=reflection_threshold,
         mcp_servers=list(mcp_servers or []),
+        react_force_tool_choice_on_user_turn=react_force_tool_choice_on_user_turn,
         auto_summarize=auto_summarize,
         summarize_threshold=summarize_threshold,
         summarizer_model=summarizer_model,
@@ -2203,6 +2208,7 @@ async def create_agent(
         "_frozen_analysis_ts": 0,
         "max_step_output_length": max_step_output_length,
         "fallback_pattern": fallback_pattern,
+        "react_force_tool_choice_on_user_turn": react_force_tool_choice_on_user_turn,
         "_handoff_targets": [],
         "_delegate_targets": [],
         "_bg_delegation_manager": BackgroundDelegationManager(),

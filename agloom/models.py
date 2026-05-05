@@ -666,6 +666,14 @@ class AgentConfig(BaseModel):
 
     mcp_servers: list[Any] = Field(default_factory=list)
 
+    react_force_tool_choice_on_user_turn: bool = Field(
+        default=True,
+        description=(
+            "ReAct: after a HumanMessage, set LangChain tool_choice=required so providers "
+            "(e.g. Groq) cannot emit prose instead of a structured tool call (tool_use_failed)."
+        ),
+    )
+
     @field_validator("rate_limit")
     @classmethod
     def rate_limit_must_be_positive(cls, v: float | None) -> float | None:

@@ -20,7 +20,7 @@ from ..models import (
     _make_step,
     _trunc,
 )
-from .middleware import HumanApprovalMiddleware, UserAbort
+from .middleware import HumanApprovalMiddleware, ReactUserTurnToolChoiceMiddleware, UserAbort
 
 logger = get_logger(__name__)
 
@@ -32,6 +32,15 @@ _TOOL_USE_FAILED = "tool_use_failed"
 _MAX_TOOL_RETRIES = 5
 _RETRY_DELAY = 0.5
 _AINVOKE_TIMEOUT = 120  # cap waits so stuck LLM/tool calls cannot block forever
+
+
+def _langchain_react_middleware(agent: dict, *extra: Any) -> list[Any]:
+    """Middleware for LangChain ``create_agent`` inside ReAct (tool_choice + optional HITL)."""
+    chain: list[Any] = []
+    if agent.get("react_force_tool_choice_on_user_turn", True):
+        chain.append(ReactUserTurnToolChoiceMiddleware())
+    chain.extend(extra)
+    return chain
 
 
 def _exception_indicates_tool_use_failed(exc: BaseException) -> bool:
@@ -229,6 +238,7 @@ async def handle_react(
 
     if hitl_active:
         return await _handle_react_hitl(
+            agent=agent,
             llm=llm,
             tools=tools,
             system_prompt=system_prompt,
@@ -254,6 +264,7 @@ async def handle_react(
         model=llm,
         tools=tools,
         system_prompt=system_prompt,
+        middleware=_langchain_react_middleware(agent),
     )
 
     invoke_config = {
@@ -393,6 +404,7 @@ async def _handle_react_streaming(
         model=llm,
         tools=tools,
         system_prompt=system_prompt,
+        middleware=_langchain_react_middleware(agent),
     )
 
     invoke_config = cast(
@@ -624,6 +636,7 @@ async def _handle_react_ainvoke_fallback(
 
 
 async def _handle_react_hitl(
+    agent: dict,
     llm,
     tools: list,
     system_prompt: str,
@@ -645,7 +658,7 @@ async def _handle_react_hitl(
         model=llm,
         tools=tools,
         system_prompt=system_prompt,
-        middleware=[approval_middleware],
+        middleware=_langchain_react_middleware(agent, approval_middleware),
     )
 
     invoke_config = {
