@@ -29,7 +29,7 @@ The **agloom CLI** stores config and cached state **only** here — ``<project>/
 | Path | Purpose |
 |------|---------|
 | ``agloom.yaml`` | Configuration (``ai.api_keys`` merged into process env for the CLI session) |
-| ``sessions/`` | Per session: ``<id>.json`` (history, ``model_binding``) and ``<id>.yaml`` (``ai:`` + optional ``safety:`` e.g. ``tool_allowlist``) |
+| ``sessions/`` | Per session: ``<id>.json`` (history, ``model_binding``, optional ``ai`` / ``safety`` overlays) |
 | ``checkpoints.sqlite`` | LangGraph checkpoints (CLI session resume when memory is on) |
 | ``graph_store.sqlite`` | LangGraph store backing long-term / session memory |
 | ``rules/`` | Cached project rules |
@@ -281,26 +281,25 @@ safety:
   # Comma list or YAML list. Include ``tools`` to pause before every tool (default when unset and require_approval).
   interrupt_before_tools: "tools"
   # Comma-separated tool names that skip the approval modal (empty = prompt for all unless allowlisted).
-  auto_approve: ""
-  # Optional: always-allowed tools from project config (union with ``sessions/<id>.yaml`` ``safety.tool_allowlist``).
-  # Session file entries are merged here; YAML ``tool_allowlist`` is always honored even when allowlist_strict_tools is true.
+  # Default: read-only tools auto-pass; write / shell / network tools still prompt.
+  auto_approve: "read_file,list_directory,get_working_directory"
+  # Optional: always-allowed tools from project config (union with ``sessions/<id>.json`` ``safety.tool_allowlist``).
+  # Session file entries are merged here; session ``tool_allowlist`` is always honored even when allowlist_strict_tools is true.
   tool_allowlist: []
-  # HITL "always allow" also writes ``sessions/<id>.yaml`` when using the CLI. JSON under .agloom is optional extra.
+  # HITL "always allow" also appends to ``sessions/<id>.json`` when using the CLI.
   # When true (default): if that file exists, only its "tools" list applies — safety.auto_approve is ignored.
   # When false: yaml auto_approve and JSON tools are unioned. If the file does not exist yet, yaml applies alone.
   allowlist_strict_tools: true
   allowlist_file: ""
-  # When true, "Always allow" during HITL appends to session YAML and the allowlist JSON under .agloom
+  # When true, "Always allow" during HITL appends to session JSON and the allowlist JSON under .agloom
   persist_tool_allowlist: true
 
 session:
   current_session: ""
   last_updated: ""
-  # Per-thread overrides: ``<storage>/sessions/<thread_id>.yaml`` (optional). Same ``ai:`` keys as
-  # this file — ``model``, ``provider``, ``base_url``, ``llm`` (timeout, max_retries, temperature,
-  # top_p, max_tokens, …), ``api_keys``. Optional ``safety:`` (e.g. ``tool_allowlist``) is merged
-  # with project ``safety`` for that thread. Session YAML wins over project for that thread. JSON keeps
-  # ``model_binding`` + history; YAML is where you set per-session endpoints and sampling.
+  # Per-thread overlays live in ``<storage>/sessions/<thread_id>.json`` under ``ai`` and ``safety`` (optional).
+  # Same ``ai`` keys as this file — ``model``, ``provider``, ``base_url``, ``llm``, ``api_keys``. The CLI also
+  # deep-merges ``model_binding`` into ``ai`` on each run. Legacy ``<id>.yaml`` sidecars are migrated once into JSON and removed.
 """
 
 CONFIG_HEADER = """# agloom configuration
@@ -496,7 +495,7 @@ def config_source_fingerprints(explicit: Path | None = None) -> list[dict[str, A
 
 
 def config_layer_fingerprint(path: Path) -> dict[str, Any] | None:
-    """Single-file fingerprint for optional layers (e.g. per-session YAML)."""
+    """Single-file fingerprint for optional layers (e.g. per-session JSON)."""
     if not path.is_file():
         return None
     try:
@@ -606,7 +605,7 @@ def merged_provider_base_for_resolve(
     ``merge_yaml_provider=model is None``): avoids yaml backend fighting an explicit ``-m groq:…`` prefix.
 
     ``ai.base_url`` is **always** merged when the caller does not pass *base_url*, so Ollama / vLLM /
-    OpenAI-compatible / LiteLLM endpoints from project or ``sessions/<id>.yaml`` still apply with
+    OpenAI-compatible / LiteLLM endpoints from project or session JSON ``ai`` still apply with
     ``agloom -m ollama:…`` or ``-m vllm:…``.
     """
     cfg_prov, cfg_base = _ai_yaml_provider_base(ai_cfg)
@@ -673,18 +672,128 @@ def session_model_binding_is_usable(binding: dict[str, Any]) -> bool:
     return True
 
 
-def session_config_yaml_path(thread_id: str) -> Path:
-    """Path to per-thread overrides: ``sessions/<id>.yaml`` (next to ``sessions/<id>.json``).
+def _read_session_json(thread_id: str) -> dict[str, Any]:
+    """Load ``sessions/<id>.json`` as a dict (empty dict if missing or unreadable)."""
+    import json
 
-    :func:`start_new_session` creates this file on first write if it is missing (``ai: {}`` or a
-    snapshot from ``model_binding``). :func:`merge_ai_into_session_yaml` updates the same file.
-    """
     tid = normalize_cli_session_id(thread_id)
-    return ensure_storage_layout() / "sessions" / f"{tid}.yaml"
+    path = session_record_path(tid)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
-def session_ai_updates_from_model_binding(binding: dict[str, Any]) -> dict[str, Any]:
-    """Turn JSON ``model_binding`` into ``ai`` keys for session YAML (deep-copy ``llm``)."""
+def _write_session_json(thread_id: str, data: dict[str, Any]) -> None:
+    """Atomically write ``sessions/<id>.json`` with UTF-8 encoding."""
+    import json
+
+    tid = normalize_cli_session_id(thread_id)
+    path = session_record_path(tid)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def read_session_safety(thread_id: str) -> dict[str, Any]:
+    """Return the ``safety`` block from session JSON (always a dict, with ``tool_allowlist`` list)."""
+    data = _read_session_json(thread_id)
+    raw = data.get("safety")
+    if not isinstance(raw, dict):
+        raw = {}
+    tools = raw.get("tool_allowlist")
+    if not isinstance(tools, list):
+        tools = []
+    return {"tool_allowlist": [str(t).strip() for t in tools if str(t).strip()]}
+
+
+def merge_tool_allowlist_into_session_json(thread_id: str, tool_name: str) -> None:
+    """Append *tool_name* to ``sessions/<id>.json`` under ``safety.tool_allowlist`` (idempotent).
+
+    Creates the JSON if missing. Preserves all other fields (``messages``, ``model_binding``, …).
+    """
+    tn = (tool_name or "").strip()
+    if not tn:
+        return
+    data: dict[str, Any] = _read_session_json(thread_id)
+    if not data:
+        data = {
+            "id": normalize_cli_session_id(thread_id),
+            "started_at": datetime.now(UTC).isoformat(),
+            "last_active": datetime.now(UTC).isoformat(),
+            "turns": 0,
+            "messages": [],
+        }
+    safety = data.get("safety")
+    if not isinstance(safety, dict):
+        safety = {}
+        data["safety"] = safety
+    tools = safety.get("tool_allowlist")
+    if not isinstance(tools, list):
+        tools = []
+    norm = [str(t).strip() for t in tools if str(t).strip()]
+    if tn not in norm:
+        norm.append(tn)
+    safety["tool_allowlist"] = norm
+    _write_session_json(thread_id, data)
+
+
+def merge_api_keys_into_session_json(thread_id: str, api_keys: dict[str, Any]) -> None:
+    """Merge *api_keys* into ``sessions/<id>.json`` ``model_binding.api_keys``.
+
+    Each key is written as-is (no env-var expansion); empty/blank values are dropped.
+    Existing keys not listed in *api_keys* are preserved.
+    """
+    if not isinstance(api_keys, dict) or not api_keys:
+        return
+    clean: dict[str, str] = {}
+    for k, v in api_keys.items():
+        if not isinstance(k, str) or not k.strip():
+            continue
+        if v is None:
+            continue
+        s = str(v).strip()
+        if not s:
+            continue
+        clean[k.strip()] = s
+    if not clean:
+        return
+    data: dict[str, Any] = _read_session_json(thread_id)
+    if not data:
+        data = {
+            "id": normalize_cli_session_id(thread_id),
+            "started_at": datetime.now(UTC).isoformat(),
+            "last_active": datetime.now(UTC).isoformat(),
+            "turns": 0,
+            "messages": [],
+        }
+    binding = data.get("model_binding")
+    if not isinstance(binding, dict):
+        binding = {}
+        data["model_binding"] = binding
+    existing = binding.get("api_keys")
+    merged = dict(existing) if isinstance(existing, dict) else {}
+    merged.update(clean)
+    binding["api_keys"] = merged
+    _write_session_json(thread_id, data)
+
+
+def read_session_api_keys(thread_id: str) -> dict[str, str]:
+    """Return ``model_binding.api_keys`` from session JSON (empty if missing)."""
+    binding = read_session_model_binding(thread_id)
+    if not binding:
+        return {}
+    raw = binding.get("api_keys")
+    if not isinstance(raw, dict):
+        return {}
+    return {k: str(v) for k, v in raw.items() if isinstance(k, str) and k.strip() and v is not None}
+
+
+def _ai_overlay_from_model_binding(binding: dict[str, Any]) -> dict[str, Any]:
+    """Map ``model_binding`` into ``ai`` keys stored under ``sessions/<id>.json``."""
     out: dict[str, Any] = {}
     em = binding.get("effective_model")
     if isinstance(em, str) and em.strip():
@@ -692,7 +801,6 @@ def session_ai_updates_from_model_binding(binding: dict[str, Any]) -> dict[str, 
     mp = binding.get("provider")
     if isinstance(mp, str) and mp.strip():
         out["provider"] = mp.strip()
-    # Always snapshot ``base_url`` (``null`` = SDK / provider default host — was omitted before).
     bu = binding.get("base_url")
     if isinstance(bu, str) and bu.strip():
         out["base_url"] = bu.strip()
@@ -709,63 +817,23 @@ def session_ai_updates_from_model_binding(binding: dict[str, Any]) -> dict[str, 
     return out
 
 
-def _ensure_session_yaml_sidecar(thread_id: str, *, model_binding: dict[str, Any] | None) -> None:
-    """Create ``sessions/<id>.yaml`` if missing so every session has a YAML sibling to the JSON."""
+def merge_ai_into_session_json(thread_id: str, ai_updates: dict[str, Any]) -> None:
+    """Deep-merge *ai_updates* into ``sessions/<id>.json`` under ``ai`` (creates JSON if missing)."""
     tid = normalize_cli_session_id(thread_id)
-    path = session_config_yaml_path(tid)
-    if not path.is_file():
-        if model_binding:
-            merge_ai_into_session_yaml(tid, session_ai_updates_from_model_binding(model_binding))
-        else:
-            merge_ai_into_session_yaml(tid, {})
-        return
-    if not model_binding:
-        return
-    fragment = load_session_config_yaml(tid)
-    ai = fragment.get("ai", {}) if isinstance(fragment.get("ai"), dict) else {}
-    snap = session_ai_updates_from_model_binding(model_binding)
-    backfill: dict[str, Any] = {}
-    if "base_url" not in ai:
-        backfill["base_url"] = snap.get("base_url")
-    if "provider" not in ai and isinstance(snap.get("provider"), str) and snap["provider"].strip():
-        backfill["provider"] = snap["provider"].strip()
-    sk = snap.get("api_keys")
-    if "api_keys" not in ai and isinstance(sk, dict) and sk:
-        backfill["api_keys"] = copy.deepcopy(sk)
-    if backfill:
-        merge_ai_into_session_yaml(tid, backfill)
-
-
-def load_session_config_yaml(thread_id: str) -> dict[str, Any]:
-    """Load optional session YAML.
-
-    The ``ai:`` subtree is merged by :func:`build_working_ai_for_thread`; the ``safety:`` subtree by
-    :func:`build_working_safety_for_thread`.
-    """
-    path = session_config_yaml_path(thread_id)
-    if not path.is_file():
-        return {}
-    try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
-        return {}
-    return raw if isinstance(raw, dict) else {}
-
-
-def build_working_ai_for_thread(cfg: dict[str, Any], thread_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Merge project ``cfg['ai']`` with ``sessions/<id>.yaml`` → ``ai`` (session wins per key).
-
-    Returns ``(working_ai, session_ai_only)`` where *session_ai_only* is the ``ai`` dict from the
-    session file (empty if no file) — used to prefer session YAML over JSON ``model_binding``.
-    """
-    import copy
-
-    project_ai = cfg.get("ai", {}) if isinstance(cfg.get("ai"), dict) else {}
-    fragment = load_session_config_yaml(thread_id)
-    session_ai = fragment.get("ai", {}) if isinstance(fragment.get("ai"), dict) else {}
-    working = copy.deepcopy(project_ai)
-    _deep_merge(working, session_ai)
-    return working, session_ai
+    data: dict[str, Any] = _read_session_json(tid)
+    if not data:
+        data = {
+            "id": tid,
+            "started_at": datetime.now(UTC).isoformat(),
+            "last_active": datetime.now(UTC).isoformat(),
+            "turns": 0,
+            "messages": [],
+        }
+    cur = data.get("ai") if isinstance(data.get("ai"), dict) else {}
+    merged = copy.deepcopy(cur)
+    _deep_merge(merged, copy.deepcopy(ai_updates))
+    data["ai"] = merged
+    _write_session_json(tid, data)
 
 
 def normalized_safety_tool_allowlist(raw: Any) -> list[str]:
@@ -779,26 +847,86 @@ def normalized_safety_tool_allowlist(raw: Any) -> list[str]:
     return []
 
 
-def build_working_safety_for_thread(cfg: dict[str, Any], thread_id: str) -> dict[str, Any]:
-    """Merge project ``cfg['safety']`` with ``sessions/<id>.yaml`` ``safety:`` (session deep-merges on top).
+def _migrate_legacy_session_yaml_to_json(thread_id: str) -> None:
+    """If ``sessions/<id>.yaml`` exists, merge ``ai`` / ``safety.tool_allowlist`` into JSON and remove the file."""
+    tid = normalize_cli_session_id(thread_id)
+    path = ensure_storage_layout() / "sessions" / f"{tid}.yaml"
+    if not path.is_file():
+        return
+    fragment: dict[str, Any] = {}
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            fragment = raw
+    except (OSError, yaml.YAMLError):
+        fragment = {}
+    data: dict[str, Any] = _read_session_json(tid)
+    if not data:
+        data = {
+            "id": tid,
+            "started_at": datetime.now(UTC).isoformat(),
+            "last_active": datetime.now(UTC).isoformat(),
+            "turns": 0,
+            "messages": [],
+        }
+    ai_src = fragment.get("ai") if isinstance(fragment.get("ai"), dict) else {}
+    if ai_src:
+        cur = data.get("ai") if isinstance(data.get("ai"), dict) else {}
+        merged_ai = copy.deepcopy(cur)
+        _deep_merge(merged_ai, copy.deepcopy(ai_src))
+        data["ai"] = merged_ai
+    legacy_safety = fragment.get("safety") if isinstance(fragment.get("safety"), dict) else None
+    if isinstance(legacy_safety, dict):
+        legacy_tl = normalized_safety_tool_allowlist(
+            legacy_safety.get("tool_allowlist") or legacy_safety.get("allowlist_tools")
+        )
+        safety = data.get("safety") if isinstance(data.get("safety"), dict) else {}
+        tools = list(normalized_safety_tool_allowlist(safety.get("tool_allowlist")))
+        for t in legacy_tl:
+            if t not in tools:
+                tools.append(t)
+        if tools:
+            safety["tool_allowlist"] = tools
+            data["safety"] = safety
+    _write_session_json(tid, data)
+    try:
+        path.unlink()
+    except OSError:
+        pass
 
-    ``tool_allowlist`` / ``allowlist_tools`` from project and session are **unioned** so session
-    additions always apply alongside project entries.
+
+def build_working_ai_for_thread(cfg: dict[str, Any], thread_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Merge project ``cfg['ai']`` with ``sessions/<id>.json`` ``ai`` (session wins per key).
+
+    Returns ``(working_ai, session_ai_only)`` where *session_ai_only* is the ``ai`` dict from the
+    session JSON — used to prefer session overrides over JSON ``model_binding`` in the CLI.
     """
+    _migrate_legacy_session_yaml_to_json(thread_id)
+    project_ai = cfg.get("ai", {}) if isinstance(cfg.get("ai"), dict) else {}
+    sess_data = _read_session_json(thread_id)
+    session_ai = sess_data.get("ai", {}) if isinstance(sess_data.get("ai"), dict) else {}
+    working = copy.deepcopy(project_ai)
+    _deep_merge(working, session_ai)
+    return working, session_ai
+
+
+def build_working_safety_for_thread(cfg: dict[str, Any], thread_id: str) -> dict[str, Any]:
+    """Merge project ``cfg['safety']`` with ``sessions/<id>.json`` ``safety:`` (session unions on top).
+
+    ``tool_allowlist`` / ``allowlist_tools`` from project YAML and session JSON are **unioned** so
+    session additions (HITL "Always allow" choices) always apply alongside project entries.
+
+    A legacy ``sessions/<id>.yaml`` sidecar is migrated into JSON (see :func:`_migrate_legacy_session_yaml_to_json`).
+    """
+    _migrate_legacy_session_yaml_to_json(thread_id)
     project = cfg.get("safety")
     if not isinstance(project, dict):
         project = {}
     out = copy.deepcopy(project)
-    fragment = load_session_config_yaml(thread_id)
-    sess = fragment.get("safety")
-    if not isinstance(sess, dict) or not sess:
-        return out
-    sess = copy.deepcopy(sess)
+
     proj_tl = normalized_safety_tool_allowlist(out.get("tool_allowlist") or out.get("allowlist_tools"))
-    sess_tl = normalized_safety_tool_allowlist(sess.get("tool_allowlist") or sess.get("allowlist_tools"))
-    for k in ("tool_allowlist", "allowlist_tools"):
-        sess.pop(k, None)
-    _deep_merge(out, sess)
+    sess_tl: list[str] = read_session_safety(thread_id).get("tool_allowlist", [])
+
     merged_tl = sorted(set(proj_tl) | set(sess_tl))
     if merged_tl:
         out["tool_allowlist"] = merged_tl
@@ -824,40 +952,12 @@ def coerce_interrupt_before_tools_list(raw: Any, *, require_approval: bool) -> l
     return [t.strip() for t in s.split(",") if t.strip()]
 
 
-def merge_ai_into_session_yaml(thread_id: str, ai_updates: dict[str, Any]) -> None:
-    """Deep-merge *ai_updates* into ``sessions/<id>.yaml`` under ``ai`` (session-scoped defaults)."""
-    path = session_config_yaml_path(thread_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        try:
-            with open(path, encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-        except yaml.YAMLError:
-            data = {}
-    else:
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
-    data.setdefault("ai", {})
-    if not isinstance(data["ai"], dict):
-        data["ai"] = {}
-    _deep_merge(data["ai"], ai_updates)
-    with open(path, "w", encoding="utf-8") as f:
-        yaml.dump(
-            data,
-            f,
-            default_flow_style=False,
-            sort_keys=False,
-            allow_unicode=True,
-        )
-
-
 def merge_ai_api_keys_into_process_env(ai: dict[str, Any]) -> None:
     """Copy ``ai.api_keys`` into :func:`os.environ` for LangChain and SDKs.
 
     Each key present under ``ai.api_keys`` **overwrites** the process environment for that
-    variable name (project or session YAML wins over any pre-existing export). Keys not listed
-    in YAML are left unchanged.
+    variable name (project or session JSON ``ai`` wins over any pre-existing export). Keys not listed
+    in config are left unchanged.
 
     ``api_keys_override`` is legacy and ignored; listing a key under ``api_keys`` is sufficient.
 
@@ -910,34 +1010,6 @@ def normalize_cli_session_id(raw: str) -> str:
     raise ValueError(
         "Session id must be 32 hex characters, a hyphenated UUID, "
         "or 1–128 ASCII letters, digits, underscores, or hyphens."
-    )
-
-
-def merge_tool_allowlist_into_session_yaml(thread_id: str, tool_name: str) -> None:
-    """Append *tool_name* to ``sessions/<id>.yaml`` under ``safety.tool_allowlist`` (create file if needed)."""
-    tid = normalize_cli_session_id(thread_id)
-    path = session_config_yaml_path(tid)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.is_file():
-        try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except (OSError, yaml.YAMLError):
-            data = {}
-    else:
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
-    data.setdefault("safety", {})
-    if not isinstance(data["safety"], dict):
-        data["safety"] = {}
-    tools = normalized_safety_tool_allowlist(data["safety"].get("tool_allowlist"))
-    tn = (tool_name or "").strip()
-    if tn and tn not in tools:
-        tools.append(tn)
-    data["safety"]["tool_allowlist"] = tools
-    path.write_text(
-        yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
     )
 
 
@@ -1005,7 +1077,8 @@ def start_new_session(
     ``model_binding`` (if provided) is the per-thread LLM routing snapshot: ``effective_model``,
     ``provider``, ``base_url``, ``merge_yaml_provider``, and merged ``llm`` kwargs. The CLI updates
     it on every run so resuming a session reuses the same model unless you pass ``-m`` / ``--provider``
-    / ``--base-url`` / ``--llm-*`` overrides.
+    / ``--base-url`` / ``--llm-*`` overrides. The same snapshot is deep-merged into ``ai`` on disk
+    so session-scoped overrides stay next to history.
 
     If ``update_config_current_session`` is False, ``agloom.yaml``'s ``session.current_session``
     is left unchanged (CLI uses this for auto-generated sessions).
@@ -1045,10 +1118,15 @@ def start_new_session(
         if model_binding is not None:
             session_data["model_binding"] = model_binding
 
+    if model_binding is not None:
+        overlay = _ai_overlay_from_model_binding(model_binding)
+        session_data.setdefault("ai", {})
+        if not isinstance(session_data["ai"], dict):
+            session_data["ai"] = {}
+        _deep_merge(session_data["ai"], copy.deepcopy(overlay))
+
     with open(session_file, "w", encoding="utf-8") as f:
         json.dump(session_data, f, indent=2)
-
-    _ensure_session_yaml_sidecar(thread_id, model_binding=model_binding)
 
     if update_config_current_session:
         config = create_default_config()
@@ -1110,9 +1188,6 @@ def add_to_session_history(thread_id: str, role: str, content: str) -> None:
 
     with open(session_file, "w", encoding="utf-8") as f:
         json.dump(session, f, indent=2)
-
-    mb = session.get("model_binding")
-    _ensure_session_yaml_sidecar(thread_id, model_binding=mb if isinstance(mb, dict) else None)
 
 
 def resolve_model(

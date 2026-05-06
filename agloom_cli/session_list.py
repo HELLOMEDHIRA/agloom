@@ -6,8 +6,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from .config import normalize_cli_session_id
 
 
@@ -63,20 +61,9 @@ def load_session_row(path: Path) -> dict[str, Any] | None:
     resolved = last_run.get("resolved") if isinstance(last_run.get("resolved"), dict) else {}
     mb = data.get("model_binding") if isinstance(data.get("model_binding"), dict) else {}
     bound_model = str(mb.get("effective_model") or "").strip()
-    yaml_model = ""
-    ypath = path.with_suffix(".yaml")
-    if ypath.is_file():
-        try:
-            yd = yaml.safe_load(ypath.read_text(encoding="utf-8"))
-            if isinstance(yd, dict):
-                yai = yd.get("ai", {})
-                if isinstance(yai, dict):
-                    ym = yai.get("model")
-                    if ym is not None and str(ym).strip():
-                        yaml_model = str(ym).strip()
-        except (OSError, yaml.YAMLError):
-            pass
-    model = str(resolved.get("model") or "").strip() or bound_model or yaml_model
+    sess_ai = data.get("ai") if isinstance(data.get("ai"), dict) else {}
+    overlay_model = str(sess_ai.get("model") or "").strip() if sess_ai else ""
+    model = str(resolved.get("model") or "").strip() or bound_model or overlay_model
 
     return {
         "id": sid,

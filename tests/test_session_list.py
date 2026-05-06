@@ -36,14 +36,16 @@ def test_load_session_row_minimal(tmp_path: Path) -> None:
     assert row["model"] == "groq:llama"
 
 
-def test_load_session_row_yaml_sidecar_model(tmp_path: Path) -> None:
-    base = tmp_path / "sess1"
+def test_load_session_row_ai_overlay_model(tmp_path: Path) -> None:
+    base = tmp_path / "sess1.json"
     base.write_text(
-        json.dumps({"id": "sess1", "messages": []}),
-        encoding="utf-8",
-    )
-    base.with_suffix(".yaml").write_text(
-        "ai:\n  model: litellm:groq/llama-3.3-70b-versatile\n",
+        json.dumps(
+            {
+                "id": "sess1",
+                "messages": [],
+                "ai": {"model": "litellm:groq/llama-3.3-70b-versatile"},
+            }
+        ),
         encoding="utf-8",
     )
     row = load_session_row(base)

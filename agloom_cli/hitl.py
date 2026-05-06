@@ -21,8 +21,11 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 
 from agloom.hitl_contract import HITLEvent
+from agloom.logging_utils import get_logger
 
-from .config import merge_tool_allowlist_into_session_yaml
+from .config import merge_tool_allowlist_into_session_json
+
+_logger = get_logger("agloom_cli.hitl")
 from .hitl_ask import build_hitl_triple_ask_request, new_hitl_tool_call_id, triple_answer_to_token
 from .hitl_allowlist import load_allowlist, merge_allowlist_file, resolve_allowlist_path
 from .hitl_ask_types import AskUserRequest, AskUserWidgetResult
@@ -263,7 +266,7 @@ def create_user_callback(
         allowlist_strict_tools: If True (default), when the allowlist file exists, **only** its ``tools`` list
             applies; ``safety.auto_approve`` is ignored for tools. If False, yaml and JSON are unioned.
             If the file does not exist yet, ``auto_approve_tools`` is used alone.
-        persist_allowlist_session_id: When set, "always allow" also appends to ``sessions/<id>.yaml``.
+        persist_allowlist_session_id: When set, "always allow" also appends to ``sessions/<id>.json``.
     """
     auto_tools = {t.strip() for t in (auto_approve_tools or []) if t.strip()}
     yaml_pre = {t.strip() for t in (yaml_prefill_allow_tools or []) if t.strip()}
@@ -299,7 +302,7 @@ def create_user_callback(
     if persist_allowlist_session_id:
         sid = persist_allowlist_session_id.strip()
         disp = f"{sid[:8]}…" if len(sid) > 8 else sid
-        _hint_parts.append(f"session [cyan]{disp}[/cyan].yaml")
+        _hint_parts.append(f"session [cyan]{disp}[/cyan].json")
     if persist_allowlist and path:
         _hint_parts.append(f"[cyan]{path.name}[/cyan]")
     if _hint_parts:
@@ -339,7 +342,8 @@ def create_user_callback(
                 return "continue"
 
             if tool_name in runtime_tools:
-                console.print(f"[green]✓ Allowlisted tool:[/green] {tool_name}")
+                # Single notification — logger reaches both plain shell stderr and the TUI log panel.
+                _logger.event(f"[HITL] auto-approved tool: {tool_name} (in safety.auto_approve / tool_allowlist)")
                 return "continue"
 
             choice = await _hitl_triple_choice(
@@ -349,7 +353,7 @@ def create_user_callback(
                 footer=f"[bold]Always allow[/bold] {persist_hint}",
                 row1="Accept (this time only)",
                 row2="Reject",
-                row3="Always allow — [dim]saved to session YAML / allowlist[/dim]",
+                row3="Always allow — [dim]saved to session JSON / allowlist[/dim]",
                 default="2",
                 tool_call_id=tool_call_id,
             )
@@ -359,8 +363,8 @@ def create_user_callback(
                 runtime_tools.add(tool_name)
                 wrote = False
                 if persist_allowlist_session_id:
-                    merge_tool_allowlist_into_session_yaml(persist_allowlist_session_id, tool_name)
-                    console.print(f"[cyan]Saved '{tool_name}' to session YAML (safety.tool_allowlist).[/cyan]")
+                    merge_tool_allowlist_into_session_json(persist_allowlist_session_id, tool_name)
+                    console.print(f"[cyan]Saved '{tool_name}' to session JSON (safety.tool_allowlist).[/cyan]")
                     wrote = True
                 if persist_allowlist and path is not None:
                     merge_allowlist_file(path, tools=[tool_name])

@@ -300,8 +300,8 @@ def resolve_model_with_optional_wizard(
 ) -> Any:
     """Call :func:`resolve_model`; on failure or no LLM in a TTY, run the provider wizard and retry."""
     from agloom_cli.config import (
-        merge_ai_into_session_yaml,
         merge_ai_into_storage_yaml,
+        merge_api_keys_into_session_json,
         resolve_model,
     )
 
@@ -342,13 +342,17 @@ def resolve_model_with_optional_wizard(
     patch_for_disk = augment_patch_api_keys_from_env(patch)
     if thread_id:
         if Confirm.ask(
-            f"Save provider, model, and API keys to [path]this session's YAML[/path] "
-            f"([cyan]sessions/{tid_disp}.yaml[/cyan])? "
-            "[dim](recommended — does not change project defaults)[/dim]",
+            f"Save API keys to [path]this session's JSON[/path] "
+            f"([cyan]sessions/{tid_disp}.json[/cyan] · ``model_binding.api_keys``)? "
+            "[dim](recommended — does not change project defaults; model/provider are saved automatically per run)[/dim]",
             default=True,
         ):
-            merge_ai_into_session_yaml(thread_id, patch_for_disk)
-            console.print(f"[success]✓[/success] Saved to [cyan]sessions/{tid_disp}.yaml[/cyan].")
+            patch_keys = patch_for_disk.get("api_keys") if isinstance(patch_for_disk, dict) else None
+            if isinstance(patch_keys, dict) and patch_keys:
+                merge_api_keys_into_session_json(thread_id, patch_keys)
+                console.print(f"[success]✓[/success] Saved API keys to [cyan]sessions/{tid_disp}.json[/cyan].")
+            else:
+                console.print("[dim]No API keys to save (none entered or all blank).[/dim]")
         if Confirm.ask(
             "Additionally save to [path]storage agloom.yaml[/path] as the default for "
             "[bold]all future sessions[/bold] in this project?",

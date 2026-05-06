@@ -126,6 +126,30 @@ async def test_strict_tools_ignores_yaml_when_file_exists(
 
 
 @pytest.mark.asyncio
+async def test_always_allow_persists_to_session_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Triple-gate choice 3 appends tool to ``sessions/<id>.json`` ``safety.tool_allowlist``."""
+    store = tmp_path / ".agloom"
+    store.mkdir()
+    (store / "sessions").mkdir(parents=True)
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
+    sid = "a" * 32
+    cb = create_user_callback(
+        auto_approve_tools=[],
+        storage_root=tmp_path,
+        allowlist_path=None,
+        persist_allowlist=False,
+        persist_allowlist_session_id=sid,
+    )
+    monkeypatch.setattr("agloom_cli.hitl.Prompt.ask", lambda *a, **k: "3")
+
+    out = await cb("tool_interrupt_before", "Tool  : my_tool\nArgs  : {}")
+    assert out == "continue"
+    jpath = store / "sessions" / f"{sid}.json"
+    data = json.loads(jpath.read_text(encoding="utf-8"))
+    assert "my_tool" in (data.get("safety") or {}).get("tool_allowlist", [])
+
+
+@pytest.mark.asyncio
 async def test_strict_tools_false_unions_yaml_and_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     p = tmp_path / "tool_allowlist.json"
     save_allowlist(p, {"tools": ["run_shell"], "patterns": [], "workers": []})

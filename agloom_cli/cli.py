@@ -32,7 +32,6 @@ from .config import (
     normalized_safety_tool_allowlist,
     read_session_model_binding,
     remove_project_cleanup_dirs,
-    session_config_yaml_path,
     session_model_binding_is_usable,
     session_record_path,
     set_cli_project_root,
@@ -661,7 +660,7 @@ async def _run(
 
     project_rules = rules.get_relevant_rules(prompt or "general") if rules else ""
 
-    # Session id first so we can load per-session YAML + model_binding before resolving the LLM.
+    # Session id first so we can load per-session JSON (``ai`` / ``model_binding``) before resolving the LLM.
     try:
         if session is not None:
             thread_id = normalize_cli_session_id(session)
@@ -704,26 +703,26 @@ async def _run(
                         wa[k] = v
     merge_ai_api_keys_into_process_env(working_ai)
 
-    def _session_yaml_has_model(sai: dict[str, Any]) -> bool:
+    def _session_ai_has_model(sai: dict[str, Any]) -> bool:
         m = sai.get("model")
         if m is None:
             return False
         s = str(m).strip()
         return bool(s) and s.lower() != "auto"
 
-    def _session_yaml_has_llm(sai: dict[str, Any]) -> bool:
+    def _session_ai_has_llm(sai: dict[str, Any]) -> bool:
         llm = sai.get("llm")
         return isinstance(llm, dict) and bool(llm)
 
     def _coalesce_non_empty_str(*vals: object) -> str | None:
-        """First non-empty string among *vals* (CLI and YAML fragments may be mixed)."""
+        """First non-empty string among *vals* (CLI and session overlay may be mixed)."""
         for v in vals:
             if isinstance(v, str) and v.strip():
                 return v.strip()
         return None
 
-    session_yaml_has_model = _session_yaml_has_model(session_ai_only)
-    session_yaml_has_llm = _session_yaml_has_llm(session_ai_only)
+    session_ai_has_model = _session_ai_has_model(session_ai_only)
+    session_ai_has_llm = _session_ai_has_llm(session_ai_only)
 
     cm_raw = working_ai.get("model", "auto")
     config_model = str(cm_raw).strip() if cm_raw is not None else "auto"
@@ -736,7 +735,7 @@ async def _run(
         and binding_raw is not None
         and session_model_binding_is_usable(binding_raw)
         and not cli_model_explicit
-        and not session_yaml_has_model
+        and not session_ai_has_model
     )
 
     llm_frozen: dict[str, Any] | None
@@ -752,10 +751,10 @@ async def _run(
         merge_yaml_provider = bool(binding_raw.get("merge_yaml_provider", True))
         bp = binding_raw.get("provider")
         bb = binding_raw.get("base_url")
-        # CLI > session YAML > JSON snapshot (so per-session base_url / provider edits apply on resume).
+        # CLI > session JSON ``ai`` > ``model_binding`` snapshot (per-session base_url / provider on resume).
         res_provider = _coalesce_non_empty_str(provider, session_ai_only.get("provider"), bp)
         res_base_url = _coalesce_non_empty_str(base_url, session_ai_only.get("base_url"), bb)
-        if session_yaml_has_llm:
+        if session_ai_has_llm:
             llm_frozen = None
         else:
             blm = binding_raw.get("llm")
@@ -803,7 +802,7 @@ async def _run(
     agent_name = name or working_ai.get("name", "agloom")
     prov, mid = describe_llm(llm)
     sources = list(config_source_fingerprints(config))
-    sess_fp = config_layer_fingerprint(session_config_yaml_path(thread_id))
+    sess_fp = config_layer_fingerprint(session_record_path(thread_id))
     if sess_fp is not None:
         sources.append(sess_fp)
     bundle = "|".join(f"{s['path']}:{s['sha256']}" for s in sources)
@@ -927,7 +926,7 @@ async def _run(
     llm_timeout = llm_timeout or execution_config.get("llm_timeout", 120.0)
     classifier_timeout = classifier_timeout or execution_config.get("classifier_timeout", 30.0)
 
-    # Safety configuration (project + ``sessions/<id>.yaml`` ``safety:`` — session merges on top)
+    # Safety configuration (project + ``sessions/<id>.json`` ``safety`` — session merges on top)
     safety_config = build_working_safety_for_thread(cfg, thread_id)
     frozen = frozen or cfg.get("frozen", False)
     frozen_template = frozen_template or cfg.get("frozen_template")
@@ -940,6 +939,15 @@ async def _run(
     )
     if require_approval is None:
         require_approval = bool(safety_config.get("require_approval", True))
+        # Warn once when a pre-existing agloom.yaml carries the old `require_approval: false` default.
+        # New default is True; we don't auto-edit user config, just point at the line.
+        if "require_approval" in safety_config and not require_approval:
+            console.print(
+                "[warning]safety.require_approval is set to false in agloom.yaml — every tool will run without "
+                "approval.[/warning]\n"
+                "[dim]Newer agloom defaults to require_approval: true. Edit safety.require_approval to true (or "
+                "delete agloom.yaml to regenerate) to enable HITL prompts.[/dim]"
+            )
     auto_approve_tools = auto_approve_tools or safety_config.get("auto_approve", "")
     ibt_list = coerce_interrupt_before_tools_list(interrupt_before_tools_raw, require_approval=require_approval)
     yaml_allow_tools = normalized_safety_tool_allowlist(
@@ -977,6 +985,24 @@ async def _run(
             persist_allowlist_session_id=(thread_id if persist_al else None),
         )
         console.print("[yellow]Human approval enabled for sensitive operations[/yellow]")
+        bypass_set = {t for t in (yaml_allow_tools + (auto_list if not strict_al else [])) if t}
+        if strict_al and yaml_allow_tools:
+            bypass_set |= set(yaml_allow_tools)
+        if not strict_al:
+            bypass_set |= set(auto_list)
+        elif al_path and al_path.exists():
+            # strict + JSON file present: yaml prefill still applies, auto_approve is ignored
+            bypass_set |= set(yaml_allow_tools)
+        else:
+            bypass_set |= set(auto_list)
+        bypass_sorted = sorted(t for t in bypass_set if t)
+        if bypass_sorted:
+            console.print(
+                f"[dim]Auto-approved (no prompt): {', '.join(bypass_sorted)}. "
+                "Remove from [cyan]safety.auto_approve[/cyan] / [cyan]safety.tool_allowlist[/cyan] to require approval.[/dim]"
+            )
+        else:
+            console.print("[dim]Every tool will prompt — no entries in safety.auto_approve / tool_allowlist.[/dim]")
 
     feedback_handler = query_cache = None
 
