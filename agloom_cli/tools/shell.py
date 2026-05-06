@@ -19,9 +19,14 @@ import os
 import platform
 import subprocess
 
+from ..safety_limits import RUN_SHELL_INCOMPLETE_PREVIEW_BYTES, RUN_SHELL_MAX_OUTPUT_BYTES
+from ..tool_result_envelope import render_incomplete
 from ..tool_loader import tool
 
-_MAX_OUTPUT_BYTES = 512 * 1024  # 512 KB — prevents OOM on runaway commands
+_SHELL_HINTS = [
+    "Do **not** treat the preview as full stdout/stderr.",
+    "Redirect to a file (e.g. `cmd > out.txt`) and use read_file with offset/limit, or narrow with head/tail/grep.",
+]
 _MAX_ENV_VALUE_CHARS = 100
 _REDACT_PATTERNS = ("key", "token", "secret", "password", "passwd", "auth", "cookie", "bearer")
 
@@ -80,20 +85,35 @@ async def run_shell(
                 pass  # process reaped by OS eventually
             return f"Error: Command timed out after {timeout} seconds"
 
+        out_len = len(stdout or b"")
+        err_len = len(stderr or b"")
+        if out_len > RUN_SHELL_MAX_OUTPUT_BYTES or err_len > RUN_SHELL_MAX_OUTPUT_BYTES:
+            prv_out = (stdout or b"")[:RUN_SHELL_INCOMPLETE_PREVIEW_BYTES].decode("utf-8", errors="replace")
+            prv_err = (stderr or b"")[:RUN_SHELL_INCOMPLETE_PREVIEW_BYTES].decode("utf-8", errors="replace")
+            blob = "[stdout preview]\n" + prv_out
+            if prv_err.strip():
+                blob += "\n\n[stderr preview]\n" + prv_err
+            return render_incomplete(
+                kind="run_shell_output_bytes_cap",
+                metrics={
+                    "stdout_bytes": out_len,
+                    "stderr_bytes": err_len,
+                    "bytes_cap": RUN_SHELL_MAX_OUTPUT_BYTES,
+                    "preview_bytes": RUN_SHELL_INCOMPLETE_PREVIEW_BYTES,
+                },
+                hints=_SHELL_HINTS,
+                preview=blob,
+            )
+
         result_parts = []
 
         if stdout:
-            decoded = stdout[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
-            result_parts.append(decoded)
-            if len(stdout) > _MAX_OUTPUT_BYTES:
-                result_parts.append(f"\n... (stdout truncated, {len(stdout)} bytes total)")
+            result_parts.append(stdout.decode("utf-8", errors="replace"))
 
         if stderr:
-            err_text = stderr[:_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
+            err_text = stderr.decode("utf-8", errors="replace")
             if err_text:
                 result_parts.append(f"[stderr] {err_text}")
-                if len(stderr) > _MAX_OUTPUT_BYTES:
-                    result_parts.append(f"... (stderr truncated, {len(stderr)} bytes total)")
 
         if proc.returncode != 0:
             result_parts.append(f"[exit code: {proc.returncode}]")

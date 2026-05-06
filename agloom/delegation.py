@@ -49,7 +49,7 @@ class HandoffTarget:
         self.input_transform = input_transform
 
     def __repr__(self) -> str:
-        return f"HandoffTarget(name={self.name!r}, description={self.description[:60]!r})"
+        return f"HandoffTarget(name={self.name!r}, description={self.description!r})"
 
 
 def _build_delegation_context(targets: list[HandoffTarget]) -> str:
@@ -127,8 +127,8 @@ async def run_delegate(
     transformed = await _transform_query(target, query)
 
     logger.event(
-        f"[Delegation] → {target.name}: {transformed[:80]!r}"
-        + (f" (transformed from {query[:40]!r})" if transformed != query else "")
+        f"[Delegation] → {target.name}: {transformed!r}"
+        + (f" (transformed from {query!r})" if transformed != query else "")
     )
 
     t0 = time.perf_counter()
@@ -220,11 +220,11 @@ class BackgroundDelegationManager:
                 bg.completed_at = time.time()
 
         async with self._lock:
-            async_task = asyncio.create_task(_run(), name=f"bg-delegate-{task_id[:8]}")
+            async_task = asyncio.create_task(_run(), name=f"bg-delegate-{task_id}")
             bg._async_task = async_task
             self._tasks[task_id] = bg
 
-        logger.event(f"[BG-Delegation] submitted task_id={task_id[:8]}… → {target.name}")
+        logger.event(f"[BG-Delegation] submitted task_id={task_id}… → {target.name}")
         return task_id
 
     def status(self, task_id: str) -> BackgroundTask | None:

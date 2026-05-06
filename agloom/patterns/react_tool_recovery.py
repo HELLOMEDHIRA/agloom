@@ -2,7 +2,80 @@
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
+from langchain_core.messages import AIMessage, ToolMessage
+
 _TOOL_USE_FAILED = "tool_use_failed"
+
+# Keys commonly seen when models emit tool intent as JSON text instead of native tool_calls.
+_STRAY_TOOL_JSON_KEYS = frozenset({"type", "name", "parameters", "arguments", "function", "id"})
+
+
+def human_message_after_stray_tool_json() -> str:
+    """Nudge after the model put tool arguments in plain assistant text (no structured tool_calls)."""
+    return (
+        "Your last reply was JSON that *describes* a tool call, but this runtime only runs tools "
+        "through the model's **native tool-calling channel** — not as raw JSON in the message body.\n"
+        "Call the tool again using the provider's structured tool API only. "
+        "After the tool result arrives, answer in normal prose (no JSON tool blobs)."
+    )
+
+
+def _tool_name_from_stray_dict(d: dict[str, Any]) -> str | None:
+    fn = d.get("function")
+    if isinstance(fn, dict):
+        n = fn.get("name")
+        if isinstance(n, str) and n.strip():
+            return n.strip()
+    n = d.get("name")
+    if isinstance(n, str) and n.strip():
+        return n.strip()
+    return None
+
+
+def _stray_dict_looks_like_tool_call(d: dict[str, Any]) -> bool:
+    if d.get("type") == "function":
+        return True
+    if "parameters" in d or "arguments" in d:
+        return True
+    if isinstance(d.get("function"), dict):
+        return True
+    if _tool_name_from_stray_dict(d) and set(d.keys()).issubset(_STRAY_TOOL_JSON_KEYS):
+        return True
+    return False
+
+
+def last_ai_message_is_stray_tool_json(messages: list[Any], allowed_tool_names: frozenset[str]) -> bool:
+    """True if the latest assistant turn is JSON tool-shaped text but has no ``tool_calls``."""
+    if not allowed_tool_names or not messages:
+        return False
+    last = messages[-1]
+    if isinstance(last, ToolMessage):
+        return False
+    for msg in reversed(messages):
+        if not isinstance(msg, AIMessage):
+            continue
+        if getattr(msg, "tool_calls", None):
+            return False
+        raw = msg.content
+        if not raw or not isinstance(raw, str):
+            return False
+        text = raw.strip()
+        if not (text.startswith("{") and text.endswith("}")):
+            return False
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(data, dict):
+            return False
+        if not _stray_dict_looks_like_tool_call(data):
+            return False
+        tname = _tool_name_from_stray_dict(data)
+        return bool(tname and tname in allowed_tool_names)
+    return False
 
 
 def exception_indicates_tool_use_failed(exc: BaseException) -> bool:

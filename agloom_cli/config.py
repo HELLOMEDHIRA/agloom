@@ -175,11 +175,13 @@ ai:
     4. Use tools wisely - Check file context before modifying
     5. Handle errors - gracefully explain what went wrong
     6. Respect user privacy - Don't log or store sensitive data
+    7. **Large files** — Prefer ``read_file`` with an explicit ``limit`` and advance ``offset``. If you see ``[agloom:tool_result]`` / ``complete=false``, treat the payload as **partial** and follow Recovery hints. A “more lines remain” footer means the window is incomplete. Prefer **grep_files** for search.
 
     ## Terminal agent style (CLI)
 
     - After a successful tool action, confirm in **1–3 short sentences** (paths, result). Do **not** teach how to do what you already did.
     - The session UI shows tool traces; avoid duplicating tool payloads or tutorial markdown unless asked.
+    - You do **not** store project file bytes in memory across turns — if the user asks to show or reread a file, use **read_file** (or equivalent) again; never placeholders.
 
     ## Code Style
 
@@ -243,7 +245,7 @@ sandbox:
 safety:
   require_approval: true
   interrupt_before_tools: "tools"
-  auto_approve: "read_file,list_directory,get_working_directory"
+  auto_approve: ""
   tool_allowlist: []
   allowlist_strict_tools: true
   allowlist_file: ""
@@ -281,11 +283,12 @@ def create_default_config() -> dict[str, Any]:
     ensure_storage_layout()
     cfgp = config_yaml_path()
     if cfgp.exists():
-        _upgrade_require_approval_in_yaml_file(cfgp)
+        _upgrade_safety_legacy_in_yaml_file(cfgp)
         with open(cfgp, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         if isinstance(data, dict):
             _coerce_legacy_require_approval_secure_default(data)
+            _coerce_legacy_auto_approve_secure_default(data)
         return data if isinstance(data, dict) else {}
 
     with open(cfgp, "w", encoding="utf-8") as f:
@@ -295,6 +298,7 @@ def create_default_config() -> dict[str, Any]:
         data = yaml.safe_load(f) or {}
     if isinstance(data, dict):
         _coerce_legacy_require_approval_secure_default(data)
+        _coerce_legacy_auto_approve_secure_default(data)
     return data if isinstance(data, dict) else {}
 
 
@@ -326,11 +330,13 @@ You have access to tools for:
 4. **Use tools wisely** - Check file context before modifying
 5. **Handle errors** - gracefully explain what went wrong and suggest fixes
 6. **Respect user privacy** - Don't log or store sensitive data
+7. **Large files** — Use **read_file** with ``offset`` and **bounded** ``limit``. Treat ``[agloom:tool_result]`` with ``complete=false`` as partial output with recovery hints—not silent truncation. Prefer **grep_files** when searching.
 
 ## Terminal agent style (agloom CLI)
 
 - You run in a **coding-agent shell** (like Cursor / Claude Code). When tools succeeded, reply **briefly**: what changed (paths, commands), errors if any, optional one-line follow-up.
 - **Never** re-explain how to perform work you already completed with tools. Do not dump long tool JSON or full file contents unless the user asked to review them.
+- You **do not** retain a private byte-accurate copy of project files between turns. If the user asks to show, reread, or retry file contents, **call the file tools again** — do not answer from memory or placeholders.
 
 ## Code Style
 
@@ -357,6 +363,9 @@ When you make mistakes or hit dead ends:
 Remember: You're collaborating with a human. They control the session, you assist."""
 
 
+_LEGACY_AUTO_APPROVE_TOOL_SET = frozenset({"read_file", "list_directory", "get_working_directory"})
+
+
 def _safety_require_approval_needs_secure_upgrade(raw: Any) -> bool:
     """True if *raw* is missing or an explicit insecure legacy value (upgraded to True on disk and in memory)."""
     if raw is None:
@@ -368,8 +377,19 @@ def _safety_require_approval_needs_secure_upgrade(raw: Any) -> bool:
     return False
 
 
-def _upgrade_require_approval_in_yaml_file(path: Path | None) -> None:
-    """Rewrite *path* when ``safety.require_approval`` is legacy false/null/missing (secure default true)."""
+def _auto_approve_is_legacy_readonly_default(raw: Any) -> bool:
+    """True if *raw* is only the old default read-only trio (now prompts like other tools)."""
+    if raw is None or raw == "":
+        return False
+    if isinstance(raw, list):
+        items = {str(x).strip() for x in raw if str(x).strip()}
+    else:
+        items = {x.strip() for x in str(raw).split(",") if x.strip()}
+    return items == _LEGACY_AUTO_APPROVE_TOOL_SET
+
+
+def _upgrade_safety_legacy_in_yaml_file(path: Path | None) -> None:
+    """Rewrite *path* for legacy ``safety.require_approval`` / default ``auto_approve`` trio."""
     if path is None:
         return
     try:
@@ -379,8 +399,7 @@ def _upgrade_require_approval_in_yaml_file(path: Path | None) -> None:
     if not resolved.is_file():
         return
     try:
-        text = resolved.read_text(encoding="utf-8")
-        data = yaml.safe_load(text) or {}
+        data = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError):
         return
     if not isinstance(data, dict):
@@ -388,9 +407,15 @@ def _upgrade_require_approval_in_yaml_file(path: Path | None) -> None:
     safety = data.get("safety")
     if not isinstance(safety, dict):
         return
-    if not _safety_require_approval_needs_secure_upgrade(safety.get("require_approval")):
+    changed = False
+    if _safety_require_approval_needs_secure_upgrade(safety.get("require_approval")):
+        safety["require_approval"] = True
+        changed = True
+    if _auto_approve_is_legacy_readonly_default(safety.get("auto_approve")):
+        safety["auto_approve"] = ""
+        changed = True
+    if not changed:
         return
-    safety["require_approval"] = True
     try:
         with open(resolved, "w", encoding="utf-8") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
@@ -407,6 +432,15 @@ def _coerce_legacy_require_approval_secure_default(cfg: dict[str, Any]) -> None:
     raw = safety.get("require_approval")
     if _safety_require_approval_needs_secure_upgrade(raw):
         safety["require_approval"] = True
+
+
+def _coerce_legacy_auto_approve_secure_default(cfg: dict[str, Any]) -> None:
+    """Clear legacy default ``auto_approve`` read-only trio so those tools participate in HITL."""
+    safety = cfg.get("safety")
+    if not isinstance(safety, dict):
+        return
+    if _auto_approve_is_legacy_readonly_default(safety.get("auto_approve")):
+        safety["auto_approve"] = ""
 
 
 def load_config(path: Path | None) -> dict[str, Any]:
@@ -442,10 +476,11 @@ def load_config(path: Path | None) -> dict[str, Any]:
     if not config_paths:
         cfg = create_default_config()
         _coerce_legacy_require_approval_secure_default(cfg)
+        _coerce_legacy_auto_approve_secure_default(cfg)
         return cfg
 
     for p in config_paths:
-        _upgrade_require_approval_in_yaml_file(p)
+        _upgrade_safety_legacy_in_yaml_file(p)
 
     merged: dict[str, Any] = {}
     for config_path in config_paths:
@@ -457,6 +492,7 @@ def load_config(path: Path | None) -> dict[str, Any]:
             console.print(f"[warning]Warning: Error parsing {config_path}: {e}[/warning]")
 
     _coerce_legacy_require_approval_secure_default(merged)
+    _coerce_legacy_auto_approve_secure_default(merged)
     return merged
 
 
@@ -964,6 +1000,44 @@ def build_working_safety_for_thread(cfg: dict[str, Any], thread_id: str) -> dict
     else:
         out.pop("tool_allowlist", None)
     return out
+
+
+def tool_allowlist_bypass_sources(
+    cfg: dict[str, Any],
+    thread_id: str,
+    *,
+    allowlist_path: Path | None,
+) -> dict[str, list[str]]:
+    """Split HITL tool allowlist entries by storage scope (for CLI transparency).
+
+    - ``project_yaml``: ``agloom.yaml`` ``safety.tool_allowlist`` — applies to **every** session in this project.
+    - ``session_json``: ``sessions/<thread_id>.json`` — **this** session only.
+    - ``allowlist_file``: default ``tool_allowlist.json`` (or ``safety.allowlist_file``) — **every** session.
+    """
+    from .hitl_allowlist import load_allowlist
+
+    project = cfg.get("safety")
+    if not isinstance(project, dict):
+        project = {}
+    proj = normalized_safety_tool_allowlist(project.get("tool_allowlist") or project.get("allowlist_tools"))
+    sess = read_session_safety(thread_id).get("tool_allowlist", [])
+    file_tools: list[str] = []
+    if allowlist_path is not None and allowlist_path.exists():
+        raw = load_allowlist(allowlist_path)
+        file_tools = []
+        for t in raw.get("tools", []):
+            s = (t if isinstance(t, str) else str(t)).strip()
+            if s:
+                file_tools.append(s)
+
+    def _dedupe(xs: list[str]) -> list[str]:
+        return list(dict.fromkeys(xs))
+
+    return {
+        "project_yaml": _dedupe(proj),
+        "session_json": _dedupe(sess),
+        "allowlist_file": _dedupe(file_tools),
+    }
 
 
 def coerce_interrupt_before_tools_list(raw: Any, *, require_approval: bool) -> list[str] | None:

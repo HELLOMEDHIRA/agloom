@@ -73,7 +73,7 @@ async def _check_before_workers(
                 (
                     f"Agent   : {agent.get('name', 'Agent')}\n"
                     f"Worker  : {cfg.worker_id}\n"
-                    f"Task    : {cfg.task[:100]}\n"
+                    f"Task    : {cfg.task}\n"
                     f"Tools   : {[t.name for t in cfg.tools] if cfg.tools else 'LLM-only'}\n"
                     "\nType 'continue' to proceed, 'skip' to abort this worker."
                 ),
@@ -289,8 +289,8 @@ async def _collect_with_after_interrupt(
                         (
                             f"Agent  : {agent_name}\n"
                             f"Worker : {cfg.worker_id} completed.\n"
-                            f"Task   : {cfg.task[:80]}\n"
-                            f"Result : {result.output[:150]}...\n"
+                            f"Task   : {cfg.task}\n"
+                            f"Result : {result.output}\n"
                             f"Status : {result.signal.value}"
                         ),
                     )

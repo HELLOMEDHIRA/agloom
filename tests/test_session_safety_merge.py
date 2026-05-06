@@ -13,9 +13,30 @@ from agloom_cli.config import (
     coerce_interrupt_before_tools_list,
     merge_tool_allowlist_into_session_json,
     repair_empty_interrupt_before_tools_when_approval_on,
+    tool_allowlist_bypass_sources,
 )
 from agloom_cli.hitl import create_user_callback
 from agloom_cli.hitl_allowlist import save_allowlist
+
+
+def test_tool_allowlist_bypass_sources_session_not_shared_across_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Session JSON allowlist is per ``thread_id``; other sessions do not inherit it."""
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", tmp_path / ".agloom", raising=False)
+    (tmp_path / ".agloom" / "sessions").mkdir(parents=True)
+    sa, sb = "a" * 32, "b" * 32
+    (tmp_path / ".agloom" / "sessions" / f"{sa}.json").write_text(
+        json.dumps({"id": sa, "safety": {"tool_allowlist": ["read_file"]}}),
+        encoding="utf-8",
+    )
+    (tmp_path / ".agloom" / "sessions" / f"{sb}.json").write_text(
+        json.dumps({"id": sb, "safety": {"tool_allowlist": []}}),
+        encoding="utf-8",
+    )
+    cfg: dict = {"safety": {"tool_allowlist": []}}
+    assert tool_allowlist_bypass_sources(cfg, sa, allowlist_path=None)["session_json"] == ["read_file"]
+    assert tool_allowlist_bypass_sources(cfg, sb, allowlist_path=None)["session_json"] == []
 
 
 def test_build_working_safety_unions_tool_allowlist_from_session_json(

@@ -425,8 +425,8 @@ async def _check_pattern_interrupt(
     if not callback:
         return True
 
-    preview = f"\nOutput: {result.output[:100]}" if result else ""
-    message = f"{config['name']} INTERRUPT-{phase.upper()} [{pattern}]\nQuery: {query[:100]}{preview}"
+    preview = f"\nOutput: {result.output}" if result else ""
+    message = f"{config['name']} INTERRUPT-{phase.upper()} [{pattern}]\nQuery: {query}{preview}"
     logger.event(f"[HITL-L1] {message}")
     try:
         decision = await call_user_callback(callback, HITLEvent.PATTERN_INTERRUPT, message)
@@ -707,7 +707,7 @@ async def _ensure_frozen_analysis(config: dict) -> None:
                 return
 
         name = config.get("name", "Agent")
-        logger.event(f"[{name}] frozen agent — classifying template: {config['frozen_template'][:80]!r}")
+        logger.event(f"[{name}] frozen agent — classifying template: {config['frozen_template']!r}")
 
         analysis: QueryAnalysis = await analyze_query(
             llm=config["llm"],
@@ -900,9 +900,7 @@ async def run_fresh(
                     type="thinking",
                     data={
                         "name": "analyze_query",
-                        "input": (augmented_query[:300] + "…")
-                        if len(augmented_query) > 300
-                        else augmented_query,
+                        "input": augmented_query,
                         "output": "Running classifier…",
                     },
                 )
@@ -934,7 +932,12 @@ async def run_fresh(
             f"complexity={analysis.complexity} "
             f"subtasks={len(analysis.subtasks)}"
         )
-        logger.debug(f"[{name}] Analysis: {analysis.model_dump()}")
+        ms = getattr(analysis, "matched_skill", None)
+        logger.debug(
+            f"[{name}] classify detail: matched_skill={ms!r} "
+            f"reasoning_chars={len((analysis.reasoning or ''))} "
+            f"direct={'yes' if analysis.direct_response else 'no'}"
+        )
         pattern_val = analysis.pattern.value
         handler = None
 
@@ -1162,7 +1165,7 @@ async def run_fresh(
 
         from .llm_utils import safe_create_task
 
-        safe_create_task(_bg_gen(), name=f"skill-gen-{name[:8]}")
+        safe_create_task(_bg_gen(), name=f"skill-gen-{name}")
 
     _maybe_fire_feedback_hooks(config, result, raw_query_str, name, skill_used=analysis.matched_skill)
 

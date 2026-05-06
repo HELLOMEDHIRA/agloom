@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from ..tool_loader import tool
-from .filesystem import BoolLike, _boolish
+from .filesystem import BoolLike, _boolish, _resolve_path
 
 _cwd_stack: list[str] = []
 
@@ -70,8 +70,10 @@ async def push_working_directory(path: str) -> str:
 
     current = str(Path.cwd().resolve())
     _cwd_stack.append(current)
-
-    return await set_working_directory(path)
+    result = await set_working_directory(path)
+    if result.startswith("Error:"):
+        _cwd_stack.pop()
+    return result
 
 
 @tool
@@ -125,16 +127,19 @@ async def path_parent(path: str, levels: int = 1) -> str:
 async def path_absolute(path: str) -> str:
     """Get absolute path.
 
+    Relative paths resolve under the current working directory; ``..`` cannot escape cwd
+    (same rules as ``read_file`` / ``file_exists``).
+
     Args:
         path: Path to convert to absolute
 
     Returns:
         Absolute path
     """
-    p = Path(path)
-    if p.is_absolute():
-        return str(p)
-    return str((Path.cwd() / p).resolve())
+    try:
+        return str(_resolve_path(path))
+    except ValueError as e:
+        return f"Error: {e}"
 
 
 @tool
@@ -147,7 +152,10 @@ async def path_exists(path: str) -> str:
     Returns:
         "true" if exists, "false" if not
     """
-    return "true" if Path(path).exists() else "false"
+    try:
+        return "true" if _resolve_path(path).exists() else "false"
+    except ValueError as e:
+        return f"Error: {e}"
 
 
 @tool
@@ -160,7 +168,10 @@ async def path_is_file(path: str) -> str:
     Returns:
         "true" if file, "false" if not
     """
-    return "true" if Path(path).is_file() else "false"
+    try:
+        return "true" if _resolve_path(path).is_file() else "false"
+    except ValueError as e:
+        return f"Error: {e}"
 
 
 @tool
@@ -173,7 +184,10 @@ async def path_is_directory(path: str) -> str:
     Returns:
         "true" if directory, "false" if not
     """
-    return "true" if Path(path).is_dir() else "false"
+    try:
+        return "true" if _resolve_path(path).is_dir() else "false"
+    except ValueError as e:
+        return f"Error: {e}"
 
 
 @tool

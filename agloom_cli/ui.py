@@ -190,9 +190,8 @@ class RichUI:
 
     def render_tool_result(self, result: str, success: bool = True) -> None:
         """Render tool result."""
-        preview = result[:80] + "..." if len(result) > 80 else result
         color = "green" if success else "red"
-        self.console.print(f"[{color}]✓[/{color}] [dim]{preview}[/dim]")
+        self.console.print(f"[{color}]✓[/{color}] [dim]{result}[/dim]")
 
     # FULL RENDER
 
@@ -217,11 +216,7 @@ class RichUI:
         self.console.print()
 
         if assistant_msg:
-            self.console.print(
-                self.render_assistant_message(
-                    assistant_msg[:500] + "..." if len(assistant_msg) > 500 else assistant_msg
-                )
-            )
+            self.console.print(self.render_assistant_message(assistant_msg))
 
         self.console.print()
         self.console.print(self.render_bottom_status())

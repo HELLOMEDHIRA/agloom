@@ -303,7 +303,7 @@ async for event in agent.astream_events("Research renewable energy"):
     elif event.type == "tool_call":
         show_step(f"Calling {event.data['name']} [{event.data.get('id', '')}]...")
     elif event.type == "tool_result":
-        show_step(f"Result [{event.data.get('id', '')}]: {event.data['output'][:50]}")
+        show_step(f"Result [{event.data.get('id', '')}]: {event.data['output']}")
     elif event.type == "worker_end":
         show_step(f"Worker finished: {event.data['name']}")
     elif event.type == "done":

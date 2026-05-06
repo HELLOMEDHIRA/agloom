@@ -7,7 +7,20 @@ from typing import Any
 
 import httpx
 
+from ..safety_limits import (
+    FETCH_JSON_INCOMPLETE_PREVIEW_CHARS,
+    HTTP_INCOMPLETE_PREVIEW_BYTES,
+    HTTP_INCOMPLETE_PREVIEW_CHARS,
+    HTTP_MAX_BODY_CHARS,
+    HTTP_MAX_RESPONSE_BYTES,
+)
+from ..tool_result_envelope import render_incomplete
 from ..tool_loader import tool
+
+_HTTP_RECOVERY_HINTS = [
+    "Do **not** treat any preview as the full response — check ``complete=false`` in the agloom block above.",
+    "Retry with pagination, smaller filters, ``Range: bytes=...``, or download to a file and use read_file(offset/limit).",
+]
 
 
 def _redact_header(name: str, value: str) -> str:
@@ -41,6 +54,8 @@ async def http_request(
     Returns:
         Formatted response with status, headers, and body
     """
+    if not (url or "").strip():
+        return "Error: url must be non-empty"
     try:
         client = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
 
@@ -63,19 +78,62 @@ async def http_request(
                 for k, v in response.headers.items():
                     result_parts.append(f"  {k}: {_redact_header(k, v)}")
 
-            if response.text:
+            if response.content:
                 result_parts.append("\n[Body]")
-                try:
-                    parsed = json.loads(response.text)
-                    formatted = json.dumps(parsed, indent=2)
-                    if len(formatted) > 5000:
-                        formatted = formatted[:5000] + f"\n... (truncated, {len(formatted)} total chars)"
-                    result_parts.append(formatted)
-                except json.JSONDecodeError:
-                    text = response.text[:2000]
-                    result_parts.append(text)
-                    if len(response.text) > 2000:
-                        result_parts.append(f"\n... (truncated, {len(response.text)} total chars)")
+                nbytes = len(response.content)
+                if nbytes > HTTP_MAX_RESPONSE_BYTES:
+                    prv_b = response.content[:HTTP_INCOMPLETE_PREVIEW_BYTES]
+                    prv = prv_b.decode("utf-8", errors="replace")
+                    result_parts.append(
+                        render_incomplete(
+                            kind="http_body_bytes_cap",
+                            metrics={
+                                "bytes_total": nbytes,
+                                "bytes_cap": HTTP_MAX_RESPONSE_BYTES,
+                                "preview_bytes": len(prv_b),
+                            },
+                            hints=_HTTP_RECOVERY_HINTS,
+                            preview=prv,
+                        )
+                    )
+                else:
+                    text = response.content.decode("utf-8", errors="replace")
+                    try:
+                        parsed = json.loads(text)
+                        formatted = json.dumps(parsed, indent=2)
+                        if len(formatted) > HTTP_MAX_BODY_CHARS:
+                            prv = formatted[:HTTP_INCOMPLETE_PREVIEW_CHARS]
+                            result_parts.append(
+                                render_incomplete(
+                                    kind="http_body_chars_cap",
+                                    metrics={
+                                        "chars_total": len(formatted),
+                                        "chars_cap": HTTP_MAX_BODY_CHARS,
+                                        "preview_chars": len(prv),
+                                    },
+                                    hints=_HTTP_RECOVERY_HINTS,
+                                    preview=prv,
+                                )
+                            )
+                        else:
+                            result_parts.append(formatted)
+                    except json.JSONDecodeError:
+                        if len(text) > HTTP_MAX_BODY_CHARS:
+                            prv = text[:HTTP_INCOMPLETE_PREVIEW_CHARS]
+                            result_parts.append(
+                                render_incomplete(
+                                    kind="http_body_chars_cap",
+                                    metrics={
+                                        "chars_total": len(text),
+                                        "chars_cap": HTTP_MAX_BODY_CHARS,
+                                        "preview_chars": len(prv),
+                                    },
+                                    hints=_HTTP_RECOVERY_HINTS,
+                                    preview=prv,
+                                )
+                            )
+                        else:
+                            result_parts.append(text)
 
             return "\n".join(result_parts)
 
@@ -177,11 +235,27 @@ async def fetch_json(url: str, params: dict[str, Any] | None = None, key: str | 
     Returns:
         JSON data or the specific key value
     """
+    if not (url or "").strip():
+        return "Error: url must be non-empty"
     try:
         client = httpx.AsyncClient(timeout=30, follow_redirects=True)
         try:
             response = await client.get(url, params=params)
             response.raise_for_status()
+            nbytes = len(response.content)
+            if nbytes > HTTP_MAX_RESPONSE_BYTES:
+                prv_b = response.content[:HTTP_INCOMPLETE_PREVIEW_BYTES]
+                prv = prv_b.decode("utf-8", errors="replace")
+                return render_incomplete(
+                    kind="fetch_json_response_bytes_cap",
+                    metrics={
+                        "bytes_total": nbytes,
+                        "bytes_cap": HTTP_MAX_RESPONSE_BYTES,
+                        "preview_bytes": len(prv_b),
+                    },
+                    hints=_HTTP_RECOVERY_HINTS,
+                    preview=prv,
+                )
             data = response.json()
 
             if key:
@@ -191,9 +265,22 @@ async def fetch_json(url: str, params: dict[str, Any] | None = None, key: str | 
                         data = data.get(k, f"Key '{k}' not found")
                     else:
                         return f"Key '{key}' not found in non-dict response"
-                return str(data) if not isinstance(data, (dict, list)) else json.dumps(data, indent=2)
-
-            return json.dumps(data, indent=2)
+                out = str(data) if not isinstance(data, (dict, list)) else json.dumps(data, indent=2)
+            else:
+                out = json.dumps(data, indent=2)
+            if len(out) > HTTP_MAX_BODY_CHARS:
+                prv = out[:FETCH_JSON_INCOMPLETE_PREVIEW_CHARS]
+                return render_incomplete(
+                    kind="fetch_json_serialized_chars_cap",
+                    metrics={
+                        "chars_total": len(out),
+                        "chars_cap": HTTP_MAX_BODY_CHARS,
+                        "preview_chars": len(prv),
+                    },
+                    hints=_HTTP_RECOVERY_HINTS,
+                    preview=prv,
+                )
+            return out
         finally:
             await client.aclose()
 

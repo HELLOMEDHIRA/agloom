@@ -8,6 +8,15 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TypeAlias
 
+from ..safety_limits import (
+    GREP_MAX_FILE_BYTES,
+    GREP_MAX_MATCHES_DEFAULT,
+    READ_FILE_ABS_MAX_BYTES,
+    READ_FILE_DEFAULT_MAX_BYTES,
+    READ_FILE_FULL_NO_LIMIT_MAX_LINES,
+    READ_FILE_MAX_LINES_PER_CALL,
+)
+from ..tool_result_envelope import render_incomplete
 from .sandbox.file_edit import match_edit_variants
 from ..tool_loader import tool
 
@@ -31,9 +40,6 @@ def _boolish(value: BoolLike | None, *, default: bool = False) -> bool:
             return True
     return default
 
-_MAX_READ_BYTES = 10 * 1024 * 1024  # 10 MB — prevent memory exhaustion
-_MAX_GREP_FILE_BYTES = 2 * 1024 * 1024
-_MAX_GREP_MATCHES_DEFAULT = 200
 _SKIP_GREP_DIR_NAMES = frozenset(
     {".git", "__pycache__", ".venv", "venv", "node_modules", ".agloom", ".tox", "dist", "build"}
 )
@@ -43,8 +49,8 @@ _SKIP_GREP_DIR_NAMES = frozenset(
 async def read_file(
     path: str,
     encoding: str = "utf-8",
-    max_size: int = 1024 * 1024,
-    offset: int = 1,
+    max_size: int = READ_FILE_DEFAULT_MAX_BYTES,
+    offset: int | None = None,
     limit: int | None = None,
 ) -> str:
     """Read the contents of a file (full or a line range).
@@ -56,18 +62,28 @@ async def read_file(
     Args:
         path: Absolute or relative path to the file
         encoding: File encoding (default: utf-8)
-        max_size: Maximum file size to read in bytes (default: 1MB)
-        offset: 1-based starting line number (inclusive). Default 1 = from the beginning.
-        limit: Maximum number of lines to return. Omit or null for all lines after ``offset``.
+        max_size: Maximum file size to read in bytes (default from ``safety_limits``; cannot exceed absolute cap)
+        offset: 1-based starting line (inclusive). Omit or null for line 1. If this line is past the
+            end of the file but ``limit`` is set, the **last** ``limit`` lines are returned (tail read),
+            which fixes common LLM mistakes when asking for the "last N lines" of a short file.
+        limit: Max lines per call (must be ≤ ``READ_FILE_MAX_LINES_PER_CALL``). Omit only for small files.
 
     Returns:
-        File text, or a line-numbered slice when ``offset`` > 1 or ``limit`` is set.
+        Full file text, a numbered window, or an ``[agloom:tool_result] complete=false`` envelope plus preview
+        when an unbounded read hits the line budget; invalid ``limit`` uses an envelope without a body preview.
     """
     try:
-        if offset < 1:
+        off = 1 if offset is None else int(offset)
+        lim: int | None = None if limit is None else int(limit)
+        if off < 1:
             return "Error: offset must be >= 1 (1-based line number)."
-        if limit is not None and limit < 1:
+        if lim is not None and lim < 1:
             return "Error: limit must be >= 1 when provided."
+        if max_size > READ_FILE_ABS_MAX_BYTES:
+            return (
+                f"Error: max_size ({max_size}) cannot exceed {READ_FILE_ABS_MAX_BYTES} bytes "
+                "(agloom safety cap)."
+            )
 
         file_path = _resolve_path(path)
         size = file_path.stat().st_size
@@ -77,28 +93,63 @@ async def read_file(
                 "Increase max_size or use grep_files with a smaller scope."
             )
         text = file_path.read_text(encoding=encoding)
-        if offset == 1 and limit is None:
-            return text
-
         lines = text.splitlines()
         n = len(lines)
+
+        if off == 1 and lim is None:
+            if n > READ_FILE_FULL_NO_LIMIT_MAX_LINES:
+                cap = READ_FILE_FULL_NO_LIMIT_MAX_LINES
+                preview_body = "\n".join(lines[:cap])
+                return render_incomplete(
+                    kind="read_file_line_budget_unbounded",
+                    metrics={
+                        "total_lines": n,
+                        "preview_lines": cap,
+                        "max_lines_without_explicit_limit": READ_FILE_FULL_NO_LIMIT_MAX_LINES,
+                    },
+                    hints=[
+                        f"Paginate: read_file(path, offset={cap + 1}, limit={READ_FILE_MAX_LINES_PER_CALL}) "
+                        "(or smaller), repeating with higher offset until EOF.",
+                        "For symbols/strings across the file, prefer grep_files.",
+                    ],
+                    preview=preview_body,
+                    preview_title="--- first lines only (file continues — incomplete) ---",
+                )
+            return text
+
         if n == 0:
-            if offset == 1:
+            if off == 1:
                 return ""
-            return f"Error: offset {offset} is past end of file (0 lines)."
+            return f"Error: offset {off} is past end of file (0 lines)."
 
-        if offset > n:
-            return f"Error: offset {offset} is past end of file ({n} lines)."
+        if off > n:
+            if lim is not None:
+                off = max(1, n - lim + 1)
+            else:
+                return text
 
-        end_idx = n if limit is None else min(n, offset - 1 + limit)
-        chunk = lines[offset - 1 : end_idx]
-        partial = limit is not None and end_idx < n
-        numbered = offset > 1 or limit is not None or partial
+        if lim is not None and lim > READ_FILE_MAX_LINES_PER_CALL:
+            return render_incomplete(
+                kind="read_file_limit_too_large",
+                metrics={
+                    "requested_limit": lim,
+                    "max_lines_per_call": READ_FILE_MAX_LINES_PER_CALL,
+                },
+                hints=[
+                    f"Retry with limit<={READ_FILE_MAX_LINES_PER_CALL} and advance ``offset`` across windows.",
+                ],
+            )
 
-        body = "\n".join(f"{offset + i}|{line}" for i, line in enumerate(chunk))
+        end_idx = n if lim is None else min(n, off - 1 + lim)
+        chunk = lines[off - 1 : end_idx]
+        partial = lim is not None and end_idx < n
+        body = "\n".join(f"{off + i}|{line}" for i, line in enumerate(chunk))
         if partial:
             remaining = n - end_idx
-            body += f"\n... ({remaining} more lines in file; use offset={end_idx + 1} to continue)"
+            body += (
+                f"\n... ({remaining} more lines remain in file after this window; incomplete file — "
+                f"use offset={end_idx + 1} with the same ``limit`` to continue.)"
+            )
         return body
     except FileNotFoundError:
         return f"Error: File not found: {path}"
@@ -140,8 +191,8 @@ async def edit_file(
         if not file_path.is_file():
             return f"Error: Not a file or does not exist: {path}"
         size = file_path.stat().st_size
-        if size > _MAX_READ_BYTES:
-            return f"Error: File too large to edit safely ({size} bytes). Max: {_MAX_READ_BYTES}."
+        if size > READ_FILE_ABS_MAX_BYTES:
+            return f"Error: File too large to edit safely ({size} bytes). Max: {READ_FILE_ABS_MAX_BYTES}."
         text = file_path.read_text(encoding=encoding)
         m = match_edit_variants(old_string, new_string, text)
         if m is None:
@@ -175,7 +226,7 @@ async def grep_files(
     glob_pattern: str = "**/*",
     regex: BoolLike = True,
     ignore_case: BoolLike = False,
-    max_matches: int = _MAX_GREP_MATCHES_DEFAULT,
+    max_matches: int = GREP_MAX_MATCHES_DEFAULT,
 ) -> str:
     """Search file contents for a pattern (like ripgrep).
 
@@ -217,7 +268,7 @@ async def grep_files(
                 raw = file_path.read_bytes()
             except OSError:
                 continue
-            if len(raw) > _MAX_GREP_FILE_BYTES:
+            if len(raw) > GREP_MAX_FILE_BYTES:
                 continue
             if b"\x00" in raw[:8192]:
                 continue
@@ -241,7 +292,10 @@ async def grep_files(
 
         footer = ""
         if n_matches >= max_matches:
-            footer = f"\n... (stopped at {max_matches} matches; narrow glob or pattern)"
+            footer = (
+                f"\n... (match cap {max_matches} reached — output is **incomplete**; "
+                "narrow ``glob_pattern``/``pattern`` or raise ``max_matches`` within reason.)"
+            )
         return "\n".join(out_lines) + footer
     except Exception as e:
         return f"Error grepping: {e}"
@@ -322,7 +376,10 @@ async def file_exists(path: str) -> str:
     Returns:
         "true" if exists, "false" if not
     """
-    return "true" if _resolve_path(path).exists() else "false"
+    try:
+        return "true" if _resolve_path(path).exists() else "false"
+    except ValueError as e:
+        return f"Error: {e}"
 
 
 @tool

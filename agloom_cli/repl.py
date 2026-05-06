@@ -230,14 +230,43 @@ def _default_expand_thinking() -> bool:
     return True
 
 
+# Tools whose raw output should appear in the final Answer / transcript when the model
+# only summarizes (common for read_file / grep).
+_TOOL_OUTPUT_MERGE_NAMES = frozenset({"read_file", "grep_files", "list_directory", "search_files"})
+
+
+def append_tool_result_for_transcript(
+    tool_name: str, output: object, accum: list[tuple[str, str]]
+) -> None:
+    name = (tool_name or "").strip()
+    if name not in _TOOL_OUTPUT_MERGE_NAMES:
+        return
+    body = str(output or "").strip()
+    if not body:
+        return
+    low = body.lower()
+    if low.startswith("error:") or low.startswith("error "):
+        return
+    accum.append((name, body))
+
+
+def merge_transcript_with_tool_outputs(stream_plain: str, artifacts: list[tuple[str, str]]) -> str:
+    if not artifacts:
+        return stream_plain
+    blocks = [f"{n}:\n{body}" for n, body in artifacts]
+    extra = "\n\n".join(blocks)
+    base = stream_plain.rstrip()
+    if not base:
+        return extra
+    return f"{base}\n\n--- tool output ---\n\n{extra}"
+
+
 def _append_trace_line(thinking_lines: list[str], event_type: str, data: dict) -> None:
     """Append one line from the **agent event stream** (not from stdlib logging)."""
     if event_type == "thinking":
         name = (data.get("name") or "classify").strip() or "classify"
         out = data.get("output", "")
         s = str(out).strip() if out else ""
-        if len(s) > 360:
-            s = s[:360] + "…"
         thinking_lines.append(f"• {name}: {s}" if s else f"• {name}")
     elif event_type == "llm_call":
         name = (data.get("name") or "llm").strip() or "llm"
@@ -253,7 +282,7 @@ def _append_trace_line(thinking_lines: list[str], event_type: str, data: dict) -
         thinking_lines.append("• reflection")
     elif event_type == "fallback":
         o = data.get("output", "")
-        thinking_lines.append(f"• fallback: {str(o)[:200]}")
+        thinking_lines.append(f"• fallback: {str(o)}")
 
 
 def _thinking_body_text(lines: list[str]) -> Text:
@@ -347,7 +376,7 @@ def _thinking_footer_panel(
             padding=(0, 1),
         )
     last = thinking_lines[-1]
-    preview = last if len(last) <= 88 else last[:88] + "…"
+    preview = last
     try:
         preview_text = Text.from_markup(preview)
     except Exception:
@@ -576,7 +605,7 @@ async def run_shell_plain(
                     console.print()
                     for i, (q, a) in enumerate(state.history, 1):
                         console.print(f"[dim]{i}.[/dim] [magenta]>{q}[/magenta]")
-                        console.print(f"   {a[:100]}...")
+                        console.print(f"   {a}")
                     console.print()
                 else:
                     console.print("[dim]No history yet.[/dim]")
@@ -614,6 +643,7 @@ async def run_shell_plain(
             thinking_lines: list[str] = []
             tool_status: dict = {}
             stream_text = Text()
+            tool_transcript: list[tuple[str, str]] = []
 
             if not hasattr(agent, "astream_events"):
                 if not hasattr(agent, "ainvoke"):
@@ -659,16 +689,15 @@ async def run_shell_plain(
                             tool_id = data.get("id", "")
                             tool_status[tool_id] = tool_name
                             tin = data.get("input", "")
-                            tin_s = str(tin)[:120] + "…" if len(str(tin)) > 120 else str(tin)
-                            thinking_lines.append(f"→ [yellow]{tool_name}[/yellow] {tin_s}")
+                            thinking_lines.append(f"→ [yellow]{tool_name}[/yellow] {tin}")
                             live.update(_live_agent_panel(thinking_lines, stream_text))
 
                         elif event_type == "tool_result":
                             tool_id = data.get("id", "")
                             tool_name = tool_status.pop(tool_id, "unknown")
                             res = data.get("output", "")
-                            preview = str(res)[:100] + "…" if len(str(res)) > 100 else str(res)
-                            thinking_lines.append(f"  [green]✓[/green] {tool_name}: {preview}")
+                            append_tool_result_for_transcript(tool_name, res, tool_transcript)
+                            thinking_lines.append(f"  [green]✓[/green] {tool_name}: {res}")
                             live.update(_live_agent_panel(thinking_lines, stream_text))
 
                         elif event_type == "error":
@@ -680,13 +709,18 @@ async def run_shell_plain(
                             # DIRECT short-circuit and other paths may never emit token chunks; use final output.
                             result = data.get("result") or {}
                             out = result.get("output", "")
-                            if out and not stream_text.plain.strip():
+                            meta = result.get("metadata") or {}
+                            if meta.get("user_aborted_tool"):
+                                tool_transcript.clear()
+                                stream_text = Text()
+                                stream_text.append(str(out or "Aborted"))
+                            elif out and not stream_text.plain.strip():
                                 stream_text.append(str(out))
                             live.update(_live_agent_panel(thinking_lines, stream_text))
 
             console.print()
 
-            full_output = stream_text.plain
+            full_output = merge_transcript_with_tool_outputs(stream_text.plain, tool_transcript)
             _print_thinking_footer(thinking_lines, expanded=state.expand_thinking)
             if full_output.strip():
                 console.print(

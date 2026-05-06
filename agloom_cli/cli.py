@@ -20,6 +20,7 @@ from .config import (
     build_working_ai_for_thread,
     build_working_safety_for_thread,
     coerce_interrupt_before_tools_list,
+    tool_allowlist_bypass_sources,
     repair_empty_interrupt_before_tools_when_approval_on,
     config_layer_fingerprint,
     config_source_fingerprints,
@@ -105,6 +106,7 @@ _AGLOOM_CLI_REPLY_EPILOG = """
 
 ---
 [agloom CLI] Final replies: **short** and outcome-first. After tools succeed, state what changed (paths, results) — do not add tutorial-style "Step 1 / Step 2" prose for work you already completed with tools.
+Oversized tool payloads: if you see ``[agloom:tool_result]`` with ``complete=false``, you have **partial** data (often with a preview)—follow Recovery hints and pagination; do not assume completeness. Prefer **grep_files** for repo search.
 """
 
 app = typer.Typer(
@@ -987,6 +989,24 @@ async def _run(
             persist_allowlist_session_id=(thread_id if persist_al else None),
         )
         console.print("[yellow]Human approval enabled for sensitive operations[/yellow]")
+        _al_src = tool_allowlist_bypass_sources(cfg, thread_id, allowlist_path=al_path)
+        _scope_parts: list[str] = []
+        if _al_src["project_yaml"]:
+            _scope_parts.append(
+                f"[cyan]agloom.yaml[/cyan] → {', '.join(_al_src['project_yaml'])} [dim](every session)[/dim]"
+            )
+        if _al_src["allowlist_file"]:
+            _scope_parts.append(
+                f"[cyan]{al_path.name}[/cyan] → {', '.join(_al_src['allowlist_file'])} [dim](every session)[/dim]"
+            )
+        if _al_src["session_json"]:
+            _tid_disp = f"{thread_id[:8]}…" if len(thread_id) > 8 else thread_id
+            _scope_parts.append(
+                f"[cyan]sessions/{_tid_disp}.json[/cyan] → {', '.join(_al_src['session_json'])} "
+                f"[dim](this session only)[/dim]"
+            )
+        if _scope_parts:
+            console.print("[dim]HITL allowlist sources: " + " · ".join(_scope_parts) + "[/dim]")
         bypass_set = {t for t in (yaml_allow_tools + (auto_list if not strict_al else [])) if t}
         if strict_al and yaml_allow_tools:
             bypass_set |= set(yaml_allow_tools)

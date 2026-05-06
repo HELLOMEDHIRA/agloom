@@ -24,6 +24,7 @@ from agloom.hitl_contract import HITLEvent
 from agloom.logging_utils import get_logger
 
 from .config import merge_tool_allowlist_into_session_json
+from .safety_limits import clamp_hitl_detail
 
 _logger = get_logger("agloom_cli.hitl")
 from .hitl_ask import build_hitl_triple_ask_request, new_hitl_tool_call_id, triple_answer_to_token
@@ -31,6 +32,9 @@ from .hitl_allowlist import load_allowlist, merge_allowlist_file, resolve_allowl
 from .hitl_ask_types import AskUserRequest, AskUserWidgetResult
 
 console = Console()
+
+# When True, skip Rich ``console.print`` paths that corrupt Textual's alternate screen (stdout).
+_suppress_hitl_console: bool = False
 
 TripleChoiceProvider = Callable[..., Awaitable[str]]
 TextInputProvider = Callable[..., Awaitable[str]]
@@ -174,6 +178,12 @@ async def _rich_ask_user(request: AskUserRequest) -> AskUserWidgetResult:
 _triple_choice_provider: TripleChoiceProvider = _rich_triple_choice
 _text_input_provider: TextInputProvider = _rich_text_input
 _ask_user_provider: AskUserProvider = _rich_ask_user
+
+
+def set_hitl_console_suppressed(on: bool) -> None:
+    """Used by the Textual shell: worker-complete panels must not write raw stdout."""
+    global _suppress_hitl_console
+    _suppress_hitl_console = on
 
 
 def set_ui_providers(
@@ -346,6 +356,12 @@ def create_user_callback(
                     f"[HITL] Skipping approval UI for {tool_name!r} (allowlisted via safety.auto_approve, "
                     "safety.tool_allowlist, and/or saved allowlist). Remove it there to get the prompt."
                 )
+                console.print(
+                    f"[dim]HITL:[/dim] [green]Auto-approved[/green] [bold]{tool_name}[/bold] "
+                    f"[dim](allowlist). No card — remove it from [cyan]safety.tool_allowlist[/cyan] "
+                    f"in [cyan].agloom/sessions/<id>.json[/cyan] / project YAML / [cyan]tool_allowlist.json[/cyan] "
+                    f"to gate this tool again.[/dim]"
+                )
                 return "continue"
 
             choice = await _hitl_triple_choice(
@@ -365,13 +381,34 @@ def create_user_callback(
                 runtime_tools.add(tool_name)
                 wrote = False
                 if persist_allowlist_session_id:
-                    merge_tool_allowlist_into_session_json(persist_allowlist_session_id, tool_name)
-                    console.print(f"[cyan]Saved '{tool_name}' to session JSON (safety.tool_allowlist).[/cyan]")
-                    wrote = True
+                    try:
+                        merge_tool_allowlist_into_session_json(persist_allowlist_session_id, tool_name)
+                        console.print(f"[cyan]Saved '{tool_name}' to session JSON (safety.tool_allowlist).[/cyan]")
+                        wrote = True
+                    except OSError as exc:
+                        _logger.warning(
+                            "hitl_session_allowlist_write_failed",
+                            error=str(exc),
+                            tool=tool_name,
+                        )
                 if persist_allowlist and path is not None:
-                    merge_allowlist_file(path, tools=[tool_name])
-                    if not wrote:
-                        console.print(f"[cyan]Saved '{tool_name}' to {path.name}.[/cyan]")
+                    try:
+                        merge_allowlist_file(path, tools=[tool_name])
+                        ap = path.resolve()
+                        try:
+                            al_disp = str(ap.relative_to(Path.cwd().resolve()))
+                        except ValueError:
+                            al_disp = str(ap)
+                        console.print(
+                            f"[cyan]Saved '{tool_name}' to project allowlist[/cyan] [dim]{al_disp}[/dim]"
+                        )
+                    except OSError as exc:
+                        _logger.warning(
+                            "hitl_allowlist_file_write_failed",
+                            path=str(path),
+                            error=str(exc),
+                            tool=tool_name,
+                        )
                 elif not wrote:
                     console.print("[cyan]Allowlisted for this CLI run (not saved).[/cyan]")
             return "continue"
@@ -392,7 +429,7 @@ def create_user_callback(
             choice = await _hitl_triple_choice(
                 title="Pattern approval",
                 subtitle=f"Pattern: {pattern}",
-                detail=message[:2000],
+                detail=clamp_hitl_detail(message),
                 footer=f"[bold]Always allow this pattern[/bold] {persist_hint}",
                 row1="Accept (this time only)",
                 row2="Reject",
@@ -417,7 +454,7 @@ def create_user_callback(
                     "The API rejected the assistant message before any tool ran — "
                     "not the same gate as tool approval."
                 ),
-                detail=message[:3500],
+                detail=clamp_hitl_detail(message),
                 footer=None,
                 row1="Retry (another model turn)",
                 row2="Stop",
@@ -434,8 +471,12 @@ def create_user_callback(
 
         if event_type == HITLEvent.WORKER_INTERRUPT_AFTER:
             # Informational only — the runtime ignores the return value.
-            console.print()
-            console.print(Panel(message, title="Worker completed", border_style="green"))
+            if _suppress_hitl_console:
+                _logger.event("worker_completed_suppressed", char_count=len(message))
+                _logger.debug("worker_completed_suppressed_body", body=message)
+            else:
+                console.print()
+                console.print(Panel(message, title="Worker completed", border_style="green"))
             return True
 
         if event_type == HITLEvent.WORKER_INTERRUPT_BEFORE:
@@ -451,7 +492,7 @@ def create_user_callback(
             choice = await _hitl_triple_choice(
                 title="Worker approval",
                 subtitle=f"Worker: {worker_id}",
-                detail=message[:2000],
+                detail=clamp_hitl_detail(message),
                 footer=f"[bold]Always allow this worker[/bold] {persist_hint}",
                 row1="Accept (this time only)",
                 row2="Reject",

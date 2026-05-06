@@ -145,7 +145,7 @@ async def cache_set(cache: dict, query: str, pattern: str, output: str) -> None:
             points=[point],
         ),
     )
-    logger.event(f"[Cache] STORED — pattern={pattern}, TTL={CACHE_TTL[pattern]}s, query='{query[:60]}'")
+    logger.event(f"[Cache] STORED — pattern={pattern}, TTL={CACHE_TTL[pattern]}s, query='{query}'")
 
 
 async def cache_cleanup(cache: dict) -> int:

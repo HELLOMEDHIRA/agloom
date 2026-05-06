@@ -28,6 +28,8 @@ from .repl import (
     _thinking_footer_panel,
     _SESSION_CARD_MAX_W,
     _SESSION_CARD_MIN_W,
+    append_tool_result_for_transcript,
+    merge_transcript_with_tool_outputs,
     reset_ui,
     tui_soft_answer,
     tui_soft_done_banner,
@@ -169,7 +171,7 @@ class AgloomShellApp(App[None]):
                 yield Static("", id="live_turn")
                 yield RichLog(
                     id="chat",
-                    highlight=True,
+                    highlight=False,
                     markup=True,
                     wrap=True,
                     max_lines=12_000,
@@ -189,11 +191,15 @@ class AgloomShellApp(App[None]):
         # so the default Rich/console provider wouldn't reach the user. Plain shell
         # automatically reverts to the Rich providers on TUI exit (see run_shell_tui).
         try:
+            from .hitl import set_hitl_console_suppressed
             from .hitl_textual import install_textual_providers
 
             install_textual_providers(self)
-        except Exception:
-            pass
+            set_hitl_console_suppressed(True)
+        except Exception as exc:
+            import sys
+
+            sys.stderr.write(f"[agloom] HITL Textual providers failed ({exc!r}) — tool prompts may not work in TUI.\n")
         self.state = ShellState()
         assert self.state is not None
         self.working_dir = os.getcwd()
@@ -270,7 +276,7 @@ class AgloomShellApp(App[None]):
             else:
                 for i, (q, a) in enumerate(self.state.history, 1):
                     log.write(f"[dim]{i}.[/dim] [magenta]> {q}[/magenta]")
-                    log.write(f"   {a[:120]}…" if len(a) > 120 else f"   {a}")
+                    log.write(f"   {a}")
             return True
         if low == "help":
             self.query_one("#chat", RichLog).write(tui_soft_help_panel())
@@ -315,6 +321,7 @@ class AgloomShellApp(App[None]):
             thinking_lines: list[str] = []
             tool_status: dict[str, str] = {}
             stream_text = Text()
+            tool_transcript: list[tuple[str, str]] = []
 
             if not hasattr(self.agent, "astream_events"):
                 if not hasattr(self.agent, "ainvoke"):
@@ -347,15 +354,14 @@ class AgloomShellApp(App[None]):
                         tool_id = data.get("id", "")
                         tool_status[tool_id] = tool_name
                         tin = data.get("input", "")
-                        tin_s = str(tin)[:120] + "…" if len(str(tin)) > 120 else str(tin)
-                        thinking_lines.append(f"→ [yellow]{tool_name}[/yellow] {tin_s}")
+                        thinking_lines.append(f"→ [yellow]{tool_name}[/yellow] {tin}")
                         live.update(_live_agent_panel(thinking_lines, stream_text, tui_soft=True))
                     elif event_type == "tool_result":
                         tool_id = data.get("id", "")
                         tool_name = tool_status.pop(tool_id, "unknown")
                         res = data.get("output", "")
-                        preview = str(res)[:100] + "…" if len(str(res)) > 100 else str(res)
-                        thinking_lines.append(f"  [green]✓[/green] {tool_name}: {preview}")
+                        append_tool_result_for_transcript(tool_name, res, tool_transcript)
+                        thinking_lines.append(f"  [green]✓[/green] {tool_name}: {res}")
                         live.update(_live_agent_panel(thinking_lines, stream_text, tui_soft=True))
                     elif event_type == "error":
                         error_msg = data.get("error", "Unknown error")
@@ -364,12 +370,17 @@ class AgloomShellApp(App[None]):
                     elif event_type == "done":
                         result = data.get("result") or {}
                         out = result.get("output", "")
-                        if out and not stream_text.plain.strip():
+                        meta = result.get("metadata") or {}
+                        if meta.get("user_aborted_tool"):
+                            tool_transcript.clear()
+                            stream_text = Text()
+                            stream_text.append(str(out or "Aborted"))
+                        elif out and not stream_text.plain.strip():
                             stream_text.append(str(out))
                         live.update(_live_agent_panel(thinking_lines, stream_text, tui_soft=True))
 
             live.update(Text(""))
-            full_output = stream_text.plain
+            full_output = merge_transcript_with_tool_outputs(stream_text.plain, tool_transcript)
             tp = _thinking_footer_panel(
                 thinking_lines, expanded=self.state.expand_thinking, tui_soft=True
             )
@@ -419,8 +430,9 @@ async def run_shell_tui(
         # Restore Rich-based HITL providers so any post-TUI prompts (or a
         # subsequent plain-shell run in the same process) work normally.
         try:
-            from .hitl import reset_ui_providers
+            from .hitl import reset_ui_providers, set_hitl_console_suppressed
 
+            set_hitl_console_suppressed(False)
             reset_ui_providers()
         except Exception:
             pass

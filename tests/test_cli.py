@@ -91,6 +91,22 @@ def test_remove_project_cleanup_dirs(tmp_path: Path) -> None:
     assert not (tmp_path / ".agsuperbrain").exists()
 
 
+def test_load_config_strips_legacy_auto_approve_readonly_trio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = tmp_path / ".agloom"
+    store.mkdir()
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
+    ypath = store / "agloom.yaml"
+    ypath.write_text(
+        "safety:\n  require_approval: true\n"
+        "  auto_approve: read_file,list_directory,get_working_directory\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(None)
+    assert cfg["safety"]["auto_approve"] == ""
+    roundtrip = yaml.safe_load(ypath.read_text(encoding="utf-8"))
+    assert roundtrip["safety"]["auto_approve"] == ""
+
+
 def test_load_config_coerces_legacy_require_approval_false(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = tmp_path / ".agloom"
     store.mkdir()

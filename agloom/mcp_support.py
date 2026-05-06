@@ -198,7 +198,7 @@ def _make_resource_tool(
     The tool description lists all available URIs so the classifier
     knows what data is accessible.
     """
-    uris_preview = ", ".join(uris[:5])
+    uris_preview = ", ".join(uris)
     if len(uris) > 5:
         uris_preview += f" ... (+{len(uris) - 5} more)"
 

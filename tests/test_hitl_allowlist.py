@@ -126,6 +126,59 @@ async def test_strict_tools_ignores_yaml_when_file_exists(
 
 
 @pytest.mark.asyncio
+async def test_always_allow_session_json_write_error_still_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Session JSON allowlist write failure must not abort the in-flight tool."""
+    store = tmp_path / ".agloom"
+    store.mkdir()
+    (store / "sessions").mkdir(parents=True)
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
+    sid = "b" * 32
+    cb = create_user_callback(
+        auto_approve_tools=[],
+        storage_root=tmp_path,
+        allowlist_path=None,
+        persist_allowlist=False,
+        persist_allowlist_session_id=sid,
+    )
+    monkeypatch.setattr("agloom_cli.hitl.Prompt.ask", lambda *a, **k: "3")
+
+    def boom_session(*_a, **_k):
+        raise OSError("session write failed")
+
+    monkeypatch.setattr("agloom_cli.hitl.merge_tool_allowlist_into_session_json", boom_session)
+    out = await cb("tool_interrupt_before", "Tool  : read_file\nArgs  : {}")
+    assert out == "continue"
+
+
+@pytest.mark.asyncio
+async def test_always_allow_merge_file_error_still_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If disk write for project allowlist fails, the current tool must still run."""
+    p = tmp_path / "tool_allowlist.json"
+    save_allowlist(p, {"tools": [], "patterns": [], "workers": []})
+    cb = create_user_callback(
+        auto_approve_tools=[],
+        storage_root=tmp_path,
+        allowlist_path=p,
+        persist_allowlist=True,
+        persist_allowlist_session_id=None,
+    )
+    monkeypatch.setattr("agloom_cli.hitl.Prompt.ask", lambda *a, **k: "3")
+
+    def boom_merge(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("agloom_cli.hitl.merge_allowlist_file", boom_merge)
+    out = await cb("tool_interrupt_before", "Tool  : read_file\nArgs  : {}")
+    assert out == "continue"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert "read_file" not in data["tools"]
+
+
+@pytest.mark.asyncio
 async def test_always_allow_persists_to_session_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Triple-gate choice 3 appends tool to ``sessions/<id>.json`` ``safety.tool_allowlist``."""
     store = tmp_path / ".agloom"

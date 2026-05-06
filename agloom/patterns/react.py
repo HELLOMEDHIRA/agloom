@@ -33,7 +33,9 @@ from .middleware import HumanApprovalMiddleware, ReactUserTurnToolChoiceMiddlewa
 from .react_tool_recovery import (
     exception_indicates_tool_use_failed as _exception_indicates_tool_use_failed,
     extract_failed_generation_snippet as _extract_failed_generation_snippet,
+    human_message_after_stray_tool_json as _human_message_after_stray_tool_json,
     human_message_after_tool_use_failed as _human_message_after_tool_use_failed,
+    last_ai_message_is_stray_tool_json as _last_ai_message_is_stray_tool_json,
 )
 
 logger = get_logger(__name__)
@@ -45,6 +47,16 @@ REACT_MAX_HITL_CYCLES = REACT_RECURSION_LIMIT // 2
 _MAX_TOOL_RETRIES = 5
 _RETRY_DELAY = 0.5
 _AINVOKE_TIMEOUT = 120  # cap waits so stuck LLM/tool calls cannot block forever
+_STRAY_TOOL_JSON_RETRIES = 3
+
+
+def _react_tool_names(tools: list[Any]) -> frozenset[str]:
+    return frozenset(
+        n.strip()
+        for t in tools
+        for n in (getattr(t, "name", None),)
+        if isinstance(n, str) and n.strip()
+    )
 
 
 def _langchain_react_middleware(agent: dict, *extra: Any) -> list[Any]:
@@ -71,12 +83,17 @@ async def _user_decision_after_tool_use_failed(user_callback: Any, exc: BaseExce
 REACT_TOOL_DISCIPLINE = """
 
 === TOOL USAGE RULES ===
-- Call each tool ONCE per task — do not repeat the same tool call.
-- After receiving a tool result, synthesize and respond IMMEDIATELY.
-- Do NOT call more tools unless the result explicitly requires it.
-- Return your final answer right after getting the tool output.
+- Do **not** repeat the **same** tool call with identical arguments. Multiple calls are required when
+  inputs differ (e.g. **read_file** with advancing ``offset`` / ``limit`` to page through a large file,
+  or another path after a failed lookup).
+- Prefer **small, purposeful reads**: use ``read_file`` with ``limit`` (and increase ``offset`` using
+  the continuation hint in the tool result) instead of pulling huge ranges in one call. Use
+  **grep_files** when searching for a symbol or pattern across a file or tree.
+- After a tool returns, either call the **next** tool your plan needs or give the **final** answer —
+  do not idle in a loop with redundant identical calls.
 - **Tool-calling turns (Groq / OpenAI-style)**: When you need a tool, emit **only** valid structured tool calls for that turn.
   Do not mix free-form assistant prose that *describes* tool outcomes before the tool runs — that is rejected as ``tool_use_failed``.
+- **Never** print JSON objects that look like ``{"name": "...", "parameters": ...}`` as assistant text — that bypasses the tool runner; use native tool calls only.
 
 === FINAL ANSWER — CODING-AGENT CLI ===
 - Never claim tool results (e.g. file contents) until the tool has returned — Groq will reject prose masquerading as a tool call.
@@ -192,6 +209,8 @@ async def handle_react(
     user_cb = agent.get("user_callback")
     attempt = 0
     max_attempts = _MAX_TOOL_RETRIES
+    tool_names = _react_tool_names(tools)
+    stray_remaining = _STRAY_TOOL_JSON_RETRIES
     try:
         user_recovery_budget = int(
             agent.get(REACT_TOOL_USE_FAILED_USER_ROUNDS_KEY, DEFAULT_REACT_TOOL_USE_FAILED_USER_ROUNDS)
@@ -208,6 +227,23 @@ async def handle_react(
                 timeout=_AINVOKE_TIMEOUT,
             )
             dur = round((time.perf_counter() - t0) * 1000, 1)
+
+            msgs = response.get("messages", [])
+            if (
+                stray_remaining > 0
+                and tool_names
+                and _last_ai_message_is_stray_tool_json(msgs, tool_names)
+            ):
+                stray_remaining -= 1
+                logger.warning(
+                    f"[React] Model returned tool intent as plain JSON text (not structured tool_calls) "
+                    f"— nudging provider; retries left={stray_remaining} (agent={name})."
+                )
+                await asyncio.sleep(_RETRY_DELAY)
+                state = {
+                    "messages": list(msgs) + [HumanMessage(content=_human_message_after_stray_tool_json())]
+                }
+                continue
 
             output = _extract_last_ai_message(response)
             if not output:
@@ -427,9 +463,24 @@ async def _handle_react_streaming(
                     final_response = output_data
 
         dur = round((time.perf_counter() - t0) * 1000, 1)
+        tool_names = _react_tool_names(tools)
         output = _extract_last_ai_message(final_response)
         if not output:
             output = "No output produced."
+
+        msgs = (final_response or {}).get("messages", [])
+        if tool_names and _last_ai_message_is_stray_tool_json(msgs, tool_names):
+            logger.warning(f"[React|stream] Stray tool JSON — one follow-up ainvoke (agent={name}).")
+            recovery_state = {
+                "messages": list(msgs) + [HumanMessage(content=_human_message_after_stray_tool_json())]
+            }
+            final_response = await asyncio.wait_for(
+                react_agent.ainvoke(recovery_state, config=invoke_config),  # type: ignore[arg-type]
+                timeout=_AINVOKE_TIMEOUT,
+            )
+            output = _extract_last_ai_message(final_response) or output
+            if not output:
+                output = "No output produced."
 
         usage = _extract_token_usage(final_response)
         steps.append(
@@ -630,6 +681,8 @@ async def _handle_react_hitl(
     # Each batch: up to hitl_auto_retries silent model-turn recoveries, then optional user prompt.
     batch_size = hitl_auto_retries + 1
     max_attempts = batch_size
+    tool_names = _react_tool_names(tools)
+    stray_remaining = _STRAY_TOOL_JSON_RETRIES
 
     while attempt < max_attempts:
         attempt += 1
@@ -642,6 +695,21 @@ async def _handle_react_hitl(
                 ),
                 timeout=_AINVOKE_TIMEOUT,
             )
+            msgs = (response or {}).get("messages", [])
+            if (
+                stray_remaining > 0
+                and tool_names
+                and _last_ai_message_is_stray_tool_json(msgs, tool_names)
+            ):
+                stray_remaining -= 1
+                logger.warning(
+                    f"[React|HITL] Stray tool JSON in assistant text — nudging provider; "
+                    f"retries left={stray_remaining} (agent={name})."
+                )
+                await asyncio.sleep(_RETRY_DELAY)
+                messages = list(msgs) + [HumanMessage(content=_human_message_after_stray_tool_json())]
+                continue
+
             output = _extract_last_ai_message(response)
             if not output:
                 output = "No output produced."
@@ -658,20 +726,22 @@ async def _handle_react_hitl(
             )
 
         except UserAbort:
-            logger.event("[React|HITL] ✋ Aborted by user.")
-            partial = "Aborted before tool execution."
-            try:
-                partial = _extract_last_ai_message(response) or partial
-            except Exception:
-                pass
+            logger.event("[React|HITL] ✋ Aborted by user (tool not run).")
+            msgs: list[Any] = []
+            if response is not None:
+                try:
+                    msgs = list((response or {}).get("messages", []))
+                except Exception:
+                    msgs = []
             return ExecutionResult(
                 pattern_used=PatternType.REACT,
                 query=query,
-                output=partial,
+                output="Aborted",
                 steps_taken=1,
                 success=True,  # deliberate user action, not a failure
                 analysis=analysis,
-                messages=(response or {}).get("messages", []),
+                metadata={"user_aborted_tool": True},
+                messages=msgs,
             )
 
         except GraphRecursionError:

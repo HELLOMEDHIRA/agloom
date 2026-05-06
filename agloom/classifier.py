@@ -144,6 +144,32 @@ If the available tools include `save_memory` or `recall_memory`:
 
 
 ═══════════════════════════════════════════════════════════
+FILE / WORKSPACE / SHELL RULE  ⚠ HIGHEST PRIORITY (CLI CODING AGENT)
+═══════════════════════════════════════════════════════════
+
+When **any** filesystem, shell, or workspace tools are listed below (e.g. read_file,
+list_directory, run_shell, grep_files, write_file, …):
+
+  • You do **not** retain project file contents in classifier memory. You cannot truthfully
+    paste or summarize files without a tool call in the execution phase.
+
+  • ANY user request to **read**, **show**, **display**, **print**, **retry**, **again**,
+    **lines** of a file, **open** a path, **search** the repo, **list** directories, or
+    **run** shell commands → **pattern = REACT**, **direct_response = null**.
+
+  • **Never** choose DIRECT with a fake code block, placeholder comment, or text that says
+    "content wasn't stored — call read_file" — that is wrong. Route to REACT so the agent
+    invokes tools.
+
+  • Pure conceptual questions ("what is a .py file?", "what does read_file do?") with **no**
+    request to inspect **this** project may stay DIRECT.
+
+  Signals that almost always require REACT when tools exist:
+    file paths, extensions (.py, .toml, .md, …), "pyproject", "lines", "top/last/first N",
+    "read the", "show the", "contents", "directory", "folder", "grep", "run cmd", "retry".
+
+
+═══════════════════════════════════════════════════════════
 STRICT FIELD RULES
 ═══════════════════════════════════════════════════════════
 
@@ -263,10 +289,11 @@ async def analyze_query(
             tools_available=has_tools,
         )
 
+        reasoning = (analysis.reasoning or "").strip()
         logger.event(
             f"[Classifier] ✅ Pattern={analysis.pattern.value:<20} "
             f"| Complexity={analysis.complexity}/10 "
-            f"| {analysis.reasoning}"
+            f"| {reasoning}"
         )
         return analysis
 

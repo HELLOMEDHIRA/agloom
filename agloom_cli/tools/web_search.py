@@ -4,8 +4,19 @@ from __future__ import annotations
 
 import os
 
+from ..safety_limits import (
+    WEB_SEARCH_ANSWER_MAX_CHARS,
+    WEB_SEARCH_SNIPPET_MAX_CHARS,
+    WEB_SEARCH_TOTAL_OUTPUT_MAX_CHARS,
+)
+from ..tool_result_envelope import render_incomplete
 from ..tool_loader import tool
 from .filesystem import BoolLike, _boolish
+
+_WEB_HINTS = [
+    "Do **not** assume snippets or answers are complete when ``complete=false``.",
+    "Narrow the query, lower ``max_results``, or set ``include_raw_content=false`` if payloads are huge.",
+]
 
 
 @tool
@@ -26,6 +37,8 @@ async def web_search(
     Returns:
         Search results with relevant information
     """
+    if not (query or "").strip():
+        return "Error: query must be non-empty"
     api_key = os.environ.get("TAVILY_API_KEY")
     if not api_key:
         return "Error: TAVILY_API_KEY not set. Get one at https://tavily.com/"
@@ -58,10 +71,15 @@ async def web_search(
             if not data.get("results"):
                 return f"No results found for: {query}"
 
-            result_parts = []
+            result_parts: list[str] = []
+            truncated = False
 
             if data.get("answer"):
-                result_parts.append(f"[Answer]\n{data['answer']}\n")
+                ans = str(data["answer"])
+                if len(ans) > WEB_SEARCH_ANSWER_MAX_CHARS:
+                    ans = ans[:WEB_SEARCH_ANSWER_MAX_CHARS]
+                    truncated = True
+                result_parts.append(f"[Answer]\n{ans}\n")
 
             result_parts.append(f"[Results for '{query}']")
             for i, result in enumerate(data.get("results", []), 1):
@@ -73,11 +91,33 @@ async def web_search(
                     score_str = f"{score:.2f}"
                 except (TypeError, ValueError):
                     score_str = "N/A"
-                content = result.get("content", "")[:300]
+                content = str(result.get("content", ""))
+                if len(content) > WEB_SEARCH_SNIPPET_MAX_CHARS:
+                    content = content[:WEB_SEARCH_SNIPPET_MAX_CHARS]
+                    truncated = True
 
-                result_parts.append(f"\n{i}. {title}\n   URL: {url}\n   Score: {score_str}\n   {content}...")
+                result_parts.append(f"\n{i}. {title}\n   URL: {url}\n   Score: {score_str}\n   {content}")
 
-            return "\n".join(result_parts)
+            out = "\n".join(result_parts)
+            orig_len = len(out)
+            if orig_len > WEB_SEARCH_TOTAL_OUTPUT_MAX_CHARS:
+                out = out[:WEB_SEARCH_TOTAL_OUTPUT_MAX_CHARS]
+                truncated = True
+
+            if truncated:
+                return render_incomplete(
+                    kind="web_search_truncated",
+                    metrics={
+                        "answer_cap_chars": WEB_SEARCH_ANSWER_MAX_CHARS,
+                        "snippet_cap_chars": WEB_SEARCH_SNIPPET_MAX_CHARS,
+                        "total_cap_chars": WEB_SEARCH_TOTAL_OUTPUT_MAX_CHARS,
+                        "returned_chars": len(out),
+                    },
+                    hints=_WEB_HINTS,
+                    preview=out,
+                    preview_title="--- partial web_search payload (trimmed to caps) ---",
+                )
+            return out
 
         finally:
             await client.aclose()

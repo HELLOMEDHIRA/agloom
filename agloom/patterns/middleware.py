@@ -116,8 +116,8 @@ class HumanApprovalMiddleware(AgentMiddleware):
                 payload,
             )
         except Exception as exc:
-            logger.error(f"{self.agent_name}[L2-HITL] user_callback raised {exc!r} — defaulting to 'continue'.")
-            decision = "continue"
+            logger.error(f"{self.agent_name}[L2-HITL] user_callback raised {exc!r} — aborting tool (not auto-approving).")
+            raise UserAbort(f"HITL prompt failed: {exc}") from exc
 
         if str(decision).strip().lower() in ("abort", "no", "skip", "cancel", "stop"):
             logger.event(f"{self.agent_name}[L2-HITL] User aborted tool '{tool_name}'.")

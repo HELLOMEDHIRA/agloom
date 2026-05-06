@@ -19,7 +19,27 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
+from agloom.logging_utils import get_logger
+
 from .hitl_ask_types import AskUserRequest, AskUserWidgetResult
+
+_logger = get_logger("agloom_cli.hitl_textual")
+
+
+def _normalize_ask_user_dismiss(raw: object) -> AskUserWidgetResult:
+    """``push_screen`` / ``push_screen_wait`` must yield ``AskUserWidgetResult``; coerce edge returns."""
+    if not isinstance(raw, dict):
+        _logger.warning("hitl_ask_user_dismiss_not_dict", got_type=type(raw).__name__)
+        return {"type": "cancelled"}
+    if raw.get("type") == "cancelled":
+        return {"type": "cancelled"}
+    if raw.get("type") != "answered":
+        _logger.warning("hitl_ask_user_unexpected_type", got_type=raw.get("type"))
+        return {"type": "cancelled"}
+    answers = raw.get("answers")
+    if not isinstance(answers, list) or not answers:
+        return {"type": "cancelled"}
+    return {"type": "answered", "answers": [str(x) for x in answers if x is not None]}
 
 
 class AskUserScreen(ModalScreen[AskUserWidgetResult]):
@@ -217,9 +237,27 @@ def install_textual_providers(app: App) -> None:
     from .hitl import set_ui_providers
 
     async def _ask_user(req: AskUserRequest) -> AskUserWidgetResult:
-        return await app.push_screen_wait(AskUserScreen(req))
+        screen = AskUserScreen(req)
+        push_wait = getattr(app, "push_screen_wait", None)
+        if callable(push_wait):
+            raw = await push_wait(screen)
+        else:
+            raw = await app.push_screen(screen, wait_for_dismiss=True)
+        return _normalize_ask_user_dismiss(raw)
 
     async def _text(*, prompt: str, default: str = "") -> str:
-        return await app.push_screen_wait(HITLTextScreen(prompt, default))
+        scr = HITLTextScreen(prompt, default)
+        push_wait = getattr(app, "push_screen_wait", None)
+        if callable(push_wait):
+            raw = await push_wait(scr)
+        else:
+            raw = await app.push_screen(scr, wait_for_dismiss=True)
+        if isinstance(raw, str):
+            return raw
+        if isinstance(raw, dict) and "answers" in raw:
+            ans = raw.get("answers")
+            if isinstance(ans, list) and ans:
+                return str(ans[0])
+        return default
 
     set_ui_providers(ask_user=_ask_user, text_input=_text)

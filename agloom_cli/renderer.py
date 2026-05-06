@@ -53,8 +53,7 @@ def render_event(event) -> None:
     elif event_type == "tool_result":
         tool_id = data.get("id", "")
         result = data.get("output", "")
-        preview = result[:120] + "..." if len(result) > 120 else result
-        console.print(f"[success]✓[/success] [dim]{preview}[/dim]")
+        console.print(f"[success]✓[/success] [dim]{result}[/dim]")
 
     elif event_type == "worker_start":
         name = data.get("name", "worker")
@@ -73,7 +72,7 @@ def render_event(event) -> None:
     elif event_type == "reflection":
         output = data.get("output", "")
         if output:
-            console.print(f"[dim]🔄 Reflection: {output[:100]}...[/dim]")
+            console.print(f"[dim]🔄 Reflection: {output}[/dim]")
 
     elif event_type == "error":
         error = data.get("error", "Unknown error")
