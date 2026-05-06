@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from ..hitl_contract import HITLEvent, call_user_callback
 from ..logging_utils import get_logger
 from ..models import Signal, SignalType
 
@@ -84,8 +85,9 @@ async def drain_for_halt(
                 continue
 
             try:
-                answer = await user_callback(
-                    "clarification_request",
+                answer = await call_user_callback(
+                    user_callback,
+                    HITLEvent.CLARIFICATION_REQUEST,
                     {
                         "caller": caller_name,
                         "worker_id": signal.worker_id,

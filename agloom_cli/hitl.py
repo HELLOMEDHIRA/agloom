@@ -10,24 +10,11 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
 
+from agloom.hitl_contract import HITLEvent
+
 from .hitl_allowlist import load_allowlist, merge_allowlist_file, resolve_allowlist_path
 
 console = Console()
-
-
-SENSITIVE_TOOLS = {
-    "run_shell": "execute shell commands",
-    "run_shell_interactive": "execute interactive shell commands",
-    "remove_file": "delete files",
-    "write_file": "write/overwrite files",
-    "set_working_directory": "change working directory",
-    "copy_file": "copy files/directories",
-    "move_file": "move files/directories",
-    "http_request": "make HTTP requests",
-    "http_post": "POST requests",
-    "http_put": "PUT requests",
-    "http_delete": "DELETE requests",
-}
 
 _TOOL_LINE_RE = re.compile(r"Tool\s*:\s*(\S+)", re.IGNORECASE)
 _WORKER_LINE_RE = re.compile(r"Worker\s*:\s*(\S+)", re.IGNORECASE)
@@ -56,27 +43,28 @@ def _parse_pattern_name(message: str) -> str | None:
     return matches[0]
 
 
-def _hitl_choice_prompt(
+def _hitl_triple_choice(
     *,
     title: str,
     subtitle: str,
     detail: str,
-    allowlist_label: str,
-    persist_hint: str,
+    footer: str | None,
+    row1: str,
+    row2: str,
+    row3: str,
+    default: str = "2",
 ) -> str:
-    """Return 'accept', 'reject', or 'allowlist'."""
-    console.print()
-    console.print(
-        Panel(
-            f"[bold yellow]{title}[/bold yellow]\n[dim]{subtitle}[/dim]\n\n{detail}\n\n"
-            f"[bold]{allowlist_label}[/bold] {persist_hint}",
-            border_style="yellow",
-        )
+    """One Rich prompt for all HITL tri-state decisions. Returns ``accept``, ``reject``, or ``allowlist``."""
+    body = (
+        f"[bold yellow]{title}[/bold yellow]\n[dim]{subtitle}[/dim]\n\n{detail}"
+        + (f"\n\n{footer}" if footer else "")
     )
+    console.print()
+    console.print(Panel(body, border_style="yellow"))
     console.print(
-        "  [green]1[/green] / [green]a[/green]  Accept (this time only)   "
-        "│   [red]2[/red] / [red]r[/red]  Reject   "
-        "│   [cyan]3[/cyan] / [cyan]l[/cyan]  Always allow — [dim]saved to allowlist[/dim]"
+        f"  [green]1[/green] / [green]a[/green]  {row1}   "
+        f"│   [red]2[/red] / [red]r[/red]  {row2}   "
+        f"│   [cyan]3[/cyan] / [cyan]l[/cyan]  {row3}"
     )
     console.print()
     choice = Prompt.ask(
@@ -91,14 +79,20 @@ def _hitl_choice_prompt(
             "accept",
             "reject",
             "allowlist",
+            "retry",
+            "stop",
+            "yes",
+            "no",
         ],
-        default="2",
+        default=default,
     )
     c = choice.strip().lower()
-    if c in ("1", "a", "accept", "y", "yes"):
-        return "accept"
+    if c in ("2", "r", "reject", "stop", "no"):
+        return "reject"
     if c in ("3", "l", "allowlist", "always", "trust"):
         return "allowlist"
+    if c in ("1", "a", "accept", "y", "yes", "retry"):
+        return "accept"
     return "reject"
 
 
@@ -111,10 +105,12 @@ def create_user_callback(
     storage_root: Path | None = None,
     allowlist_strict_tools: bool = True,
 ):
-    """Create ``user_callback`` for agloom HITL (L1/L2/L3).
+    """Build a ``user_callback`` for interactive terminals (Rich).
 
-    **L2 tool interrupts** use event ``tool_interrupt_before`` (see ``HumanApprovalMiddleware``).
-    Choices match common assistant UX: accept once, reject, or always allow (persisted allowlist).
+    For the **stable event names and return-value contract**, see
+    ``agloom.hitl_contract`` / :class:`~agloom.hitl_contract.HITLEvent`.
+    This function is **CLI-only**; library users should implement their own callback
+    (web UI, tests, logging) using the same event strings.
 
     Args:
         auto_approve_tools: Tool names never prompted (from config ``safety.auto_approve``) when not strict.
@@ -163,7 +159,7 @@ def create_user_callback(
     async def callback(event_type: str, message: str | dict) -> Any:
         nonlocal runtime_tools, runtime_patterns, runtime_workers
 
-        if event_type == "clarification_request":
+        if event_type == HITLEvent.CLARIFICATION_REQUEST:
             if isinstance(message, dict):
                 q = str(message.get("question", ""))
                 wid = message.get("worker_id", "")
@@ -176,7 +172,7 @@ def create_user_callback(
         if not isinstance(message, str):
             return True
 
-        if event_type == "tool_interrupt_before":
+        if event_type == HITLEvent.TOOL_INTERRUPT_BEFORE:
             tool_name = _parse_tool_name(message)
             if not tool_name:
                 console.print(f"[dim]{message}[/dim]")
@@ -186,13 +182,15 @@ def create_user_callback(
                 console.print(f"[green]✓ Allowlisted tool:[/green] {tool_name}")
                 return "continue"
 
-            description = SENSITIVE_TOOLS.get(tool_name, f"execute {tool_name}")
-            choice = _hitl_choice_prompt(
+            choice = _hitl_triple_choice(
                 title="Tool approval",
                 subtitle=f"Tool: {tool_name}",
                 detail=message,
-                allowlist_label="Always allow",
-                persist_hint=persist_hint,
+                footer=f"[bold]Always allow[/bold] {persist_hint}",
+                row1="Accept (this time only)",
+                row2="Reject",
+                row3="Always allow — [dim]saved to allowlist[/dim]",
+                default="2",
             )
             if choice == "reject":
                 return "abort"
@@ -205,7 +203,7 @@ def create_user_callback(
                     console.print("[cyan]Allowlisted for this CLI run (not saved).[/cyan]")
             return "continue"
 
-        if event_type == "pattern_interrupt":
+        if event_type == HITLEvent.PATTERN_INTERRUPT:
             pattern = _parse_pattern_name(message)
             if pattern and pattern in runtime_patterns:
                 console.print(f"[green]✓ Allowlisted pattern:[/green] {pattern}")
@@ -215,12 +213,15 @@ def create_user_callback(
                 console.print(f"[dim]{message}[/dim]")
                 return True
 
-            choice = _hitl_choice_prompt(
+            choice = _hitl_triple_choice(
                 title="Pattern approval",
                 subtitle=f"Pattern: {pattern}",
                 detail=message[:2000],
-                allowlist_label="Always allow this pattern",
-                persist_hint=persist_hint,
+                footer=f"[bold]Always allow this pattern[/bold] {persist_hint}",
+                row1="Accept (this time only)",
+                row2="Reject",
+                row3="Always allow — [dim]saved to allowlist[/dim]",
+                default="2",
             )
             if choice == "reject":
                 return "no"
@@ -233,7 +234,35 @@ def create_user_callback(
                     console.print("[cyan]Allowlisted for this CLI run (not saved).[/cyan]")
             return True
 
-        if event_type == "worker_interrupt_before":
+        if event_type == HITLEvent.REACT_TOOL_USE_FAILED:
+            choice = _hitl_triple_choice(
+                title="Model turn rejected (tool_use_failed)",
+                subtitle=(
+                    "The API rejected the assistant message before any tool ran — "
+                    "not the same gate as tool approval."
+                ),
+                detail=message[:3500],
+                footer=None,
+                row1="Retry (another model turn)",
+                row2="Stop",
+                row3="Retry — [dim]allowlist applies only after a real tool is proposed[/dim]",
+                default="1",
+            )
+            if choice == "reject":
+                return "abort"
+            if choice == "allowlist":
+                console.print(
+                    "[dim]Always-allow lists gate real tool calls. Retrying with another model turn…[/dim]"
+                )
+            return "retry"
+
+        if event_type == HITLEvent.WORKER_INTERRUPT_AFTER:
+            # Informational only — the runtime ignores the return value.
+            console.print()
+            console.print(Panel(message, title="Worker completed", border_style="green"))
+            return True
+
+        if event_type == HITLEvent.WORKER_INTERRUPT_BEFORE:
             worker_id = _parse_worker_id(message)
             if worker_id and worker_id in runtime_workers:
                 console.print(f"[green]✓ Allowlisted worker:[/green] {worker_id}")
@@ -243,12 +272,15 @@ def create_user_callback(
                 console.print(f"[dim]{message}[/dim]")
                 return "continue"
 
-            choice = _hitl_choice_prompt(
+            choice = _hitl_triple_choice(
                 title="Worker approval",
                 subtitle=f"Worker: {worker_id}",
                 detail=message[:2000],
-                allowlist_label="Always allow this worker",
-                persist_hint=persist_hint,
+                footer=f"[bold]Always allow this worker[/bold] {persist_hint}",
+                row1="Accept (this time only)",
+                row2="Reject",
+                row3="Always allow — [dim]saved to allowlist[/dim]",
+                default="2",
             )
             if choice == "reject":
                 return "skip"

@@ -31,6 +31,7 @@ from .llm_utils import (
     robust_structured_call,
     safe_create_task,
 )
+from .hitl_contract import HITLEvent, normalize_react_tool_use_failed_decision
 from .logging_utils import configure_package_logging, get_logger
 from .memory.session import SessionMemory
 from .memory.store import LongTermStore
@@ -75,6 +76,7 @@ except ImportError:
     _HARNESS_AVAILABLE = False
 
 __all__ = [
+    "HITLEvent",
     "RESERVED_TOOL_NAMES",
     "AgentConfig",
     "AgentEvent",
@@ -113,6 +115,7 @@ __all__ = [
     "create_agent_sync",
     "create_cache",
     "get_logger",
+    "normalize_react_tool_use_failed_decision",
     "robust_structured_call",
     "safe_create_task",
 ]

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 
+from ..hitl_contract import HITLEvent, call_user_callback
 from ..logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -94,8 +94,9 @@ class HumanApprovalMiddleware(AgentMiddleware):
         logger.event(f"{self.agent_name}[L2-HITL] Pausing before tool '{tool_name}'")
 
         try:
-            decision = self.user_callback(
-                "tool_interrupt_before",
+            decision = await call_user_callback(
+                self.user_callback,
+                HITLEvent.TOOL_INTERRUPT_BEFORE,
                 (
                     f"Agent : {self.agent_name}\n"
                     f"Tool  : {tool_name}\n"
@@ -103,8 +104,6 @@ class HumanApprovalMiddleware(AgentMiddleware):
                     f"\nType 'continue' to proceed or 'abort' to cancel."
                 ),
             )
-            if asyncio.iscoroutine(decision):
-                decision = await decision
         except Exception as exc:
             logger.error(f"{self.agent_name}[L2-HITL] user_callback raised {exc!r} — defaulting to 'continue'.")
             decision = "continue"

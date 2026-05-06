@@ -627,7 +627,10 @@ class AgentConfig(BaseModel):
     interrupt_before_tools: list[str] = Field(default_factory=list)
     interrupt_before_workers: list[str] = Field(default_factory=list)
     interrupt_after_workers: list[str] = Field(default_factory=list)
-    user_callback: Any = None  # Callable | None
+    user_callback: Any = Field(
+        default=None,
+        description="Human-in-the-loop decisions: event names and semantics in ``agloom.hitl_contract`` (``HITLEvent``).",
+    )
 
     debug: bool = False
     max_concurrent: int = Field(default=4, ge=1, le=32)
@@ -671,6 +674,25 @@ class AgentConfig(BaseModel):
         description=(
             "ReAct: after a HumanMessage, set LangChain tool_choice=required so providers "
             "(e.g. Groq) cannot emit prose instead of a structured tool call (tool_use_failed)."
+        ),
+    )
+
+    react_tool_use_failed_auto_retries_hitl: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description=(
+            "ReAct + L2 HITL: silent tool_use_failed retries before the user_callback receives "
+            "REACT_TOOL_USE_FAILED. See ``agloom.hitl_contract``."
+        ),
+    )
+    react_tool_use_failed_user_rounds: int = Field(
+        default=3,
+        ge=0,
+        le=20,
+        description=(
+            "ReAct: how many times the user_callback may extend the run with a user-chosen "
+            "retry after REACT_TOOL_USE_FAILED. See ``agloom.hitl_contract``."
         ),
     )
 

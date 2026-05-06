@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from .. import worker as worker_module
+from ..hitl_contract import HITLEvent, call_user_callback
 from ..logging_utils import get_logger
 from ..models import ResolvedWorkerConfig, Signal, SignalType, WorkerResult
 from .worker_gates import get_signal_queue
@@ -66,8 +67,9 @@ async def _check_before_workers(
 
         logger.event(f"[HITL] L3-Before: pausing before '{cfg.worker_id}'")
         try:
-            decision = await user_callback(
-                "worker_interrupt_before",
+            decision = await call_user_callback(
+                user_callback,
+                HITLEvent.WORKER_INTERRUPT_BEFORE,
                 (
                     f"Agent   : {agent.get('name', 'Agent')}\n"
                     f"Worker  : {cfg.worker_id}\n"
@@ -196,8 +198,9 @@ async def _listen_for_halt(
                 continue
 
             try:
-                answer = await user_callback(
-                    "clarification_request",
+                answer = await call_user_callback(
+                    user_callback,
+                    HITLEvent.CLARIFICATION_REQUEST,
                     {
                         "agent_name": agent_name,
                         "worker_id": signal.worker_id,
@@ -280,8 +283,9 @@ async def _collect_with_after_interrupt(
             if interrupt_list and user_callback and _should_interrupt(cfg.worker_id, interrupt_list):
                 logger.event(f"[HITL] L3-After: pausing after '{cfg.worker_id}'")
                 try:
-                    await user_callback(
-                        "worker_interrupt_after",
+                    await call_user_callback(
+                        user_callback,
+                        HITLEvent.WORKER_INTERRUPT_AFTER,
                         (
                             f"Agent  : {agent_name}\n"
                             f"Worker : {cfg.worker_id} completed.\n"

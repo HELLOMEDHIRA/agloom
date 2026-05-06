@@ -21,6 +21,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool, StructuredTool
 
 from .classifier import analyze_query
+from .hitl_contract import HITLEvent, call_user_callback
 from .delegation import (
     BackgroundDelegationManager,
     HandoffTarget,
@@ -428,7 +429,7 @@ async def _check_pattern_interrupt(
     message = f"{config['name']} INTERRUPT-{phase.upper()} [{pattern}]\nQuery: {query[:100]}{preview}"
     logger.event(f"[HITL-L1] {message}")
     try:
-        decision = await _maybe_await(callback("pattern_interrupt", message))
+        decision = await call_user_callback(callback, HITLEvent.PATTERN_INTERRUPT, message)
         return str(decision).strip().lower() not in ("no", "abort", "stop", "cancel")
     except Exception as exc:
         logger.error(f"[HITL-L1] user_callback raised {exc!r} — continuing (fail-open).")
@@ -1997,6 +1998,8 @@ async def create_agent(
     harness_project_name: str = "project",
     skills_disk_mirror: Path | str | None = None,
     react_force_tool_choice_on_user_turn: bool = True,
+    react_tool_use_failed_auto_retries_hitl: int = 2,
+    react_tool_use_failed_user_rounds: int = 3,
 ) -> UnifiedAgent:
     """Construct a configured ``UnifiedAgent`` (async).
 
@@ -2056,6 +2059,8 @@ async def create_agent(
         reflection_threshold=reflection_threshold,
         mcp_servers=list(mcp_servers or []),
         react_force_tool_choice_on_user_turn=react_force_tool_choice_on_user_turn,
+        react_tool_use_failed_auto_retries_hitl=react_tool_use_failed_auto_retries_hitl,
+        react_tool_use_failed_user_rounds=react_tool_use_failed_user_rounds,
         auto_summarize=auto_summarize,
         summarize_threshold=summarize_threshold,
         summarizer_model=summarizer_model,
@@ -2209,6 +2214,8 @@ async def create_agent(
         "max_step_output_length": max_step_output_length,
         "fallback_pattern": fallback_pattern,
         "react_force_tool_choice_on_user_turn": react_force_tool_choice_on_user_turn,
+        "react_tool_use_failed_auto_retries_hitl": react_tool_use_failed_auto_retries_hitl,
+        "react_tool_use_failed_user_rounds": react_tool_use_failed_user_rounds,
         "_handoff_targets": [],
         "_delegate_targets": [],
         "_bg_delegation_manager": BackgroundDelegationManager(),
