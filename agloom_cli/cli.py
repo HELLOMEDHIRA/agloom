@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,6 +20,7 @@ from .config import (
     build_working_ai_for_thread,
     build_working_safety_for_thread,
     coerce_interrupt_before_tools_list,
+    repair_empty_interrupt_before_tools_when_approval_on,
     config_layer_fingerprint,
     config_source_fingerprints,
     ensure_config_ready,
@@ -926,7 +928,6 @@ async def _run(
     llm_timeout = llm_timeout or execution_config.get("llm_timeout", 120.0)
     classifier_timeout = classifier_timeout or execution_config.get("classifier_timeout", 30.0)
 
-    # Safety configuration (project + ``sessions/<id>.json`` ``safety`` — session merges on top)
     safety_config = build_working_safety_for_thread(cfg, thread_id)
     frozen = frozen or cfg.get("frozen", False)
     frozen_template = frozen_template or cfg.get("frozen_template")
@@ -938,26 +939,27 @@ async def _run(
         interrupt_before_tools or cfg.get("interrupt_before_tools") or safety_config.get("interrupt_before_tools")
     )
     if require_approval is None:
-        require_approval = bool(safety_config.get("require_approval", True))
-        # Warn once when a pre-existing agloom.yaml carries the old `require_approval: false` default.
-        # New default is True; we don't auto-edit user config, just point at the line.
-        if "require_approval" in safety_config and not require_approval:
-            console.print(
-                "[warning]safety.require_approval is set to false in agloom.yaml — every tool will run without "
-                "approval.[/warning]\n"
-                "[dim]Newer agloom defaults to require_approval: true. Edit safety.require_approval to true (or "
-                "delete agloom.yaml to regenerate) to enable HITL prompts.[/dim]"
-            )
+        env_ra = (os.environ.get("AGLOOM_REQUIRE_APPROVAL") or "").strip().lower()
+        if env_ra in ("0", "false", "no", "off", "n"):
+            require_approval = False
+        else:
+            _ra = safety_config.get("require_approval")
+            require_approval = True if _ra is None else bool(_ra)
     auto_approve_tools = auto_approve_tools or safety_config.get("auto_approve", "")
     ibt_list = coerce_interrupt_before_tools_list(interrupt_before_tools_raw, require_approval=require_approval)
+    ibt_list, ibt_repaired_empty = repair_empty_interrupt_before_tools_when_approval_on(
+        ibt_list, require_approval=require_approval
+    )
+    if ibt_repaired_empty:
+        console.print(
+            "[yellow]Note:[/yellow] [cyan]safety.interrupt_before_tools[/cyan] is empty but approval is on; "
+            "using [cyan]tools[/cyan] so each tool can still be gated. "
+            "Use [cyan]--no-require-approval[/cyan] or [cyan]AGLOOM_REQUIRE_APPROVAL=0[/cyan] to disable L2."
+        )
     yaml_allow_tools = normalized_safety_tool_allowlist(
         safety_config.get("tool_allowlist") or safety_config.get("allowlist_tools")
     )
 
-    # L1–L4 HITL: ``user_callback`` is invoked by the core (see ``agloom.hitl_contract``).
-    # - CLI: ``agloom_cli.hitl.create_user_callback`` (Rich line UI; Textual TUI swaps in
-    #   modal providers via ``install_textual_providers`` in ``repl_tui`` on_mount).
-    # - ReAct ``tool_use_failed``: event ``REACT_TOOL_USE_FAILED`` (not tool approve/deny).
     user_callback = None
     if require_approval:
         from .hitl import create_user_callback
@@ -991,15 +993,16 @@ async def _run(
         if not strict_al:
             bypass_set |= set(auto_list)
         elif al_path and al_path.exists():
-            # strict + JSON file present: yaml prefill still applies, auto_approve is ignored
             bypass_set |= set(yaml_allow_tools)
         else:
             bypass_set |= set(auto_list)
         bypass_sorted = sorted(t for t in bypass_set if t)
         if bypass_sorted:
             console.print(
-                f"[dim]Auto-approved (no prompt): {', '.join(bypass_sorted)}. "
-                "Remove from [cyan]safety.auto_approve[/cyan] / [cyan]safety.tool_allowlist[/cyan] to require approval.[/dim]"
+                f"[dim]No approval modal for: {', '.join(bypass_sorted)} "
+                "(listed under [cyan]safety.auto_approve[/cyan], [cyan]safety.tool_allowlist[/cyan], "
+                "and/or saved allowlist). The agent still runs those tools; clear those entries to see "
+                "Accept / Reject / Always allow.[/dim]"
             )
         else:
             console.print("[dim]Every tool will prompt — no entries in safety.auto_approve / tool_allowlist.[/dim]")

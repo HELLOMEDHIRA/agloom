@@ -342,8 +342,10 @@ def create_user_callback(
                 return "continue"
 
             if tool_name in runtime_tools:
-                # Single notification — logger reaches both plain shell stderr and the TUI log panel.
-                _logger.event(f"[HITL] auto-approved tool: {tool_name} (in safety.auto_approve / tool_allowlist)")
+                _logger.event(
+                    f"[HITL] Skipping approval UI for {tool_name!r} (allowlisted via safety.auto_approve, "
+                    "safety.tool_allowlist, and/or saved allowlist). Remove it there to get the prompt."
+                )
                 return "continue"
 
             choice = await _hitl_triple_choice(

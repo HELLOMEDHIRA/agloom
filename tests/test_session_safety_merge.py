@@ -12,6 +12,7 @@ from agloom_cli.config import (
     build_working_safety_for_thread,
     coerce_interrupt_before_tools_list,
     merge_tool_allowlist_into_session_json,
+    repair_empty_interrupt_before_tools_when_approval_on,
 )
 from agloom_cli.hitl import create_user_callback
 from agloom_cli.hitl_allowlist import save_allowlist
@@ -75,6 +76,19 @@ def test_coerce_interrupt_before_tools_default_tools_when_approval() -> None:
     assert coerce_interrupt_before_tools_list(None, require_approval=True) == ["tools"]
     assert coerce_interrupt_before_tools_list("", require_approval=True) == ["tools"]
     assert coerce_interrupt_before_tools_list(None, require_approval=False) is None
+
+
+def test_repair_empty_ibt_when_approval_on() -> None:
+    assert repair_empty_interrupt_before_tools_when_approval_on([], require_approval=True) == (
+        ["tools"],
+        True,
+    )
+    assert repair_empty_interrupt_before_tools_when_approval_on(["run_shell"], require_approval=True) == (
+        ["run_shell"],
+        False,
+    )
+    assert repair_empty_interrupt_before_tools_when_approval_on([], require_approval=False) == ([], False)
+    assert repair_empty_interrupt_before_tools_when_approval_on(None, require_approval=True) == (None, False)
 
 
 def test_merge_tool_allowlist_into_session_json_roundtrip(

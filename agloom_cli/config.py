@@ -29,7 +29,7 @@ The **agloom CLI** stores config and cached state **only** here — ``<project>/
 | Path | Purpose |
 |------|---------|
 | ``agloom.yaml`` | Configuration (``ai.api_keys`` merged into process env for the CLI session) |
-| ``sessions/`` | Per session: ``<id>.json`` (history, ``model_binding``, optional ``ai`` / ``safety`` overlays) |
+| ``sessions/`` | Per session: ``<id>.json`` (history, ``model_binding``, ``ai`` overlay, ``safety`` with at least ``tool_allowlist`` for hand-edits) |
 | ``checkpoints.sqlite`` | LangGraph checkpoints (CLI session resume when memory is on) |
 | ``graph_store.sqlite`` | LangGraph store backing long-term / session memory |
 | ``rules/`` | Cached project rules |
@@ -137,38 +137,7 @@ DEFAULT_CONFIG = """# agloom configuration file
 
 ai:
   name: agloom
-  # Default when you run ``agloom`` without ``-m``. Override per run: ``agloom -m llama-3.3-70b-versatile``
   model: auto
-  # Optional explicit backend for ambiguous ids (e.g. meta-llama/...): groq | ollama | vllm | litellm | openrouter | openai | ...
-  # Ignored when you pass ``-m`` unless you also pass ``--provider`` (CLI wins).
-  # provider: groq
-  # Base URL for local ollama / OpenAI-compatible vLLM (defaults: localhost — see docs).
-  # base_url: ""
-  # Optional API keys (exact env var names, e.g. GROQ_API_KEY). Listed keys are written into the
-  # process environment and override any existing export for that variable (session/project YAML wins).
-  # Prefer env-only in CI; session YAML can snapshot keys when saving from the wizard.
-  # api_keys:
-  #   NVIDIA_API_KEY: nvapi-...
-  #   OPENAI_API_KEY: sk-...
-  #   GROQ_API_KEY: gsk-...
-  #   ANTHROPIC_API_KEY: sk-ant-...
-  # Curated integrations — typical ``api_keys`` env names + routing (see model_resolver.get_model):
-  #   openai: OPENAI_API_KEY; optional base_url (Azure/custom). llm keys are filtered to that client
-  #     (``timeout`` → ``request_timeout``, ``max_completion_tokens`` → ``max_tokens``, …).
-  #   anthropic: ANTHROPIC_API_KEY; llm: ``stop`` → ``stop_sequences``, ``timeout`` → ``default_request_timeout``.
-  #   google / gemini: GOOGLE_API_KEY or GEMINI_API_KEY; llm: ``max_tokens``/``max_completion_tokens`` → ``max_output_tokens``.
-  #   mistralai: MISTRAL_API_KEY
-  #   groq: GROQ_API_KEY
-  #   xai: XAI_API_KEY
-  #   ollama: no key; base_url or OLLAMA_HOST / OLLAMA_BASE_URL
-  #   vllm: base_url; OPENAI_API_KEY or VLLM_API_KEY optional (often EMPTY)
-  #   litellm: model litellm:upstream/model; OPENAI_API_KEY default; base_url → api_base
-  #   openrouter: OPENROUTER_API_KEY; cerebras: CEREBRAS_API_KEY; nvidia: NVIDIA_API_KEY
-  #   lc: / init: / other slugs: LangChain ``init_chat_model`` — see upstream docs.
-  # Endpoint routing: base_url merges when --base-url omitted. provider merges when CLI model omitted.
-  # base_url: http://127.0.0.1:11434
-  # Client / sampling options: defaults match ``_LLM_YAML_DEFAULTS`` (:func:`baseline_llm_params`).
-  # Change any value; ``null`` keeps optional fields out of provider requests (no baseline for that key).
   llm:
     temperature: 0
     top_p: 1.0
@@ -238,9 +207,7 @@ ai:
 
 mcp:
   servers: ""
-  # Super-Brain MCP is always used by the CLI (https://agsuperbrain.readthedocs.io/). Default args: [-u, -m, agsuperbrain, mcp]. Optional: superbrain: { name:, command:, args: }
   superbrain: {}
-  # Extra MCP servers (listed after Super-Brain unless same name replaces it)
   server_list: []
 
 tools:
@@ -259,9 +226,7 @@ skills:
   max_skills: 30
 
 rules:
-  # Custom rules directory (YAML files)
   dir: ""
-  # Refresh rules on each session (default: false - only refresh if missing)
   refresh: false
 
 execution:
@@ -271,51 +236,26 @@ execution:
   llm_timeout: 120.0
   classifier_timeout: 30.0
 
-# Optional confined workspace (see ``agloom_cli.tools.LocalSandbox``). Not wired into default CLI tools yet.
 sandbox:
   enabled: false
   root: ""
 
 safety:
   require_approval: true
-  # Comma list or YAML list. Include ``tools`` to pause before every tool (default when unset and require_approval).
   interrupt_before_tools: "tools"
-  # Comma-separated tool names that skip the approval modal (empty = prompt for all unless allowlisted).
-  # Default: read-only tools auto-pass; write / shell / network tools still prompt.
   auto_approve: "read_file,list_directory,get_working_directory"
-  # Optional: always-allowed tools from project config (union with ``sessions/<id>.json`` ``safety.tool_allowlist``).
-  # Session file entries are merged here; session ``tool_allowlist`` is always honored even when allowlist_strict_tools is true.
   tool_allowlist: []
-  # HITL "always allow" also appends to ``sessions/<id>.json`` when using the CLI.
-  # When true (default): if that file exists, only its "tools" list applies — safety.auto_approve is ignored.
-  # When false: yaml auto_approve and JSON tools are unioned. If the file does not exist yet, yaml applies alone.
   allowlist_strict_tools: true
   allowlist_file: ""
-  # When true, "Always allow" during HITL appends to session JSON and the allowlist JSON under .agloom
   persist_tool_allowlist: true
 
 session:
   current_session: ""
   last_updated: ""
-  # Per-thread overlays live in ``<storage>/sessions/<thread_id>.json`` under ``ai`` and ``safety`` (optional).
-  # Same ``ai`` keys as this file — ``model``, ``provider``, ``base_url``, ``llm``, ``api_keys``. The CLI also
-  # deep-merges ``model_binding`` into ``ai`` on each run. Legacy ``<id>.yaml`` sidecars are migrated once into JSON and removed.
 """
 
-CONFIG_HEADER = """# agloom configuration
-#
-# This file is auto-created on first CLI run.
-# Edit this file to customize your agloom environment.
-#
-# For full documentation, see: https://agloom.readthedocs.io
-#
-# Config precedence:
-#   1. CLI arguments
-#   2. Explicit -c/--config file
-#   3. Project-root .agloom.yaml
-#   4. <project>/.agloom/agloom.yaml (or ~/.agloom/agloom.yaml if no CLI project)
-#   5. Environment variables
-#   6. Default values
+CONFIG_HEADER = """# agloom configuration (auto-created). Docs: https://agloom.readthedocs.io
+# Precedence: CLI > -c/--config > project .agloom.yaml > storage agloom.yaml > env > defaults
 """
 
 
@@ -342,13 +282,19 @@ def create_default_config() -> dict[str, Any]:
     cfgp = config_yaml_path()
     if cfgp.exists():
         with open(cfgp, encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+            data = yaml.safe_load(f) or {}
+        if isinstance(data, dict):
+            _coerce_legacy_require_approval_secure_default(data)
+        return data if isinstance(data, dict) else {}
 
     with open(cfgp, "w", encoding="utf-8") as f:
         f.write(CONFIG_HEADER + "\n\n" + DEFAULT_CONFIG)
 
     with open(cfgp, encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        data = yaml.safe_load(f) or {}
+    if isinstance(data, dict):
+        _coerce_legacy_require_approval_secure_default(data)
+    return data if isinstance(data, dict) else {}
 
 
 def get_system_prompt() -> str:
@@ -410,6 +356,23 @@ When you make mistakes or hit dead ends:
 Remember: You're collaborating with a human. They control the session, you assist."""
 
 
+def _coerce_legacy_require_approval_secure_default(cfg: dict[str, Any]) -> None:
+    """Force ``safety.require_approval`` to True (legacy false/null/missing)."""
+    safety = cfg.setdefault("safety", {})
+    if not isinstance(safety, dict):
+        cfg["safety"] = {"require_approval": True}
+        return
+    raw = safety.get("require_approval")
+    if raw is None:
+        safety["require_approval"] = True
+        return
+    if raw is False:
+        safety["require_approval"] = True
+        return
+    if isinstance(raw, str) and raw.strip().lower() in ("false", "no", "0", "off", "n"):
+        safety["require_approval"] = True
+
+
 def load_config(path: Path | None) -> dict[str, Any]:
     """Load configuration from YAML files and merge.
 
@@ -441,7 +404,9 @@ def load_config(path: Path | None) -> dict[str, Any]:
         _append(path)
 
     if not config_paths:
-        return create_default_config()
+        cfg = create_default_config()
+        _coerce_legacy_require_approval_secure_default(cfg)
+        return cfg
 
     merged: dict[str, Any] = {}
     for config_path in config_paths:
@@ -452,6 +417,7 @@ def load_config(path: Path | None) -> dict[str, Any]:
         except yaml.YAMLError as e:
             console.print(f"[warning]Warning: Error parsing {config_path}: {e}[/warning]")
 
+    _coerce_legacy_require_approval_secure_default(merged)
     return merged
 
 
@@ -696,6 +662,24 @@ def _write_session_json(thread_id: str, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def default_session_safety_skeleton() -> dict[str, Any]:
+    """Session JSON ``safety`` stub (``tool_allowlist``); merged in :func:`build_working_safety_for_thread`."""
+    return {"tool_allowlist": []}
+
+
+def ensure_session_safety_structure(session_data: dict[str, Any]) -> None:
+    """Mutate *session_data* so a normal ``safety`` dict exists (idempotent)."""
+    raw = session_data.get("safety")
+    if not isinstance(raw, dict):
+        session_data["safety"] = default_session_safety_skeleton()
+        return
+    tools = raw.get("tool_allowlist")
+    if tools is None:
+        raw["tool_allowlist"] = []
+    elif not isinstance(tools, list):
+        raw["tool_allowlist"] = normalized_safety_tool_allowlist(tools)
 
 
 def read_session_safety(thread_id: str) -> dict[str, Any]:
@@ -952,6 +936,17 @@ def coerce_interrupt_before_tools_list(raw: Any, *, require_approval: bool) -> l
     return [t.strip() for t in s.split(",") if t.strip()]
 
 
+def repair_empty_interrupt_before_tools_when_approval_on(
+    ibt_list: list[str] | None,
+    *,
+    require_approval: bool,
+) -> tuple[list[str] | None, bool]:
+    """Coerce explicit ``[]`` to ``[\"tools\"]`` when approval is on (else ReAct skips HITL middleware)."""
+    if require_approval and ibt_list is not None and len(ibt_list) == 0:
+        return ["tools"], True
+    return ibt_list, False
+
+
 def merge_ai_api_keys_into_process_env(ai: dict[str, Any]) -> None:
     """Copy ``ai.api_keys`` into :func:`os.environ` for LangChain and SDKs.
 
@@ -1081,7 +1076,8 @@ def start_new_session(
     so session-scoped overrides stay next to history.
 
     If ``update_config_current_session`` is False, ``agloom.yaml``'s ``session.current_session``
-    is left unchanged (CLI uses this for auto-generated sessions).
+    is left unchanged (CLI uses this for auto-generated sessions). Normalizes ``safety`` via
+    :func:`ensure_session_safety_structure` on each write.
     """
     import json
 
@@ -1124,6 +1120,8 @@ def start_new_session(
         if not isinstance(session_data["ai"], dict):
             session_data["ai"] = {}
         _deep_merge(session_data["ai"], copy.deepcopy(overlay))
+
+    ensure_session_safety_structure(session_data)
 
     with open(session_file, "w", encoding="utf-8") as f:
         json.dump(session_data, f, indent=2)
@@ -1185,6 +1183,8 @@ def add_to_session_history(thread_id: str, role: str, content: str) -> None:
     )
     session["last_active"] = datetime.now(UTC).isoformat()
     session["turns"] = session.get("turns", 0) + 1
+
+    ensure_session_safety_structure(session)
 
     with open(session_file, "w", encoding="utf-8") as f:
         json.dump(session, f, indent=2)

@@ -74,6 +74,7 @@ def test_start_new_session_preserves_history_and_sets_last_run(tmp_path: Path, m
     assert len(data["messages"]) == 1
     assert data["last_run"] == meta
     assert "last_active" in data
+    assert data.get("safety") == {"tool_allowlist": []}
     assert not (store / "sessions" / f"{sid}.yaml").is_file()
 
 
@@ -87,6 +88,18 @@ def test_remove_project_cleanup_dirs(tmp_path: Path) -> None:
     assert len(removed) == 2
     assert not (tmp_path / ".agloom").exists()
     assert not (tmp_path / ".agsuperbrain").exists()
+
+
+def test_load_config_coerces_legacy_require_approval_false(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = tmp_path / ".agloom"
+    store.mkdir()
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
+    (store / "agloom.yaml").write_text(
+        "safety:\n  require_approval: false\n  auto_approve: ''\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(None)
+    assert cfg["safety"]["require_approval"] is True
 
 
 def test_load_explicit_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -207,6 +220,8 @@ def test_start_new_session_skip_config_yaml(tmp_path: Path, monkeypatch: pytest.
     assert "keep-me" in txt
     assert "brandnewid" not in txt
     assert not (store / "sessions" / "brandnewid.yaml").is_file()
+    new_sess = json.loads((store / "sessions" / "brandnewid.json").read_text(encoding="utf-8"))
+    assert new_sess.get("safety") == {"tool_allowlist": []}
 
 
 def test_build_working_ai_session_overrides_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -300,6 +315,7 @@ def test_start_new_session_writes_model_binding(tmp_path: Path, monkeypatch: pyt
     start_new_session(sid, model_binding=binding, update_config_current_session=False)
     data = json.loads((store / "sessions" / f"{sid}.json").read_text(encoding="utf-8"))
     assert data["model_binding"] == binding
+    assert data.get("safety") == {"tool_allowlist": []}
     sess = data["ai"]
     assert sess["model"] == "openai:gpt-4o"
     assert sess["llm"]["temperature"] == 0
