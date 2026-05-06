@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
 
 from agloom_cli.config import (
     build_working_ai_for_thread,
@@ -94,12 +95,15 @@ def test_load_config_coerces_legacy_require_approval_false(tmp_path: Path, monke
     store = tmp_path / ".agloom"
     store.mkdir()
     monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
-    (store / "agloom.yaml").write_text(
+    ypath = store / "agloom.yaml"
+    ypath.write_text(
         "safety:\n  require_approval: false\n  auto_approve: ''\n",
         encoding="utf-8",
     )
     cfg = load_config(None)
     assert cfg["safety"]["require_approval"] is True
+    roundtrip = yaml.safe_load(ypath.read_text(encoding="utf-8"))
+    assert roundtrip["safety"]["require_approval"] is True
 
 
 def test_load_explicit_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -224,6 +228,55 @@ def test_start_new_session_skip_config_yaml(tmp_path: Path, monkeypatch: pytest.
     assert new_sess.get("safety") == {"tool_allowlist": []}
 
 
+def test_build_working_ai_model_binding_overrides_session_ai_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = tmp_path / ".agloom"
+    store.mkdir()
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
+    sid = "c" * 32
+    (store / "sessions").mkdir(parents=True)
+    (store / "sessions" / f"{sid}.json").write_text(
+        json.dumps(
+            {
+                "id": sid,
+                "ai": {"model": "openai:old", "llm": {"temperature": 0.99}},
+                "model_binding": {
+                    "effective_model": "groq:meta-llama/new",
+                    "provider": "groq",
+                    "base_url": None,
+                    "merge_yaml_provider": True,
+                    "llm": {"temperature": 0},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    working, sess_only = build_working_ai_for_thread({"ai": {"model": "project:x", "llm": {}}}, sid)
+    assert working["model"] == "groq:meta-llama/new"
+    assert working["llm"]["temperature"] == 0
+    assert sess_only["model"] == "openai:old"
+
+
+def test_start_new_session_keeps_non_mirrored_ai_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = tmp_path / ".agloom"
+    store.mkdir()
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
+    (store / "sessions").mkdir(parents=True)
+    sid = "d" * 32
+    (store / "sessions" / f"{sid}.json").write_text(
+        json.dumps(
+            {
+                "id": sid,
+                "ai": {"model": "will-strip", "system_prompt": "keep me"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    binding = {"effective_model": "openai:gpt-4o", "llm": {}}
+    start_new_session(sid, model_binding=binding, update_config_current_session=False)
+    data = json.loads((store / "sessions" / f"{sid}.json").read_text(encoding="utf-8"))
+    assert data["ai"] == {"system_prompt": "keep me"}
+
+
 def test_build_working_ai_session_overrides_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = tmp_path / ".agloom"
     store.mkdir()
@@ -316,15 +369,16 @@ def test_start_new_session_writes_model_binding(tmp_path: Path, monkeypatch: pyt
     data = json.loads((store / "sessions" / f"{sid}.json").read_text(encoding="utf-8"))
     assert data["model_binding"] == binding
     assert data.get("safety") == {"tool_allowlist": []}
-    sess = data["ai"]
-    assert sess["model"] == "openai:gpt-4o"
-    assert sess["llm"]["temperature"] == 0
-    assert "base_url" in sess
-    assert sess["base_url"] is None
+    assert "ai" not in data
+    working, _ = build_working_ai_for_thread({"ai": {}}, sid)
+    assert working["model"] == "openai:gpt-4o"
+    assert working["llm"]["temperature"] == 0
+    assert "base_url" in working
+    assert working["base_url"] is None
     assert not (store / "sessions" / f"{sid}.yaml").is_file()
 
 
-def test_start_new_session_merges_model_binding_into_session_ai(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_start_new_session_model_binding_only_no_duplicate_ai(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = tmp_path / ".agloom"
     store.mkdir()
     monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
@@ -339,12 +393,13 @@ def test_start_new_session_merges_model_binding_into_session_ai(tmp_path: Path, 
     }
     start_new_session(sid, model_binding=binding, update_config_current_session=False)
     data = json.loads((store / "sessions" / f"{sid}.json").read_text(encoding="utf-8"))
-    ai = data["ai"]
-    assert ai["model"] == "nvidia:meta/Llama-4"
-    assert ai["provider"] == "nvidia"
-    assert ai["base_url"] == "https://example/v1"
-    assert ai["api_keys"] is None
-    assert ai["llm"] == {"temperature": 0.2, "top_p": 0.9}
+    assert "ai" not in data
+    working, _ = build_working_ai_for_thread({"ai": {}}, sid)
+    assert working["model"] == "nvidia:meta/Llama-4"
+    assert working["provider"] == "nvidia"
+    assert working["base_url"] == "https://example/v1"
+    assert working["api_keys"] is None
+    assert working["llm"] == {"temperature": 0.2, "top_p": 0.9}
 
 
 def test_start_new_session_session_ai_includes_api_keys_from_binding(
@@ -365,7 +420,9 @@ def test_start_new_session_session_ai_includes_api_keys_from_binding(
     }
     start_new_session(sid, model_binding=binding, update_config_current_session=False)
     data = json.loads((store / "sessions" / f"{sid}.json").read_text(encoding="utf-8"))
-    assert data["ai"]["api_keys"] == {"NVIDIA_API_KEY": "nvapi-test"}
+    assert "ai" not in data
+    working, _ = build_working_ai_for_thread({"ai": {}}, sid)
+    assert working["api_keys"] == {"NVIDIA_API_KEY": "nvapi-test"}
 
 
 def test_start_new_session_session_ai_null_base_url_when_unset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -386,9 +443,11 @@ def test_start_new_session_session_ai_null_base_url_when_unset(tmp_path: Path, m
         "llm": {"temperature": 0},
     }
     start_new_session(sid, model_binding=binding, update_config_current_session=False)
-    loaded = json.loads((store / "sessions" / f"{sid}.json").read_text(encoding="utf-8"))["ai"]
-    assert "base_url" in loaded
-    assert loaded["base_url"] is None
+    disk = json.loads((store / "sessions" / f"{sid}.json").read_text(encoding="utf-8"))
+    assert "ai" not in disk
+    working, _ = build_working_ai_for_thread({"ai": {}}, sid)
+    assert "base_url" in working
+    assert working["base_url"] is None
 
 
 def test_get_system_prompt_nonempty() -> None:

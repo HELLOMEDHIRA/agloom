@@ -662,7 +662,7 @@ async def _run(
 
     project_rules = rules.get_relevant_rules(prompt or "general") if rules else ""
 
-    # Session id first so we can load per-session JSON (``ai`` / ``model_binding``) before resolving the LLM.
+    # Session id first — per-session JSON (``model_binding`` + optional ``ai`` extras) before resolving the LLM.
     try:
         if session is not None:
             thread_id = normalize_cli_session_id(session)

@@ -29,7 +29,7 @@ The **agloom CLI** stores config and cached state **only** here — ``<project>/
 | Path | Purpose |
 |------|---------|
 | ``agloom.yaml`` | Configuration (``ai.api_keys`` merged into process env for the CLI session) |
-| ``sessions/`` | Per session: ``<id>.json`` (history, ``model_binding``, ``ai`` overlay, ``safety`` with at least ``tool_allowlist`` for hand-edits) |
+| ``sessions/`` | Per session: ``<id>.json`` (history, ``model_binding`` LLM snapshot, optional extra ``ai`` keys, ``safety``) |
 | ``checkpoints.sqlite`` | LangGraph checkpoints (CLI session resume when memory is on) |
 | ``graph_store.sqlite`` | LangGraph store backing long-term / session memory |
 | ``rules/`` | Cached project rules |
@@ -281,6 +281,7 @@ def create_default_config() -> dict[str, Any]:
     ensure_storage_layout()
     cfgp = config_yaml_path()
     if cfgp.exists():
+        _upgrade_require_approval_in_yaml_file(cfgp)
         with open(cfgp, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         if isinstance(data, dict):
@@ -356,6 +357,47 @@ When you make mistakes or hit dead ends:
 Remember: You're collaborating with a human. They control the session, you assist."""
 
 
+def _safety_require_approval_needs_secure_upgrade(raw: Any) -> bool:
+    """True if *raw* is missing or an explicit insecure legacy value (upgraded to True on disk and in memory)."""
+    if raw is None:
+        return True
+    if raw is False:
+        return True
+    if isinstance(raw, str) and raw.strip().lower() in ("false", "no", "0", "off", "n"):
+        return True
+    return False
+
+
+def _upgrade_require_approval_in_yaml_file(path: Path | None) -> None:
+    """Rewrite *path* when ``safety.require_approval`` is legacy false/null/missing (secure default true)."""
+    if path is None:
+        return
+    try:
+        resolved = path if path.is_absolute() else path.resolve()
+    except OSError:
+        resolved = path
+    if not resolved.is_file():
+        return
+    try:
+        text = resolved.read_text(encoding="utf-8")
+        data = yaml.safe_load(text) or {}
+    except (OSError, yaml.YAMLError):
+        return
+    if not isinstance(data, dict):
+        return
+    safety = data.get("safety")
+    if not isinstance(safety, dict):
+        return
+    if not _safety_require_approval_needs_secure_upgrade(safety.get("require_approval")):
+        return
+    safety["require_approval"] = True
+    try:
+        with open(resolved, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+    except OSError:
+        return
+
+
 def _coerce_legacy_require_approval_secure_default(cfg: dict[str, Any]) -> None:
     """Force ``safety.require_approval`` to True (legacy false/null/missing)."""
     safety = cfg.setdefault("safety", {})
@@ -363,13 +405,7 @@ def _coerce_legacy_require_approval_secure_default(cfg: dict[str, Any]) -> None:
         cfg["safety"] = {"require_approval": True}
         return
     raw = safety.get("require_approval")
-    if raw is None:
-        safety["require_approval"] = True
-        return
-    if raw is False:
-        safety["require_approval"] = True
-        return
-    if isinstance(raw, str) and raw.strip().lower() in ("false", "no", "0", "off", "n"):
+    if _safety_require_approval_needs_secure_upgrade(raw):
         safety["require_approval"] = True
 
 
@@ -407,6 +443,9 @@ def load_config(path: Path | None) -> dict[str, Any]:
         cfg = create_default_config()
         _coerce_legacy_require_approval_secure_default(cfg)
         return cfg
+
+    for p in config_paths:
+        _upgrade_require_approval_in_yaml_file(p)
 
     merged: dict[str, Any] = {}
     for config_path in config_paths:
@@ -485,6 +524,11 @@ def _deep_merge(base: dict, override: dict) -> dict:
             base[key] = value
     return base
 
+
+# Session ``ai`` keys that mirror ``model_binding`` (stripped on save to avoid duplicate JSON).
+_SESSION_AI_KEYS_FROM_MODEL_BINDING: frozenset[str] = frozenset(
+    {"model", "provider", "base_url", "api_keys", "llm"}
+)
 
 _LLM_YAML_PARAM_KEYS: frozenset[str] = frozenset(
     {
@@ -777,7 +821,7 @@ def read_session_api_keys(thread_id: str) -> dict[str, str]:
 
 
 def _ai_overlay_from_model_binding(binding: dict[str, Any]) -> dict[str, Any]:
-    """Map ``model_binding`` into ``ai`` keys stored under ``sessions/<id>.json``."""
+    """Map ``model_binding`` into ``ai``-shaped dict (used when merging working config, not for disk mirror)."""
     out: dict[str, Any] = {}
     em = binding.get("effective_model")
     if isinstance(em, str) and em.strip():
@@ -880,17 +924,20 @@ def _migrate_legacy_session_yaml_to_json(thread_id: str) -> None:
 
 
 def build_working_ai_for_thread(cfg: dict[str, Any], thread_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Merge project ``cfg['ai']`` with ``sessions/<id>.json`` ``ai`` (session wins per key).
+    """Merge project ``cfg['ai']`` with session JSON: optional ``ai`` extras, then ``model_binding`` overlay.
 
-    Returns ``(working_ai, session_ai_only)`` where *session_ai_only* is the ``ai`` dict from the
-    session JSON — used to prefer session overrides over JSON ``model_binding`` in the CLI.
+    *session_ai_only* is only the ``ai`` object stored in JSON (excludes ``model_binding``); the CLI
+    uses it for resume heuristics. Resolved model/provider/keys come from ``model_binding`` when present.
     """
     _migrate_legacy_session_yaml_to_json(thread_id)
     project_ai = cfg.get("ai", {}) if isinstance(cfg.get("ai"), dict) else {}
     sess_data = _read_session_json(thread_id)
     session_ai = sess_data.get("ai", {}) if isinstance(sess_data.get("ai"), dict) else {}
     working = copy.deepcopy(project_ai)
-    _deep_merge(working, session_ai)
+    _deep_merge(working, copy.deepcopy(session_ai))
+    mb_raw = sess_data.get("model_binding")
+    if isinstance(mb_raw, dict):
+        _deep_merge(working, copy.deepcopy(_ai_overlay_from_model_binding(mb_raw)))
     return working, session_ai
 
 
@@ -1069,11 +1116,9 @@ def start_new_session(
     If the session file already exists, ``messages``, ``turns``, and other fields are
     preserved; ``last_active`` and ``last_run`` are updated.
 
-    ``model_binding`` (if provided) is the per-thread LLM routing snapshot: ``effective_model``,
-    ``provider``, ``base_url``, ``merge_yaml_provider``, and merged ``llm`` kwargs. The CLI updates
-    it on every run so resuming a session reuses the same model unless you pass ``-m`` / ``--provider``
-    / ``--base-url`` / ``--llm-*`` overrides. The same snapshot is deep-merged into ``ai`` on disk
-    so session-scoped overrides stay next to history.
+    ``model_binding`` (if provided) is the per-thread LLM routing snapshot for resume. The CLI does
+    not duplicate that data under ``ai`` on disk; extras-only ``ai`` (e.g. from :func:`merge_ai_into_session_json`)
+    are kept, and mirrored keys under ``ai`` are removed when saving a new binding.
 
     If ``update_config_current_session`` is False, ``agloom.yaml``'s ``session.current_session``
     is left unchanged (CLI uses this for auto-generated sessions). Normalizes ``safety`` via
@@ -1115,11 +1160,12 @@ def start_new_session(
             session_data["model_binding"] = model_binding
 
     if model_binding is not None:
-        overlay = _ai_overlay_from_model_binding(model_binding)
-        session_data.setdefault("ai", {})
-        if not isinstance(session_data["ai"], dict):
-            session_data["ai"] = {}
-        _deep_merge(session_data["ai"], copy.deepcopy(overlay))
+        ai_block = session_data.get("ai")
+        if isinstance(ai_block, dict):
+            for k in _SESSION_AI_KEYS_FROM_MODEL_BINDING:
+                ai_block.pop(k, None)
+            if not ai_block:
+                session_data.pop("ai", None)
 
     ensure_session_safety_structure(session_data)
 
