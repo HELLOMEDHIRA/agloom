@@ -36,6 +36,39 @@ def test_load_session_row_minimal(tmp_path: Path) -> None:
     assert row["model"] == "groq:llama"
 
 
+def test_load_session_row_yaml_sidecar_model(tmp_path: Path) -> None:
+    base = tmp_path / "sess1"
+    base.write_text(
+        json.dumps({"id": "sess1", "messages": []}),
+        encoding="utf-8",
+    )
+    base.with_suffix(".yaml").write_text(
+        "ai:\n  model: litellm:groq/llama-3.3-70b-versatile\n",
+        encoding="utf-8",
+    )
+    row = load_session_row(base)
+    assert row is not None
+    assert row["model"] == "litellm:groq/llama-3.3-70b-versatile"
+
+
+def test_load_session_row_model_binding_fallback(tmp_path: Path) -> None:
+    """When ``last_run.resolved.model`` is missing, use ``model_binding.effective_model``."""
+    p = tmp_path / "sess.json"
+    p.write_text(
+        json.dumps(
+            {
+                "id": "sess",
+                "messages": [],
+                "model_binding": {"effective_model": "ollama:llama3.2"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    row = load_session_row(p)
+    assert row is not None
+    assert row["model"] == "ollama:llama3.2"
+
+
 def test_list_session_rows_order(tmp_path: Path) -> None:
     d = tmp_path / "sessions"
     d.mkdir()

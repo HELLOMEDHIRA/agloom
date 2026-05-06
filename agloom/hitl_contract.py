@@ -45,8 +45,9 @@ Callback signature::
 
 Use :class:`HITLEvent` for ``event_type`` instead of hard-coded strings.
 
-- **TOOL_INTERRUPT_BEFORE** — ``message`` is a ``str`` describing the tool call;
-  return ``continue`` to run the tool or ``abort`` / ``no`` / ``cancel`` to skip.
+- **TOOL_INTERRUPT_BEFORE** — ``message`` is usually a ``dict`` from the ReAct middleware
+  (``tool_name``, ``tool_call_id``, ``agent_name``, ``args``, ``detail``) or a legacy ``str``
+  describing the tool call; return ``continue`` to run the tool or ``abort`` / ``no`` / ``cancel`` to skip.
 - **PATTERN_INTERRUPT** — pattern gate; return truthy to continue or ``no`` to abort.
 - **WORKER_INTERRUPT_BEFORE / AFTER** — parallel worker gates; ``continue`` or ``skip``.
 - **CLARIFICATION_REQUEST** — ``message`` is ``dict`` or ``str``; return the user's reply.

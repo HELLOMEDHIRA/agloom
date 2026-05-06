@@ -74,6 +74,25 @@ async def test_callback_tool_allowlisted_skips_prompt(tmp_path: Path, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_tool_interrupt_before_accepts_dict_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Middleware-style dict (tool_name, tool_call_id, detail) is supported alongside legacy str."""
+    p = tmp_path / "tool_allowlist.json"
+    cb = create_user_callback(auto_approve_tools=[], storage_root=tmp_path, allowlist_path=p)
+    monkeypatch.setattr("agloom_cli.hitl.Prompt.ask", lambda *a, **k: "2")
+    payload = {
+        "tool_name": "run_shell",
+        "tool_call_id": "tc-test-1",
+        "agent_name": "A",
+        "args": {},
+        "detail": "Agent : A\nTool  : run_shell\nArgs  : {}",
+    }
+    out = await cb("tool_interrupt_before", payload)
+    assert out == "abort"
+
+
+@pytest.mark.asyncio
 async def test_callback_tool_reject_aborts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     p = tmp_path / "tool_allowlist.json"
     cb = create_user_callback(auto_approve_tools=[], storage_root=tmp_path, allowlist_path=p)

@@ -1,13 +1,16 @@
-"""Built-in CLI tools — filesystem, shell, web, http, tasks.
+"""Built-in CLI tools — filesystem, shell, web, http, tasks, sandbox backends.
 
-These tools provide cross-platform support for CLI operations.
+Prefer ``from agloom_cli.tools import LocalSandbox, BackendProtocol, ...`` for
+sandbox types and backends; submodule paths remain available for deep imports.
 """
 
 from .filesystem import (
     copy_file,
     create_directory,
+    edit_file,
     file_exists,
     get_file_info,
+    grep_files,
     list_directory,
     move_file,
     read_file,
@@ -40,6 +43,38 @@ from .task_tracker import (
     show_remaining_steps,
     update_task_progress,
 )
+from .sandbox import (
+    BACKEND_TYPES,
+    DEFAULT_EXECUTE_TIMEOUT,
+    FILE_NOT_FOUND,
+    INVALID_PATH,
+    IS_DIRECTORY,
+    MAX_BINARY_BYTES,
+    MAX_OUTPUT_BYTES,
+    PERMISSION_DENIED,
+    TRUNCATION_MSG,
+    BackendFactory,
+    BackendProtocol,
+    EditResult,
+    ExecuteResponse,
+    FileData,
+    FileDownloadResponse,
+    FileFormat,
+    FileInfo,
+    FileOperationError,
+    FileUploadResponse,
+    GlobResult,
+    GrepMatch,
+    GrepResult,
+    LocalSandbox,
+    LocalShellBackend,
+    LsResult,
+    ReadResult,
+    SandboxBackendProtocol,
+    WriteResult,
+    execute_accepts_timeout,
+    match_edit_variants,
+)
 from .web_search import (
     find_docs,
     search_github,
@@ -63,21 +98,46 @@ from .working_dir import (
 )
 
 __all__ = [
+    "BACKEND_TYPES",
+    "BackendFactory",
+    "BackendProtocol",
+    "DEFAULT_EXECUTE_TIMEOUT",
+    "FILE_NOT_FOUND",
+    "INVALID_PATH",
+    "IS_DIRECTORY",
+    "MAX_BINARY_BYTES",
+    "MAX_OUTPUT_BYTES",
+    "PERMISSION_DENIED",
+    "TRUNCATION_MSG",
     "clear_task_tracker",
     "complete_step",
     "copy_file",
     "create_directory",
     # Task tracking
     "create_task_plan",
+    "edit_file",
+    "EditResult",
+    "ExecuteResponse",
+    "execute_accepts_timeout",
     "fetch_json",
     "file_exists",
+    "FileData",
+    "FileDownloadResponse",
+    "FileFormat",
+    "FileInfo",
+    "FileOperationError",
+    "FileUploadResponse",
     "find_docs",
     "get_current_task",
+    "grep_files",
     "get_env_var",
     "get_file_info",
     "get_system_info",
     # Working directory
     "get_working_directory",
+    "GlobResult",
+    "GrepMatch",
+    "GrepResult",
     "http_delete",
     "http_get",
     "http_head",
@@ -87,6 +147,10 @@ __all__ = [
     "http_request",
     "list_directory",
     "list_env_vars",
+    "LocalSandbox",
+    "LocalShellBackend",
+    "LsResult",
+    "match_edit_variants",
     "move_file",
     "path_absolute",
     "path_basename",
@@ -101,7 +165,9 @@ __all__ = [
     "push_working_directory",
     # Filesystem
     "read_file",
+    "ReadResult",
     "remove_file",
+    "SandboxBackendProtocol",
     # Shell
     "run_shell",
     "run_shell_interactive",
@@ -115,4 +181,5 @@ __all__ = [
     # Web search
     "web_search",
     "write_file",
+    "WriteResult",
 ]

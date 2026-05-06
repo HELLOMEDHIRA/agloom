@@ -1,7 +1,7 @@
 """Textual-based interactive shell: scrollable chat (left) + fixed session card (right).
 
 Uses the alternate screen so the session sidebar stays visible while the transcript scrolls.
-Fallback: ``AGLOOM_REPL_PLAIN=1`` or :func:`agloom_cli.repl.run_shell_plain`.
+Non-TTY runs (CI, piped IO) automatically fall back to :func:`agloom_cli.repl.run_shell_plain`.
 """
 
 from __future__ import annotations

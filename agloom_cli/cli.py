@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import uuid
 from datetime import UTC, datetime
@@ -15,20 +16,36 @@ from rich.theme import Theme
 
 from .config import (
     add_to_session_history,
+    build_working_ai_for_thread,
+    build_working_safety_for_thread,
+    coerce_interrupt_before_tools_list,
+    config_layer_fingerprint,
     config_source_fingerprints,
     ensure_config_ready,
     get_system_prompt,
     list_project_cleanup_dirs,
     load_config,
+    merge_ai_api_keys_into_process_env,
+    merged_llm_params_for_resolve,
+    merged_provider_base_for_resolve,
     normalize_cli_session_id,
+    normalized_safety_tool_allowlist,
+    read_session_model_binding,
     remove_project_cleanup_dirs,
+    session_config_yaml_path,
+    session_model_binding_is_usable,
     session_record_path,
     set_cli_project_root,
     start_new_session,
     storage_dir,
 )
 from .mcp_loader import build_mcp_configs
-from .model_resolver import MissingProviderApiKey, MissingProviderDependency, describe_llm
+from .model_resolver import (
+    MissingProviderApiKey,
+    MissingProviderDependency,
+    augment_patch_api_keys_from_env,
+    describe_llm,
+)
 from .provider_wizard import resolve_model_with_optional_wizard
 from .project import detect_project, get_git_info
 from .project_rules import load_project_rules
@@ -49,6 +66,38 @@ console = Console(
         }
     )
 )
+
+
+def _cli_llm_param_overrides(
+    *,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    top_k: int | None = None,
+    max_tokens: int | None = None,
+    max_completion_tokens: int | None = None,
+    frequency_penalty: float | None = None,
+    presence_penalty: float | None = None,
+    seed: int | None = None,
+) -> dict[str, Any] | None:
+    """Build ``llm_param_overrides`` for :func:`~agloom_cli.config.resolve_model` from CLI flags."""
+    out: dict[str, Any] = {}
+    if temperature is not None:
+        out["temperature"] = temperature
+    if top_p is not None:
+        out["top_p"] = top_p
+    if top_k is not None:
+        out["top_k"] = top_k
+    if max_tokens is not None:
+        out["max_tokens"] = max_tokens
+    if max_completion_tokens is not None:
+        out["max_completion_tokens"] = max_completion_tokens
+    if frequency_penalty is not None:
+        out["frequency_penalty"] = frequency_penalty
+    if presence_penalty is not None:
+        out["presence_penalty"] = presence_penalty
+    if seed is not None:
+        out["seed"] = seed
+    return out or None
 
 # Suffix for all CLI runs — nudges models toward Cursor/Claude Code–style brevity after tool use.
 _AGLOOM_CLI_REPLY_EPILOG = """
@@ -80,10 +129,12 @@ def _get_builtin_tools() -> list:
         copy_file,
         create_directory,
         create_task_plan,
+        edit_file,
         fetch_json,
         file_exists,
         find_docs,
         get_current_task,
+        grep_files,
         get_env_var,
         get_file_info,
         get_system_info,
@@ -126,6 +177,8 @@ def _get_builtin_tools() -> list:
     return [
         read_file,
         write_file,
+        edit_file,
+        grep_files,
         list_directory,
         file_exists,
         create_directory,
@@ -246,6 +299,32 @@ def main(
         "--no-provider-wizard",
         help="Skip interactive provider/model/API-key setup when the LLM cannot be resolved (TTY only)",
     ),
+    llm_temperature: float | None = typer.Option(
+        None, "--llm-temperature", help="Override ai.llm.temperature (merged after config)"
+    ),
+    llm_top_p: float | None = typer.Option(
+        None, "--llm-top-p", help="Override ai.llm.top_p"
+    ),
+    llm_top_k: int | None = typer.Option(None, "--llm-top-k", help="Override ai.llm.top_k"),
+    llm_max_tokens: int | None = typer.Option(
+        None, "--llm-max-tokens", help="Override ai.llm.max_tokens"
+    ),
+    llm_max_completion_tokens: int | None = typer.Option(
+        None,
+        "--llm-max-completion-tokens",
+        help="Override ai.llm.max_completion_tokens",
+    ),
+    llm_frequency_penalty: float | None = typer.Option(
+        None,
+        "--llm-frequency-penalty",
+        help="Override ai.llm.frequency_penalty",
+    ),
+    llm_presence_penalty: float | None = typer.Option(
+        None,
+        "--llm-presence-penalty",
+        help="Override ai.llm.presence_penalty",
+    ),
+    llm_seed: int | None = typer.Option(None, "--llm-seed", help="Override ai.llm.seed"),
     version: bool = typer.Option(
         False,
         "--version",
@@ -292,6 +371,16 @@ def main(
             verbose,
             no_builtins,
             no_provider_wizard,
+            _cli_llm_param_overrides(
+                temperature=llm_temperature,
+                top_p=llm_top_p,
+                top_k=llm_top_k,
+                max_tokens=llm_max_tokens,
+                max_completion_tokens=llm_max_completion_tokens,
+                frequency_penalty=llm_frequency_penalty,
+                presence_penalty=llm_presence_penalty,
+                seed=llm_seed,
+            ),
             project,
             rules_dir,
             refresh_rules,
@@ -309,48 +398,53 @@ def _run_resume_picked_session(
     verbose: bool,
     prompt: str | None,
 ) -> None:
-    """Invoke the main agent run with a chosen session id (strict session file guard)."""
+    """Invoke the main agent run with a chosen session id (strict session file guard).
+
+    Uses named kwargs against ``_run`` so a future signature change surfaces as
+    ``TypeError`` at call time instead of silently shifting positional arguments.
+    """
     asyncio.run(
         _run(
-            model,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            False,
-            None,
-            None,
-            None,
-            config,
-            session_id,
-            True,
-            verbose,
-            False,
-            True,
-            project,
-            None,
-            False,
-            prompt,
+            model=model,
+            provider=None,
+            base_url=None,
+            name=None,
+            system_prompt=None,
+            tools_dir=None,
+            enable_memory=None,
+            memory_path=None,
+            enable_skills=None,
+            max_skills=None,
+            session_max_turns=None,
+            auto_summarize=None,
+            summarize_threshold=None,
+            mcp_servers=None,
+            interrupt_before=None,
+            interrupt_after=None,
+            interrupt_before_tools=None,
+            require_approval=None,
+            auto_approve_tools=None,
+            max_concurrent=None,
+            max_retries=None,
+            retry_delay=None,
+            llm_timeout=None,
+            classifier_timeout=None,
+            fallback_pattern=None,
+            frozen=False,
+            frozen_template=None,
+            feedback_webhook=None,
+            cache_dir=None,
+            config=config,
+            session=session_id,
+            strict_session=True,
+            verbose=verbose,
+            no_builtins=False,
+            no_provider_wizard=True,
+            llm_param_overrides=None,
+            project=project,
+            rules_dir=None,
+            refresh_rules=False,
+            prompt=prompt,
         )
     )
 
@@ -502,6 +596,7 @@ async def _run(
     verbose: bool,
     no_builtins: bool,
     no_provider_wizard: bool,
+    llm_param_overrides: dict[str, Any] | None,
     project: Path | None,
     rules_dir: Path | None,
     refresh_rules: bool,
@@ -527,6 +622,8 @@ async def _run(
     console.print()
 
     cfg = load_config(config) if config else load_config(None)
+    _ai = cfg.get("ai", {}) if isinstance(cfg.get("ai"), dict) else {}
+    merge_ai_api_keys_into_process_env(_ai)
 
     # Super-Brain: required local graph + MCP — always run init for this project root
     from . import superbrain_setup
@@ -564,41 +661,7 @@ async def _run(
 
     project_rules = rules.get_relevant_rules(prompt or "general") if rules else ""
 
-    # Model: explicit -m overrides; otherwise use config ai.model (then resolve_model auto chain).
-    ai_config = cfg.get("ai", {})
-    cm_raw = ai_config.get("model", "auto")
-    config_model = str(cm_raw).strip() if cm_raw is not None else "auto"
-    if not config_model:
-        config_model = "auto"
-    if model is None:
-        effective_model = config_model
-    else:
-        cli_m = model.strip()
-        effective_model = cli_m if cli_m else config_model
-    try:
-        llm = resolve_model_with_optional_wizard(
-            console,
-            cfg,
-            effective_model=effective_model,
-            provider=provider,
-            base_url=base_url,
-            merge_yaml_provider=model is None,
-            no_provider_wizard=no_provider_wizard,
-        )
-    except MissingProviderDependency as e:
-        console.print(f"[error]{e}[/error]")
-        raise typer.Exit(1) from None
-    except MissingProviderApiKey as e:
-        console.print(f"[error]{e}[/error]")
-        raise typer.Exit(1) from None
-    if llm is None:
-        console.print(
-            "[error]No model configured. Set an API key for a supported provider (e.g. OPENAI_API_KEY, "
-            "GROQ_API_KEY, GOOGLE_API_KEY) and install the matching extra (e.g. pip install 'agloom[groq]').[/error]"
-        )
-        raise typer.Exit(1)
-
-    # Session: explicit --session resumes that id; otherwise always a new thread (no config/env auto-resume).
+    # Session id first so we can load per-session YAML + model_binding before resolving the LLM.
     try:
         if session is not None:
             thread_id = normalize_cli_session_id(session)
@@ -622,9 +685,127 @@ async def _run(
                 raise typer.Exit(1)
             console.print(f"[warning]{msg}[/warning]")
 
-    agent_name = name or ai_config.get("name", "agloom")
+    binding_raw = read_session_model_binding(thread_id) if session is not None else None
+    working_ai, session_ai_only = build_working_ai_for_thread(cfg, thread_id)
+    if binding_raw:
+        bk = binding_raw.get("api_keys")
+        if isinstance(bk, dict) and bk:
+            working_ai.setdefault("api_keys", {})
+            wa = working_ai["api_keys"]
+            if isinstance(wa, dict):
+                for k, v in bk.items():
+                    if not isinstance(k, str) or v is None:
+                        continue
+                    vs = str(v).strip()
+                    if not vs:
+                        continue
+                    ex = wa.get(k)
+                    if ex is None or not str(ex).strip():
+                        wa[k] = v
+    merge_ai_api_keys_into_process_env(working_ai)
+
+    def _session_yaml_has_model(sai: dict[str, Any]) -> bool:
+        m = sai.get("model")
+        if m is None:
+            return False
+        s = str(m).strip()
+        return bool(s) and s.lower() != "auto"
+
+    def _session_yaml_has_llm(sai: dict[str, Any]) -> bool:
+        llm = sai.get("llm")
+        return isinstance(llm, dict) and bool(llm)
+
+    def _coalesce_non_empty_str(*vals: object) -> str | None:
+        """First non-empty string among *vals* (CLI and YAML fragments may be mixed)."""
+        for v in vals:
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        return None
+
+    session_yaml_has_model = _session_yaml_has_model(session_ai_only)
+    session_yaml_has_llm = _session_yaml_has_llm(session_ai_only)
+
+    cm_raw = working_ai.get("model", "auto")
+    config_model = str(cm_raw).strip() if cm_raw is not None else "auto"
+    if not config_model:
+        config_model = "auto"
+
+    cli_model_explicit = model is not None and bool(model.strip())
+    use_binding = (
+        session is not None
+        and binding_raw is not None
+        and session_model_binding_is_usable(binding_raw)
+        and not cli_model_explicit
+        and not session_yaml_has_model
+    )
+
+    llm_frozen: dict[str, Any] | None
+    if cli_model_explicit:
+        effective_model = model.strip()
+        merge_yaml_provider = False
+        res_provider = provider
+        res_base_url = base_url
+        llm_frozen = None
+    elif use_binding:
+        assert binding_raw is not None
+        effective_model = str(binding_raw["effective_model"]).strip()
+        merge_yaml_provider = bool(binding_raw.get("merge_yaml_provider", True))
+        bp = binding_raw.get("provider")
+        bb = binding_raw.get("base_url")
+        # CLI > session YAML > JSON snapshot (so per-session base_url / provider edits apply on resume).
+        res_provider = _coalesce_non_empty_str(provider, session_ai_only.get("provider"), bp)
+        res_base_url = _coalesce_non_empty_str(base_url, session_ai_only.get("base_url"), bb)
+        if session_yaml_has_llm:
+            llm_frozen = None
+        else:
+            blm = binding_raw.get("llm")
+            llm_frozen = dict(blm) if isinstance(blm, dict) and blm else None
+    else:
+        if model is None:
+            effective_model = config_model
+        else:
+            cli_m = model.strip()
+            effective_model = cli_m if cli_m else config_model
+        merge_yaml_provider = model is None
+        res_provider = provider
+        res_base_url = base_url
+        llm_frozen = None
+
+    cfg_for_llm = copy.deepcopy(cfg)
+    cfg_for_llm["ai"] = working_ai
+
+    try:
+        llm = resolve_model_with_optional_wizard(
+            console,
+            cfg_for_llm,
+            effective_model=effective_model,
+            provider=res_provider,
+            base_url=res_base_url,
+            merge_yaml_provider=merge_yaml_provider,
+            no_provider_wizard=no_provider_wizard,
+            llm_param_overrides=llm_param_overrides,
+            llm_frozen=llm_frozen,
+            thread_id=thread_id,
+        )
+    except MissingProviderDependency as e:
+        console.print(f"[error]{e}[/error]")
+        raise typer.Exit(1) from None
+    except MissingProviderApiKey as e:
+        console.print(f"[error]{e}[/error]")
+        raise typer.Exit(1) from None
+    if llm is None:
+        console.print(
+            "[error]No model configured. Set an API key for a supported provider (e.g. OPENAI_API_KEY, "
+            "GROQ_API_KEY, GOOGLE_API_KEY) and install the matching extra (e.g. pip install 'agloom[groq]').[/error]"
+        )
+        raise typer.Exit(1)
+
+    agent_name = name or working_ai.get("name", "agloom")
     prov, mid = describe_llm(llm)
-    sources = config_source_fingerprints(config)
+    sources = list(config_source_fingerprints(config))
+    sess_fp = config_layer_fingerprint(session_config_yaml_path(thread_id))
+    if sess_fp is not None:
+        sources.append(sess_fp)
     bundle = "|".join(f"{s['path']}:{s['sha256']}" for s in sources)
     bundle_hash = hashlib.sha256(bundle.encode()).hexdigest() if bundle else ""
     cli_payload: dict[str, Any] = {}
@@ -644,9 +825,45 @@ async def _run(
         "cli": cli_payload,
         "resolved": {"model": f"{prov}:{mid}", "agent_name": agent_name},
     }
+    mp, mb = merged_provider_base_for_resolve(
+        working_ai,
+        provider=res_provider,
+        base_url=res_base_url,
+        merge_yaml_provider=merge_yaml_provider,
+    )
+    saved_merged_llm = merged_llm_params_for_resolve(
+        working_ai,
+        llm_frozen=llm_frozen,
+        llm_param_overrides=llm_param_overrides,
+    )
+    mid_s = mid.strip() if mid else ""
+    if mid_s and mid_s.lower() != "auto":
+        stored_effective = f"{prov}:{mid_s}"
+    else:
+        stored_effective = effective_model
+    model_binding_out: dict[str, Any] = {
+        "effective_model": stored_effective,
+        "provider": mp,
+        "base_url": mb,
+        "merge_yaml_provider": merge_yaml_provider,
+        "llm": saved_merged_llm,
+    }
+    key_snap = augment_patch_api_keys_from_env(
+        {
+            "model": stored_effective,
+            "provider": mp,
+            "api_keys": dict(working_ai.get("api_keys") or {}),
+        }
+    ).get("api_keys")
+    if isinstance(key_snap, dict) and key_snap:
+        model_binding_out["api_keys"] = key_snap
+    else:
+        model_binding_out["api_keys"] = None
+
     start_new_session(
         thread_id,
         run_metadata=run_meta,
+        model_binding=model_binding_out,
         update_config_current_session=session is not None,
     )
 
@@ -658,7 +875,7 @@ async def _run(
 
     # MCP servers (Super-Brain preset, server_list, legacy comma-separated — see mcp_loader.build_mcp_configs)
     mcp_configs = build_mcp_configs(cfg, mcp_servers)
-    base_system_prompt = system_prompt or ai_config.get("system_prompt") or get_system_prompt()
+    base_system_prompt = system_prompt or working_ai.get("system_prompt") or get_system_prompt()
 
     # Get session context for smart injection
     session_context = get_session_context_summary(
@@ -710,18 +927,24 @@ async def _run(
     llm_timeout = llm_timeout or execution_config.get("llm_timeout", 120.0)
     classifier_timeout = classifier_timeout or execution_config.get("classifier_timeout", 30.0)
 
-    # Safety configuration
-    safety_config = cfg.get("safety", {})
+    # Safety configuration (project + ``sessions/<id>.yaml`` ``safety:`` — session merges on top)
+    safety_config = build_working_safety_for_thread(cfg, thread_id)
     frozen = frozen or cfg.get("frozen", False)
     frozen_template = frozen_template or cfg.get("frozen_template")
     feedback_webhook = feedback_webhook or cfg.get("feedback_webhook")
     cache_dir = cache_dir or cfg.get("cache_dir")
     interrupt_before = interrupt_before or cfg.get("interrupt_before")
     interrupt_after = interrupt_after or cfg.get("interrupt_after")
-    interrupt_before_tools = interrupt_before_tools or cfg.get("interrupt_before_tools")
+    interrupt_before_tools_raw = (
+        interrupt_before_tools or cfg.get("interrupt_before_tools") or safety_config.get("interrupt_before_tools")
+    )
     if require_approval is None:
         require_approval = bool(safety_config.get("require_approval", True))
     auto_approve_tools = auto_approve_tools or safety_config.get("auto_approve", "")
+    ibt_list = coerce_interrupt_before_tools_list(interrupt_before_tools_raw, require_approval=require_approval)
+    yaml_allow_tools = normalized_safety_tool_allowlist(
+        safety_config.get("tool_allowlist") or safety_config.get("allowlist_tools")
+    )
 
     # L1–L4 HITL: ``user_callback`` is invoked by the core (see ``agloom.hitl_contract``).
     # - CLI: ``agloom_cli.hitl.create_user_callback`` (Rich line UI; Textual TUI swaps in
@@ -746,10 +969,12 @@ async def _run(
         strict_al = bool(safety_config.get("allowlist_strict_tools", True))
         user_callback = create_user_callback(
             auto_approve_tools=auto_list,
+            yaml_prefill_allow_tools=yaml_allow_tools,
             persist_allowlist=bool(persist_al),
             allowlist_path=al_path,
             storage_root=storage_dir(),
             allowlist_strict_tools=strict_al,
+            persist_allowlist_session_id=(thread_id if persist_al else None),
         )
         console.print("[yellow]Human approval enabled for sensitive operations[/yellow]")
 
@@ -815,13 +1040,7 @@ async def _run(
             "debug": verbose,
             "enable_memory_tools": enable_memory,
             "user_callback": user_callback,
-            "interrupt_before_tools": (
-                [t.strip() for t in interrupt_before_tools.split(",")]
-                if interrupt_before_tools
-                else ["run_shell", "write_file", "remove_file"]
-                if require_approval
-                else None
-            ),
+            "interrupt_before_tools": ibt_list,
             "max_concurrent": max_concurrent,
             "max_retries": max_retries,
             "retry_delay": retry_delay,

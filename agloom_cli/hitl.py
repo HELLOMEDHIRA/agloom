@@ -1,9 +1,12 @@
 """Human-in-the-loop approval handler for CLI (Cursor / Claude Code–style choices).
 
-The prompt UI is pluggable via :func:`set_ui_providers`. Default is the Rich-based
-line shell (used by the plain REPL). The Textual TUI swaps in modal screens at
-mount time so prompts render as a dialog over the live chat instead of trying to
-share stdin/stdout with the app.
+Triple gates (tool / pattern / worker / react recovery) use a structured
+:class:`~agloom_cli.hitl_ask_types.AskUserRequest` (``ask_user``) with
+``tool_call_id`` correlation for tool approval when the middleware supplies it.
+
+The UI is pluggable via :func:`set_ui_providers` (``ask_user``, ``text_input``).
+Default is Rich; the Textual TUI installs :class:`~agloom_cli.hitl_textual.AskUserScreen`
+on mount.
 """
 
 from __future__ import annotations
@@ -19,12 +22,16 @@ from rich.prompt import Prompt
 
 from agloom.hitl_contract import HITLEvent
 
+from .config import merge_tool_allowlist_into_session_yaml
+from .hitl_ask import build_hitl_triple_ask_request, new_hitl_tool_call_id, triple_answer_to_token
 from .hitl_allowlist import load_allowlist, merge_allowlist_file, resolve_allowlist_path
+from .hitl_ask_types import AskUserRequest, AskUserWidgetResult
 
 console = Console()
 
 TripleChoiceProvider = Callable[..., Awaitable[str]]
 TextInputProvider = Callable[..., Awaitable[str]]
+AskUserProvider = Callable[[AskUserRequest], Awaitable[AskUserWidgetResult]]
 
 _TOOL_LINE_RE = re.compile(r"Tool\s*:\s*(\S+)", re.IGNORECASE)
 _WORKER_LINE_RE = re.compile(r"Worker\s*:\s*(\S+)", re.IGNORECASE)
@@ -107,28 +114,92 @@ async def _rich_text_input(*, prompt: str, default: str = "") -> str:
     return Prompt.ask(prompt, default=default)
 
 
+def _format_hitl_triple_prompt(
+    title: str,
+    subtitle: str,
+    detail: str,
+    footer: str | None,
+) -> str:
+    parts = [title, subtitle, "", detail]
+    if footer:
+        parts.extend(["", footer])
+    return "\n".join(parts)
+
+
+async def _rich_ask_user(request: AskUserRequest) -> AskUserWidgetResult:
+    """Rich console implementation of :class:`~agloom_cli.hitl_ask_types.AskUserRequest`."""
+    answers: list[str] = []
+    for q in request.get("questions") or []:
+        qtype = q.get("type") or "text"
+        qtext = q.get("question") or ""
+        if qtype == "text":
+            answers.append(await _text_input_provider(prompt=qtext, default=""))
+            continue
+        choices_list = q.get("choices") or []
+        if not choices_list:
+            answers.append(await _text_input_provider(prompt=qtext, default=""))
+            continue
+        lines = [f"[bold yellow]{qtext}[/bold yellow]", ""]
+        prompt_choices: list[str] = []
+        for i, ch in enumerate(choices_list, 1):
+            val = (ch.get("value") or "").strip()
+            lab = (ch.get("label") or val).strip() or val
+            lines.append(f"  [green]{i}[/green]  {lab}")
+            prompt_choices.append(str(i))
+            if val:
+                prompt_choices.append(val.lower())
+        console.print()
+        console.print(Panel("\n".join(lines), border_style="yellow"))
+        default_key = (
+            request.get("rich_prompt_default")
+            if request.get("rich_prompt_default") in prompt_choices
+            else ("2" if "2" in prompt_choices and len(choices_list) >= 2 else prompt_choices[0])
+        )
+        raw = Prompt.ask("Choice", choices=prompt_choices, default=default_key)
+        rs = (raw or "").strip()
+        if rs.isdigit():
+            idx = int(rs) - 1
+            if 0 <= idx < len(choices_list):
+                answers.append((choices_list[idx].get("value") or "").strip().lower())
+            else:
+                answers.append("reject")
+        else:
+            answers.append(rs.lower())
+    return {"type": "answered", "answers": answers}
+
+
 _triple_choice_provider: TripleChoiceProvider = _rich_triple_choice
 _text_input_provider: TextInputProvider = _rich_text_input
+_ask_user_provider: AskUserProvider = _rich_ask_user
 
 
 def set_ui_providers(
     *,
     triple_choice: TripleChoiceProvider | None = None,
     text_input: TextInputProvider | None = None,
+    ask_user: AskUserProvider | None = None,
 ) -> None:
-    """Swap HITL prompt UI (used by the Textual TUI to install modal-screen providers)."""
-    global _triple_choice_provider, _text_input_provider
+    """Swap HITL prompt UI (used by the Textual TUI to install modal-screen providers).
+
+    HITL triple gates use the structured :class:`~agloom_cli.hitl_ask_types.AskUserRequest` path
+    (``ask_user``). The legacy ``triple_choice`` provider is kept for compatibility but is no longer
+    invoked by :func:`_hitl_triple_choice`.
+    """
+    global _triple_choice_provider, _text_input_provider, _ask_user_provider
     if triple_choice is not None:
         _triple_choice_provider = triple_choice
     if text_input is not None:
         _text_input_provider = text_input
+    if ask_user is not None:
+        _ask_user_provider = ask_user
 
 
 def reset_ui_providers() -> None:
     """Restore the default Rich providers (call when the TUI exits)."""
-    global _triple_choice_provider, _text_input_provider
+    global _triple_choice_provider, _text_input_provider, _ask_user_provider
     _triple_choice_provider = _rich_triple_choice
     _text_input_provider = _rich_text_input
+    _ask_user_provider = _rich_ask_user
 
 
 async def _hitl_triple_choice(
@@ -141,18 +212,23 @@ async def _hitl_triple_choice(
     row2: str,
     row3: str,
     default: str = "2",
+    tool_call_id: str = "",
 ) -> str:
-    """Dispatch a tri-state HITL prompt through the active provider. Returns ``accept``/``reject``/``allowlist``."""
-    return await _triple_choice_provider(
-        title=title,
-        subtitle=subtitle,
-        detail=detail,
-        footer=footer,
-        row1=row1,
-        row2=row2,
-        row3=row3,
-        default=default,
+    """Structured ask-user interrupt; returns ``accept``/``reject``/``allowlist``."""
+    tcid = new_hitl_tool_call_id(tool_call_id)
+    d = default if default in ("1", "2", "3") else "2"
+    req = build_hitl_triple_ask_request(
+        tool_call_id=tcid,
+        prompt_text=_format_hitl_triple_prompt(title, subtitle, detail, footer),
+        choice_labels=(row1, row2, row3),
+        rich_prompt_default=d,
+        focus_choice_index=int(d),
     )
+    result = await _ask_user_provider(req)
+    if result["type"] == "cancelled":
+        return "reject"
+    token = triple_answer_to_token(result["answers"])
+    return _normalize_triple_choice(token)
 
 
 async def _hitl_text_input(prompt: str, *, default: str = "") -> str:
@@ -163,10 +239,12 @@ async def _hitl_text_input(prompt: str, *, default: str = "") -> str:
 def create_user_callback(
     auto_approve_tools: list[str] | None = None,
     *,
+    yaml_prefill_allow_tools: list[str] | None = None,
     persist_allowlist: bool = True,
     allowlist_path: Path | None = None,
     storage_root: Path | None = None,
     allowlist_strict_tools: bool = True,
+    persist_allowlist_session_id: str | None = None,
 ):
     """Build a ``user_callback`` for interactive terminals (Rich).
 
@@ -177,14 +255,18 @@ def create_user_callback(
 
     Args:
         auto_approve_tools: Tool names never prompted (from config ``safety.auto_approve``) when not strict.
-        persist_allowlist: If True, "always allow" appends to the allowlist JSON under ``.agloom``.
+        yaml_prefill_allow_tools: Project + session ``safety.tool_allowlist`` (merged). Always unioned into
+            the runtime allowlist first — honored even when *allowlist_strict_tools* and the JSON file exist.
+        persist_allowlist: If True, "always allow" can append to the allowlist JSON under ``.agloom``.
         allowlist_path: Resolved path (use :func:`resolve_allowlist_path`); must stay under *storage_root*.
         storage_root: Active storage root (``storage_dir()``, i.e. project ``.agloom``). Used to validate *allowlist_path*.
         allowlist_strict_tools: If True (default), when the allowlist file exists, **only** its ``tools`` list
             applies; ``safety.auto_approve`` is ignored for tools. If False, yaml and JSON are unioned.
             If the file does not exist yet, ``auto_approve_tools`` is used alone.
+        persist_allowlist_session_id: When set, "always allow" also appends to ``sessions/<id>.yaml``.
     """
     auto_tools = {t.strip() for t in (auto_approve_tools or []) if t.strip()}
+    yaml_pre = {t.strip() for t in (yaml_prefill_allow_tools or []) if t.strip()}
 
     path: Path | None = allowlist_path
     if path is None and storage_root is not None:
@@ -207,15 +289,23 @@ def create_user_callback(
         file_exists = False
 
     if allowlist_strict_tools and file_exists:
-        runtime_tools = set(file_tools)
+        runtime_tools = yaml_pre | set(file_tools)
     else:
-        runtime_tools = set(auto_tools) | set(file_tools)
+        runtime_tools = yaml_pre | set(auto_tools) | set(file_tools)
     runtime_patterns = set(file_patterns)
     runtime_workers = set(file_workers)
 
-    persist_hint = (
-        f"(writes to [cyan]{path}[/cyan])" if persist_allowlist and path else "(this session only — persistence off)"
-    )
+    _hint_parts: list[str] = []
+    if persist_allowlist_session_id:
+        sid = persist_allowlist_session_id.strip()
+        disp = f"{sid[:8]}…" if len(sid) > 8 else sid
+        _hint_parts.append(f"session [cyan]{disp}[/cyan].yaml")
+    if persist_allowlist and path:
+        _hint_parts.append(f"[cyan]{path.name}[/cyan]")
+    if _hint_parts:
+        persist_hint = "(writes to " + " + ".join(_hint_parts) + ")"
+    else:
+        persist_hint = "(this session only — persistence off)"
 
     async def callback(event_type: str, message: str | dict) -> Any:
         nonlocal runtime_tools, runtime_patterns, runtime_workers
@@ -229,13 +319,23 @@ def create_user_callback(
                 ask_label = f"Clarification: {message}"
             return await _hitl_text_input(ask_label, default="")
 
-        if not isinstance(message, str):
-            return True
-
         if event_type == HITLEvent.TOOL_INTERRUPT_BEFORE:
-            tool_name = _parse_tool_name(message)
+            tool_call_id = ""
+            if isinstance(message, dict):
+                tool_name = str(message.get("tool_name") or "").strip()
+                if not tool_name:
+                    tool_name = _parse_tool_name(str(message.get("detail") or "")) or ""
+                tool_call_id = str(message.get("tool_call_id") or "")
+                detail = str(message.get("detail") or message)
+            elif isinstance(message, str):
+                tool_name = _parse_tool_name(message) or ""
+                detail = message
+            else:
+                console.print(f"[dim]{message!r}[/dim]")
+                return "continue"
+
             if not tool_name:
-                console.print(f"[dim]{message}[/dim]")
+                console.print(f"[dim]{detail}[/dim]")
                 return "continue"
 
             if tool_name in runtime_tools:
@@ -245,23 +345,33 @@ def create_user_callback(
             choice = await _hitl_triple_choice(
                 title="Tool approval",
                 subtitle=f"Tool: {tool_name}",
-                detail=message,
+                detail=detail,
                 footer=f"[bold]Always allow[/bold] {persist_hint}",
                 row1="Accept (this time only)",
                 row2="Reject",
-                row3="Always allow — [dim]saved to allowlist[/dim]",
+                row3="Always allow — [dim]saved to session YAML / allowlist[/dim]",
                 default="2",
+                tool_call_id=tool_call_id,
             )
             if choice == "reject":
                 return "abort"
             if choice == "allowlist":
                 runtime_tools.add(tool_name)
+                wrote = False
+                if persist_allowlist_session_id:
+                    merge_tool_allowlist_into_session_yaml(persist_allowlist_session_id, tool_name)
+                    console.print(f"[cyan]Saved '{tool_name}' to session YAML (safety.tool_allowlist).[/cyan]")
+                    wrote = True
                 if persist_allowlist and path is not None:
                     merge_allowlist_file(path, tools=[tool_name])
-                    console.print(f"[cyan]Saved '{tool_name}' to tool allowlist.[/cyan]")
-                else:
+                    if not wrote:
+                        console.print(f"[cyan]Saved '{tool_name}' to {path.name}.[/cyan]")
+                elif not wrote:
                     console.print("[cyan]Allowlisted for this CLI run (not saved).[/cyan]")
             return "continue"
+
+        if not isinstance(message, str):
+            return True
 
         if event_type == HITLEvent.PATTERN_INTERRUPT:
             pattern = _parse_pattern_name(message)

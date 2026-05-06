@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.prompt import Confirm, IntPrompt, Prompt
 
 from .langchain_index_overview import INIT_CHAT_SLUG_TITLES, NON_CHAT_INDEX_BRANDS
+from .model_resolver import augment_patch_api_keys_from_env
 
 # LangChain’s built-in registry (same providers ``init_chat_model`` supports first-class).
 try:
@@ -293,9 +294,16 @@ def resolve_model_with_optional_wizard(
     base_url: str | None,
     merge_yaml_provider: bool,
     no_provider_wizard: bool,
+    llm_param_overrides: dict[str, Any] | None = None,
+    llm_frozen: dict[str, Any] | None = None,
+    thread_id: str | None = None,
 ) -> Any:
     """Call :func:`resolve_model`; on failure or no LLM in a TTY, run the provider wizard and retry."""
-    from agloom_cli.config import merge_ai_into_storage_yaml, resolve_model
+    from agloom_cli.config import (
+        merge_ai_into_session_yaml,
+        merge_ai_into_storage_yaml,
+        resolve_model,
+    )
 
     from .model_resolver import MissingProviderApiKey, MissingProviderDependency
 
@@ -307,6 +315,8 @@ def resolve_model_with_optional_wizard(
             provider=provider,
             base_url=base_url,
             merge_yaml_provider=merge_yaml_provider,
+            llm_param_overrides=llm_param_overrides,
+            llm_frozen=llm_frozen,
         )
         if llm is not None:
             return llm
@@ -328,11 +338,30 @@ def resolve_model_with_optional_wizard(
         return None
 
     merged = merge_wizard_patch_into_cfg(cfg, patch)
-    if Confirm.ask(
+    tid_disp = f"{thread_id[:8]}…" if thread_id and len(thread_id) > 8 else (thread_id or "")
+    patch_for_disk = augment_patch_api_keys_from_env(patch)
+    if thread_id:
+        if Confirm.ask(
+            f"Save provider, model, and API keys to [path]this session's YAML[/path] "
+            f"([cyan]sessions/{tid_disp}.yaml[/cyan])? "
+            "[dim](recommended — does not change project defaults)[/dim]",
+            default=True,
+        ):
+            merge_ai_into_session_yaml(thread_id, patch_for_disk)
+            console.print(f"[success]✓[/success] Saved to [cyan]sessions/{tid_disp}.yaml[/cyan].")
+        if Confirm.ask(
+            "Additionally save to [path]storage agloom.yaml[/path] as the default for "
+            "[bold]all future sessions[/bold] in this project?",
+            default=False,
+        ):
+            merge_ai_into_storage_yaml(patch_for_disk)
+            console.print("[success]✓[/success] Saved to [cyan]agloom.yaml[/cyan] (project-wide default).")
+    elif Confirm.ask(
         "Save provider, model, and api_keys to [path]agloom.yaml[/path] under this project?",
         default=True,
     ):
-        merge_ai_into_storage_yaml(patch)
+        merge_ai_into_storage_yaml(patch_for_disk)
+        console.print("[success]✓[/success] Saved to [cyan]agloom.yaml[/cyan].")
 
     try:
         return resolve_model(
@@ -341,6 +370,8 @@ def resolve_model_with_optional_wizard(
             provider=provider,
             base_url=base_url or patch.get("base_url"),
             merge_yaml_provider=merge_yaml_provider,
+            llm_param_overrides=llm_param_overrides,
+            llm_frozen=llm_frozen,
         )
     except (MissingProviderApiKey, MissingProviderDependency) as e2:
         console.print(f"[error]Could not initialize the model after setup: {e2}[/error]")

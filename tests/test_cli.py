@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
 import pytest
 
 from agloom_cli.config import (
+    build_working_ai_for_thread,
     config_source_fingerprints,
     get_system_prompt,
     get_thread_id,
     list_project_cleanup_dirs,
     load_config,
+    load_session_config_yaml,
+    merge_ai_into_session_yaml,
     normalize_cli_session_id,
+    read_session_model_binding,
     remove_project_cleanup_dirs,
+    session_ai_updates_from_model_binding,
+    session_config_yaml_path,
+    session_model_binding_is_usable,
     session_record_path,
     set_cli_project_root,
     start_new_session,
@@ -69,6 +77,10 @@ def test_start_new_session_preserves_history_and_sets_last_run(tmp_path: Path, m
     assert len(data["messages"]) == 1
     assert data["last_run"] == meta
     assert "last_active" in data
+    yp = session_config_yaml_path(sid)
+    assert yp.is_file()
+    loaded = load_session_config_yaml(sid)
+    assert loaded.get("ai") == {}
 
 
 def test_remove_project_cleanup_dirs(tmp_path: Path) -> None:
@@ -200,6 +212,135 @@ def test_start_new_session_skip_config_yaml(tmp_path: Path, monkeypatch: pytest.
     txt = (store / "agloom.yaml").read_text(encoding="utf-8")
     assert "keep-me" in txt
     assert "brandnewid" not in txt
+    assert session_config_yaml_path("brandnewid").is_file()
+
+
+def test_build_working_ai_session_overrides_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = tmp_path / ".agloom"
+    store.mkdir()
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
+    sid = "c" * 32
+    (store / "sessions").mkdir(parents=True)
+    ypath = store / "sessions" / f"{sid}.yaml"
+    ypath.write_text(
+        "ai:\n  model: groq:meta-llama/from-session\n  llm:\n    temperature: 0.55\n    top_p: 0.9\n",
+        encoding="utf-8",
+    )
+    cfg = {"ai": {"model": "openai:gpt-4o", "llm": {"temperature": 0, "max_tokens": 100}}}
+    working, sess_only = build_working_ai_for_thread(cfg, sid)
+    assert working["model"] == "groq:meta-llama/from-session"
+    assert working["llm"]["temperature"] == 0.55
+    assert working["llm"]["top_p"] == 0.9
+    assert working["llm"]["max_tokens"] == 100
+    assert sess_only["model"] == "groq:meta-llama/from-session"
+
+
+def test_merge_ai_into_session_yaml_creates_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = tmp_path / ".agloom"
+    store.mkdir()
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
+    sid = "d" * 32
+    merge_ai_into_session_yaml(sid, {"model": "ollama:llama3.2", "llm": {"temperature": 0.3}})
+    p = session_config_yaml_path(sid)
+    assert p.is_file()
+    loaded = load_session_config_yaml(sid)
+    assert loaded["ai"]["model"] == "ollama:llama3.2"
+    assert loaded["ai"]["llm"]["temperature"] == 0.3
+
+
+def test_read_session_model_binding(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = tmp_path / ".agloom"
+    store.mkdir()
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
+    sid = "a" * 32
+    (store / "sessions").mkdir(parents=True)
+    sf = store / "sessions" / f"{sid}.json"
+    sf.write_text(
+        json.dumps({"id": sid, "model_binding": {"effective_model": "groq:meta-llama/foo"}}),
+        encoding="utf-8",
+    )
+    b = read_session_model_binding(sid)
+    assert b is not None
+    assert b["effective_model"] == "groq:meta-llama/foo"
+    assert session_model_binding_is_usable(b)
+    assert not session_model_binding_is_usable({"effective_model": "auto"})
+
+
+def test_start_new_session_writes_model_binding(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = tmp_path / ".agloom"
+    store.mkdir()
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
+    (store / "agloom.yaml").write_text("session:\n  current_session: 'x'\n", encoding="utf-8")
+    sid = "b" * 32
+    binding = {"effective_model": "openai:gpt-4o", "llm": {"temperature": 0}}
+    start_new_session(sid, model_binding=binding, update_config_current_session=False)
+    data = json.loads((store / "sessions" / f"{sid}.json").read_text(encoding="utf-8"))
+    assert data["model_binding"] == binding
+    sess = load_session_config_yaml(sid)["ai"]
+    assert sess["model"] == "openai:gpt-4o"
+    assert sess["llm"]["temperature"] == 0
+    assert "base_url" in sess
+    assert sess["base_url"] is None
+
+
+def test_session_ai_updates_from_model_binding_maps_fields() -> None:
+    u = session_ai_updates_from_model_binding(
+        {
+            "effective_model": "nvidia:meta/Llama-4",
+            "provider": "nvidia",
+            "base_url": "https://example/v1",
+            "llm": {"temperature": 0.2, "top_p": 0.9},
+        }
+    )
+    assert u["model"] == "nvidia:meta/Llama-4"
+    assert u["provider"] == "nvidia"
+    assert u["base_url"] == "https://example/v1"
+    assert u["api_keys"] is None
+    assert u["llm"] == {"temperature": 0.2, "top_p": 0.9}
+
+
+def test_session_ai_updates_includes_api_keys_from_binding() -> None:
+    u = session_ai_updates_from_model_binding(
+        {
+            "effective_model": "nvidia:x",
+            "api_keys": {"NVIDIA_API_KEY": "nvapi-test"},
+            "llm": {},
+        },
+    )
+    assert u["api_keys"] == {"NVIDIA_API_KEY": "nvapi-test"}
+
+
+def test_session_ai_updates_includes_null_base_url_when_unset() -> None:
+    u = session_ai_updates_from_model_binding(
+        {"effective_model": "nvidia:meta/Llama-4", "provider": "nvidia", "base_url": None, "llm": {}},
+    )
+    assert u["base_url"] is None
+    assert u["api_keys"] is None
+
+
+def test_session_yaml_backfills_base_url_when_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = tmp_path / ".agloom"
+    store.mkdir()
+    monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
+    (store / "agloom.yaml").write_text("ai:\n  name: t\n", encoding="utf-8")
+    sid = "f" * 32
+    (store / "sessions").mkdir(parents=True)
+    yp = store / "sessions" / f"{sid}.yaml"
+    yp.write_text(
+        "ai:\n  model: nvidia:meta/foo\n  llm:\n    temperature: 0\n",
+        encoding="utf-8",
+    )
+    binding = {
+        "effective_model": "nvidia:meta/foo",
+        "provider": "nvidia",
+        "base_url": None,
+        "merge_yaml_provider": True,
+        "llm": {"temperature": 0},
+    }
+    start_new_session(sid, model_binding=binding, update_config_current_session=False)
+    loaded = load_session_config_yaml(sid)["ai"]
+    assert "base_url" in loaded
+    assert loaded["base_url"] is None
 
 
 def test_get_system_prompt_nonempty() -> None:

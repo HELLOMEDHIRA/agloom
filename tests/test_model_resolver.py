@@ -217,7 +217,34 @@ def test_resolve_model_yaml_api_keys_applied_during_get_model(monkeypatch: pytes
     )
     assert out == "ok"
     assert captured["during"] == "key-from-yaml"
-    assert os.environ.get("GROQ_API_KEY") is None
+    assert os.environ.get("GROQ_API_KEY") == "key-from-yaml"
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+
+def test_merge_api_keys_yaml_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "from-shell")
+
+    def fake_get_model(model_id: str, **kwargs: object) -> str:
+        return os.environ.get("GROQ_API_KEY", "")
+
+    monkeypatch.setattr(mr, "get_model", fake_get_model)
+    out = cfg.resolve_model(
+        "groq:meta-llama/foo",
+        config={"ai": {"api_keys": {"GROQ_API_KEY": "from-yaml"}}},
+    )
+    assert out == "from-yaml"
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+
+def test_augment_patch_api_keys_from_env_fills_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "env-gsk")
+    p = mr.augment_patch_api_keys_from_env({"model": "groq:meta-llama/foo"})
+    assert p["api_keys"]["GROQ_API_KEY"] == "env-gsk"
+    p2 = mr.augment_patch_api_keys_from_env(
+        {"model": "groq:meta-llama/foo", "api_keys": {"GROQ_API_KEY": "wizard-gsk"}}
+    )
+    assert p2["api_keys"]["GROQ_API_KEY"] == "wizard-gsk"
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
 
 def test_get_model_unknown_provider_slug_uses_init_chat_model(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -226,3 +253,114 @@ def test_get_model_unknown_provider_slug_uses_init_chat_model(monkeypatch: pytes
 
     monkeypatch.setattr(mr, "_init_chat_model_unified", fake_init)
     assert mr.get_model("bedrock:us.anthropic.claude-3-5-sonnet") == "init:bedrock:us.anthropic.claude-3-5-sonnet"
+
+
+def test_llm_params_from_ai_config_filters_unknown_keys() -> None:
+    assert cfg.llm_params_from_ai_config({"llm": {"temperature": 0.7, "bogus": 1}}) == {"temperature": 0.7}
+
+
+def test_resolve_model_default_temperature_when_no_yaml_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_get_model(model_id: str, **kwargs: object) -> str:
+        captured.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(mr, "get_model", fake_get_model)
+    cfg.resolve_model("groq:meta-llama/foo", config={"ai": {}})
+    assert captured.get("temperature") == 0
+
+
+def test_merged_provider_base_url_from_yaml_when_cli_model_explicit() -> None:
+    """``ai.base_url`` applies even when merge_yaml_provider is False (e.g. ``agloom -m ollama:…``)."""
+    ai = {"base_url": "http://192.168.1.10:11434", "provider": "ollama"}
+    mp, mb = cfg.merged_provider_base_for_resolve(
+        ai,
+        provider=None,
+        base_url=None,
+        merge_yaml_provider=False,
+    )
+    assert mb == "http://192.168.1.10:11434"
+    assert mp is None
+
+
+def test_merged_provider_yaml_provider_only_when_merge_enabled() -> None:
+    ai = {"provider": "groq", "base_url": "http://proxy/v1"}
+    mp, mb = cfg.merged_provider_base_for_resolve(
+        ai,
+        provider=None,
+        base_url=None,
+        merge_yaml_provider=True,
+    )
+    assert mp == "groq"
+    assert mb == "http://proxy/v1"
+
+
+def test_llm_yaml_defaults_match_param_keys() -> None:
+    assert set(cfg._LLM_YAML_DEFAULTS.keys()) == set(cfg._LLM_YAML_PARAM_KEYS)
+
+
+def test_baseline_llm_params_omits_none_defaults() -> None:
+    b = cfg.baseline_llm_params()
+    assert b["temperature"] == 0
+    assert b["top_p"] == 1.0
+    assert b["max_retries"] == 2
+    assert "top_k" not in b
+    assert "max_tokens" not in b
+
+
+def test_merged_llm_includes_baseline_when_no_yaml_llm() -> None:
+    out = cfg.merged_llm_params_for_resolve({})
+    assert out["temperature"] == 0
+    assert out["top_p"] == 1.0
+    assert out["max_retries"] == 2
+    assert out["frequency_penalty"] == 0.0
+
+
+def test_merged_llm_params_frozen_overrides_yaml() -> None:
+    ai = {"llm": {"temperature": 0.9, "top_p": 0.5}}
+    out = cfg.merged_llm_params_for_resolve(
+        ai,
+        llm_frozen={"temperature": 0.2, "max_tokens": 100},
+        llm_param_overrides={"top_p": 0.99},
+    )
+    assert out["temperature"] == 0.2
+    assert out["top_p"] == 0.99
+    assert out["max_tokens"] == 100
+
+
+def test_resolve_model_llm_frozen_skips_yaml_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_get_model(model_id: str, **kwargs: object) -> str:
+        captured.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(mr, "get_model", fake_get_model)
+    cfg.resolve_model(
+        "groq:meta-llama/foo",
+        config={"ai": {"llm": {"temperature": 0.9}}},
+        llm_frozen={"temperature": 0.3, "max_tokens": 50},
+        llm_param_overrides={"top_p": 0.8},
+    )
+    assert captured["temperature"] == 0.3
+    assert captured["max_tokens"] == 50
+    assert captured["top_p"] == 0.8
+
+
+def test_resolve_model_llm_yaml_and_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_get_model(model_id: str, **kwargs: object) -> str:
+        captured.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(mr, "get_model", fake_get_model)
+    cfg.resolve_model(
+        "groq:meta-llama/foo",
+        config={"ai": {"llm": {"temperature": 0.5, "top_p": 0.9}}},
+        llm_param_overrides={"temperature": 0.8, "max_tokens": 100},
+    )
+    assert captured["temperature"] == 0.8
+    assert captured["top_p"] == 0.9
+    assert captured["max_tokens"] == 100

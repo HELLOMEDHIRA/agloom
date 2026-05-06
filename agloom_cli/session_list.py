@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from .config import normalize_cli_session_id
 
 
@@ -59,7 +61,22 @@ def load_session_row(path: Path) -> dict[str, Any] | None:
     last_run = data.get("last_run") if isinstance(data.get("last_run"), dict) else {}
     project_root = str(last_run.get("project_root") or "").strip()
     resolved = last_run.get("resolved") if isinstance(last_run.get("resolved"), dict) else {}
-    model = str(resolved.get("model") or "").strip()
+    mb = data.get("model_binding") if isinstance(data.get("model_binding"), dict) else {}
+    bound_model = str(mb.get("effective_model") or "").strip()
+    yaml_model = ""
+    ypath = path.with_suffix(".yaml")
+    if ypath.is_file():
+        try:
+            yd = yaml.safe_load(ypath.read_text(encoding="utf-8"))
+            if isinstance(yd, dict):
+                yai = yd.get("ai", {})
+                if isinstance(yai, dict):
+                    ym = yai.get("model")
+                    if ym is not None and str(ym).strip():
+                        yaml_model = str(ym).strip()
+        except (OSError, yaml.YAMLError):
+            pass
+    model = str(resolved.get("model") or "").strip() or bound_model or yaml_model
 
     return {
         "id": sid,

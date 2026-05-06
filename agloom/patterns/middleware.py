@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -93,16 +94,26 @@ class HumanApprovalMiddleware(AgentMiddleware):
 
         logger.event(f"{self.agent_name}[L2-HITL] Pausing before tool '{tool_name}'")
 
+        raw_id = getattr(request, "tool_call_id", None)
+        tool_call_id = str(raw_id).strip() if raw_id is not None and str(raw_id).strip() else uuid.uuid4().hex
+        payload: dict[str, Any] = {
+            "tool_name": tool_name,
+            "tool_call_id": tool_call_id,
+            "agent_name": self.agent_name,
+            "args": getattr(request, "args", {}),
+            "detail": (
+                f"Agent : {self.agent_name}\n"
+                f"Tool  : {tool_name}\n"
+                f"Args  : {getattr(request, 'args', {})}\n"
+                f"\nType 'continue' to proceed or 'abort' to cancel."
+            ),
+        }
+
         try:
             decision = await call_user_callback(
                 self.user_callback,
                 HITLEvent.TOOL_INTERRUPT_BEFORE,
-                (
-                    f"Agent : {self.agent_name}\n"
-                    f"Tool  : {tool_name}\n"
-                    f"Args  : {getattr(request, 'args', {})}\n"
-                    f"\nType 'continue' to proceed or 'abort' to cancel."
-                ),
+                payload,
             )
         except Exception as exc:
             logger.error(f"{self.agent_name}[L2-HITL] user_callback raised {exc!r} — defaulting to 'continue'.")

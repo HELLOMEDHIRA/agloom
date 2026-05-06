@@ -41,6 +41,18 @@ import sys
 from importlib import util
 from typing import Any
 
+from agloom_cli.llm_provider_params import normalize_provider_slug, spread_llm_options_for_provider
+
+
+def _slug_for_spread_llm(*, model_provider: str | None, model: str) -> str:
+    """Provider slug for :func:`spread_llm_options_for_provider` when using ``init_chat_model``."""
+    if model_provider:
+        return normalize_provider_slug(model_provider)
+    pref, _rest = split_provider_prefix(model)
+    if pref and pref not in ("lc", "init"):
+        return normalize_provider_slug(pref)
+    return "__generic_init__"
+
 # CLI auto-pick order: (slug for ``AGLOOM_PROVIDER``, Rich label, env var(s), default model id).
 _CLI_PROVIDER_ROWS: list[tuple[str, str, str | tuple[str, ...], str]] = [
     ("openai", "OpenAI", "OPENAI_API_KEY", "gpt-4o"),
@@ -50,6 +62,67 @@ _CLI_PROVIDER_ROWS: list[tuple[str, str, str | tuple[str, ...], str]] = [
     ("groq", "Groq", "GROQ_API_KEY", "meta-llama/llama-4-scout-17b-16e-instruct"),
     ("xai", "xAI", "XAI_API_KEY", "grok-3-latest"),
 ]
+
+# Env vars to snapshot into ``ai.api_keys`` when saving session YAML (wizard / augment_patch).
+_PROVIDER_ENV_KEYS: dict[str, tuple[str, ...]] = {
+    "openai": ("OPENAI_API_KEY",),
+    "anthropic": ("ANTHROPIC_API_KEY",),
+    "google": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+    "gemini": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+    "mistralai": ("MISTRAL_API_KEY",),
+    "mistral": ("MISTRAL_API_KEY",),
+    "groq": ("GROQ_API_KEY",),
+    "xai": ("XAI_API_KEY",),
+    "ollama": (),
+    "vllm": ("OPENAI_API_KEY", "VLLM_API_KEY"),
+    "litellm": ("OPENAI_API_KEY",),
+    "openrouter": ("OPENROUTER_API_KEY",),
+    "cerebras": ("CEREBRAS_API_KEY",),
+    "nvidia": ("NVIDIA_API_KEY",),
+    "cohere": ("COHERE_API_KEY",),
+    "deepseek": ("DEEPSEEK_API_KEY",),
+    "fireworks": ("FIREWORKS_API_KEY",),
+    "together": ("TOGETHER_API_KEY",),
+    "perplexity": ("PERPLEXITY_API_KEY",),
+    "upstage": ("UPSTAGE_API_KEY",),
+    "ibm": ("WATSONX_API_KEY",),
+    "huggingface": ("HUGGINGFACEHUB_API_TOKEN",),
+    "baseten": ("BASETEN_API_KEY",),
+    "azure_openai": ("AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"),
+    "azure_ai": ("AZURE_AI_API_KEY", "AZURE_AI_ENDPOINT"),
+}
+
+
+def augment_patch_api_keys_from_env(patch: dict[str, Any]) -> dict[str, Any]:
+    """Add ``api_keys`` from :func:`os.environ` for the resolved provider without clobbering *patch*.
+
+    Wizard-entered keys win; we only ``setdefault`` env values so a session YAML can carry the same
+    secrets the user already exported (portable session files).
+    """
+    model = str(patch.get("model") or "").strip()
+    prov_hint = patch.get("provider")
+    if isinstance(prov_hint, str):
+        prov_hint = prov_hint.strip() or None
+    pref, _rest = split_provider_prefix(model)
+    raw_tok = (pref or prov_hint or "").strip().lower().replace("-", "_")
+    if raw_tok in ("mistral",):
+        raw_tok = "mistralai"
+    if raw_tok in ("google", "gemini"):
+        raw_tok = "google"
+    keys_tpl = _PROVIDER_ENV_KEYS.get(raw_tok, ())
+    snap: dict[str, str] = {}
+    for name in keys_tpl:
+        v = os.environ.get(name)
+        if v and str(v).strip():
+            snap[name] = str(v).strip()
+    if not snap:
+        return patch
+    merged = dict(patch.get("api_keys") or {})
+    for k, v in snap.items():
+        merged.setdefault(k, v)
+    out = dict(patch)
+    out["api_keys"] = merged
+    return out
 
 _SLUG_TO_EXTRA: dict[str, tuple[str, str]] = {
     "openai": ("openai", "'agloom[openai]'"),
@@ -203,7 +276,8 @@ def _init_chat_model_unified(
             "'agloom' (core langchain dependency)",
         ) from e
 
-    init_kw: dict[str, Any] = dict(kwargs)
+    filt = _slug_for_spread_llm(model_provider=model_provider, model=model)
+    init_kw: dict[str, Any] = spread_llm_options_for_provider(filt, kwargs)
     init_kw.setdefault("temperature", 0)
     if base_url:
         init_kw["base_url"] = base_url.strip()
@@ -221,21 +295,12 @@ def _get_litellm_model(model_id: str, *, base_url: str | None = None, **kwargs: 
 
     params: dict[str, Any] = {
         "model": model_id,
-        "temperature": kwargs.get("temperature", 0),
+        **spread_llm_options_for_provider("litellm", kwargs),
     }
+    if "temperature" not in params:
+        params["temperature"] = kwargs.get("temperature", 0)
     if base_url:
         params["api_base"] = base_url.strip()
-    for key in (
-        "max_tokens",
-        "max_completion_tokens",
-        "top_p",
-        "frequency_penalty",
-        "presence_penalty",
-        "timeout",
-        "max_retries",
-    ):
-        if key in kwargs:
-            params[key] = kwargs[key]
     return ChatLiteLLM(**params)
 
 
@@ -359,7 +424,8 @@ def get_model(
         model_id: Model identifier (optionally prefixed with ``provider:``).
         provider: Optional slug overriding heuristic routing (``groq``, ``ollama``, ``litellm``, …).
         base_url: Optional HTTP origin for ``ollama`` / ``vllm`` / OpenAI-compatible / LiteLLM endpoints.
-        **kwargs: Passed through (e.g. ``temperature``).
+        **kwargs: Decoding / client options from ``ai.llm``. Keys are normalized and filtered per
+            provider (see :mod:`agloom_cli.llm_provider_params`).
 
     Returns:
         LangChain BaseChatModel instance
@@ -438,7 +504,7 @@ def _usable_cli_provider_triples() -> tuple[list[tuple[str, str, str]], list[Mis
     return usable, missing
 
 
-def try_resolve_llm_from_api_keys(*, interactive: bool | None = None) -> Any | None:
+def try_resolve_llm_from_api_keys(*, interactive: bool | None = None, **llm_kwargs: Any) -> Any | None:
     """Pick a default model from API keys.
 
     - If exactly one provider is usable (key set + extra installed), use it.
@@ -473,13 +539,13 @@ def try_resolve_llm_from_api_keys(*, interactive: bool | None = None) -> Any | N
     if pref:
         for slug, _label, default_model in usable:
             if slug == pref:
-                return get_model(default_model)
+                return get_model(default_model, **llm_kwargs)
 
     if interactive is None:
         interactive = sys.stdin.isatty() and sys.stdout.isatty()
 
     if len(usable) == 1:
-        return get_model(usable[0][2])
+        return get_model(usable[0][2], **llm_kwargs)
 
     if interactive and len(usable) > 1:
         from rich.console import Console
@@ -496,9 +562,9 @@ def try_resolve_llm_from_api_keys(*, interactive: bool | None = None) -> Any | N
             )
         choice = IntPrompt.ask("Enter number", default=1)
         idx = max(1, min(choice, len(usable))) - 1
-        return get_model(usable[idx][2])
+        return get_model(usable[idx][2], **llm_kwargs)
 
-    return get_model(usable[0][2])
+    return get_model(usable[0][2], **llm_kwargs)
 
 
 def describe_llm(llm: Any) -> tuple[str, str]:
@@ -537,11 +603,14 @@ def _get_vllm_openai_compatible(model_id: str, *, base_url: str | None = None, *
 
     bu = _default_vllm_base_url(base_url)
     api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("VLLM_API_KEY") or "EMPTY"
+    opts = spread_llm_options_for_provider("vllm", kwargs)
+    if "temperature" not in opts:
+        opts["temperature"] = kwargs.get("temperature", 0)
     return ChatOpenAI(
         model=model_id,
         base_url=bu,
         api_key=api_key,
-        temperature=kwargs.get("temperature", 0),
+        **opts,
     )
 
 
@@ -553,9 +622,11 @@ def _get_openai_model(model_id: str, *, base_url: str | None = None, **kwargs: A
 
     params: dict[str, Any] = {
         "model": model_id,
-        "temperature": kwargs.get("temperature", 0),
         "api_key": _require_env("OPENAI_API_KEY", for_provider="OpenAI"),
+        **spread_llm_options_for_provider("openai", kwargs),
     }
+    if "temperature" not in params:
+        params["temperature"] = kwargs.get("temperature", 0)
     if base_url:
         params["base_url"] = base_url.strip()
     return ChatOpenAI(**params)
@@ -576,10 +647,13 @@ def _get_anthropic_model(model_id: str, **kwargs) -> Any:
         elif "haiku" in model_id.lower():
             actual_model = "claude-3-haiku-20240307"
 
+    opts = spread_llm_options_for_provider("anthropic", kwargs)
+    if "temperature" not in opts:
+        opts["temperature"] = kwargs.get("temperature", 0)
     return ChatAnthropic(
         model=actual_model,
-        temperature=kwargs.get("temperature", 0),
         anthropic_api_key=_require_env("ANTHROPIC_API_KEY", for_provider="Anthropic"),
+        **opts,
     )
 
 
@@ -590,10 +664,13 @@ def _get_google_genai_model(model_id: str, **kwargs) -> Any:
         raise MissingProviderDependency("google-genai", "'agloom[google-genai]'") from e
 
     key = _require_google_api_key()
+    opts = spread_llm_options_for_provider("google", kwargs)
+    if "temperature" not in opts:
+        opts["temperature"] = kwargs.get("temperature", 0)
     return ChatGoogleGenerativeAI(
         model=model_id,
-        temperature=kwargs.get("temperature", 0),
         api_key=key,
+        **opts,
     )
 
 
@@ -603,10 +680,13 @@ def _get_mistral_model(model_id: str, **kwargs) -> Any:
     except ImportError as e:
         raise MissingProviderDependency("mistralai", "'agloom[mistralai]'") from e
 
+    opts = spread_llm_options_for_provider("mistralai", kwargs)
+    if "temperature" not in opts:
+        opts["temperature"] = kwargs.get("temperature", 0)
     return ChatMistralAI(
         model=model_id,
-        temperature=kwargs.get("temperature", 0),
         api_key=_require_env("MISTRAL_API_KEY", for_provider="Mistral AI"),
+        **opts,
     )
 
 
@@ -616,10 +696,13 @@ def _get_xai_model(model_id: str, **kwargs) -> Any:
     except ImportError as e:
         raise MissingProviderDependency("xai", "'agloom[xai]'") from e
 
+    opts = spread_llm_options_for_provider("xai", kwargs)
+    if "temperature" not in opts:
+        opts["temperature"] = kwargs.get("temperature", 0)
     return ChatXAI(
         model=model_id,
-        temperature=kwargs.get("temperature", 0),
         api_key=_require_env("XAI_API_KEY", for_provider="xAI"),
+        **opts,
     )
 
 
@@ -630,10 +713,13 @@ def _get_cerebras_model(model_id: str, **kwargs) -> Any:
     except ImportError as e:
         raise MissingProviderDependency("cerebras", "'agloom[cerebras]'") from e
 
+    opts = spread_llm_options_for_provider("cerebras", kwargs)
+    if "temperature" not in opts:
+        opts["temperature"] = kwargs.get("temperature", 0)
     return ChatCerebras(
         model=model_id,
-        temperature=kwargs.get("temperature", 0),
         api_key=_require_env("CEREBRAS_API_KEY", for_provider="Cerebras"),
+        **opts,
     )
 
 
@@ -643,10 +729,13 @@ def _get_groq_model(model_id: str, **kwargs) -> Any:
     except ImportError as e:
         raise MissingProviderDependency("groq", "'agloom[groq]'") from e
 
+    opts = spread_llm_options_for_provider("groq", kwargs)
+    if "temperature" not in opts:
+        opts["temperature"] = kwargs.get("temperature", 0)
     return ChatGroq(
         model=model_id,
-        temperature=kwargs.get("temperature", 0),
         api_key=_require_env("GROQ_API_KEY", for_provider="Groq"),
+        **opts,
     )
 
 
@@ -658,8 +747,10 @@ def _get_ollama_model(model_id: str, *, base_url: str | None = None, **kwargs: A
 
     params: dict[str, Any] = {
         "model": model_id,
-        "temperature": kwargs.get("temperature", 0),
+        **spread_llm_options_for_provider("ollama", kwargs),
     }
+    if "temperature" not in params:
+        params["temperature"] = kwargs.get("temperature", 0)
     if base_url:
         params["base_url"] = base_url.strip()
     return ChatOllama(**params)

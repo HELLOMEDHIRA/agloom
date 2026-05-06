@@ -178,7 +178,7 @@ def tui_soft_help_panel() -> Panel:
     return Panel(
         "[#b8c8e0]Commands:[/] exit · clear · history · help · thinking (toggle)\n"
         "[#b8c8e0]Keys:[/] [dim]ctrl+shift+q[/] or [dim]F10[/] exit (VS Code terminal)\n"
-        "[#b8c8e0]Env:[/] AGLOOM_REPL_PLAIN=1 line shell · AGLOOM_EXPAND_THINKING=0 compact reasoning",
+        "[#b8c8e0]Env:[/] AGLOOM_EXPAND_THINKING=0 compact reasoning",
         title="[italic #a8c0e0]Help[/]",
         border_style=_SOFT_BORDER_HELP,
         box=_SOFT_BOX,
@@ -387,9 +387,11 @@ def _print_thinking_footer(thinking_lines: list[str], *, expanded: bool) -> None
 
 
 def _use_textual_repl() -> bool:
-    """Use Textual split layout (scrollable chat + fixed session card) when possible."""
-    if os.environ.get("AGLOOM_REPL_PLAIN", "").strip().lower() in ("1", "true", "yes", "on"):
-        return False
+    """Use Textual split layout (scrollable chat + fixed session card) when stdin/stdout are TTY.
+
+    Non-TTY runs (CI, piped IO, redirected stdin/stdout) automatically fall back to the
+    Rich line shell. No env-var override needed — HITL prompts work in both modes.
+    """
     try:
         stdin_ok = bool(getattr(sys.stdin, "isatty", lambda: False)())
         stdout_ok = bool(getattr(sys.stdout, "isatty", lambda: False)())
@@ -484,7 +486,7 @@ async def run_shell_plain(
     thread_id: str | None = None,
     tools_count: int | None = None,
 ) -> None:
-    """Rich line-based shell (``AGLOOM_REPL_PLAIN=1`` or no Textual / non-TTY).
+    """Rich line-based shell (used when stdin/stdout are non-TTY or Textual isn't installed).
 
     Features:
     - Status bar with LangSmith (banner printed by CLI before ``run_shell``)
@@ -750,11 +752,10 @@ def _show_help() -> None:
   thinking on|off | toggle   Compact vs full [dim]Reasoning[/dim] trace after each reply
                     (default: full; env [cyan]AGLOOM_EXPAND_THINKING=0[/cyan] for compact default)
 
-  [dim]TTY shell uses Textual (scrollable chat + fixed session card). Line-only mode:[/dim]
-                    [cyan]AGLOOM_REPL_PLAIN=1[/cyan]
+  [dim]TTY shell uses Textual (scrollable chat + fixed session card); non-TTY runs auto-fallback to the line shell.[/dim]
 
 [cyan]Built-in Tools:[/cyan]
-  📁 Files:   read_file, write_file, list_directory, search_files
+  📁 Files:   read_file, write_file, edit_file, grep_files, list_directory, search_files
   📋 Edit:    copy_file, move_file, remove_file, create_directory
   🔧 Shell:   run_shell, run_shell_interactive, get_system_info
   📂 Paths:   get_working_directory, set_working_directory, path_*
