@@ -1,8 +1,15 @@
-"""Human-in-the-loop approval handler for CLI (Cursor / Claude Code–style choices)."""
+"""Human-in-the-loop approval handler for CLI (Cursor / Claude Code–style choices).
+
+The prompt UI is pluggable via :func:`set_ui_providers`. Default is the Rich-based
+line shell (used by the plain REPL). The Textual TUI swaps in modal screens at
+mount time so prompts render as a dialog over the live chat instead of trying to
+share stdin/stdout with the app.
+"""
 
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +22,9 @@ from agloom.hitl_contract import HITLEvent
 from .hitl_allowlist import load_allowlist, merge_allowlist_file, resolve_allowlist_path
 
 console = Console()
+
+TripleChoiceProvider = Callable[..., Awaitable[str]]
+TextInputProvider = Callable[..., Awaitable[str]]
 
 _TOOL_LINE_RE = re.compile(r"Tool\s*:\s*(\S+)", re.IGNORECASE)
 _WORKER_LINE_RE = re.compile(r"Worker\s*:\s*(\S+)", re.IGNORECASE)
@@ -43,7 +53,19 @@ def _parse_pattern_name(message: str) -> str | None:
     return matches[0]
 
 
-def _hitl_triple_choice(
+def _normalize_triple_choice(raw: str) -> str:
+    """Map any accepted token (1/2/3, a/r/l, retry/stop, …) to ``accept``/``reject``/``allowlist``."""
+    c = (raw or "").strip().lower()
+    if c in ("2", "r", "reject", "stop", "no"):
+        return "reject"
+    if c in ("3", "l", "allowlist", "always", "trust"):
+        return "allowlist"
+    if c in ("1", "a", "accept", "y", "yes", "retry"):
+        return "accept"
+    return "reject"
+
+
+async def _rich_triple_choice(
     *,
     title: str,
     subtitle: str,
@@ -54,7 +76,7 @@ def _hitl_triple_choice(
     row3: str,
     default: str = "2",
 ) -> str:
-    """One Rich prompt for all HITL tri-state decisions. Returns ``accept``, ``reject``, or ``allowlist``."""
+    """Default Rich-based tri-state prompt. Used by the plain CLI shell."""
     body = (
         f"[bold yellow]{title}[/bold yellow]\n[dim]{subtitle}[/dim]\n\n{detail}"
         + (f"\n\n{footer}" if footer else "")
@@ -70,30 +92,72 @@ def _hitl_triple_choice(
     choice = Prompt.ask(
         "Choice",
         choices=[
-            "1",
-            "2",
-            "3",
-            "a",
-            "r",
-            "l",
-            "accept",
-            "reject",
-            "allowlist",
-            "retry",
-            "stop",
-            "yes",
-            "no",
+            "1", "2", "3",
+            "a", "r", "l",
+            "accept", "reject", "allowlist",
+            "retry", "stop", "yes", "no",
         ],
         default=default,
     )
-    c = choice.strip().lower()
-    if c in ("2", "r", "reject", "stop", "no"):
-        return "reject"
-    if c in ("3", "l", "allowlist", "always", "trust"):
-        return "allowlist"
-    if c in ("1", "a", "accept", "y", "yes", "retry"):
-        return "accept"
-    return "reject"
+    return _normalize_triple_choice(choice)
+
+
+async def _rich_text_input(*, prompt: str, default: str = "") -> str:
+    """Default Rich-based free-text prompt. Used for clarification answers."""
+    return Prompt.ask(prompt, default=default)
+
+
+_triple_choice_provider: TripleChoiceProvider = _rich_triple_choice
+_text_input_provider: TextInputProvider = _rich_text_input
+
+
+def set_ui_providers(
+    *,
+    triple_choice: TripleChoiceProvider | None = None,
+    text_input: TextInputProvider | None = None,
+) -> None:
+    """Swap HITL prompt UI (used by the Textual TUI to install modal-screen providers)."""
+    global _triple_choice_provider, _text_input_provider
+    if triple_choice is not None:
+        _triple_choice_provider = triple_choice
+    if text_input is not None:
+        _text_input_provider = text_input
+
+
+def reset_ui_providers() -> None:
+    """Restore the default Rich providers (call when the TUI exits)."""
+    global _triple_choice_provider, _text_input_provider
+    _triple_choice_provider = _rich_triple_choice
+    _text_input_provider = _rich_text_input
+
+
+async def _hitl_triple_choice(
+    *,
+    title: str,
+    subtitle: str,
+    detail: str,
+    footer: str | None,
+    row1: str,
+    row2: str,
+    row3: str,
+    default: str = "2",
+) -> str:
+    """Dispatch a tri-state HITL prompt through the active provider. Returns ``accept``/``reject``/``allowlist``."""
+    return await _triple_choice_provider(
+        title=title,
+        subtitle=subtitle,
+        detail=detail,
+        footer=footer,
+        row1=row1,
+        row2=row2,
+        row3=row3,
+        default=default,
+    )
+
+
+async def _hitl_text_input(prompt: str, *, default: str = "") -> str:
+    """Dispatch a free-text HITL prompt through the active provider."""
+    return await _text_input_provider(prompt=prompt, default=default)
 
 
 def create_user_callback(
@@ -163,11 +227,10 @@ def create_user_callback(
             if isinstance(message, dict):
                 q = str(message.get("question", ""))
                 wid = message.get("worker_id", "")
-                console.print(f"[bold]Worker {wid} asks:[/bold] {q}")
+                ask_label = f"Worker {wid} asks: {q}" if wid else q or "Clarification needed"
             else:
-                console.print(f"[bold]Clarification:[/bold] {message}")
-            ans = Prompt.ask("Your answer", default="")
-            return ans
+                ask_label = f"Clarification: {message}"
+            return await _hitl_text_input(ask_label, default="")
 
         if not isinstance(message, str):
             return True
@@ -182,7 +245,7 @@ def create_user_callback(
                 console.print(f"[green]✓ Allowlisted tool:[/green] {tool_name}")
                 return "continue"
 
-            choice = _hitl_triple_choice(
+            choice = await _hitl_triple_choice(
                 title="Tool approval",
                 subtitle=f"Tool: {tool_name}",
                 detail=message,
@@ -213,7 +276,7 @@ def create_user_callback(
                 console.print(f"[dim]{message}[/dim]")
                 return True
 
-            choice = _hitl_triple_choice(
+            choice = await _hitl_triple_choice(
                 title="Pattern approval",
                 subtitle=f"Pattern: {pattern}",
                 detail=message[:2000],
@@ -235,7 +298,7 @@ def create_user_callback(
             return True
 
         if event_type == HITLEvent.REACT_TOOL_USE_FAILED:
-            choice = _hitl_triple_choice(
+            choice = await _hitl_triple_choice(
                 title="Model turn rejected (tool_use_failed)",
                 subtitle=(
                     "The API rejected the assistant message before any tool ran — "
@@ -272,7 +335,7 @@ def create_user_callback(
                 console.print(f"[dim]{message}[/dim]")
                 return "continue"
 
-            choice = _hitl_triple_choice(
+            choice = await _hitl_triple_choice(
                 title="Worker approval",
                 subtitle=f"Worker: {worker_id}",
                 detail=message[:2000],

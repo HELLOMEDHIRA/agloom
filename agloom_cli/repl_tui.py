@@ -185,6 +185,15 @@ class AgloomShellApp(App[None]):
     async def on_mount(self) -> None:
         self.theme = "agloom-glass"
         reset_ui()
+        # HITL prompts must render as Textual modals — stdin is owned by the app,
+        # so the default Rich/console provider wouldn't reach the user. Plain shell
+        # automatically reverts to the Rich providers on TUI exit (see run_shell_tui).
+        try:
+            from .hitl_textual import install_textual_providers
+
+            install_textual_providers(self)
+        except Exception:
+            pass
         self.state = ShellState()
         assert self.state is not None
         self.working_dir = os.getcwd()
@@ -404,4 +413,14 @@ async def run_shell_tui(
         thread_id=thread_id,
         tools_count=tools_count,
     )
-    await app.run_async()
+    try:
+        await app.run_async()
+    finally:
+        # Restore Rich-based HITL providers so any post-TUI prompts (or a
+        # subsequent plain-shell run in the same process) work normally.
+        try:
+            from .hitl import reset_ui_providers
+
+            reset_ui_providers()
+        except Exception:
+            pass
