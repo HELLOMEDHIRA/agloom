@@ -31,7 +31,7 @@ from .llm_utils import (
     robust_structured_call,
     safe_create_task,
 )
-from .hitl_contract import HITLEvent, normalize_react_tool_use_failed_decision
+from .hitl_contract import HITLEvent, call_user_callback, normalize_react_tool_use_failed_decision
 from .logging_utils import configure_package_logging, get_logger
 from .memory.session import SessionMemory
 from .memory.store import LongTermStore
@@ -77,6 +77,7 @@ except ImportError:
 
 __all__ = [
     "HITLEvent",
+    "call_user_callback",
     "RESERVED_TOOL_NAMES",
     "AgentConfig",
     "AgentEvent",

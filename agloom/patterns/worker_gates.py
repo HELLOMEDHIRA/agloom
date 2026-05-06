@@ -48,7 +48,7 @@ async def drain_for_halt(
       Logs warning, returns True immediately — caller must stop.
 
     CLARIFICATION_REQUEST (fully wired):
-      1. Calls user_callback("clarification_request", {worker_id, question})
+      1. Calls user_callback(HITLEvent.CLARIFICATION_REQUEST, {worker_id, question})
       2. Awaits user answer
       3. Routes answer → clarification_queues[worker_id]
       4. Worker's ask_for_clarification tool unblocks and continues

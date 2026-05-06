@@ -57,7 +57,7 @@ def _langchain_react_middleware(agent: dict, *extra: Any) -> list[Any]:
 
 
 async def _user_decision_after_tool_use_failed(user_callback: Any, exc: BaseException) -> str:
-    """Invoke :attr:`HITLEvent.REACT_TOOL_USE_FAILED`; returns ``retry`` or ``abort``."""
+    """Ask human whether to attempt another model turn after provider rejection (not tool approval)."""
     if not user_callback:
         return "abort"
     try:
@@ -279,8 +279,8 @@ async def handle_react(
                     if decision == "retry":
                         max_attempts += _MAX_TOOL_RETRIES
                         logger.event(
-                            f"[React] User chose retry after tool_use_failed "
-                            f"(recovery rounds left={user_recovery_budget})."
+                            f"[React] User authorized another model-turn batch after "
+                            f"REACT_TOOL_USE_FAILED (recovery rounds left={user_recovery_budget})."
                         )
                         await asyncio.sleep(_RETRY_DELAY)
                         state = {
@@ -627,7 +627,7 @@ async def _handle_react_hitl(
     except (TypeError, ValueError):
         hitl_auto_retries = DEFAULT_REACT_TOOL_USE_FAILED_AUTO_RETRIES_HITL
     hitl_auto_retries = max(0, min(hitl_auto_retries, _MAX_TOOL_RETRIES))
-    # Each "round" = up to hitl_auto_retries silent retries + 1 user-prompt attempt.
+    # Each batch: up to hitl_auto_retries silent model-turn recoveries, then optional user prompt.
     batch_size = hitl_auto_retries + 1
     max_attempts = batch_size
 
@@ -693,14 +693,23 @@ async def _handle_react_hitl(
 
         except Exception as exc:
             if _exception_indicates_tool_use_failed(exc):
-                # HITL batch: hitl_auto_retries silent attempts, then a user prompt.
-                # Counter resets on each user-chosen retry so every round gets the same cadence.
+                # Silent steps = corrective HumanMessage + new LLM call (no tool to approve yet).
+                # Counter resets after user authorizes another batch.
                 if silent_in_batch <= hitl_auto_retries:
-                    logger.warning(
-                        f"[React|HITL] ⚠ tool_use_failed — silent retry "
-                        f"{silent_in_batch}/{hitl_auto_retries} (agent={name}); "
-                        f"next failure opens user recovery. Retrying in {_RETRY_DELAY}s."
-                    )
+                    if silent_in_batch < hitl_auto_retries:
+                        logger.warning(
+                            f"[React|HITL] ⚠ tool_use_failed — automatic model-turn recovery "
+                            f"{silent_in_batch}/{hitl_auto_retries} (agent={name}); "
+                            f"not tool approve/deny. Sleep {_RETRY_DELAY}s."
+                        )
+                    else:
+                        logger.warning(
+                            f"[React|HITL] ⚠ tool_use_failed — automatic recovery budget used "
+                            f"({hitl_auto_retries}/{hitl_auto_retries}) for this batch "
+                            f"(agent={name}); next failure invokes "
+                            f"user_callback({HITLEvent.REACT_TOOL_USE_FAILED!r}, …). "
+                            f"Sleep {_RETRY_DELAY}s."
+                        )
                     await asyncio.sleep(_RETRY_DELAY)
                     messages.append(HumanMessage(content=_human_message_after_tool_use_failed(exc)))
                     response = None
@@ -712,8 +721,8 @@ async def _handle_react_hitl(
                         max_attempts += batch_size
                         silent_in_batch = 0
                         logger.event(
-                            f"[React|HITL] User chose retry after tool_use_failed "
-                            f"(recovery rounds left={user_recovery_budget})."
+                            f"[React|HITL] User authorized another model-turn batch after "
+                            f"REACT_TOOL_USE_FAILED (recovery rounds left={user_recovery_budget})."
                         )
                         await asyncio.sleep(_RETRY_DELAY)
                         messages.append(HumanMessage(content=_human_message_after_tool_use_failed(exc)))

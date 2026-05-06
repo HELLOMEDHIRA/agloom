@@ -1,20 +1,42 @@
 """Model resolution — auto-detect available LLM providers for the CLI.
 
 LangChain publishes many chat integrations; the canonical doc index is
-https://docs.langchain.com/oss/python/integrations/chat
+https://docs.langchain.com/oss/python/integrations/chat  
+Full provider list: https://docs.langchain.com/oss/python/integrations/providers/all_providers
+
+**Explicit provider** (recommended for ``org/model`` ids such as ``meta-llama/...``):
+
+- ``agloom -m groq:meta-llama/llama-4-scout-17b-16e-instruct``
+- ``agloom -m ollama:llama3.2 --base-url http://192.168.1.10:11434``
+- Config: ``ai.provider: groq`` with ``ai.model: meta-llama/...``, optional ``ai.base_url``.
+
+**Broad routing** (install the matching optional extra from ``pyproject.toml``):
+
+- **LiteLLM** (100+ upstream providers via one adapter): ``agloom -m litellm:groq/llama-3.3-70b-versatile``
+  or ``ai.provider: litellm`` + ``ai.model: …``. Optional ``--base-url`` maps to LiteLLM ``api_base``.
+- **Any LangChain integration** via the unified initializer: ``agloom -m lc:openai:gpt-4o`` or
+  ``agloom -m init:groq:meta-llama/...`` (same as ``langchain.chat_models.init_chat_model``). Requires
+  the provider’s ``langchain-*`` package (e.g. ``agloom[openai]``, ``agloom[groq]``).
+- **OpenRouter**: ``agloom -m openrouter:anthropic/claude-3.5-sonnet`` (needs ``agloom[openrouter]``).
+
+``vLLM`` uses OpenAI-compatible HTTP (see LangChain `ChatOpenAI` + ``base_url``):
+https://docs.langchain.com/oss/python/integrations/chat/vllm
 
 ``pyproject.toml`` defines optional extras ``agloom[<name>]`` for each first-party
 ``langchain-*`` integration package (plus ``community`` for long-tail models). Combine extras
-as needed (e.g. ``pip install 'agloom[openai,groq]'``).
-Only a **small subset** is wired in this module for ``agloom`` CLI env-based defaults.
-Other backends: ``pip install 'agloom[aws]'`` / ``'agloom[litellm]'`` / … (or plain
-``langchain-*``), then ``init_chat_model`` or pass ``BaseChatModel``
-(``agloom.unified_agent.resolve_model``).
+as needed (e.g. ``pip install 'agloom[openai,groq,ollama,litellm]'``).
+Curated first-party slugs (OpenAI, Groq, …) keep strict API-key checks. **Any other**
+``provider:model`` token (e.g. ``cohere:command-r``, ``bedrock:…``, ``google_vertexai:…``)
+routes to ``langchain.chat_models.init_chat_model`` — the same provider list as
+https://docs.langchain.com/oss/python/integrations/providers/all_providers (install the matching
+``langchain-*`` extra or ``agloom[community]`` for long-tail integrations). Use ``litellm:…`` for
+LiteLLM’s unified router, or ``lc:`` / ``init:`` to pass a full prefixed descriptor.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import sys
 from importlib import util
 from typing import Any
@@ -36,6 +58,11 @@ _SLUG_TO_EXTRA: dict[str, tuple[str, str]] = {
     "mistralai": ("mistralai", "'agloom[mistralai]'"),
     "groq": ("groq", "'agloom[groq]'"),
     "xai": ("xai", "'agloom[xai]'"),
+    "ollama": ("ollama", "'agloom[ollama]'"),
+    "vllm": ("openai", "'agloom[openai]'"),
+    "litellm": ("litellm", "'agloom[litellm]'"),
+    "openrouter": ("openrouter", "'agloom[openrouter]'"),
+    "cerebras": ("cerebras", "'agloom[cerebras]'"),
 }
 
 _SLUG_TO_IMPORT: dict[str, str] = {
@@ -45,7 +72,61 @@ _SLUG_TO_IMPORT: dict[str, str] = {
     "mistralai": "langchain_mistralai",
     "groq": "langchain_groq",
     "xai": "langchain_xai",
+    "ollama": "langchain_ollama",
+    "litellm": "langchain_litellm",
+    "openrouter": "langchain_openrouter",
+    "cerebras": "langchain_cerebras",
 }
+
+# URI schemes: first ``:`` is not ``provider:model`` (avoids ``https://...`` false splits).
+_URI_SCHEME_PREFIXES: frozenset[str] = frozenset({"http", "https", "file", "urn", "data", "ftp"})
+# Provider token for ``slug:model_id`` (matches LangChain ``model_provider`` / LiteLLM-style slugs).
+_PROVIDER_TOKEN_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
+
+
+def split_provider_prefix(spec: str) -> tuple[str | None, str]:
+    """Split ``provider:model_id`` for any LangChain ``model_provider``-style *provider*.
+
+    - ``lc:`` / ``init:`` use only the first colon; the rest may contain ``:`` (full ``init_chat_model`` descriptor).
+    - Otherwise, the left segment must match ``_PROVIDER_TOKEN_RE`` (e.g. ``cohere:command-r``, ``bedrock:...``).
+    - URIs (``https://``, …) are not split.
+    """
+    spec = spec.strip()
+    if ":" not in spec:
+        return None, spec
+    left, _, right = spec.partition(":")
+    key = left.strip()
+    rest = right.strip()
+    if not key or not rest:
+        return None, spec
+    kl = key.lower()
+    if kl in ("lc", "init"):
+        return kl, rest
+    if kl in _URI_SCHEME_PREFIXES:
+        return None, spec
+    if not _PROVIDER_TOKEN_RE.fullmatch(kl):
+        return None, spec
+    return kl.replace("-", "_"), rest
+
+
+def provider_slug_token_valid(slug: str) -> bool:
+    """True if *slug* is usable as ``AGLOOM_PROVIDER`` / ``ai.provider`` (alphanumeric token)."""
+    s = slug.strip().lower().replace("-", "_")
+    return bool(_PROVIDER_TOKEN_RE.fullmatch(s))
+
+
+def _default_ollama_base_url(explicit: str | None) -> str | None:
+    if explicit:
+        return explicit.strip()
+    return os.environ.get("OLLAMA_BASE_URL") or os.environ.get("OLLAMA_HOST")
+
+
+def _default_vllm_base_url(explicit: str | None) -> str:
+    base = (explicit or os.environ.get("VLLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL") or "").strip()
+    if not base:
+        return "http://127.0.0.1:8000/v1"
+    base = base.rstrip("/")
+    return base if base.endswith("/v1") else f"{base}/v1"
 
 
 def _env_configured(names: str | tuple[str, ...]) -> bool:
@@ -91,7 +172,8 @@ def _require_env(name: str, *, for_provider: str) -> str:
         return v
     raise MissingProviderApiKey(
         f"{name} is not set. Export it to use {for_provider} models "
-        f"(e.g. `set {name}=...` on Windows or `export {name}=...` in bash)."
+        f"(e.g. `set {name}=...` on Windows or `export {name}=...` in bash), "
+        f"or add it under `ai.api_keys` in agloom.yaml (local / project-level config)."
     )
 
 
@@ -100,64 +182,238 @@ def _require_google_api_key() -> str:
     if k:
         return k
     raise MissingProviderApiKey(
-        "GOOGLE_API_KEY or GEMINI_API_KEY must be set for Gemini models."
+        "GOOGLE_API_KEY or GEMINI_API_KEY must be set for Gemini models "
+        "(environment or `ai.api_keys` in agloom.yaml)."
     )
 
 
-def get_model(model_id: str, **kwargs) -> Any:
-    """Get a LangChain chat model by ID (CLI-curated routing only).
+def _init_chat_model_unified(
+    model: str,
+    *,
+    model_provider: str | None = None,
+    base_url: str | None = None,
+    **kwargs: Any,
+) -> Any:
+    """``langchain.chat_models.init_chat_model`` — supports ``provider:model_id`` strings."""
+    try:
+        from langchain.chat_models import init_chat_model
+    except ImportError as e:
+        raise MissingProviderDependency(
+            "langchain",
+            "'agloom' (core langchain dependency)",
+        ) from e
 
-    Dozens of other backends exist under separate PyPI packages; see the module docstring URL.
-    For those, install the integration from LangChain's docs and use ``init_chat_model`` or a
-    concrete ``BaseChatModel`` in application code — not this helper.
+    init_kw: dict[str, Any] = dict(kwargs)
+    init_kw.setdefault("temperature", 0)
+    if base_url:
+        init_kw["base_url"] = base_url.strip()
+    if model_provider:
+        return init_chat_model(model, model_provider=model_provider, **init_kw)
+    return init_chat_model(model, **init_kw)
 
-    Optional extras match ``[project.optional-dependencies]`` in ``pyproject.toml``
-    (e.g. ``openai``, ``aws``, ``litellm``, ``community``).
 
-    - OpenAI: gpt-4o, gpt-4o-mini, …
-    - Anthropic: claude-…
-    - Google Gemini: gemini-… (``GOOGLE_API_KEY`` or ``GEMINI_API_KEY``)
-    - xAI: grok-… (``XAI_API_KEY``)
-    - Mistral AI: mistral-…, ministral…, pixtral…, codestral… (``MISTRAL_API_KEY``)
-    - Groq: meta-llama/…, …
-    - Ollama: local names when ``OLLAMA_HOST`` is set
+def _get_litellm_model(model_id: str, *, base_url: str | None = None, **kwargs: Any) -> Any:
+    """LiteLLM-backed chat model (routes to many upstream APIs)."""
+    try:
+        from langchain_litellm import ChatLiteLLM
+    except ImportError as e:
+        raise MissingProviderDependency("litellm", "'agloom[litellm]'") from e
+
+    params: dict[str, Any] = {
+        "model": model_id,
+        "temperature": kwargs.get("temperature", 0),
+    }
+    if base_url:
+        params["api_base"] = base_url.strip()
+    for key in (
+        "max_tokens",
+        "max_completion_tokens",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "timeout",
+        "max_retries",
+    ):
+        if key in kwargs:
+            params[key] = kwargs[key]
+    return ChatLiteLLM(**params)
+
+
+def _get_by_provider(
+    slug: str,
+    model_id: str,
+    *,
+    base_url: str | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Construct a chat model from an explicit provider slug (curated + ``init_chat_model``)."""
+    s = slug.strip().lower().replace("-", "_")
+    if s in ("mistral",):
+        s = "mistralai"
+    if s in ("google", "gemini"):
+        return _get_google_genai_model(model_id, **kwargs)
+    if s == "openai":
+        return _get_openai_model(model_id, base_url=base_url, **kwargs)
+    if s == "anthropic":
+        return _get_anthropic_model(model_id, **kwargs)
+    if s == "mistralai":
+        return _get_mistral_model(model_id, **kwargs)
+    if s == "xai":
+        return _get_xai_model(model_id, **kwargs)
+    if s == "groq":
+        return _get_groq_model(model_id, **kwargs)
+    if s == "ollama":
+        return _get_ollama_model(model_id, base_url=_default_ollama_base_url(base_url), **kwargs)
+    if s == "vllm":
+        return _get_vllm_openai_compatible(model_id, base_url=base_url, **kwargs)
+    if s == "litellm":
+        return _get_litellm_model(model_id, base_url=base_url, **kwargs)
+    if s in ("lc", "init"):
+        return _init_chat_model_unified(model_id, base_url=base_url, **kwargs)
+    if s == "openrouter":
+        return _init_chat_model_unified(
+            model_id,
+            model_provider="openrouter",
+            base_url=base_url,
+            **kwargs,
+        )
+    if s == "cerebras":
+        return _get_cerebras_model(model_id, **kwargs)
+    # Any other token (``cohere``, ``bedrock``, ``google_vertexai``, …): LangChain's catalog.
+    return _init_chat_model_unified(
+        model_id,
+        model_provider=s,
+        base_url=base_url,
+        **kwargs,
+    )
+
+
+def _ambiguous_slash_model_help(model_id: str) -> str:
+    return (
+        f"Ambiguous model id {model_id!r} (contains '/'). "
+        "Pick the backend explicitly — for example:\n"
+        "  agloom -m groq:meta-llama/llama-4-scout-17b-16e-instruct\n"
+        "  agloom --provider groq -m meta-llama/llama-4-scout-17b-16e-instruct\n"
+        "  agloom -m ollama:llama3.2 [--base-url http://127.0.0.1:11434]\n"
+        "  agloom -m litellm:groq/llama-3.3-70b-versatile\n"
+        "  agloom -m cohere:command-r-plus\n"
+        "  agloom -m lc:openrouter:anthropic/claude-3.5-sonnet\n"
+        "Or set ai.provider in agloom.yaml. Docs: "
+        "https://docs.langchain.com/oss/python/integrations/chat"
+    )
+
+
+def _route_slash_model(model_id: str, *, base_url: str | None, **kwargs: Any) -> Any:
+    """Resolve ``org/model`` ids when no ``provider:`` prefix was used."""
+    pref_raw = (os.environ.get("AGLOOM_PROVIDER") or "").strip()
+    pref = pref_raw.lower().replace("-", "_")
+    if (
+        pref
+        and pref not in _URI_SCHEME_PREFIXES
+        and provider_slug_token_valid(pref_raw)
+    ):
+        if pref == "mistral":
+            pref = "mistralai"
+        return _get_by_provider(pref, model_id, base_url=base_url, **kwargs)
+
+    has_ollama = bool(_default_ollama_base_url(None))
+    has_groq = bool(os.environ.get("GROQ_API_KEY"))
+    if has_ollama and has_groq:
+        raise ValueError(
+            _ambiguous_slash_model_help(model_id)
+            + "\n\nBoth OLLAMA_BASE_URL/OLLAMA_HOST and GROQ_API_KEY are set — use "
+            "`groq:…` / `ollama:…`, `--provider`, `ai.provider`, or `AGLOOM_PROVIDER`."
+        )
+    if has_groq:
+        return _get_groq_model(model_id, **kwargs)
+    if has_ollama:
+        return _get_ollama_model(model_id, base_url=_default_ollama_base_url(base_url), **kwargs)
+
+    raise ValueError(_ambiguous_slash_model_help(model_id))
+
+
+def get_model(
+    model_id: str,
+    *,
+    provider: str | None = None,
+    base_url: str | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Get a LangChain chat model by ID (CLI routing + LiteLLM / ``init_chat_model`` bridges).
+
+    First-party integrations are listed in ``pyproject.toml`` optional extras. For providers
+    without a curated slug, use ``<provider>:<model_id>`` (``init_chat_model``), ``lc:…``, or
+    ``litellm:…``. Install the integration from the LangChain provider index; keys may live in
+    ``ai.api_keys`` in yaml (applied while the model is resolved).
+
+    **Explicit routing**
+
+    - ``provider`` kwarg or ``ai.provider`` from config forces the backend.
+    - ``model_id`` may use ``provider:rest`` (e.g. ``groq:meta-llama/...``, ``litellm:groq/llama-3.1-8b-instant``).
+    - ``base_url`` (or env ``OLLAMA_BASE_URL`` / ``OLLAMA_HOST``, ``VLLM_BASE_URL``) for local servers.
+      For ``litellm``, ``base_url`` is passed as LiteLLM ``api_base``.
+
+    Optional extras match ``[project.optional-dependencies]`` in ``pyproject.toml``.
 
     Args:
-        model_id: Model identifier
-        **kwargs: Additional model parameters (temperature, etc.)
+        model_id: Model identifier (optionally prefixed with ``provider:``).
+        provider: Optional slug overriding heuristic routing (``groq``, ``ollama``, ``litellm``, …).
+        base_url: Optional HTTP origin for ``ollama`` / ``vllm`` / OpenAI-compatible / LiteLLM endpoints.
+        **kwargs: Passed through (e.g. ``temperature``).
 
     Returns:
         LangChain BaseChatModel instance
     """
-    model_id_lower = model_id.lower()
+    prefix_slug, rest = split_provider_prefix(model_id)
+    mid = rest.strip() if prefix_slug else model_id.strip()
+    merged_provider = (provider or prefix_slug or "").strip().lower() or None
+    if merged_provider:
+        merged_provider = merged_provider.replace("-", "_")
+    if merged_provider == "mistral":
+        merged_provider = "mistralai"
+    if merged_provider:
+        return _get_by_provider(merged_provider, mid, base_url=base_url, **kwargs)
+
+    model_id_lower = mid.lower()
 
     if model_id_lower.startswith(("gpt-", "o1")):
-        return _get_openai_model(model_id, **kwargs)
+        return _get_openai_model(mid, base_url=base_url, **kwargs)
 
     if "claude" in model_id_lower or model_id_lower.startswith("anthropic"):
-        return _get_anthropic_model(model_id, **kwargs)
+        return _get_anthropic_model(mid, **kwargs)
 
     if "gemini" in model_id_lower or model_id_lower.startswith("models/gemini"):
-        return _get_google_genai_model(model_id, **kwargs)
+        return _get_google_genai_model(mid, **kwargs)
 
     if "grok" in model_id_lower:
-        return _get_xai_model(model_id, **kwargs)
+        return _get_xai_model(mid, **kwargs)
 
     if "groq" in model_id_lower:
-        return _get_groq_model(model_id, **kwargs)
+        return _get_groq_model(mid, **kwargs)
 
-    if "/" in model_id and not model_id_lower.startswith(("openai/", "anthropic/")):
-        return _get_groq_model(model_id, **kwargs)
+    if "/" in mid and not model_id_lower.startswith(("openai/", "anthropic/")):
+        return _route_slash_model(mid, base_url=base_url, **kwargs)
 
-    if _looks_like_mistral_ai_cloud(model_id):
-        return _get_mistral_model(model_id, **kwargs)
+    if _looks_like_mistral_ai_cloud(mid):
+        return _get_mistral_model(mid, **kwargs)
 
     if "llama" in model_id_lower or "mistral" in model_id_lower:
-        if os.environ.get("OLLAMA_HOST"):
-            return _get_ollama_model(model_id, **kwargs)
-        return _get_groq_model(model_id, **kwargs)
+        ho, hg = bool(_default_ollama_base_url(None)), bool(os.environ.get("GROQ_API_KEY"))
+        if ho and hg:
+            raise ValueError(
+                "Set either OLLAMA_BASE_URL for local models or GROQ_API_KEY for Groq — "
+                "not both without choosing: use `groq:model`, `ollama:model`, or `AGLOOM_PROVIDER`."
+            )
+        if ho:
+            return _get_ollama_model(mid, base_url=_default_ollama_base_url(base_url), **kwargs)
+        if hg:
+            return _get_groq_model(mid, **kwargs)
+        raise ValueError(
+            f"Could not resolve {mid!r}. Export GROQ_API_KEY, or set OLLAMA_BASE_URL and "
+            "`pip install 'agloom[ollama]'`, or use an explicit prefix e.g. `groq:{mid}`."
+        )
 
-    return _get_default_model(model_id, **kwargs)
+    return _get_default_model(mid, **kwargs)
 
 
 def _integration_importable(slug: str) -> bool:
@@ -265,20 +521,44 @@ def describe_llm(llm: Any) -> tuple[str, str]:
         return "xai", mid_s
     if "ollama" in cls_name:
         return "ollama", mid_s
+    if "litellm" in cls_name:
+        return "litellm", mid_s
+    if "cerebras" in cls_name:
+        return "cerebras", mid_s
     return type(llm).__name__.replace("Chat", "").lower() or "llm", mid_s
 
 
-def _get_openai_model(model_id: str, **kwargs) -> Any:
+def _get_vllm_openai_compatible(model_id: str, *, base_url: str | None = None, **kwargs: Any) -> Any:
+    """vLLM HTTP server (OpenAI-compatible). See LangChain + vLLM docs."""
     try:
         from langchain_openai import ChatOpenAI
     except ImportError as e:
         raise MissingProviderDependency("openai", "'agloom[openai]'") from e
 
+    bu = _default_vllm_base_url(base_url)
+    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("VLLM_API_KEY") or "EMPTY"
     return ChatOpenAI(
         model=model_id,
+        base_url=bu,
+        api_key=api_key,
         temperature=kwargs.get("temperature", 0),
-        api_key=_require_env("OPENAI_API_KEY", for_provider="OpenAI"),
     )
+
+
+def _get_openai_model(model_id: str, *, base_url: str | None = None, **kwargs: Any) -> Any:
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError as e:
+        raise MissingProviderDependency("openai", "'agloom[openai]'") from e
+
+    params: dict[str, Any] = {
+        "model": model_id,
+        "temperature": kwargs.get("temperature", 0),
+        "api_key": _require_env("OPENAI_API_KEY", for_provider="OpenAI"),
+    }
+    if base_url:
+        params["base_url"] = base_url.strip()
+    return ChatOpenAI(**params)
 
 
 def _get_anthropic_model(model_id: str, **kwargs) -> Any:
@@ -343,6 +623,20 @@ def _get_xai_model(model_id: str, **kwargs) -> Any:
     )
 
 
+def _get_cerebras_model(model_id: str, **kwargs) -> Any:
+    """Cerebras — not in LangChain ``_BUILTIN_PROVIDERS``; use first-party package."""
+    try:
+        from langchain_cerebras import ChatCerebras
+    except ImportError as e:
+        raise MissingProviderDependency("cerebras", "'agloom[cerebras]'") from e
+
+    return ChatCerebras(
+        model=model_id,
+        temperature=kwargs.get("temperature", 0),
+        api_key=_require_env("CEREBRAS_API_KEY", for_provider="Cerebras"),
+    )
+
+
 def _get_groq_model(model_id: str, **kwargs) -> Any:
     try:
         from langchain_groq import ChatGroq
@@ -356,16 +650,19 @@ def _get_groq_model(model_id: str, **kwargs) -> Any:
     )
 
 
-def _get_ollama_model(model_id: str, **kwargs) -> Any:
+def _get_ollama_model(model_id: str, *, base_url: str | None = None, **kwargs: Any) -> Any:
     try:
         from langchain_ollama import ChatOllama
     except ImportError as e:
         raise MissingProviderDependency("ollama", "'agloom[ollama]'") from e
 
-    return ChatOllama(
-        model=model_id,
-        temperature=kwargs.get("temperature", 0),
-    )
+    params: dict[str, Any] = {
+        "model": model_id,
+        "temperature": kwargs.get("temperature", 0),
+    }
+    if base_url:
+        params["base_url"] = base_url.strip()
+    return ChatOllama(**params)
 
 
 def _get_default_model(model_id: str, **kwargs) -> Any:

@@ -162,7 +162,6 @@ async def _hitl_text_input(prompt: str, *, default: str = "") -> str:
 
 def create_user_callback(
     auto_approve_tools: list[str] | None = None,
-    require_all: bool = False,
     *,
     persist_allowlist: bool = True,
     allowlist_path: Path | None = None,
@@ -178,7 +177,6 @@ def create_user_callback(
 
     Args:
         auto_approve_tools: Tool names never prompted (from config ``safety.auto_approve``) when not strict.
-        require_all: Reserved for future use.
         persist_allowlist: If True, "always allow" appends to the allowlist JSON under ``.agloom``.
         allowlist_path: Resolved path (use :func:`resolve_allowlist_path`); must stay under *storage_root*.
         storage_root: Active storage root (``storage_dir()``, i.e. project ``.agloom``). Used to validate *allowlist_path*.
@@ -186,7 +184,6 @@ def create_user_callback(
             applies; ``safety.auto_approve`` is ignored for tools. If False, yaml and JSON are unioned.
             If the file does not exist yet, ``auto_approve_tools`` is used alone.
     """
-    _ = require_all
     auto_tools = {t.strip() for t in (auto_approve_tools or []) if t.strip()}
 
     path: Path | None = allowlist_path

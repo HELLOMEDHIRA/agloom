@@ -7,9 +7,10 @@ import os
 import re
 import shutil
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
 import yaml
 from rich.console import Console
@@ -27,7 +28,7 @@ The **agloom CLI** stores config and cached state **only** here — ``<project>/
 
 | Path | Purpose |
 |------|---------|
-| ``agloom.yaml`` | Configuration |
+| ``agloom.yaml`` | Configuration (optional ``ai.api_keys``: env-style secrets for local use) |
 | ``sessions/`` | Session state |
 | ``checkpoints.sqlite`` | LangGraph checkpoints (CLI session resume when memory is on) |
 | ``graph_store.sqlite`` | LangGraph store backing long-term / session memory |
@@ -138,6 +139,18 @@ ai:
   name: agloom
   # Default when you run ``agloom`` without ``-m``. Override per run: ``agloom -m llama-3.3-70b-versatile``
   model: auto
+  # Optional explicit backend for ambiguous ids (e.g. meta-llama/...): groq | ollama | vllm | litellm | openrouter | openai | ...
+  # Ignored when you pass ``-m`` unless you also pass ``--provider`` (CLI wins).
+  # provider: groq
+  # Base URL for local ollama / OpenAI-compatible vLLM (defaults: localhost — see docs).
+  # base_url: ""
+  # Optional API keys (local / project-only — use the same names as environment variables).
+  # Applied only while the CLI resolves the chat model; LangChain integrations read them from the process env.
+  # Prefer env vars in CI; keep this file out of git if it contains secrets.
+  # api_keys:
+  #   OPENAI_API_KEY: sk-...
+  #   GROQ_API_KEY: gsk-...
+  #   ANTHROPIC_API_KEY: sk-ant-...
   system_prompt: |
     You are an autonomous AI programming assistant built with agloom.
 
@@ -442,6 +455,37 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return base
 
 
+@contextmanager
+def use_ai_api_key_overlay(ai: dict[str, Any]) -> Generator[None, None, None]:
+    """Temporarily set process env vars from ``ai.api_keys`` for LangChain SDK compatibility."""
+    raw = ai.get("api_keys")
+    if not isinstance(raw, dict):
+        yield
+        return
+    overlay: dict[str, str] = {}
+    for k, v in raw.items():
+        if not isinstance(k, str) or v is None:
+            continue
+        ks = k.strip()
+        vs = str(v).strip()
+        if ks and vs:
+            overlay[ks] = vs
+    if not overlay:
+        yield
+        return
+    previous: dict[str, str | None] = {k: os.environ.get(k) for k in overlay}
+    try:
+        for k, v in overlay.items():
+            os.environ[k] = v
+        yield
+    finally:
+        for k, old in previous.items():
+            if old is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = old
+
+
 _SESSION_UUID_HYPHEN = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -637,7 +681,15 @@ def add_to_session_history(thread_id: str, role: str, content: str) -> None:
         json.dump(session, f, indent=2)
 
 
-def resolve_model(model_id: str | None, *, interactive_providers: bool | None = None) -> Any:
+def resolve_model(
+    model_id: str | None,
+    *,
+    config: dict[str, Any] | None = None,
+    interactive_providers: bool | None = None,
+    provider: str | None = None,
+    base_url: str | None = None,
+    merge_yaml_provider: bool = True,
+) -> Any:
     """Resolve model from ID or env var.
 
     CLI auto-wiring covers a subset (see ``model_resolver``). Optional extras for LangChain’s
@@ -645,9 +697,15 @@ def resolve_model(model_id: str | None, *, interactive_providers: bool | None = 
     Integrations without their own ``langchain-*`` wheel typically need ``agloom[community]``.
     Doc index: https://docs.langchain.com/oss/python/integrations/chat
 
+    When *config* is omitted, :func:`load_config` is used so project ``.agloom.yaml`` layers apply.
+    ``ai.api_keys`` in that merged config is applied temporarily (process env) while resolving the
+    model so all LangChain integrations see standard ``*_API_KEY`` variables.
+
     Priority:
     1. Explicit model_id (non-``auto``) — strict; fails if the matching extra is missing.
-    2. Config ``ai.model`` — if the integration is not installed, falls through.
+       Uses ``provider`` / ``base_url`` kwargs when passed (CLI overrides config).
+    2. Config ``ai.model`` with optional ``ai.provider`` and ``ai.base_url`` — falls through on
+       missing integration.
     3. ``*_MODEL_ID`` environment variables — each is tried in order; missing extras are skipped
        (so ``OPENAI_MODEL_ID`` does not block ``GROQ_MODEL_ID`` when only ``agloom[groq]`` is installed).
     4. Auto-detect from available API keys (see ``try_resolve_llm_from_api_keys``). If several keys
@@ -662,40 +720,56 @@ def resolve_model(model_id: str | None, *, interactive_providers: bool | None = 
             return not value.strip() or value.strip().lower() == "auto"
         return str(value).strip().lower() == "auto"
 
-    # 1. Explicit override — must match installed integration.
-    if model_id is not None and not _is_auto(model_id):
-        return get_model(model_id.strip())
+    def _cfg_provider_base(ai: dict[str, Any]) -> tuple[str | None, str | None]:
+        raw_p = ai.get("provider")
+        raw_b = ai.get("base_url")
+        p = raw_p.strip() if isinstance(raw_p, str) and raw_p.strip() else None
+        b = raw_b.strip() if isinstance(raw_b, str) and raw_b.strip() else None
+        return p, b
 
-    config = create_default_config()
-    cm_raw = config.get("ai", {}).get("model")
-    # 2. Config file — optional fallback when e.g. ``model: gpt-4o`` but only Groq extra is installed.
-    if not _is_auto(cm_raw):
-        cm_str = cm_raw.strip() if isinstance(cm_raw, str) else str(cm_raw).strip()
-        try:
-            return get_model(cm_str)
-        except MissingProviderDependency:
-            pass
+    merged_conf = load_config(None) if config is None else config
+    ai_cfg = merged_conf.get("ai", {}) if isinstance(merged_conf.get("ai"), dict) else {}
+    cfg_prov, cfg_base = _cfg_provider_base(ai_cfg)
 
-    # 3. Per-provider model env vars (do not let OPENAI_* alone block later providers).
-    for env_key in (
-        "OPENAI_MODEL_ID",
-        "ANTHROPIC_MODEL_ID",
-        "GROQ_MODEL_ID",
-        "GOOGLE_MODEL_ID",
-        "GEMINI_MODEL_ID",
-        "MISTRAL_MODEL_ID",
-        "XAI_MODEL_ID",
-    ):
-        mid = os.environ.get(env_key)
-        if _is_auto(mid):
-            continue
-        try:
-            return get_model(str(mid).strip())
-        except MissingProviderDependency:
-            continue
+    eff_prov = cfg_prov if merge_yaml_provider else None
+    eff_base = cfg_base if merge_yaml_provider else None
+    merged_provider = (provider or eff_prov or "").strip().lower() or None
+    merged_base = (base_url or eff_base or "").strip() or None
 
-    # 4. Infer from API keys.
-    return try_resolve_llm_from_api_keys(interactive=interactive_providers)
+    with use_ai_api_key_overlay(ai_cfg):
+        # 1. Explicit override — must match installed integration.
+        if model_id is not None and not _is_auto(model_id):
+            return get_model(model_id.strip(), provider=merged_provider, base_url=merged_base)
+
+        cm_raw = ai_cfg.get("model")
+        # 2. Config file — optional fallback when e.g. ``model: gpt-4o`` but only Groq extra is installed.
+        if not _is_auto(cm_raw):
+            cm_str = cm_raw.strip() if isinstance(cm_raw, str) else str(cm_raw).strip()
+            try:
+                return get_model(cm_str, provider=merged_provider, base_url=merged_base)
+            except MissingProviderDependency:
+                pass
+
+        # 3. Per-provider model env vars (do not let OPENAI_* alone block later providers).
+        for env_key in (
+            "OPENAI_MODEL_ID",
+            "ANTHROPIC_MODEL_ID",
+            "GROQ_MODEL_ID",
+            "GOOGLE_MODEL_ID",
+            "GEMINI_MODEL_ID",
+            "MISTRAL_MODEL_ID",
+            "XAI_MODEL_ID",
+        ):
+            mid = os.environ.get(env_key)
+            if _is_auto(mid):
+                continue
+            try:
+                return get_model(str(mid).strip(), provider=merged_provider, base_url=merged_base)
+            except MissingProviderDependency:
+                continue
+
+        # 4. Infer from API keys.
+        return try_resolve_llm_from_api_keys(interactive=interactive_providers)
 
 
 def add_to_gitignore() -> bool:
@@ -733,3 +807,31 @@ def ensure_config_ready() -> dict[str, Any]:
     config = create_default_config()
     add_to_gitignore()
     return config
+
+
+def merge_ai_into_storage_yaml(ai_updates: dict[str, Any]) -> None:
+    """Deep-merge *ai_updates* into ``storage_dir()/agloom.yaml`` under the ``ai`` key."""
+    path = config_yaml_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except yaml.YAMLError:
+            data = {}
+    else:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data.setdefault("ai", {})
+    if not isinstance(data["ai"], dict):
+        data["ai"] = {}
+    _deep_merge(data["ai"], ai_updates)
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.dump(
+            data,
+            f,
+            default_flow_style=False,
+            sort_keys=False,
+            allow_unicode=True,
+        )

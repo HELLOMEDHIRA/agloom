@@ -1,6 +1,6 @@
 [project]
 name = "agloom"
-version = "0.1.34"
+version = "0.1.35"
 description = "The intelligent fabric for AI agents — 9 execution patterns, auto-classified, self-learning, production-ready. Drop-in replacement for LangChain's create_agent."
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -43,11 +43,6 @@ Issues = "https://github.com/HELLOMEDHIRA/agloom/issues"
 agloom = "agloom_cli.cli:run_cli"
 
 [project.optional-dependencies]
-# LangChain chat integrations — one optional extra per first-party ``langchain-*`` PyPI package.
-# Long-tail / legacy chat models often live in ``community`` instead of a dedicated package.
-# Catalog: https://docs.langchain.com/oss/python/integrations/chat
-# Omitted when incompatible with ``langchain>=1.2`` / ``langchain-core`` 1.x (install manually if needed):
-# ``langchain-ai21``, ``langchain-databricks``, ``langchain-deepinfra``, ``langchain-writer``.
 anthropic = ["langchain-anthropic>=1.4.3"]
 aws = ["langchain-aws>=1.4.5"]
 azure-ai = ["langchain-azure-ai>=1.2.3"]

@@ -22,7 +22,6 @@ from .config import (
     load_config,
     normalize_cli_session_id,
     remove_project_cleanup_dirs,
-    resolve_model,
     session_record_path,
     set_cli_project_root,
     start_new_session,
@@ -30,6 +29,7 @@ from .config import (
 )
 from .mcp_loader import build_mcp_configs
 from .model_resolver import MissingProviderApiKey, MissingProviderDependency, describe_llm
+from .provider_wizard import resolve_model_with_optional_wizard
 from .project import detect_project, get_git_info
 from .project_rules import load_project_rules
 from .repl import render_banner, run_shell
@@ -179,7 +179,20 @@ def main(
         None,
         "--model",
         "-m",
-        help="Model ID (overrides config ai.model). Omit to use .agloom/agloom.yaml ai.model, then auto-detect.",
+        help=(
+            "Model id or provider:id (e.g. groq:meta-llama/..., litellm:groq/llama-3.3-70b, lc:openai:gpt-4o). "
+            "Overrides config ai.model; omits ai.provider from yaml unless --provider is set."
+        ),
+    ),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="LLM backend slug (groq, ollama, vllm, openai, …). Overrides ambiguous routing.",
+    ),
+    base_url: str | None = typer.Option(
+        None,
+        "--base-url",
+        help="Server URL for Ollama or vLLM (OpenAI-compatible); optional — defaults to localhost.",
     ),
     name: str | None = typer.Option(None, "--name", help="Agent name"),
     system_prompt: str | None = typer.Option(None, "--system-prompt", help="System prompt"),
@@ -228,6 +241,11 @@ def main(
     refresh_rules: bool = typer.Option(False, "--refresh-rules", help="Force refresh project rules"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose"),
     no_builtins: bool = typer.Option(False, "--no-builtins", help="Disable built-in tools"),
+    no_provider_wizard: bool = typer.Option(
+        False,
+        "--no-provider-wizard",
+        help="Skip interactive provider/model/API-key setup when the LLM cannot be resolved (TTY only)",
+    ),
     version: bool = typer.Option(
         False,
         "--version",
@@ -240,6 +258,8 @@ def main(
     asyncio.run(
         _run(
             model,
+            provider,
+            base_url,
             name,
             system_prompt,
             tools_dir,
@@ -271,6 +291,7 @@ def main(
             strict_session,
             verbose,
             no_builtins,
+            no_provider_wizard,
             project,
             rules_dir,
             refresh_rules,
@@ -314,6 +335,8 @@ def _run_resume_picked_session(
             None,
             None,
             None,
+            None,
+            None,
             False,
             None,
             None,
@@ -323,6 +346,7 @@ def _run_resume_picked_session(
             True,
             verbose,
             False,
+            True,
             project,
             None,
             False,
@@ -444,6 +468,8 @@ def sessions_cmd(
 
 async def _run(
     model: str | None,
+    provider: str | None,
+    base_url: str | None,
     name: str | None,
     system_prompt: str | None,
     tools_dir: Path | None,
@@ -475,6 +501,7 @@ async def _run(
     strict_session: bool,
     verbose: bool,
     no_builtins: bool,
+    no_provider_wizard: bool,
     project: Path | None,
     rules_dir: Path | None,
     refresh_rules: bool,
@@ -549,7 +576,15 @@ async def _run(
         cli_m = model.strip()
         effective_model = cli_m if cli_m else config_model
     try:
-        llm = resolve_model(effective_model)
+        llm = resolve_model_with_optional_wizard(
+            console,
+            cfg,
+            effective_model=effective_model,
+            provider=provider,
+            base_url=base_url,
+            merge_yaml_provider=model is None,
+            no_provider_wizard=no_provider_wizard,
+        )
     except MissingProviderDependency as e:
         console.print(f"[error]{e}[/error]")
         raise typer.Exit(1) from None
@@ -688,7 +723,10 @@ async def _run(
         require_approval = bool(safety_config.get("require_approval", True))
     auto_approve_tools = auto_approve_tools or safety_config.get("auto_approve", "")
 
-    # Human approval callback
+    # L1–L4 HITL: ``user_callback`` is invoked by the core (see ``agloom.hitl_contract``).
+    # - CLI: ``agloom_cli.hitl.create_user_callback`` (Rich line UI; Textual TUI swaps in
+    #   modal providers via ``install_textual_providers`` in ``repl_tui`` on_mount).
+    # - ReAct ``tool_use_failed``: event ``REACT_TOOL_USE_FAILED`` (not tool approve/deny).
     user_callback = None
     if require_approval:
         from .hitl import create_user_callback
