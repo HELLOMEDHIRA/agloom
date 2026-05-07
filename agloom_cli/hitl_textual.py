@@ -13,6 +13,9 @@ Restored to defaults (Rich) on app exit by :func:`agloom_cli.hitl.reset_ui_provi
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
+from typing import Any, cast
+
 from textual.app import App
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -240,7 +243,7 @@ def install_textual_providers(app: App) -> None:
         screen = AskUserScreen(req)
         push_wait = getattr(app, "push_screen_wait", None)
         if callable(push_wait):
-            raw = await push_wait(screen)
+            raw = await cast("Awaitable[Any]", push_wait(screen))
         else:
             raw = await app.push_screen(screen, wait_for_dismiss=True)
         return _normalize_ask_user_dismiss(raw)
@@ -249,7 +252,7 @@ def install_textual_providers(app: App) -> None:
         scr = HITLTextScreen(prompt, default)
         push_wait = getattr(app, "push_screen_wait", None)
         if callable(push_wait):
-            raw = await push_wait(scr)
+            raw = await cast("Awaitable[Any]", push_wait(scr))
         else:
             raw = await app.push_screen(scr, wait_for_dismiss=True)
         if isinstance(raw, str):

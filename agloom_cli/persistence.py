@@ -8,9 +8,10 @@ agloom and skills work at runtime (sync ``SqliteStore`` does not implement async
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncGenerator
+from typing import Any
 
 
 @asynccontextmanager

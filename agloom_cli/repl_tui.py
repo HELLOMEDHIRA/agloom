@@ -11,7 +11,6 @@ import traceback
 from typing import Any
 
 from rich.text import Text
-
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -21,13 +20,13 @@ from textual.widgets import Footer, Input, RichLog, Static
 
 from .config import add_to_session_history
 from .repl import (
+    _SESSION_CARD_MAX_W,
+    _SESSION_CARD_MIN_W,
     ShellState,
     _append_trace_line,
     _live_agent_panel,
     _session_side_card,
     _thinking_footer_panel,
-    _SESSION_CARD_MAX_W,
-    _SESSION_CARD_MIN_W,
     append_tool_result_for_transcript,
     merge_transcript_with_tool_outputs,
     reset_ui,
@@ -393,8 +392,11 @@ class AgloomShellApp(App[None]):
             try:
                 add_to_session_history(self.invoke_tid, "user", prompt_text)
                 add_to_session_history(self.invoke_tid, "assistant", full_output)
-            except Exception:
-                pass
+            except Exception as e:
+                log.write(
+                    f"[dim](warning: failed to persist session history for "
+                    f"{self.invoke_tid[:8]}…: {e})[/dim]"
+                )
 
             self._refresh_sidebar()
             log.write(tui_soft_done_banner(len(self.state.history)))

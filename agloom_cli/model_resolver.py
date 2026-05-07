@@ -1,7 +1,7 @@
 """Model resolution — auto-detect available LLM providers for the CLI.
 
 LangChain publishes many chat integrations; the canonical doc index is
-https://docs.langchain.com/oss/python/integrations/chat  
+https://docs.langchain.com/oss/python/integrations/chat
 Full provider list: https://docs.langchain.com/oss/python/integrations/providers/all_providers
 
 **Explicit provider** (recommended for ``org/model`` ids such as ``meta-llama/...``):
@@ -42,6 +42,19 @@ from importlib import util
 from typing import Any
 
 from agloom_cli.llm_provider_params import normalize_provider_slug, spread_llm_options_for_provider
+from agloom_cli.provider_registry import (
+    CLASS_TO_SLUG,
+    cli_auto_detect_rows,
+)
+from agloom_cli.provider_registry import (
+    PROVIDER_ENV_KEYS as _PROVIDER_ENV_KEYS,
+)
+from agloom_cli.provider_registry import (
+    SLUG_TO_CHAT_MODULE as _SLUG_TO_IMPORT,
+)
+from agloom_cli.provider_registry import (
+    SLUG_TO_PIP_EXTRA as _SLUG_TO_EXTRA,
+)
 
 
 def _slug_for_spread_llm(*, model_provider: str | None, model: str) -> str:
@@ -53,44 +66,10 @@ def _slug_for_spread_llm(*, model_provider: str | None, model: str) -> str:
         return normalize_provider_slug(pref)
     return "__generic_init__"
 
-# CLI auto-pick order: (slug for ``AGLOOM_PROVIDER``, Rich label, env var(s), default model id).
-_CLI_PROVIDER_ROWS: list[tuple[str, str, str | tuple[str, ...], str]] = [
-    ("openai", "OpenAI", "OPENAI_API_KEY", "gpt-4o"),
-    ("anthropic", "Anthropic", "ANTHROPIC_API_KEY", "claude-3-5-sonnet-20241022"),
-    ("google", "Google Gemini", ("GOOGLE_API_KEY", "GEMINI_API_KEY"), "gemini-2.0-flash"),
-    ("mistralai", "Mistral AI", "MISTRAL_API_KEY", "mistral-large-latest"),
-    ("groq", "Groq", "GROQ_API_KEY", "meta-llama/llama-4-scout-17b-16e-instruct"),
-    ("xai", "xAI", "XAI_API_KEY", "grok-3-latest"),
-]
-
-# Env vars to snapshot into ``ai.api_keys`` when saving session YAML (wizard / augment_patch).
-_PROVIDER_ENV_KEYS: dict[str, tuple[str, ...]] = {
-    "openai": ("OPENAI_API_KEY",),
-    "anthropic": ("ANTHROPIC_API_KEY",),
-    "google": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
-    "gemini": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
-    "mistralai": ("MISTRAL_API_KEY",),
-    "mistral": ("MISTRAL_API_KEY",),
-    "groq": ("GROQ_API_KEY",),
-    "xai": ("XAI_API_KEY",),
-    "ollama": (),
-    "vllm": ("OPENAI_API_KEY", "VLLM_API_KEY"),
-    "litellm": ("OPENAI_API_KEY",),
-    "openrouter": ("OPENROUTER_API_KEY",),
-    "cerebras": ("CEREBRAS_API_KEY",),
-    "nvidia": ("NVIDIA_API_KEY",),
-    "cohere": ("COHERE_API_KEY",),
-    "deepseek": ("DEEPSEEK_API_KEY",),
-    "fireworks": ("FIREWORKS_API_KEY",),
-    "together": ("TOGETHER_API_KEY",),
-    "perplexity": ("PERPLEXITY_API_KEY",),
-    "upstage": ("UPSTAGE_API_KEY",),
-    "ibm": ("WATSONX_API_KEY",),
-    "huggingface": ("HUGGINGFACEHUB_API_TOKEN",),
-    "baseten": ("BASETEN_API_KEY",),
-    "azure_openai": ("AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"),
-    "azure_ai": ("AZURE_AI_API_KEY", "AZURE_AI_ENDPOINT"),
-}
+# Auto-pick rows + env-key snapshot table are derived from :mod:`agloom_cli.provider_registry`
+# (see imports above). Keep the registry as the sole source of truth — do not add provider
+# entries here.
+_CLI_PROVIDER_ROWS = cli_auto_detect_rows()
 
 
 def augment_patch_api_keys_from_env(patch: dict[str, Any]) -> dict[str, Any]:
@@ -104,12 +83,10 @@ def augment_patch_api_keys_from_env(patch: dict[str, Any]) -> dict[str, Any]:
     if isinstance(prov_hint, str):
         prov_hint = prov_hint.strip() or None
     pref, _rest = split_provider_prefix(model)
-    raw_tok = (pref or prov_hint or "").strip().lower().replace("-", "_")
-    if raw_tok in ("mistral",):
-        raw_tok = "mistralai"
-    if raw_tok in ("google", "gemini"):
-        raw_tok = "google"
-    keys_tpl = _PROVIDER_ENV_KEYS.get(raw_tok, ())
+    raw_tok = (pref or prov_hint or "").strip()
+    # Canonical slug: shared with params filtering (folds google_genai → google, etc.).
+    canon = normalize_provider_slug(raw_tok) if raw_tok else ""
+    keys_tpl = _PROVIDER_ENV_KEYS.get(canon, ())
     snap: dict[str, str] = {}
     for name in keys_tpl:
         v = os.environ.get(name)
@@ -124,32 +101,7 @@ def augment_patch_api_keys_from_env(patch: dict[str, Any]) -> dict[str, Any]:
     out["api_keys"] = merged
     return out
 
-_SLUG_TO_EXTRA: dict[str, tuple[str, str]] = {
-    "openai": ("openai", "'agloom[openai]'"),
-    "anthropic": ("anthropic", "'agloom[anthropic]'"),
-    "google": ("google-genai", "'agloom[google-genai]'"),
-    "mistralai": ("mistralai", "'agloom[mistralai]'"),
-    "groq": ("groq", "'agloom[groq]'"),
-    "xai": ("xai", "'agloom[xai]'"),
-    "ollama": ("ollama", "'agloom[ollama]'"),
-    "vllm": ("openai", "'agloom[openai]'"),
-    "litellm": ("litellm", "'agloom[litellm]'"),
-    "openrouter": ("openrouter", "'agloom[openrouter]'"),
-    "cerebras": ("cerebras", "'agloom[cerebras]'"),
-}
-
-_SLUG_TO_IMPORT: dict[str, str] = {
-    "openai": "langchain_openai",
-    "anthropic": "langchain_anthropic",
-    "google": "langchain_google_genai",
-    "mistralai": "langchain_mistralai",
-    "groq": "langchain_groq",
-    "xai": "langchain_xai",
-    "ollama": "langchain_ollama",
-    "litellm": "langchain_litellm",
-    "openrouter": "langchain_openrouter",
-    "cerebras": "langchain_cerebras",
-}
+# ``_SLUG_TO_EXTRA`` and ``_SLUG_TO_IMPORT`` are imported from :mod:`agloom_cli.provider_registry`.
 
 # URI schemes: first ``:`` is not ``provider:model`` (avoids ``https://...`` false splits).
 _URI_SCHEME_PREFIXES: frozenset[str] = frozenset({"http", "https", "file", "urn", "data", "ftp"})
@@ -221,7 +173,20 @@ def _looks_like_mistral_ai_cloud(model_id: str) -> bool:
 
 
 class MissingProviderDependency(ImportError):
-    """Optional LangChain provider package is not installed (``agloom[extra]``)."""
+    """Optional LangChain provider package is not installed (``agloom[extra]``).
+
+    **Handling policy** (intentional split):
+
+    - :func:`agloom_cli.cli._run` and friends catch this at the top level and exit cleanly with
+      the install hint — installing a package mid-run is not actionable from the CLI.
+    - :func:`agloom_cli.provider_wizard.resolve_model_with_optional_wizard` *also* catches this,
+      but only to offer the interactive provider wizard as a recovery path. If the user picks
+      a different (already-installed) provider in the wizard, the original ``ImportError`` was
+      not the user's intent and should be replaced by the new resolution.
+
+    Always re-raise with the original instance (or its replacement from the wizard) — never
+    swallow.
+    """
 
     def __init__(self, extra: str, pip_hint: str, *, detail: str | None = None) -> None:
         self.extra = extra
@@ -236,7 +201,13 @@ class MissingProviderDependency(ImportError):
 
 
 class MissingProviderApiKey(ValueError):
-    """Required API key for the resolved provider is not set (avoid SDK tracebacks)."""
+    """Required API key for the resolved provider is not set (avoid SDK tracebacks).
+
+    **Handling policy**: same as :class:`MissingProviderDependency` — the CLI top-level exits
+    with a clear ``set ENV_VAR=…`` hint, while
+    :func:`agloom_cli.provider_wizard.resolve_model_with_optional_wizard` may recover by
+    prompting the user to enter the key (or pick a different provider).
+    """
 
 
 def _require_env(name: str, *, for_provider: str) -> str:
@@ -312,10 +283,10 @@ def _get_by_provider(
     **kwargs: Any,
 ) -> Any:
     """Construct a chat model from an explicit provider slug (curated + ``init_chat_model``)."""
-    s = slug.strip().lower().replace("-", "_")
-    if s in ("mistral",):
-        s = "mistralai"
-    if s in ("google", "gemini"):
+    # Canonicalize via the same table the params filter uses — so wizard-saved patches
+    # (e.g. ``google_genai:gemini-...``) hit the curated path and get the full param surface.
+    s = normalize_provider_slug(slug)
+    if s == "google":
         return _get_google_genai_model(model_id, **kwargs)
     if s == "openai":
         return _get_openai_model(model_id, base_url=base_url, **kwargs)
@@ -568,30 +539,41 @@ def try_resolve_llm_from_api_keys(*, interactive: bool | None = None, **llm_kwar
 
 
 def describe_llm(llm: Any) -> tuple[str, str]:
-    """Return ``(provider_slug, model_id)`` for status lines (e.g. REPL INFO panel)."""
-    cls_name = type(llm).__name__.lower()
+    """Return ``(provider_slug, model_id)`` for status lines (e.g. REPL INFO panel).
+
+    Uses :data:`agloom_cli.provider_registry.CLASS_TO_SLUG` for an exact class-name lookup;
+    falls back to substring matching so wrappers / forks (e.g. ``MyChatGroq``) still resolve.
+    """
+    cls_name = type(llm).__name__
     mid = getattr(llm, "model_name", None) or getattr(llm, "model", None)
     mid_s = str(mid).strip() if mid else "auto"
 
-    if "groq" in cls_name:
-        return "groq", mid_s
-    if "openai" in cls_name or cls_name == "chatopenai":
-        return "openai", mid_s
-    if "anthropic" in cls_name or "claude" in cls_name:
-        return "anthropic", mid_s
-    if "google" in cls_name or "gemini" in cls_name:
-        return "google", mid_s
-    if "mistral" in cls_name:
-        return "mistralai", mid_s
-    if "xai" in cls_name or "grok" in cls_name:
-        return "xai", mid_s
-    if "ollama" in cls_name:
-        return "ollama", mid_s
-    if "litellm" in cls_name:
-        return "litellm", mid_s
-    if "cerebras" in cls_name:
-        return "cerebras", mid_s
-    return type(llm).__name__.replace("Chat", "").lower() or "llm", mid_s
+    # Fast path: exact LangChain class match.
+    slug = CLASS_TO_SLUG.get(cls_name)
+    if slug:
+        return slug, mid_s
+
+    # Slow path: substring match for wrappers / renames. Order matters — more-specific
+    # tokens (``grok``, ``claude``) are checked before short ones (``openai``).
+    cls_lower = cls_name.lower()
+    for token, fallback_slug in (
+        ("groq", "groq"),
+        ("anthropic", "anthropic"),
+        ("claude", "anthropic"),
+        ("gemini", "google"),
+        ("google", "google"),
+        ("mistral", "mistralai"),
+        ("grok", "xai"),
+        ("xai", "xai"),
+        ("ollama", "ollama"),
+        ("litellm", "litellm"),
+        ("cerebras", "cerebras"),
+        ("openai", "openai"),
+    ):
+        if token in cls_lower:
+            return fallback_slug, mid_s
+
+    return cls_name.replace("Chat", "").lower() or "llm", mid_s
 
 
 def _get_vllm_openai_compatible(model_id: str, *, base_url: str | None = None, **kwargs: Any) -> Any:
@@ -757,23 +739,35 @@ def _get_ollama_model(model_id: str, *, base_url: str | None = None, **kwargs: A
 
 
 def _get_default_model(model_id: str, **kwargs) -> Any:
+    """Route an unprefixed model id (or ``auto``) to the first provider with an env key set.
+
+    When *model_id* is ``auto`` / empty, substitute a curated default for the picked provider.
+    Otherwise honor the user's id (likely a custom fine-tune / deployment name) — let the SDK
+    reject it if invalid rather than silently swapping it for the curated default.
+    """
+    mid = (model_id or "").strip()
+    use_curated = (not mid) or mid.lower() == "auto"
+
     if os.environ.get("OPENAI_API_KEY"):
-        return _get_openai_model("gpt-4o", **kwargs)
+        return _get_openai_model("gpt-4o" if use_curated else mid, **kwargs)
 
     if os.environ.get("ANTHROPIC_API_KEY"):
-        return _get_anthropic_model("claude-3-5-sonnet-20241022", **kwargs)
+        return _get_anthropic_model("claude-3-5-sonnet-20241022" if use_curated else mid, **kwargs)
 
     if _google_api_key():
-        return _get_google_genai_model("gemini-2.0-flash", **kwargs)
+        return _get_google_genai_model("gemini-2.0-flash" if use_curated else mid, **kwargs)
 
     if os.environ.get("MISTRAL_API_KEY"):
-        return _get_mistral_model("mistral-large-latest", **kwargs)
+        return _get_mistral_model("mistral-large-latest" if use_curated else mid, **kwargs)
 
     if os.environ.get("GROQ_API_KEY"):
-        return _get_groq_model("meta-llama/llama-4-scout-17b-16e-instruct", **kwargs)
+        return _get_groq_model(
+            "meta-llama/llama-4-scout-17b-16e-instruct" if use_curated else mid,
+            **kwargs,
+        )
 
     if os.environ.get("XAI_API_KEY"):
-        return _get_xai_model("grok-3-latest", **kwargs)
+        return _get_xai_model("grok-3-latest" if use_curated else mid, **kwargs)
 
     raise ValueError(
         "No model found. Set one of: OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY or GEMINI_API_KEY, "

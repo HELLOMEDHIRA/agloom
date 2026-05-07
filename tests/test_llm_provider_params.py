@@ -84,6 +84,51 @@ def test_normalize_bedrock_and_vertex_aliases() -> None:
     assert normalize_provider_slug("watsonx") == "ibm"
 
 
+def test_normalize_google_genai_folds_to_google() -> None:
+    """Wizard saves ``google_genai:gemini-...``; resolver/params canonicalize to ``google``.
+
+    Regression: ``google_genai`` previously fell back to ``__generic_init__`` and lost the full
+    ``ChatGoogleGenerativeAI`` param surface (``safety_settings``, ``thinking_budget``, …).
+    """
+    assert normalize_provider_slug("google_genai") == "google"
+    assert normalize_provider_slug("google_generative_ai") == "google"
+    assert normalize_provider_slug("google-genai") == "google"
+
+
+def test_spread_google_genai_uses_full_google_params() -> None:
+    out = spread_llm_options_for_provider(
+        "google_genai",
+        {"max_tokens": 256, "thinking_budget": 1024, "safety_settings": [{"x": 1}]},
+    )
+    assert out["max_output_tokens"] == 256
+    assert out["thinking_budget"] == 1024
+    assert out["safety_settings"] == [{"x": 1}]
+
+
+def test_spread_huggingface_keeps_provider_specific_keys() -> None:
+    out = spread_llm_options_for_provider(
+        "huggingface",
+        {"temperature": 0.4, "max_new_tokens": 64, "do_sample": True, "frequency_penalty": 0.1},
+    )
+    assert out["temperature"] == 0.4
+    assert out["max_new_tokens"] == 64
+    assert out["do_sample"] is True
+    # OpenAI-only knobs should not leak to HuggingFace
+    assert "frequency_penalty" not in out
+
+
+def test_spread_baseten_inherits_openai_family_params() -> None:
+    out = spread_llm_options_for_provider("baseten", {"temperature": 0.2, "frequency_penalty": 0.0})
+    assert out["temperature"] == 0.2
+    assert out["frequency_penalty"] == 0.0
+
+
+def test_spread_azure_openai_inherits_openai_family_params() -> None:
+    out = spread_llm_options_for_provider("azure_openai", {"temperature": 0.5, "max_tokens": 16})
+    assert out["temperature"] == 0.5
+    assert out["max_tokens"] == 16
+
+
 def test_spread_cohere_timeout_alias() -> None:
     out = spread_llm_options_for_provider("cohere", {"timeout": 12, "temperature": 0})
     assert out["timeout_seconds"] == 12

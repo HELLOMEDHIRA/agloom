@@ -62,3 +62,6 @@ skills_store/
 # agloom config (local only)
 .agloom
 .agloom.yaml
+# Super-Brain
+.agsuperbrain/
+.agsuperbrainignore

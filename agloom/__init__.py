@@ -11,12 +11,8 @@ Sync constructor: ``create_agent_sync``. Use ``async with agent:`` (or ``await a
 to release MCP clients and feedback handlers.
 """
 
-from importlib.metadata import PackageNotFoundError, version
-
-try:
-    __version__ = version("agloom")
-except PackageNotFoundError:
-    __version__ = "0.0.0-dev"
+from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
+from importlib.metadata import version as _version
 
 from .delegation import (
     BackgroundDelegationManager,
@@ -24,6 +20,7 @@ from .delegation import (
     BackgroundTaskStatus,
     HandoffTarget,
 )
+from .hitl_contract import HITLEvent, call_user_callback, normalize_react_tool_use_failed_decision
 from .llm_utils import (
     AsyncRateLimiter,
     CircuitBreaker,
@@ -31,7 +28,6 @@ from .llm_utils import (
     robust_structured_call,
     safe_create_task,
 )
-from .hitl_contract import HITLEvent, call_user_callback, normalize_react_tool_use_failed_decision
 from .logging_utils import configure_package_logging, get_logger
 from .memory.session import SessionMemory
 from .memory.store import LongTermStore
@@ -75,9 +71,13 @@ except ImportError:
     BootstrapState = None
     _HARNESS_AVAILABLE = False
 
+try:
+    __version__ = _version("agloom")
+except _PackageNotFoundError:
+    __version__ = "0.0.0-dev"
+del _PackageNotFoundError, _version
+
 __all__ = [
-    "HITLEvent",
-    "call_user_callback",
     "RESERVED_TOOL_NAMES",
     "AgentConfig",
     "AgentEvent",
@@ -90,6 +90,7 @@ __all__ = [
     "CircuitBreaker",
     "ExecutionResult",
     "GitSession",
+    "HITLEvent",
     "HandoffTarget",
     "LLMSemaphore",
     "LongTermStore",
@@ -111,6 +112,7 @@ __all__ = [
     "WorkerResult",
     "cache_get",
     "cache_set",
+    "call_user_callback",
     "configure_package_logging",
     "create_agent",
     "create_agent_sync",

@@ -14,6 +14,15 @@ from rich.prompt import Confirm, IntPrompt, Prompt
 
 from .langchain_index_overview import INIT_CHAT_SLUG_TITLES, NON_CHAT_INDEX_BRANDS
 from .model_resolver import augment_patch_api_keys_from_env
+from .provider_registry import (
+    WIZARD_DEFAULT_MODELS as _DEFAULT_MODEL_BY_SLUG,
+)
+from .provider_registry import (
+    WIZARD_ENV_KEYS as _ENV_KEYS_BY_SLUG,
+)
+from .provider_registry import (
+    wizard_extra_rows,
+)
 
 # LangChain’s built-in registry (same providers ``init_chat_model`` supports first-class).
 try:
@@ -21,66 +30,8 @@ try:
 except ImportError:  # pragma: no cover
     _LC_BUILTIN_PROVIDERS = {}
 
-_DEFAULT_MODEL_BY_SLUG: dict[str, str] = {
-    "openai": "gpt-4o",
-    "anthropic": "claude-3-5-sonnet-20241022",
-    "groq": "meta-llama/llama-4-scout-17b-16e-instruct",
-    "google_genai": "gemini-2.0-flash",
-    "google_vertexai": "gemini-2.0-flash",
-    "mistralai": "mistral-large-latest",
-    "xai": "grok-3-latest",
-    "ollama": "llama3.2",
-    "cohere": "command-r-plus",
-    "deepseek": "deepseek-chat",
-    "fireworks": "accounts/fireworks/models/llama-v3p1-8b-instruct",
-    "together": "meta-llama/Llama-3-70b-chat-hf",
-    "perplexity": "sonar",
-    "openrouter": "openai/gpt-4o",
-    "nvidia": "meta/llama3-70b-instruct",
-    "upstage": "solar-1-mini-chat",
-    "litellm": "groq/llama-3.3-70b-versatile",
-    "huggingface": "HuggingFaceH4/zephyr-7b-beta",
-    "ibm": "ibm/granite-3-2-8b-instruct",
-    "baseten": "llama-3-8b",
-    "bedrock": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-    "bedrock_converse": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-    "anthropic_bedrock": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-    "azure_openai": "gpt-4o",
-    "azure_ai": "gpt-4o",
-    "google_anthropic_vertex": "claude-3-5-sonnet@20240620",
-    "cerebras": "llama-3.3-70b",
-}
-
-# Env vars to prompt for (empty → skip prompts; user relies on cloud creds / IAM).
-_ENV_KEYS_BY_SLUG: dict[str, list[str]] = {
-    "openai": ["OPENAI_API_KEY"],
-    "anthropic": ["ANTHROPIC_API_KEY"],
-    "groq": ["GROQ_API_KEY"],
-    "google_genai": ["GOOGLE_API_KEY"],
-    "google_vertexai": ["GOOGLE_API_KEY"],
-    "mistralai": ["MISTRAL_API_KEY"],
-    "xai": ["XAI_API_KEY"],
-    "cohere": ["COHERE_API_KEY"],
-    "deepseek": ["DEEPSEEK_API_KEY"],
-    "fireworks": ["FIREWORKS_API_KEY"],
-    "together": ["TOGETHER_API_KEY"],
-    "perplexity": ["PERPLEXITY_API_KEY"],
-    "openrouter": ["OPENROUTER_API_KEY"],
-    "nvidia": ["NVIDIA_API_KEY"],
-    "upstage": ["UPSTAGE_API_KEY"],
-    "ibm": ["WATSONX_API_KEY"],
-    "huggingface": ["HUGGINGFACEHUB_API_TOKEN"],
-    "baseten": ["BASETEN_API_KEY"],
-    "azure_openai": ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"],
-    "azure_ai": ["AZURE_AI_API_KEY", "AZURE_AI_ENDPOINT"],
-    "ollama": [],
-    "litellm": ["OPENAI_API_KEY"],
-    "bedrock": [],
-    "bedrock_converse": [],
-    "anthropic_bedrock": [],
-    "google_anthropic_vertex": [],
-    "cerebras": ["CEREBRAS_API_KEY"],
-}
+# ``_DEFAULT_MODEL_BY_SLUG`` and ``_ENV_KEYS_BY_SLUG`` are imported from
+# :mod:`agloom_cli.provider_registry` (above). To add a provider, edit ``provider_registry.PROVIDERS``.
 
 
 def _pip_package_for_module(module_path: str) -> str:
@@ -96,16 +47,12 @@ def langchain_init_chat_provider_table() -> list[tuple[str, str, str]]:
     return rows
 
 
-# Chat integrations that ship as ``agloom[extra]`` but are not in LangChain ``_BUILTIN_PROVIDERS`` yet.
-_EXTRA_WIZARD_ROWS: tuple[tuple[str, str, str, str], ...] = (
-    ("cerebras", "langchain-cerebras", "ChatCerebras", "Cerebras"),
-)
-
-
 def wizard_provider_table() -> list[tuple[str, str, str, str]]:
     """Rows ``(slug, pip_package, class_name, display_title)`` for the interactive wizard.
 
-    Merges LangChain’s ``init_chat_model`` registry with Agloom extras, sorted by display title.
+    Merges LangChain's ``init_chat_model`` registry with extras derived from
+    :mod:`agloom_cli.provider_registry` (any provider with a ``chat_class`` + ``pip_extra``
+    whose aliases are not already in LangChain's registry). Sorted by display title.
     """
     seen: set[str] = set()
     rows: list[tuple[str, str, str, str]] = []
@@ -113,7 +60,7 @@ def wizard_provider_table() -> list[tuple[str, str, str, str]]:
         seen.add(slug)
         title = INIT_CHAT_SLUG_TITLES.get(slug, slug.replace("_", " ").title())
         rows.append((slug, pip_pkg, cls_name, title))
-    for slug, pip_pkg, cls_name, title in _EXTRA_WIZARD_ROWS:
+    for slug, pip_pkg, cls_name, title in wizard_extra_rows(seen):
         if slug not in seen:
             rows.append((slug, pip_pkg, cls_name, title))
             seen.add(slug)
@@ -138,10 +85,9 @@ def _existing_api_keys(ai: dict[str, Any]) -> dict[str, str]:
 
 
 def _env_keys_for_slug(slug: str) -> list[str]:
+    """Wizard env-prompt list for *slug* (table override, then ``<SLUG>_API_KEY`` heuristic)."""
     if slug in _ENV_KEYS_BY_SLUG:
         return list(_ENV_KEYS_BY_SLUG[slug])
-    if slug in ("litellm",):
-        return ["OPENAI_API_KEY"]
     return [f"{slug.upper()}_API_KEY"]
 
 

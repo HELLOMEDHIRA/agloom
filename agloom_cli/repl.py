@@ -245,7 +245,7 @@ def append_tool_result_for_transcript(
     if not body:
         return
     low = body.lower()
-    if low.startswith("error:") or low.startswith("error "):
+    if low.startswith(("error:", "error ")):
         return
     accum.append((name, body))
 
@@ -282,7 +282,7 @@ def _append_trace_line(thinking_lines: list[str], event_type: str, data: dict) -
         thinking_lines.append("• reflection")
     elif event_type == "fallback":
         o = data.get("output", "")
-        thinking_lines.append(f"• fallback: {str(o)}")
+        thinking_lines.append(f"• fallback: {o!s}")
 
 
 def _thinking_body_text(lines: list[str]) -> Text:
@@ -735,8 +735,10 @@ async def run_shell_plain(
             try:
                 add_to_session_history(invoke_tid, "user", prompt_text)
                 add_to_session_history(invoke_tid, "assistant", full_output)
-            except Exception:
-                pass
+            except Exception as e:
+                console.print(
+                    f"[dim](warning: failed to persist session history for {invoke_tid[:8]}…: {e})[/dim]",
+                )
 
             console.print(
                 Panel(

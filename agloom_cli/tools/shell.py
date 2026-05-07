@@ -20,8 +20,8 @@ import platform
 import subprocess
 
 from ..safety_limits import RUN_SHELL_INCOMPLETE_PREVIEW_BYTES, RUN_SHELL_MAX_OUTPUT_BYTES
-from ..tool_result_envelope import render_incomplete
 from ..tool_loader import tool
+from ..tool_result_envelope import render_incomplete
 
 _SHELL_HINTS = [
     "Do **not** treat the preview as full stdout/stderr.",

@@ -356,8 +356,8 @@ No configuration required. 46 tools ready. 9 patterns available. Memory enabled 
 
 ## See Also
 
-- [Execution Patterns](concepts/patterns.md) — All 9 patterns explained
-- [Memory System](features/memory.md) — Deep dive on memory architecture
-- [Skill Learning](features/skills.md) — How agents learn from interaction
-- [HITL](features/hitl.md) — 4 levels of human interruption
-- [MCP](features/mcp.md) — Model Context Protocol support
+- [Execution Patterns](../concepts/patterns.md) — All 9 patterns explained
+- [Memory System](../features/memory.md) — Deep dive on memory architecture
+- [Skill Learning](../features/skills.md) — How agents learn from interaction
+- [HITL](../features/hitl.md) — 4 levels of human interruption
+- [MCP](../features/mcp.md) — Model Context Protocol support

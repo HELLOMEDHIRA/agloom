@@ -163,23 +163,14 @@ def detect_frameworks(root: Path, language: str) -> list[str]:
 
 def detect_project_type(root: Path, language: str) -> str:
     """Detect if project is library, app, or service."""
-    # Check for web app indicators
     if (root / "templates").exists() or (root / "public").exists():
         return "webapp"
-
-    # Check for API indicators
     if (root / "routes").exists() or (root / "api").exists():
         return "api"
-
-    # Check for CLI tool
     if (root / "cli").exists() or (root / "cmd").exists():
         return "cli"
-
-    # Check for library/package
-    if language == "python":
-        if (root / "src").exists() or not (root / "tests").exists():
-            return "library"
-
+    if language == "python" and ((root / "src").exists() or not (root / "tests").exists()):
+        return "library"
     return "application"
 
 

@@ -58,7 +58,7 @@ class CliConsoleNoiseFilter(logging.Filter):
         self._app_verbose = app_verbose
         super().__init__()
 
-    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003 — logging API
+    def filter(self, record: logging.LogRecord) -> bool:
         if record.levelno >= logging.WARNING:
             return True
         name = record.name

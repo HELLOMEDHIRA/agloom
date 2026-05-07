@@ -12,8 +12,8 @@ import inspect
 import time
 import uuid
 from collections.abc import AsyncGenerator, Callable, Sequence
-from pathlib import Path
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -21,7 +21,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool, StructuredTool
 
 from .classifier import analyze_query
-from .hitl_contract import HITLEvent, call_user_callback
 from .delegation import (
     BackgroundDelegationManager,
     HandoffTarget,
@@ -30,6 +29,7 @@ from .delegation import (
     resolve_handoff,
     run_delegate,
 )
+from .hitl_contract import HITLEvent, call_user_callback
 from .logging_utils import configure_package_logging, get_logger
 from .mcp_support import MCPServerConfig
 from .memory import (
@@ -40,6 +40,7 @@ from .memory import (
 )
 from .models import (
     DEFAULT_SYSTEM_PROMPT,
+    AgentConfig,
     AgentEvent,
     AgentStep,
     ExecutionResult,
@@ -935,7 +936,7 @@ async def run_fresh(
         ms = getattr(analysis, "matched_skill", None)
         logger.debug(
             f"[{name}] classify detail: matched_skill={ms!r} "
-            f"reasoning_chars={len((analysis.reasoning or ''))} "
+            f"reasoning_chars={len(analysis.reasoning or '')} "
             f"direct={'yes' if analysis.direct_response else 'no'}"
         )
         pattern_val = analysis.pattern.value
@@ -2021,8 +2022,6 @@ async def create_agent(
     extend ``tools`` (memory load_skill, harness tools).
     """
     configure_package_logging(debug)
-
-    from .models import AgentConfig
 
     AgentConfig(
         model=model,

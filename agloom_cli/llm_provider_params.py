@@ -8,7 +8,8 @@ provider does not support so optional extras are not forced to accept a one-size
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Callable, Mapping
+from typing import Any
 
 # Tuning / request fields allowed per provider (from ``langchain-*`` model_fields; excludes
 # credentials, clients, callbacks, etc.).
@@ -297,6 +298,28 @@ LLM_PARAM_KEYS_BY_PROVIDER: dict[str, frozenset[str]] = {
             "prompt_cache_key",
         }
     ),
+    # langchain_huggingface.ChatHuggingFace — wraps HuggingFace pipelines / Inference Endpoints.
+    "huggingface": frozenset(
+        {
+            "temperature",
+            "max_new_tokens",
+            "top_k",
+            "top_p",
+            "do_sample",
+            "repetition_penalty",
+            "stop",
+            "stop_sequences",
+            "seed",
+            "model_kwargs",
+            "timeout",
+            "max_retries",
+            "streaming",
+        }
+    ),
+    # Baseten — OpenAI-compatible inference endpoint; same param surface as ChatOpenAI.
+    "baseten": _OPENAI_FAMILY_LLM_KEYS,
+    # Azure OpenAI — same tuning surface as ChatOpenAI; auth/endpoint go via constructor (not LLM tuning).
+    "azure_openai": _OPENAI_FAMILY_LLM_KEYS,
     # langchain_google_vertexai.ChatVertexAI
     "google_vertexai": frozenset(
         {
@@ -377,7 +400,9 @@ def normalize_provider_slug(slug: str) -> str:
     s = slug.strip().lower().replace("-", "_")
     if s in ("mistral",):
         return "mistralai"
-    if s in ("google", "gemini"):
+    # LangChain registers Gemini under ``google_genai``; Agloom's curated path uses ``google``.
+    # Fold both (plus the spelled-out alias) so wizard-saved patches and resolver lookups agree.
+    if s in ("google", "gemini", "google_genai", "google_generative_ai"):
         return "google"
     if s in ("vertexai", "vertex_ai"):
         return "google_vertexai"
@@ -398,123 +423,83 @@ def _coerce_stop_sequences(value: Any) -> list[str] | None:
     return [str(value)]
 
 
+# Alias rules per canonical provider slug. Each rule is ``(source, target, coerce | None)``;
+# ``_apply_yaml_aliases`` migrates ``source`` → ``target`` when target unset, otherwise drops
+# ``source`` to avoid passing two synonyms to the LangChain constructor.
+_AliasRule = tuple[str, str, "Callable[[Any], Any] | None"]
+
+_OPENAI_FAMILY_ALIASES: tuple[_AliasRule, ...] = (
+    ("timeout", "request_timeout", None),
+    ("max_completion_tokens", "max_tokens", None),
+)
+
+_GEMINI_TOKEN_ALIASES: tuple[_AliasRule, ...] = (
+    ("max_tokens", "max_output_tokens", None),
+    ("max_completion_tokens", "max_output_tokens", None),
+)
+
+_PROVIDER_ALIASES: dict[str, tuple[_AliasRule, ...]] = {
+    "openai": (*_OPENAI_FAMILY_ALIASES,),
+    "vllm": (*_OPENAI_FAMILY_ALIASES,),
+    "xai": (*_OPENAI_FAMILY_ALIASES,),
+    "cerebras": (*_OPENAI_FAMILY_ALIASES,),
+    "groq": (("timeout", "request_timeout", None),),  # groq keeps ``max_tokens`` / ``max_completion_tokens`` shape
+    "openrouter": (*_OPENAI_FAMILY_ALIASES,),
+    "azure_ai": (("timeout", "request_timeout", None),),
+    "azure_openai": (*_OPENAI_FAMILY_ALIASES,),
+    "deepseek": (("timeout", "request_timeout", None),),
+    "together": (("timeout", "request_timeout", None),),
+    "upstage": (("timeout", "request_timeout", None),),
+    "nvidia": (("max_completion_tokens", "max_tokens", None),),
+    "litellm": (("timeout", "request_timeout", None),),
+    "fireworks": (("timeout", "request_timeout", None),),
+    "perplexity": (("timeout", "request_timeout", None),),
+    "cohere": (("timeout", "timeout_seconds", None),),
+    "anthropic": (
+        ("timeout", "default_request_timeout", None),
+        ("stop", "stop_sequences", _coerce_stop_sequences),
+    ),
+    "bedrock": (
+        ("max_completion_tokens", "max_tokens", None),
+        ("stop", "stop_sequences", _coerce_stop_sequences),
+    ),
+    "google": _GEMINI_TOKEN_ALIASES,
+    "google_vertexai": _GEMINI_TOKEN_ALIASES,
+    "google_anthropic_vertex": (
+        *_GEMINI_TOKEN_ALIASES,
+        ("stop", "stop_sequences", _coerce_stop_sequences),
+    ),
+    "ollama": (
+        ("max_tokens", "num_predict", None),
+        ("max_completion_tokens", "num_predict", None),
+    ),
+    "mistralai": (("seed", "random_seed", None),),
+}
+
+
 def _apply_yaml_aliases(provider: str, d: dict[str, Any]) -> None:
-    """Map shared YAML names onto provider-specific fields (in place)."""
-    # OpenAI-shaped clients use request_timeout, not timeout.
-    if provider in (
-        "openai",
-        "vllm",
-        "xai",
-        "cerebras",
-        "groq",
-        "openrouter",
-        "azure_ai",
-        "deepseek",
-        "together",
-        "upstage",
-    ):
-        if d.get("request_timeout") is None and d.get("timeout") is not None:
-            d["request_timeout"] = d.pop("timeout")
-    if provider == "anthropic":
-        if d.get("default_request_timeout") is None and d.get("timeout") is not None:
-            d["default_request_timeout"] = d.pop("timeout")
-        elif "timeout" in d:
-            d.pop("timeout", None)
-        if d.get("stop_sequences") is None and d.get("stop") is not None:
-            seq = _coerce_stop_sequences(d.pop("stop"))
-            if seq is not None:
-                d["stop_sequences"] = seq
-        elif "stop" in d:
-            d.pop("stop", None)
+    """Map shared YAML names onto provider-specific fields (in place).
 
-    if provider == "litellm":
-        if d.get("request_timeout") is None and d.get("timeout") is not None:
-            d["request_timeout"] = d.pop("timeout")
-        elif "timeout" in d:
-            d.pop("timeout", None)
-
-    if provider in ("fireworks", "perplexity"):
-        if d.get("request_timeout") is None and d.get("timeout") is not None:
-            d["request_timeout"] = d.pop("timeout")
-        elif "timeout" in d:
-            d.pop("timeout", None)
-
-    if provider == "cohere":
-        if d.get("timeout_seconds") is None and d.get("timeout") is not None:
-            d["timeout_seconds"] = d.pop("timeout")
-        elif "timeout" in d:
-            d.pop("timeout", None)
-
-    if provider == "bedrock":
-        if d.get("max_tokens") is None and d.get("max_completion_tokens") is not None:
-            d["max_tokens"] = d.pop("max_completion_tokens")
-        elif "max_completion_tokens" in d:
-            d.pop("max_completion_tokens", None)
-        if d.get("stop_sequences") is None and d.get("stop") is not None:
-            seq = _coerce_stop_sequences(d.pop("stop"))
-            if seq is not None:
-                d["stop_sequences"] = seq
-        elif "stop" in d:
-            d.pop("stop", None)
-
-    if provider == "google_vertexai":
-        if d.get("max_output_tokens") is None and d.get("max_tokens") is not None:
-            d["max_output_tokens"] = d.pop("max_tokens")
-        elif "max_tokens" in d:
-            d.pop("max_tokens", None)
-        if d.get("max_output_tokens") is None and d.get("max_completion_tokens") is not None:
-            d["max_output_tokens"] = d.pop("max_completion_tokens")
-        elif "max_completion_tokens" in d:
-            d.pop("max_completion_tokens", None)
-
-    if provider == "google_anthropic_vertex":
-        if d.get("max_output_tokens") is None and d.get("max_tokens") is not None:
-            d["max_output_tokens"] = d.pop("max_tokens")
-        elif "max_tokens" in d:
-            d.pop("max_tokens", None)
-        if d.get("max_output_tokens") is None and d.get("max_completion_tokens") is not None:
-            d["max_output_tokens"] = d.pop("max_completion_tokens")
-        elif "max_completion_tokens" in d:
-            d.pop("max_completion_tokens", None)
-        if d.get("stop_sequences") is None and d.get("stop") is not None:
-            seq = _coerce_stop_sequences(d.pop("stop"))
-            if seq is not None:
-                d["stop_sequences"] = seq
-        elif "stop" in d:
-            d.pop("stop", None)
-
-    # Token limit field names
-    if provider in ("openai", "vllm", "xai", "cerebras", "groq", "openrouter", "nvidia"):
-        if d.get("max_tokens") is None and d.get("max_completion_tokens") is not None:
-            d["max_tokens"] = d.pop("max_completion_tokens")
-        elif "max_completion_tokens" in d:
-            d.pop("max_completion_tokens", None)
-
-    if provider == "google":
-        if d.get("max_output_tokens") is None and d.get("max_tokens") is not None:
-            d["max_output_tokens"] = d.pop("max_tokens")
-        elif "max_tokens" in d:
-            d.pop("max_tokens", None)
-        if d.get("max_output_tokens") is None and d.get("max_completion_tokens") is not None:
-            d["max_output_tokens"] = d.pop("max_completion_tokens")
-        elif "max_completion_tokens" in d:
-            d.pop("max_completion_tokens", None)
-
-    if provider == "ollama":
-        if d.get("num_predict") is None and d.get("max_tokens") is not None:
-            d["num_predict"] = d.pop("max_tokens")
-        elif "max_tokens" in d:
-            d.pop("max_tokens", None)
-        if d.get("num_predict") is None and d.get("max_completion_tokens") is not None:
-            d["num_predict"] = d.pop("max_completion_tokens")
-        elif "max_completion_tokens" in d:
-            d.pop("max_completion_tokens", None)
-
-    if provider == "mistralai":
-        if d.get("random_seed") is None and d.get("seed") is not None:
-            d["random_seed"] = d.pop("seed")
-        elif "seed" in d:
-            d.pop("seed", None)
+    Driven by :data:`_PROVIDER_ALIASES`. For each ``(source, target, coerce)`` rule:
+    if *source* is set and *target* is not, move it (applying *coerce* if given); otherwise drop
+    *source* so the LangChain constructor doesn't see two names for the same setting.
+    """
+    rules = _PROVIDER_ALIASES.get(provider)
+    if not rules:
+        return
+    for source, target, coerce in rules:
+        if source not in d:
+            continue
+        if d.get(target) is None:
+            value = d.pop(source)
+            if coerce is not None:
+                coerced = coerce(value)
+                if coerced is not None:
+                    d[target] = coerced
+            else:
+                d[target] = value
+        else:
+            d.pop(source, None)
 
 
 def spread_llm_options_for_provider(provider_slug: str, kwargs: Mapping[str, Any]) -> dict[str, Any]:

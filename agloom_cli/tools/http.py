@@ -14,8 +14,8 @@ from ..safety_limits import (
     HTTP_MAX_BODY_CHARS,
     HTTP_MAX_RESPONSE_BYTES,
 )
-from ..tool_result_envelope import render_incomplete
 from ..tool_loader import tool
+from ..tool_result_envelope import render_incomplete
 
 _HTTP_RECOVERY_HINTS = [
     "Do **not** treat any preview as the full response — check ``complete=false`` in the agloom block above.",

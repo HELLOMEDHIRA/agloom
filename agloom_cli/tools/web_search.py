@@ -9,9 +9,9 @@ from ..safety_limits import (
     WEB_SEARCH_SNIPPET_MAX_CHARS,
     WEB_SEARCH_TOTAL_OUTPUT_MAX_CHARS,
 )
-from ..tool_result_envelope import render_incomplete
 from ..tool_loader import tool
-from .filesystem import BoolLike, _boolish
+from ..tool_result_envelope import render_incomplete
+from .filesystem import _boolish
 
 _WEB_HINTS = [
     "Do **not** assume snippets or answers are complete when ``complete=false``.",

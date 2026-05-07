@@ -1,7 +1,7 @@
 [project]
 name = "agloom"
-version = "0.1.49"
-description = "The intelligent fabric for AI agents — 9 execution patterns, auto-classified, self-learning, production-ready. Drop-in replacement for LangChain's create_agent."
+version = "0.1.50"
+description = "Production agent framework on LangChain/LangGraph: 9 auto-routed execution patterns, persistent memory, skill learning, feedback evaluation, 4-level HITL, MCP — plus a project-aware coding CLI."
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.12,<3.13"
@@ -30,7 +30,7 @@ dependencies = [
     "tiktoken>=0.12.0",
     "langchain-huggingface>=1.2.2",
     "agsuperbrain>=0.0.1",
-    "langgraph-checkpoint-sqlite>=2.0.0",
+    "langgraph-checkpoint-sqlite>=3.0.3",
 ]
 
 [project.urls]
@@ -44,20 +44,20 @@ agloom = "agloom_cli.cli:run_cli"
 
 [project.optional-dependencies]
 anthropic = ["langchain-anthropic>=1.4.3"]
-aws = ["langchain-aws>=1.4.5"]
+aws = ["langchain-aws>=1.4.6"]
 azure-ai = ["langchain-azure-ai>=1.2.3"]
 cerebras = ["langchain-cerebras>=0.8.2"]
 cohere = ["langchain-cohere>=0.5.1"]
 community = ["langchain-community>=0.4.1"]
 deepseek = ["langchain-deepseek>=1.0.1"]
-fireworks = ["langchain-fireworks>=1.3.0"]
+fireworks = ["langchain-fireworks>=1.3.1"]
 google-genai = ["langchain-google-genai>=4.2.2,<5"]
 google-vertexai = ["langchain-google-vertexai>=3.2.3"]
 groq = ["langchain-groq>=1.1.2"]
 huggingface = ["langchain-huggingface>=1.2.2"]
-ibm = ["langchain-ibm>=1.0.7"]
+ibm = ["langchain-ibm>=1.0.8"]
 litellm = ["langchain-litellm>=0.6.4"]
-mistralai = ["langchain-mistralai>=1.1.3"]
+mistralai = ["langchain-mistralai>=1.1.4"]
 nvidia = ["langchain-nvidia-ai-endpoints>=1.2.1"]
 ollama = ["langchain-ollama>=1.1.0"]
 openai = ["langchain-openai>=1.2.1"]
@@ -159,6 +159,11 @@ ignore = [
     "SIM105",  # use contextlib.suppress — explicit try/except is clearer here
     "SIM102",  # collapsible if — sometimes nested ifs are clearer
     "SIM118",  # in-dict-keys — .keys() is sometimes more explicit
+    "SIM103",  # needless-bool — explicit return True/False reads clearer than bool(expr)
+    "SIM108",  # if-else-block-instead-of-if-exp — explicit if/else preferred for readability
+    "SIM117",  # multiple-with — combining ``with`` statements not always clearer
+    "UP040",   # non-pep695-type-alias — keep ``TypeAlias`` for explicitness / runtime introspection
+    "RUF022",  # unsorted __all__ — we group ours by feature with comments
     "TC001",   # typing-only-first-party-import — can break runtime
     "TC002",   # typing-only-third-party-import — can break runtime
     "TC003",   # typing-only-stdlib-import — can break runtime
@@ -170,7 +175,11 @@ ignore = [
 "tests/**/*.py" = ["S", "T20", "E402", "N817", "B006", "B011", "RUF059"]
 "examples/*.py" = ["S", "T20", "T201"]
 "agloom_cli/tools/*.py" = ["ASYNC230", "ASYNC221", "ASYNC240", "S602"]
+"agloom_cli/persistence.py" = ["ASYNC240"]              # one-time bootstrap mkdir
 "agloom_cli/project.py" = ["S607"]
+"agloom/unified_agent.py" = ["ASYNC240"]                # one-time skill-mirror Path().resolve()
+"agloom_cli/hitl_textual.py" = ["RUF012"]               # Textual framework convention: class BINDINGS list
+"agloom_cli/repl_tui.py" = ["RUF012"]                   # Textual framework convention: class BINDINGS list
 
 [tool.ruff.lint.isort]
 known-first-party = ["agloom", "agloom_cli", "tests"]
@@ -191,13 +200,22 @@ project-includes = ["agloom/**/*.py", "agloom_cli/**/*.py", "examples/**/*.py", 
 replace-imports-with-any = [
     "distro",
     "langchain_anthropic",
+    "langchain_cerebras",
     "langchain_google_genai",
     "langchain_groq",
+    "langchain_litellm",
     "langchain_mistralai",
     "langchain_ollama",
     "langchain_openai",
     "langchain_xai",
     "openai",
+    "textual",
+    "textual.app",
+    "textual.binding",
+    "textual.containers",
+    "textual.screen",
+    "textual.theme",
+    "textual.widgets",
 ]
 
 # ── Commitizen ────────────────────────────────────────────────────────────────
@@ -222,4 +240,8 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
     "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    # langgraph 1.1+ emits a LangChainPendingDeprecationWarning during ``encrypted`` module import;
+    # not actionable from agloom (we never call ``JsonPlusSerializer`` directly).
+    "ignore::langchain_core._api.deprecation.LangChainPendingDeprecationWarning",
 ]

@@ -15,9 +15,7 @@ from agloom_cli.tools.working_dir import (
     path_exists,
     path_is_directory,
     path_is_file,
-    pop_working_directory,
     push_working_directory,
-    set_working_directory,
 )
 
 

@@ -200,10 +200,8 @@ def chunk_python_file(content: str, file_path: Path) -> list[FileChunk]:
     start_line = 1
 
     for i, line in enumerate(lines, 1):
-        # Check for function definition
         func_match = re.match(r"(async\s+)?def\s+(\w+)\s*\(", line)
         if func_match:
-            # Save previous chunk
             if current_chunk:
                 chunks.append(
                     FileChunk(
@@ -221,7 +219,6 @@ def chunk_python_file(content: str, file_path: Path) -> list[FileChunk]:
             current_chunk = [line]
             continue
 
-        # Check for class definition
         class_match = re.match(r"class\s+(\w+)(?:\(.*?\))?:", line)
         if class_match:
             if current_chunk:
@@ -241,7 +238,6 @@ def chunk_python_file(content: str, file_path: Path) -> list[FileChunk]:
             current_chunk = [line]
             continue
 
-        # Check for method (inside class)
         method_match = re.match(r"\s+(async\s+)?def\s+(\w+)\s*\(", line)
         if method_match and current_type == "class":
             chunks.append(

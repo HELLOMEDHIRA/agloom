@@ -90,6 +90,15 @@ def _get_file_type(file_path: Path) -> Literal["text", "binary"]:
     return "text"
 
 
+def _coerce_text(buf: object) -> str:
+    """Best-effort coerce ``subprocess`` stdout/stderr (str | bytes | None) to ``str``."""
+    if buf is None:
+        return ""
+    if isinstance(buf, bytes):
+        return buf.decode("utf-8", errors="replace")
+    return str(buf)
+
+
 def _virt_rel(path: str | None) -> str:
     """Map virtual path (``/foo``) to relpath under sandbox root."""
     if path is None:
@@ -153,7 +162,9 @@ class LocalSandbox(SandboxBackendProtocol):
             out = (proc.stdout or "") + (proc.stderr or "")
             return ExecuteResponse(output=out, exit_code=proc.returncode, truncated=False)
         except subprocess.TimeoutExpired as e:
-            msg = (e.stdout or "") + (e.stderr or "") + "\n(timeout)"
+            stdout = _coerce_text(e.stdout)
+            stderr = _coerce_text(e.stderr)
+            msg = stdout + stderr + "\n(timeout)"
             return ExecuteResponse(output=msg, exit_code=124, truncated=False)
         except Exception as e:
             return ExecuteResponse(output=str(e), exit_code=1, truncated=False)
@@ -307,7 +318,6 @@ class LocalSandbox(SandboxBackendProtocol):
         file_path: str,
         old_string: str,
         new_string: str,
-        *,
         replace_all: bool = False,
     ) -> EditResult:
         try:

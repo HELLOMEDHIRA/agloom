@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from ..tool_loader import tool
-from .filesystem import BoolLike, _boolish, _resolve_path
+from .filesystem import _boolish, _resolve_path
 
 _cwd_stack: list[str] = []
 

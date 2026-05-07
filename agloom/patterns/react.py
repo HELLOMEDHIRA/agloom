@@ -12,9 +12,9 @@ from langgraph.errors import GraphRecursionError
 from ..hitl_contract import (
     DEFAULT_REACT_TOOL_USE_FAILED_AUTO_RETRIES_HITL,
     DEFAULT_REACT_TOOL_USE_FAILED_USER_ROUNDS,
-    HITLEvent,
     REACT_TOOL_USE_FAILED_AUTO_RETRIES_HITL_KEY,
     REACT_TOOL_USE_FAILED_USER_ROUNDS_KEY,
+    HITLEvent,
     call_user_callback,
     normalize_react_tool_use_failed_decision,
 )
@@ -32,9 +32,17 @@ from ..models import (
 from .middleware import HumanApprovalMiddleware, ReactUserTurnToolChoiceMiddleware, UserAbort
 from .react_tool_recovery import (
     exception_indicates_tool_use_failed as _exception_indicates_tool_use_failed,
-    extract_failed_generation_snippet as _extract_failed_generation_snippet,
+)
+from .react_tool_recovery import (
+    extract_failed_generation_snippet as _extract_failed_generation_snippet,  # re-export for tests / consumers # noqa: F401
+)
+from .react_tool_recovery import (
     human_message_after_stray_tool_json as _human_message_after_stray_tool_json,
+)
+from .react_tool_recovery import (
     human_message_after_tool_use_failed as _human_message_after_tool_use_failed,
+)
+from .react_tool_recovery import (
     last_ai_message_is_stray_tool_json as _last_ai_message_is_stray_tool_json,
 )
 

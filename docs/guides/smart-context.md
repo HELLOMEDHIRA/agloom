@@ -156,5 +156,5 @@ agloom --refresh-rules
 
 ## See Also
 
-- [CLI Reference](guides/cli.md)
-- [Memory System](features/memory.md)
+- [CLI Reference](cli.md)
+- [Memory System](../features/memory.md)

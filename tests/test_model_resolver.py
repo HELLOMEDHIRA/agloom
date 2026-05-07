@@ -364,3 +364,52 @@ def test_resolve_model_llm_yaml_and_overrides(monkeypatch: pytest.MonkeyPatch) -
     assert captured["temperature"] == 0.8
     assert captured["top_p"] == 0.9
     assert captured["max_tokens"] == 100
+
+
+# ── Provider registry contract ────────────────────────────────────────────────
+
+
+def test_describe_llm_uses_class_registry_for_known_classes() -> None:
+    """``describe_llm`` should hit the ``CLASS_TO_SLUG`` exact-match path for stock LangChain classes."""
+
+    class ChatGroq:  # name only — we never instantiate the real one
+        model_name = "llama-3.3-70b-versatile"
+
+    class ChatOpenAI:
+        model = "gpt-4o-mini"
+
+    class ChatGoogleGenerativeAI:
+        model = "gemini-2.0-flash"
+
+    assert mr.describe_llm(ChatGroq()) == ("groq", "llama-3.3-70b-versatile")
+    assert mr.describe_llm(ChatOpenAI()) == ("openai", "gpt-4o-mini")
+    assert mr.describe_llm(ChatGoogleGenerativeAI()) == ("google", "gemini-2.0-flash")
+
+
+def test_describe_llm_falls_back_to_substring_for_wrappers() -> None:
+    """Custom wrapper / fork classes should resolve via the substring fallback."""
+
+    class MyCustomChatGroqWrapper:
+        model = "groq-foo"
+
+    class CompanyClaudeBridge:
+        model = "claude-x"
+
+    assert mr.describe_llm(MyCustomChatGroqWrapper()) == ("groq", "groq-foo")
+    assert mr.describe_llm(CompanyClaudeBridge()) == ("anthropic", "claude-x")
+
+
+def test_resolver_env_keys_match_registry_canonical_slugs() -> None:
+    """The resolver's snapshot table must equal what the registry reports."""
+    from agloom_cli.provider_registry import PROVIDERS
+
+    expected = {p.slug: p.resolver_env_keys for p in PROVIDERS.values() if p.resolver_env_keys}
+    assert expected == mr._PROVIDER_ENV_KEYS
+
+
+def test_cli_auto_detect_rows_priority_ordering() -> None:
+    """Auto-detect rows must be sorted by ``auto_priority`` (1, 2, 3, …) — not insertion order."""
+    rows = mr._CLI_PROVIDER_ROWS
+    slugs = [r[0] for r in rows]
+    # Six providers have explicit ``auto_priority``.
+    assert slugs == ["openai", "anthropic", "google", "mistralai", "groq", "xai"]

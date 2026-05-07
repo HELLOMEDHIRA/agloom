@@ -20,8 +20,6 @@ from .config import (
     build_working_ai_for_thread,
     build_working_safety_for_thread,
     coerce_interrupt_before_tools_list,
-    tool_allowlist_bypass_sources,
-    repair_empty_interrupt_before_tools_when_approval_on,
     config_layer_fingerprint,
     config_source_fingerprints,
     ensure_config_ready,
@@ -35,11 +33,13 @@ from .config import (
     normalized_safety_tool_allowlist,
     read_session_model_binding,
     remove_project_cleanup_dirs,
+    repair_empty_interrupt_before_tools_when_approval_on,
     session_model_binding_is_usable,
     session_record_path,
     set_cli_project_root,
     start_new_session,
     storage_dir,
+    tool_allowlist_bypass_sources,
 )
 from .mcp_loader import build_mcp_configs
 from .model_resolver import (
@@ -48,9 +48,9 @@ from .model_resolver import (
     augment_patch_api_keys_from_env,
     describe_llm,
 )
-from .provider_wizard import resolve_model_with_optional_wizard
 from .project import detect_project, get_git_info
 from .project_rules import load_project_rules
+from .provider_wizard import resolve_model_with_optional_wizard
 from .repl import render_banner, run_shell
 from .session_list import get_config_current_session_id, list_session_rows
 from .session_manager import get_session_context_summary, update_session_file_summaries
@@ -137,11 +137,11 @@ def _get_builtin_tools() -> list:
         file_exists,
         find_docs,
         get_current_task,
-        grep_files,
         get_env_var,
         get_file_info,
         get_system_info,
         get_working_directory,
+        grep_files,
         http_delete,
         http_get,
         http_head,
@@ -1121,8 +1121,10 @@ async def _run(
             try:
                 add_to_session_history(thread_id, "user", prompt)
                 add_to_session_history(thread_id, "assistant", result.output or "")
-            except Exception:
-                pass
+            except Exception as e:
+                console.print(
+                    f"[dim](warning: failed to persist session history for {thread_id[:8]}…: {e})[/dim]",
+                )
         else:
             git_info = get_git_info(project_ctx.root)
 

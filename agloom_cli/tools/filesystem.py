@@ -16,9 +16,9 @@ from ..safety_limits import (
     READ_FILE_FULL_NO_LIMIT_MAX_LINES,
     READ_FILE_MAX_LINES_PER_CALL,
 )
+from ..tool_loader import tool
 from ..tool_result_envelope import render_incomplete
 from .sandbox.file_edit import match_edit_variants
-from ..tool_loader import tool
 
 # Groq (and some models) often emit "true"/"false" strings for booleans; JSON Schema must allow them.
 BoolLike: TypeAlias = bool | str | int
