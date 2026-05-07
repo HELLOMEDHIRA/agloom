@@ -112,7 +112,8 @@ execution:
 
 safety:
   require_approval: true
-  auto_approve: "read_file,list_directory,get_working_directory"
+  # New installs pre-approve harness + load_skill by default; add read-only helpers as needed.
+  auto_approve: "read_file,list_directory,get_working_directory,initialize_project,bootstrap_progress,save_progress,get_next_task,update_task,add_task,git_status,git_log,git_commit,git_checkpoint,git_revert_hint,load_skill"
   # When tool_allowlist.json exists, only its tools apply (yaml auto_approve ignored). Set false to union both.
   allowlist_strict_tools: true
 
@@ -130,6 +131,7 @@ session:
 | `--system-prompt` | | Custom system prompt | (default) |
 | `--tools` | `-t` | Custom tools directory | |
 | `--memory/--no-memory` | | Enable/disable memory | (config default) |
+| `--harness/--no-harness` | | Task/git harness (extra tools); on by default; backed by `.agloom/graph_store.sqlite` | from `harness.enabled` / `AGLOOM_HARNESS` when flag omitted |
 | `--memory-path` | | Memory storage path | auto |
 | `--skills/--no-skills` | | Enable/disable skills | (config default) |
 | `--max-skills` | | Max skills to learn | 30 |
@@ -184,6 +186,10 @@ rules:
 export OPENAI_API_KEY="sk-..."
 export GROQ_API_KEY="gsk_..."
 export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Optional: force harness on/off when not passing --harness / --no-harness (see features/harness.md)
+# export AGLOOM_HARNESS=0   # off
+# export AGLOOM_HARNESS=1   # on
 ```
 
 ## Project Context Awareness
@@ -259,7 +265,7 @@ Each session keeps:
 - Modified files tracking
 - Turn count
 
-With **memory enabled**, the CLI also persists LangGraph checkpoints and store data under `.agloom/` (`checkpoints.sqlite`, `graph_store.sqlite`) so the same **`--session`** thread id survives process restarts. `create_agent` itself is unchanged; only the CLI passes a durable checkpointer and store.
+The CLI always opens **`graph_store.sqlite`** under `.agloom/` for harness/skills long-term data. With **memory enabled**, it also uses **`checkpoints.sqlite`** and session memory so the same **`--session`** thread survives process restarts and LT memory tools are available. With **memory disabled**, checkpoint resume and those memory tools are off, but harness state in **`graph_store.sqlite`** remains durable. By default the CLI passes **`harness=True`** (see `harness:` in `agloom.yaml` and [Harness](../features/harness.md)) unless you opt out.
 
 ## Data Storage
 

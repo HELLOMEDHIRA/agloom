@@ -1,6 +1,6 @@
 [project]
 name = "agloom"
-version = "0.1.50"
+version = "0.1.54"
 description = "Production agent framework on LangChain/LangGraph: 9 auto-routed execution patterns, persistent memory, skill learning, feedback evaluation, 4-level HITL, MCP — plus a project-aware coding CLI."
 readme = "README.md"
 license = {text = "Apache-2.0"}

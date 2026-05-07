@@ -30,8 +30,8 @@ The **agloom CLI** stores config and cached state **only** here — ``<project>/
 |------|---------|
 | ``agloom.yaml`` | Configuration (``ai.api_keys`` merged into process env for the CLI session) |
 | ``sessions/`` | Per session: ``<id>.json`` (history, ``model_binding`` LLM snapshot, optional extra ``ai`` keys, ``safety``) |
-| ``checkpoints.sqlite`` | LangGraph checkpoints (CLI session resume when memory is on) |
-| ``graph_store.sqlite`` | LangGraph store backing long-term / session memory |
+| ``checkpoints.sqlite`` | LangGraph checkpoints (only when memory is enabled; session resume) |
+| ``graph_store.sqlite`` | LangGraph store (always: harness/skills; also session memory when memory is on) |
 | ``rules/`` | Cached project rules |
 | ``skills/`` | Skills (``SKILL.md`` trees, including learned skills) |
 | ``tool_allowlist.json`` (or ``safety.allowlist_file`` basename) | Per-project HITL allowlist; lives only under this folder |
@@ -182,6 +182,9 @@ ai:
     - After a successful tool action, confirm in **1–3 short sentences** (paths, result). Do **not** teach how to do what you already did.
     - The session UI shows tool traces; avoid duplicating tool payloads or tutorial markdown unless asked.
     - You do **not** store project file bytes in memory across turns — if the user asks to show or reread a file, use **read_file** (or equivalent) again; never placeholders.
+    - Tool truthfulness contract: if you claim you used a tool, include the relevant excerpt in your Answer (or explicitly mark it incomplete and continue).
+    - UI-agnostic: never say “shown above / below” — only what you print in the Answer is guaranteed visible.
+    - If a tool returns ``[agloom:tool_result]`` with ``complete=false``, treat it as partial and follow Recovery hints; do not summarize as if complete.
 
     ## Code Style
 
@@ -220,6 +223,13 @@ memory:
   enabled: true
   max_turns: 50
 
+# Long-running task + git harness. The CLI enables this by default; graph_store.sqlite under .agloom/
+# always backs harness/skills (checkpoints.sqlite only when memory.enabled is true).
+harness:
+  enabled: true
+  # Optional scoping for ProgressTracker; empty = default name "project"
+  project_name: ""
+
 auto_summarize: true
 summarize_threshold: 200000
 
@@ -245,7 +255,8 @@ sandbox:
 safety:
   require_approval: true
   interrupt_before_tools: "tools"
-  auto_approve: ""
+  # Read-only helpers + harness + load_skill skip HITL; other tools still gated when require_approval is true
+  auto_approve: "read_file,list_directory,get_working_directory,initialize_project,bootstrap_progress,save_progress,get_next_task,update_task,add_task,git_status,git_log,git_commit,git_checkpoint,git_revert_hint,load_skill"
   tool_allowlist: []
   allowlist_strict_tools: true
   allowlist_file: ""
@@ -337,6 +348,9 @@ You have access to tools for:
 - You run in a **coding-agent shell** (like Cursor / Claude Code). When tools succeeded, reply **briefly**: what changed (paths, commands), errors if any, optional one-line follow-up.
 - **Never** re-explain how to perform work you already completed with tools. Do not dump long tool JSON or full file contents unless the user asked to review them.
 - You **do not** retain a private byte-accurate copy of project files between turns. If the user asks to show, reread, or retry file contents, **call the file tools again** — do not answer from memory or placeholders.
+- Tool truthfulness contract: if you claim you used a tool, include the relevant excerpt in your final Answer (or explicitly mark it incomplete and continue).
+- UI-agnostic: never say “shown above / below”.
+- Completeness: treat ``[agloom:tool_result] complete=false`` as partial output and follow Recovery hints.
 
 ## Code Style
 

@@ -99,6 +99,7 @@ asyncio.run(main())
 | **LangSmith** | Auto-detected. Zero code changes |
 | **Task Delegation** | 4 patterns: `as_tool()`, hand-off, hierarchical, background. Agents delegate to agents |
 | **Frozen Agents** | Classify once, batch thousands |
+| **Harness** | `harness=True` + `store=`: task artifact, bootstrap, git helpers. **CLI:** on by default (`graph_store.sqlite`) — [Harness](features/harness.md) |
 
 ---
 

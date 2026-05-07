@@ -9,6 +9,7 @@ from ..safety_limits import (
     WEB_SEARCH_SNIPPET_MAX_CHARS,
     WEB_SEARCH_TOTAL_OUTPUT_MAX_CHARS,
 )
+from ..tool_arg_coerce import absent_to_none, coerce_int
 from ..tool_loader import tool
 from ..tool_result_envelope import render_incomplete
 from .filesystem import _boolish
@@ -43,8 +44,12 @@ async def web_search(
     if not api_key:
         return "Error: TAVILY_API_KEY not set. Get one at https://tavily.com/"
 
-    if max_results < 1 or max_results > 10:
-        return f"Error: max_results must be between 1 and 10, got {max_results}"
+    mr_raw = absent_to_none(max_results)
+    if mr_raw is None:
+        mr_raw = 5
+    max_res, merr = coerce_int(mr_raw, "max_results", min_value=1, max_value=10)
+    if merr:
+        return merr
 
     inc_ans = _boolish(include_answer, default=True)
     inc_raw = _boolish(include_raw_content, default=False)
@@ -59,7 +64,7 @@ async def web_search(
                 json={
                     "api_key": api_key,
                     "query": query,
-                    "max_results": max_results,
+                    "max_results": max_res,
                     "include_answer": inc_ans,
                     "include_raw_content": inc_raw,
                     "include_images": False,

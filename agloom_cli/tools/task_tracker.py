@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from ..tool_arg_coerce import absent_to_none, coerce_int
 from ..tool_loader import tool
 
 _task_tracker: dict[str, Any] = {}
@@ -106,7 +107,13 @@ async def complete_step(step_index: int | None = None) -> str:
     tid = active_tasks[0]
     task = _task_tracker[tid]
 
-    idx = step_index if step_index is not None else task["current_step"]
+    if absent_to_none(step_index) is None:
+        idx = task["current_step"]
+    else:
+        coerced, err = coerce_int(step_index, "step_index", min_value=0)
+        if err:
+            return err
+        idx = coerced
 
     if idx < 0 or idx >= len(task["steps"]):
         return f"Invalid step index {idx}. Valid range: 0-{len(task['steps']) - 1}"
@@ -139,8 +146,14 @@ async def update_task_progress(
     Returns:
         Progress update confirmation
     """
-    progress = (current_step + 1) / total_steps * 100 if total_steps > 0 else 0
-    return f"[{status}] Step {current_step + 1}/{total_steps} ({progress:.0f}%)"
+    cur, err_a = coerce_int(current_step, "current_step", min_value=0)
+    if err_a:
+        return err_a
+    tot, err_b = coerce_int(total_steps, "total_steps", min_value=1)
+    if err_b:
+        return err_b
+    progress = (cur + 1) / tot * 100 if tot > 0 else 0
+    return f"[{status}] Step {cur + 1}/{tot} ({progress:.0f}%)"
 
 
 @tool

@@ -14,6 +14,7 @@ from ..safety_limits import (
     HTTP_MAX_BODY_CHARS,
     HTTP_MAX_RESPONSE_BYTES,
 )
+from ..tool_arg_coerce import absent_to_none, coerce_headers, coerce_http_body, coerce_int, coerce_query_params
 from ..tool_loader import tool
 from ..tool_result_envelope import render_incomplete
 
@@ -56,17 +57,36 @@ async def http_request(
     """
     if not (url or "").strip():
         return "Error: url must be non-empty"
+
+    headers, herr = coerce_headers(headers, "headers")
+    if herr:
+        return herr
+    params, perr = coerce_query_params(params, "params")
+    if perr:
+        return perr
+    body, berr = coerce_http_body(body, "body")
+    if berr:
+        return berr
+    t_raw = absent_to_none(timeout)
+    if t_raw is None:
+        t_raw = 30
+    timeout_sec, terr = coerce_int(t_raw, "timeout", min_value=1, max_value=86_400)
+    if terr:
+        return terr
+
     try:
-        client = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
+        client = httpx.AsyncClient(timeout=timeout_sec, follow_redirects=True)
 
         try:
+            json_kw = body if isinstance(body, (dict, list)) else None
+            content_kw = body if isinstance(body, str) else None
             response = await client.request(
-                method=method.upper(),
+                method=str(method or "GET").upper(),
                 url=url,
                 headers=headers,
                 params=params,
-                json=body if isinstance(body, dict) else None,
-                content=body if isinstance(body, str) else None,
+                json=json_kw,
+                content=content_kw,
             )
 
             result_parts = [
@@ -141,7 +161,7 @@ async def http_request(
             await client.aclose()
 
     except httpx.TimeoutException:
-        return f"Error: Request timed out after {timeout} seconds"
+        return f"Error: Request timed out after {timeout_sec} seconds"
     except httpx.ConnectError as e:
         return f"Error: Could not connect to {url}: {e}"
     except httpx.HTTPError as e:
@@ -237,6 +257,9 @@ async def fetch_json(url: str, params: dict[str, Any] | None = None, key: str | 
     """
     if not (url or "").strip():
         return "Error: url must be non-empty"
+    params, perr = coerce_query_params(params, "params")
+    if perr:
+        return perr
     try:
         client = httpx.AsyncClient(timeout=30, follow_redirects=True)
         try:

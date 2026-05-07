@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`create_agent(..., harness=True)`** — Progress tools (`bootstrap_progress`, `save_progress`, etc.) are now bound to an eagerly created `ProgressTracker`. Previously the factories were called without a `tracker` argument and agent construction failed with `TypeError`.
+
+### Added
+
+- **CLI safety defaults** — Generated `agloom.yaml` pre-approves common read-only builtins, all harness tools (`initialize_project`, `bootstrap_progress`, `save_progress`, task CRUD, `git_*`), and `load_skill` under `safety.auto_approve` so they skip the HITL modal when `require_approval` is on. Remove names from that list to gate them again.
+
+- **CLI harness** — The interactive CLI passes `harness=True` by default (`harness.enabled` in `agloom.yaml`, overridable with `--harness` / `--no-harness` and `AGLOOM_HARNESS`). `graph_store.sqlite` under `.agloom/` is always used for harness/skills; `--memory` adds `checkpoints.sqlite` and LT memory tools.
+- **Documentation:** [Long-running harness](features/harness.md) (`harness` / `harness_project_name`, injected tools, storage notes, CLI defaults). Linked from the home page, [create_agent](concepts/create-agent.md), and [All Parameters](configuration/parameters.md).
+
 ## [0.1.2] — 2026-04-14
 
 ### Added

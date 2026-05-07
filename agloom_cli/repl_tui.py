@@ -7,6 +7,7 @@ Non-TTY runs (CI, piped IO) automatically fall back to :func:`agloom_cli.repl.ru
 from __future__ import annotations
 
 import os
+import time
 import traceback
 from typing import Any
 
@@ -27,6 +28,7 @@ from .repl import (
     _live_agent_panel,
     _session_side_card,
     _thinking_footer_panel,
+    _fmt_elapsed,
     append_tool_result_for_transcript,
     merge_transcript_with_tool_outputs,
     reset_ui,
@@ -321,6 +323,7 @@ class AgloomShellApp(App[None]):
             tool_status: dict[str, str] = {}
             stream_text = Text()
             tool_transcript: list[tuple[str, str]] = []
+            t0 = time.perf_counter()
 
             if not hasattr(self.agent, "astream_events"):
                 if not hasattr(self.agent, "ainvoke"):
@@ -332,6 +335,7 @@ class AgloomShellApp(App[None]):
                 async for event in self.agent.astream_events(prompt_text, thread_id=self.invoke_tid):
                     event_type = event.type
                     data = event.data
+                    elapsed_s = time.perf_counter() - t0
                     if event_type in (
                         "thinking",
                         "llm_call",
@@ -341,7 +345,7 @@ class AgloomShellApp(App[None]):
                         "reflection",
                         "fallback",
                     ):
-                        _append_trace_line(thinking_lines, event_type, data)
+                        _append_trace_line(thinking_lines, event_type, data, elapsed_s=elapsed_s)
                         live.update(_live_agent_panel(thinking_lines, stream_text, tui_soft=True))
                     elif event_type == "token":
                         content = data.get("content", "")
@@ -353,18 +357,22 @@ class AgloomShellApp(App[None]):
                         tool_id = data.get("id", "")
                         tool_status[tool_id] = tool_name
                         tin = data.get("input", "")
-                        thinking_lines.append(f"→ [yellow]{tool_name}[/yellow] {tin}")
+                        thinking_lines.append(
+                            f"[dim]t+{_fmt_elapsed(elapsed_s)}[/dim] → [yellow]{tool_name}[/yellow] {tin}"
+                        )
                         live.update(_live_agent_panel(thinking_lines, stream_text, tui_soft=True))
                     elif event_type == "tool_result":
                         tool_id = data.get("id", "")
                         tool_name = tool_status.pop(tool_id, "unknown")
                         res = data.get("output", "")
                         append_tool_result_for_transcript(tool_name, res, tool_transcript)
-                        thinking_lines.append(f"  [green]✓[/green] {tool_name}: {res}")
+                        thinking_lines.append(
+                            f"[dim]t+{_fmt_elapsed(elapsed_s)}[/dim]   [green]✓[/green] {tool_name}: {res}"
+                        )
                         live.update(_live_agent_panel(thinking_lines, stream_text, tui_soft=True))
                     elif event_type == "error":
                         error_msg = data.get("error", "Unknown error")
-                        thinking_lines.append(f"✗ {error_msg}")
+                        thinking_lines.append(f"[dim]t+{_fmt_elapsed(elapsed_s)}[/dim] ✗ {error_msg}")
                         live.update(_live_agent_panel(thinking_lines, stream_text, tui_soft=True))
                     elif event_type == "done":
                         result = data.get("result") or {}
@@ -386,7 +394,8 @@ class AgloomShellApp(App[None]):
             if tp is not None:
                 log.write(tp)
             if full_output.strip():
-                log.write(tui_soft_answer(full_output))
+                total_s = time.perf_counter() - t0
+                log.write(tui_soft_answer(f"[dim]Time:[/dim] {_fmt_elapsed(total_s)}\n\n{full_output}"))
 
             self.state.add_turn(prompt_text, full_output)
             try:

@@ -275,7 +275,7 @@ mcp:
 # Safety
 safety:
   require_approval: true
-  auto_approve: "read_file,list_directory,get_working_directory"
+  auto_approve: "read_file,list_directory,get_working_directory,initialize_project,bootstrap_progress,save_progress,get_next_task,update_task,add_task,git_status,git_log,git_commit,git_checkpoint,git_revert_hint,load_skill"
   allowlist_strict_tools: true
 
 # Execution

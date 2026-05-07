@@ -25,6 +25,10 @@ async def create_agent(
 
 See [All Parameters](../configuration/parameters.md) for the complete reference.
 
+### Long-running harness (optional)
+
+For agents that keep a **structured task graph**, **verification steps**, and **git** workflows across sessions, pass **`harness=True`** together with a LangGraph **`store=`**. That appends tools such as `bootstrap_progress`, `get_next_task`, `update_task`, and `git_status` / `git_commit`, and feeds **cross-session progress** into classification. **`harness=True` without `store=` is ignored** (with a log warning). The **interactive CLI** turns this on by default and supplies a **SQLite** LangGraph store (`graph_store.sqlite` under `.agloom/`) even when session memory is off. Details: [Harness](../features/harness.md).
+
 ## What It Returns
 
 `create_agent` returns a `UnifiedAgent` with these methods:

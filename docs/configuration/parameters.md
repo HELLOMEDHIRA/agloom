@@ -127,6 +127,8 @@ Delegation can also be configured at runtime:
 | `mcp_servers` | `list[MCPServerConfig]` | `None` | MCP server connections. See [MCP Servers](../features/mcp.md) |
 | `max_step_output_length` | `int` | `0` | Max chars for step input/output in traces. `0` = no truncation (default — full output preserved). Set to e.g. `500` to limit memory usage |
 | `fallback_pattern` | `PatternType \| None` | `None` | Override classifier fallback when structured output fails. `None` = auto (REACT with tools, DIRECT without) |
+| `harness` | `bool` | `False` | Inject progress + git tools (`initialize_project`, `bootstrap_progress`, task CRUD, `git_*`). **Requires `store=`**; ignored without a store. See [Harness](../features/harness.md) |
+| `harness_project_name` | `str` | `"project"` | Scopes the `ProgressTracker` / artifact key together with `name` |
 
 ## Runtime Parameters (Method Signatures)
 

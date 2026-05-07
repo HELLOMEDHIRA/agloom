@@ -20,6 +20,17 @@ async def test_read_file_offset_limit(tmp_path, monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.mark.asyncio
+async def test_read_file_coerces_string_numeric_args(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Models often emit string numbers in JSON tool args."""
+    monkeypatch.chdir(tmp_path)
+    p = tmp_path / "t.txt"
+    p.write_text("a\nb\nc\n", encoding="utf-8")
+    out = await read_file("t.txt", offset="2", limit="2")  # type: ignore[arg-type]
+    assert "2|b" in out
+    assert "3|c" in out
+
+
+@pytest.mark.asyncio
 async def test_read_file_offset_past_eof_tail_with_limit(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """LLMs often use a guessed offset for 'last N lines'; clamp to tail when offset > line count."""
     monkeypatch.chdir(tmp_path)
@@ -96,7 +107,7 @@ async def test_read_file_rejects_max_size_above_abs_cap(tmp_path, monkeypatch: p
     p.write_text("x\n", encoding="utf-8")
     out = await read_file("tiny.txt", max_size=READ_FILE_ABS_MAX_BYTES + 1)
     assert "Error" in out
-    assert "cannot exceed" in out.lower()
+    assert "10485761" in out and "max_size" in out.lower()
 
 
 @pytest.mark.asyncio

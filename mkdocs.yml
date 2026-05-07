@@ -96,6 +96,7 @@ nav:
       - MCP Servers: features/mcp.md
       - Frozen Agents: features/frozen-agents.md
       - Task Delegation: features/delegation.md
+      - Long-running harness: features/harness.md
       - Observability & LangSmith: features/observability.md
   - Configuration:
       - All Parameters: configuration/parameters.md

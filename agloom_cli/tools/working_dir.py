@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from ..tool_arg_coerce import absent_to_none, coerce_int
 from ..tool_loader import tool
 from .filesystem import _boolish, _resolve_path
 
@@ -94,16 +95,24 @@ async def pop_working_directory() -> str:
 
 
 @tool
-async def path_join(*parts: str) -> str:
+async def path_join(parts: list[str]) -> str:
     """Join path components.
 
     Args:
-        *parts: Path components to join
+        parts: Path segments in order, e.g. ``[\"_agloom_tool_smoke\", \"hello.txt\"]``.
+            (Structured tool calls pass this as a single list — not ``*args``.)
 
     Returns:
-        Joined path
+        Joined path using OS-specific separators
     """
-    return str(Path(*parts))
+    segs: list[str] = []
+    for p in parts:
+        s = p.strip() if isinstance(p, str) else str(p).strip()
+        if s:
+            segs.append(s)
+    if not segs:
+        return str(Path())
+    return str(Path(*segs))
 
 
 @tool
@@ -117,8 +126,14 @@ async def path_parent(path: str, levels: int = 1) -> str:
     Returns:
         Parent directory path
     """
+    lv_raw = absent_to_none(levels)
+    if lv_raw is None:
+        lv_raw = 1
+    n_lv, err = coerce_int(lv_raw, "levels", min_value=1, max_value=256)
+    if err:
+        return err
     p = Path(path)
-    for _ in range(levels):
+    for _ in range(n_lv):
         p = p.parent
     return str(p)
 

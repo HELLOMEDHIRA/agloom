@@ -312,7 +312,9 @@ def create_user_callback(
         sid = persist_allowlist_session_id.strip()
         disp = f"{sid[:8]}…" if len(sid) > 8 else sid
         _hint_parts.append(f"session [cyan]{disp}[/cyan].json")
-    if persist_allowlist and path:
+    # Only name the on-disk allowlist file once it exists; the resolved path defaults
+    # to tool_allowlist.json even before first save, which confused users.
+    if persist_allowlist and path is not None and file_exists:
         _hint_parts.append(f"[cyan]{path.name}[/cyan]")
     if _hint_parts:
         persist_hint = "(writes to " + " + ".join(_hint_parts) + ")"
@@ -358,8 +360,8 @@ def create_user_callback(
                 console.print(
                     f"[dim]HITL:[/dim] [green]Auto-approved[/green] [bold]{tool_name}[/bold] "
                     f"[dim](allowlist). No card — remove it from [cyan]safety.tool_allowlist[/cyan] "
-                    f"in [cyan].agloom/sessions/<id>.json[/cyan] / project YAML / [cyan]tool_allowlist.json[/cyan] "
-                    f"to gate this tool again.[/dim]"
+                    f"in [cyan].agloom/sessions/<id>.json[/cyan], project YAML, or your allowlist file "
+                    f"under [cyan].agloom[/cyan] to gate this tool again.[/dim]"
                 )
                 return "continue"
 
@@ -370,7 +372,7 @@ def create_user_callback(
                 footer=f"[bold]Always allow[/bold] {persist_hint}",
                 row1="Accept (this time only)",
                 row2="Reject",
-                row3="Always allow — [dim]saved to session JSON / allowlist[/dim]",
+                row3="Always allow — [dim]saved to session JSON / project allowlist (if used)[/dim]",
                 default="2",
                 tool_call_id=tool_call_id,
             )

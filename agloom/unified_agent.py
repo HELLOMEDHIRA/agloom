@@ -14,7 +14,7 @@ import uuid
 from collections.abc import AsyncGenerator, Callable, Sequence
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, cast
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -2122,12 +2122,23 @@ async def create_agent(
     _harness_enabled = False
     _git_session: Any = None
     _progress_tracker_factory: Callable | None = None
+    _harness_progress_tracker: Any = None
 
     if harness and resolved_store is not None and _HARNESS_AVAILABLE:
         _harness_enabled = True
         assert GitSession is not None
         assert create_initializer_tool is not None
         _git_session = GitSession()
+        # Progress tool factories require a tracker instance; await singleton creation here
+        # (create_agent is async — safe). Without this, ``bootstrap_progress_tool()`` etc.
+        # raised TypeError (missing ``tracker``).
+        _aw_get_pt = cast(
+            Callable[[Any, str, str], Awaitable[Any]],
+            get_progress_tracker,
+        )
+        _harness_progress_tracker = await _aw_get_pt(
+            resolved_store, agent_name, harness_project_name
+        )
 
         def _progress_tracker_factory() -> Any:
             return get_progress_tracker(resolved_store, agent_name, harness_project_name)
@@ -2150,11 +2161,11 @@ async def create_agent(
             _make_tool(git_commit_tool, _git_session),
             _make_tool(git_checkpoint_tool, _git_session, session_id=""),
             _make_tool(git_revert_hint_tool, _git_session),
-            _make_tool(bootstrap_progress_tool),
-            _make_tool(save_progress_tool),
-            _make_tool(update_task_tool),
-            _make_tool(get_next_task_tool),
-            _make_tool(add_task_tool),
+            _make_tool(bootstrap_progress_tool, _harness_progress_tracker),
+            _make_tool(save_progress_tool, _harness_progress_tracker),
+            _make_tool(update_task_tool, _harness_progress_tracker),
+            _make_tool(get_next_task_tool, _harness_progress_tracker),
+            _make_tool(add_task_tool, _harness_progress_tracker),
             _make_tool(create_initializer_tool, resolved_llm, resolved_store, agent_name, harness_project_name),
         ]
         resolved_tools = resolved_tools + harness_tools
@@ -2202,7 +2213,7 @@ async def create_agent(
         "_feedback": {},
         "_harness_enabled": _harness_enabled,
         "_harness_project": harness_project_name,
-        "_progress_tracker": None,
+        "_progress_tracker": _harness_progress_tracker,
         "_progress_tracker_factory": _progress_tracker_factory,
         "_git_session": _git_session,
         "frozen": frozen,

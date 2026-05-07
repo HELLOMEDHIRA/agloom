@@ -20,6 +20,7 @@ import platform
 import subprocess
 
 from ..safety_limits import RUN_SHELL_INCOMPLETE_PREVIEW_BYTES, RUN_SHELL_MAX_OUTPUT_BYTES
+from ..tool_arg_coerce import absent_to_none, coerce_env_vars, coerce_int
 from ..tool_loader import tool
 from ..tool_result_envelope import render_incomplete
 
@@ -60,8 +61,15 @@ async def run_shell(
     Returns:
         Command output (stdout + stderr)
     """
-    if timeout <= 0:
-        return "Error: Timeout must be a positive integer"
+    t_raw = absent_to_none(timeout)
+    if t_raw is None:
+        t_raw = 30
+    timeout_sec, terr = coerce_int(t_raw, "timeout", min_value=1, max_value=86_400)
+    if terr:
+        return terr
+    env, eerr = coerce_env_vars(env, "env")
+    if eerr:
+        return eerr
 
     try:
         proc = await asyncio.create_subprocess_shell(
@@ -75,7 +83,7 @@ async def run_shell(
         try:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(),
-                timeout=timeout,
+                timeout=timeout_sec,
             )
         except TimeoutError:
             proc.kill()
@@ -83,7 +91,7 @@ async def run_shell(
                 await asyncio.wait_for(proc.wait(), timeout=5)
             except TimeoutError:
                 pass  # process reaped by OS eventually
-            return f"Error: Command timed out after {timeout} seconds"
+            return f"Error: Command timed out after {timeout_sec} seconds"
 
         out_len = len(stdout or b"")
         err_len = len(stderr or b"")
@@ -147,6 +155,9 @@ async def run_shell_interactive(
     Returns:
         Command exit status
     """
+    env, eerr = coerce_env_vars(env, "env")
+    if eerr:
+        return eerr
     try:
         merged_env = _merge_env(env)
 

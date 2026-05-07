@@ -16,6 +16,7 @@ from ..safety_limits import (
     READ_FILE_FULL_NO_LIMIT_MAX_LINES,
     READ_FILE_MAX_LINES_PER_CALL,
 )
+from ..tool_arg_coerce import absent_to_none, coerce_int
 from ..tool_loader import tool
 from ..tool_result_envelope import render_incomplete
 from .sandbox.file_edit import match_edit_variants
@@ -73,30 +74,40 @@ async def read_file(
         when an unbounded read hits the line budget; invalid ``limit`` uses an envelope without a body preview.
     """
     try:
-        off = 1 if offset is None else int(offset)
-        lim: int | None = None if limit is None else int(limit)
-        if off < 1:
-            return "Error: offset must be >= 1 (1-based line number)."
-        if lim is not None and lim < 1:
-            return "Error: limit must be >= 1 when provided."
-        if max_size > READ_FILE_ABS_MAX_BYTES:
-            return (
-                f"Error: max_size ({max_size}) cannot exceed {READ_FILE_ABS_MAX_BYTES} bytes "
-                "(agloom safety cap)."
-            )
+        if absent_to_none(offset) is None:
+            off_i = 1
+        else:
+            co_off, oerr = coerce_int(offset, "offset", min_value=1)
+            if oerr:
+                return oerr
+            off_i = co_off
+        if absent_to_none(limit) is None:
+            lim_i: int | None = None
+        else:
+            co_lim, lerr = coerce_int(limit, "limit", min_value=1)
+            if lerr:
+                return lerr
+            lim_i = co_lim
+
+        ms_raw = absent_to_none(max_size)
+        if ms_raw is None:
+            ms_raw = READ_FILE_DEFAULT_MAX_BYTES
+        max_sz, merr = coerce_int(ms_raw, "max_size", min_value=1, max_value=READ_FILE_ABS_MAX_BYTES)
+        if merr:
+            return merr
 
         file_path = _resolve_path(path)
         size = file_path.stat().st_size
-        if size > max_size:
+        if size > max_sz:
             return (
-                f"Error: File too large ({size} bytes). Max allowed: {max_size} bytes. "
+                f"Error: File too large ({size} bytes). Max allowed: {max_sz} bytes. "
                 "Increase max_size or use grep_files with a smaller scope."
             )
         text = file_path.read_text(encoding=encoding)
         lines = text.splitlines()
         n = len(lines)
 
-        if off == 1 and lim is None:
+        if off_i == 1 and lim_i is None:
             if n > READ_FILE_FULL_NO_LIMIT_MAX_LINES:
                 cap = READ_FILE_FULL_NO_LIMIT_MAX_LINES
                 preview_body = "\n".join(lines[:cap])
@@ -118,21 +129,21 @@ async def read_file(
             return text
 
         if n == 0:
-            if off == 1:
+            if off_i == 1:
                 return ""
-            return f"Error: offset {off} is past end of file (0 lines)."
+            return f"Error: offset {off_i} is past end of file (0 lines)."
 
-        if off > n:
-            if lim is not None:
-                off = max(1, n - lim + 1)
+        if off_i > n:
+            if lim_i is not None:
+                off_i = max(1, n - lim_i + 1)
             else:
                 return text
 
-        if lim is not None and lim > READ_FILE_MAX_LINES_PER_CALL:
+        if lim_i is not None and lim_i > READ_FILE_MAX_LINES_PER_CALL:
             return render_incomplete(
                 kind="read_file_limit_too_large",
                 metrics={
-                    "requested_limit": lim,
+                    "requested_limit": lim_i,
                     "max_lines_per_call": READ_FILE_MAX_LINES_PER_CALL,
                 },
                 hints=[
@@ -140,10 +151,10 @@ async def read_file(
                 ],
             )
 
-        end_idx = n if lim is None else min(n, off - 1 + lim)
-        chunk = lines[off - 1 : end_idx]
-        partial = lim is not None and end_idx < n
-        body = "\n".join(f"{off + i}|{line}" for i, line in enumerate(chunk))
+        end_idx = n if lim_i is None else min(n, off_i - 1 + lim_i)
+        chunk = lines[off_i - 1 : end_idx]
+        partial = lim_i is not None and end_idx < n
+        body = "\n".join(f"{off_i + i}|{line}" for i, line in enumerate(chunk))
         if partial:
             remaining = n - end_idx
             body += (
@@ -247,8 +258,12 @@ async def grep_files(
     try:
         if not pattern:
             return "Error: pattern must be non-empty."
-        if max_matches < 1:
-            return "Error: max_matches must be >= 1."
+        mm_raw = absent_to_none(max_matches)
+        if mm_raw is None:
+            mm_raw = GREP_MAX_MATCHES_DEFAULT
+        mm_cap, merr = coerce_int(mm_raw, "max_matches", min_value=1, max_value=1_000_000)
+        if merr:
+            return merr
         root = _resolve_path(path)
         if not root.is_dir():
             return f"Error: Not a directory: {path}"
@@ -262,7 +277,7 @@ async def grep_files(
         out_lines: list[str] = []
         n_matches = 0
         for file_path in _iter_grep_files(root, glob_pattern):
-            if n_matches >= max_matches:
+            if n_matches >= mm_cap:
                 break
             try:
                 raw = file_path.read_bytes()
@@ -281,7 +296,7 @@ async def grep_files(
                     continue
             rel = file_path.relative_to(root).as_posix()
             for i, line in enumerate(text.splitlines(), start=1):
-                if n_matches >= max_matches:
+                if n_matches >= mm_cap:
                     break
                 if rx.search(line):
                     out_lines.append(f"{rel}:{i}:{line}")
@@ -291,9 +306,9 @@ async def grep_files(
             return f"No matches for pattern in {path!r} (glob {glob_pattern!r})."
 
         footer = ""
-        if n_matches >= max_matches:
+        if n_matches >= mm_cap:
             footer = (
-                f"\n... (match cap {max_matches} reached — output is **incomplete**; "
+                f"\n... (match cap {mm_cap} reached — output is **incomplete**; "
                 "narrow ``glob_pattern``/``pattern`` or raise ``max_matches`` within reason.)"
             )
         return "\n".join(out_lines) + footer

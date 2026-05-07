@@ -9,12 +9,16 @@ import pytest
 from agloom_cli.tools.filesystem import file_exists, write_file
 from agloom_cli.tools.http import fetch_json, http_request
 from agloom_cli.tools.web_search import web_search
+from langchain_core.tools import StructuredTool
+
 from agloom_cli.tools.working_dir import (
     get_working_directory,
     path_absolute,
     path_exists,
     path_is_directory,
     path_is_file,
+    path_join,
+    path_parent,
     push_working_directory,
 )
 
@@ -41,6 +45,33 @@ async def test_path_absolute_relative(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.chdir(tmp_path)
     out = await path_absolute("sub/z")
     assert Path(out) == (tmp_path / "sub" / "z").resolve()
+
+
+@pytest.mark.asyncio
+async def test_path_join_accepts_parts_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    out = await path_join(["_agloom_tool_smoke", "hello.txt"])
+    # Join is relative; resolves under cwd like any relative path.
+    assert Path(out) == Path("_agloom_tool_smoke") / "hello.txt"
+    assert (tmp_path / out).is_relative_to(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_path_parent_coerces_string_levels() -> None:
+    out = await path_parent("a/b/c", levels="2")  # type: ignore[arg-type]
+    assert out.replace("\\", "/").replace("//", "/").rstrip("/").endswith("a")
+
+
+@pytest.mark.asyncio
+async def test_path_join_structured_tool_ainvoke_parts_keyword() -> None:
+    """LangChain passes variadic schema args as ``parts=[...]`` — signature must match."""
+    t = StructuredTool.from_function(
+        coroutine=path_join,
+        name="path_join",
+        description="join",
+    )
+    out = await t.ainvoke({"parts": ["x", "y", "z"]})
+    assert Path(out) == Path("x") / "y" / "z"
 
 
 @pytest.mark.asyncio

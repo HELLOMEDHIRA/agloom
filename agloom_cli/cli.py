@@ -106,7 +106,7 @@ _AGLOOM_CLI_REPLY_EPILOG = """
 
 ---
 [agloom CLI] Final replies: **short** and outcome-first. After tools succeed, state what changed (paths, results) — do not add tutorial-style "Step 1 / Step 2" prose for work you already completed with tools.
-Oversized tool payloads: if you see ``[agloom:tool_result]`` with ``complete=false``, you have **partial** data (often with a preview)—follow Recovery hints and pagination; do not assume completeness. Prefer **grep_files** for repo search.
+Tool truthfulness: never claim tool results without quoting them. If a tool returns ``[agloom:tool_result]`` with ``complete=false``, treat it as partial and follow Recovery hints; do not assume completeness. Never say “shown above / below”.
 """
 
 app = typer.Typer(
@@ -255,6 +255,11 @@ def main(
     tools_dir: Path | None = typer.Option(None, "--tools", "-t", help="Tools directory"),
     enable_memory: bool | None = typer.Option(None, "--memory/--no-memory", help="Enable memory"),
     memory_path: Path | None = typer.Option(None, "--memory-path", help="Memory storage path"),
+    harness: bool | None = typer.Option(
+        None,
+        "--harness/--no-harness",
+        help="Task/git harness (extra tools); default on (harness.enabled in config); store is SQLite under .agloom/",
+    ),
     enable_skills: bool | None = typer.Option(None, "--skills/--no-skills", help="Enable skills"),
     max_skills: int | None = typer.Option(None, "--max-skills", help="Max skills"),
     session_max_turns: int | None = typer.Option(None, "--max-turns", help="Max session turns"),
@@ -347,6 +352,7 @@ def main(
             tools_dir,
             enable_memory,
             memory_path,
+            harness,
             enable_skills,
             max_skills,
             session_max_turns,
@@ -416,6 +422,7 @@ def _run_resume_picked_session(
             tools_dir=None,
             enable_memory=None,
             memory_path=None,
+            harness=None,
             enable_skills=None,
             max_skills=None,
             session_max_turns=None,
@@ -572,6 +579,7 @@ async def _run(
     tools_dir: Path | None,
     enable_memory: bool | None,
     memory_path: Path | None,
+    harness: bool | None,
     enable_skills: bool | None,
     max_skills: int | None,
     session_max_turns: int | None,
@@ -914,6 +922,24 @@ async def _run(
     memory_path = memory_path or cfg.get("memory_path")
     enable_memory = enable_memory if enable_memory is not None else memory_config.get("enabled", True)
     session_max_turns = session_max_turns if session_max_turns else memory_config.get("max_turns", 50)
+
+    harness_cfg = cfg.get("harness", {})
+    if not isinstance(harness_cfg, dict):
+        harness_cfg = {}
+    harness_yaml = harness_cfg.get("enabled", True)
+    env_harness = (os.environ.get("AGLOOM_HARNESS") or "").strip().lower()
+    if env_harness in ("0", "false", "no", "off", "n"):
+        harness_yaml = False
+    elif env_harness in ("1", "true", "yes", "on", "y"):
+        harness_yaml = True
+    if harness is not None:
+        use_harness = harness
+    else:
+        use_harness = bool(harness_yaml)
+    harness_project_name: str | None = None
+    _hpn = harness_cfg.get("project_name") or harness_cfg.get("project")
+    if isinstance(_hpn, str) and _hpn.strip():
+        harness_project_name = _hpn.strip()
     auto_summarize = auto_summarize if auto_summarize is not None else cfg.get("auto_summarize", True)
     summarize_threshold = summarize_threshold or cfg.get("summarize_threshold", 200000)
 
@@ -1057,9 +1083,8 @@ async def _run(
 
     async with cli_langgraph_sqlite(enable_memory, storage_dir()) as (checkpointer, shared_graph_store):
         memory = None
-        store = None
+        store = LongTermStore(shared_graph_store)
         if enable_memory:
-            store = LongTermStore(shared_graph_store)
             memory = SessionMemory(
                 store=shared_graph_store,
                 max_turns=session_max_turns,
@@ -1109,6 +1134,8 @@ async def _run(
             "skills_disk_mirror": (storage_dir() / "skills")
             if (enable_skills and store is not None)
             else None,
+            "harness": use_harness,
+            **({"harness_project_name": harness_project_name} if harness_project_name else {}),
         }
 
         agent_kwargs: Any = agent_config
@@ -1132,7 +1159,17 @@ async def _run(
             console.print(f"Model: [info]{effective_model}[/info]")
             console.print(f"Tools: [info]{len(tools)}[/info]")
             if enable_memory:
-                console.print("[info]Memory: enabled (SQLite resume under .agloom)[/info]")
+                console.print("[info]Memory: enabled (SQLite store + checkpoints under .agloom)[/info]")
+            else:
+                console.print(
+                    "[info]Memory: off[/info] — no session resume or LT memory tools; harness/skills still use "
+                    "[cyan].agloom/graph_store.sqlite[/cyan]. Enable [cyan]--memory[/cyan] for checkpoints + memory tools."
+                )
+            if use_harness:
+                console.print(
+                    "[info]Harness: on[/info] — task/git tools (disable: [cyan]--no-harness[/cyan] or "
+                    "[cyan]harness.enabled: false[/cyan] in agloom.yaml)"
+                )
             if enable_skills:
                 console.print(f"[info]Skills: enabled (max: {max_skills})[/info]")
 
@@ -1160,7 +1197,7 @@ async def _run(
                 verbose=verbose,
                 llm_status=f"{prov}:{mid}",
                 thread_id=thread_id,
-                tools_count=len(tools),
+                tools_count=len(agent.config.get("tools") or tools),
             )
 
 

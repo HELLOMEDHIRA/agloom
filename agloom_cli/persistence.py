@@ -18,22 +18,23 @@ from typing import Any
 async def cli_langgraph_sqlite(
     enable_memory: bool, storage_root: Path
 ) -> AsyncGenerator[tuple[Any, Any], None]:
-    """Open async SQLite checkpointer + store, or yield ``(None, None)`` when memory is off.
+    """Open async SQLite LangGraph store; optionally the checkpointer for session memory.
+
+    ``graph_store.sqlite`` is **always** opened so the CLI can persist harness/skills data under
+    ``.agloom/`` even when ``--no-memory`` (no session checkpoint resume, no LT memory tools).
 
     Yields:
-        ``(checkpointer, raw_graph_store)`` for :class:`~agloom.memory.LongTermStore`
-        / :class:`~agloom.memory.SessionMemory`, or in-memory-off mode two ``None`` values.
+        ``(checkpointer, raw_graph_store)`` — *checkpointer* is ``None`` when memory is disabled.
     """
-    if not enable_memory:
-        yield (None, None)
-        return
-
     storage_root.mkdir(parents=True, exist_ok=True)
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
     from langgraph.store.sqlite.aio import AsyncSqliteStore
 
-    ckpt_path = storage_root / "checkpoints.sqlite"
     store_path = storage_root / "graph_store.sqlite"
-    async with AsyncSqliteSaver.from_conn_string(str(ckpt_path)) as saver:
-        async with AsyncSqliteStore.from_conn_string(str(store_path)) as graph_store:
-            yield (saver, graph_store)
+    async with AsyncSqliteStore.from_conn_string(str(store_path)) as graph_store:
+        if enable_memory:
+            ckpt_path = storage_root / "checkpoints.sqlite"
+            async with AsyncSqliteSaver.from_conn_string(str(ckpt_path)) as saver:
+                yield (saver, graph_store)
+        else:
+            yield (None, graph_store)

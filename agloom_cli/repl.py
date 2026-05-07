@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import time
 
 from rich import box
 from rich.align import Align
@@ -230,6 +231,17 @@ def _default_expand_thinking() -> bool:
     return True
 
 
+# Timing helpers
+def _fmt_elapsed(elapsed_s: float) -> str:
+    if elapsed_s < 10:
+        return f"{elapsed_s:.2f}s"
+    if elapsed_s < 60:
+        return f"{elapsed_s:.1f}s"
+    m = int(elapsed_s // 60)
+    s = int(elapsed_s % 60)
+    return f"{m}m{s:02d}s"
+
+
 # Tools whose raw output should appear in the final Answer / transcript when the model
 # only summarizes (common for read_file / grep).
 _TOOL_OUTPUT_MERGE_NAMES = frozenset({"read_file", "grep_files", "list_directory", "search_files"})
@@ -261,28 +273,31 @@ def merge_transcript_with_tool_outputs(stream_plain: str, artifacts: list[tuple[
     return f"{base}\n\n--- tool output ---\n\n{extra}"
 
 
-def _append_trace_line(thinking_lines: list[str], event_type: str, data: dict) -> None:
+def _append_trace_line(
+    thinking_lines: list[str], event_type: str, data: dict, *, elapsed_s: float | None = None
+) -> None:
     """Append one line from the **agent event stream** (not from stdlib logging)."""
+    t = f"[dim]t+{_fmt_elapsed(elapsed_s)}[/dim] " if elapsed_s is not None else ""
     if event_type == "thinking":
         name = (data.get("name") or "classify").strip() or "classify"
         out = data.get("output", "")
         s = str(out).strip() if out else ""
-        thinking_lines.append(f"• {name}: {s}" if s else f"• {name}")
+        thinking_lines.append(f"{t}• {name}: {s}" if s else f"{t}• {name}")
     elif event_type == "llm_call":
         name = (data.get("name") or "llm").strip() or "llm"
         dur = data.get("duration_ms")
-        thinking_lines.append(f"• {name} ({dur} ms)" if dur is not None else f"• {name}")
+        thinking_lines.append(f"{t}• {name} ({dur} ms)" if dur is not None else f"{t}• {name}")
     elif event_type == "worker_start":
-        thinking_lines.append(f"• worker → {data.get('name', '')}")
+        thinking_lines.append(f"{t}• worker → {data.get('name', '')}")
     elif event_type == "worker_end":
-        thinking_lines.append(f"• worker ✓ {data.get('name', '')}")
+        thinking_lines.append(f"{t}• worker ✓ {data.get('name', '')}")
     elif event_type == "cache_hit":
-        thinking_lines.append("• cache hit")
+        thinking_lines.append(f"{t}• cache hit")
     elif event_type == "reflection":
-        thinking_lines.append("• reflection")
+        thinking_lines.append(f"{t}• reflection")
     elif event_type == "fallback":
         o = data.get("output", "")
-        thinking_lines.append(f"• fallback: {o!s}")
+        thinking_lines.append(f"{t}• fallback: {o!s}")
 
 
 def _thinking_body_text(lines: list[str]) -> Text:
@@ -644,6 +659,7 @@ async def run_shell_plain(
             tool_status: dict = {}
             stream_text = Text()
             tool_transcript: list[tuple[str, str]] = []
+            t0 = time.perf_counter()
 
             if not hasattr(agent, "astream_events"):
                 if not hasattr(agent, "ainvoke"):
@@ -665,6 +681,7 @@ async def run_shell_plain(
                     async for event in agent.astream_events(prompt_text, thread_id=invoke_tid):
                         event_type = event.type
                         data = event.data
+                        elapsed_s = time.perf_counter() - t0
 
                         if event_type in (
                             "thinking",
@@ -675,7 +692,7 @@ async def run_shell_plain(
                             "reflection",
                             "fallback",
                         ):
-                            _append_trace_line(thinking_lines, event_type, data)
+                            _append_trace_line(thinking_lines, event_type, data, elapsed_s=elapsed_s)
                             live.update(_live_agent_panel(thinking_lines, stream_text))
 
                         elif event_type == "token":
@@ -689,7 +706,7 @@ async def run_shell_plain(
                             tool_id = data.get("id", "")
                             tool_status[tool_id] = tool_name
                             tin = data.get("input", "")
-                            thinking_lines.append(f"→ [yellow]{tool_name}[/yellow] {tin}")
+                            thinking_lines.append(f"[dim]t+{_fmt_elapsed(elapsed_s)}[/dim] → [yellow]{tool_name}[/yellow] {tin}")
                             live.update(_live_agent_panel(thinking_lines, stream_text))
 
                         elif event_type == "tool_result":
@@ -697,12 +714,12 @@ async def run_shell_plain(
                             tool_name = tool_status.pop(tool_id, "unknown")
                             res = data.get("output", "")
                             append_tool_result_for_transcript(tool_name, res, tool_transcript)
-                            thinking_lines.append(f"  [green]✓[/green] {tool_name}: {res}")
+                            thinking_lines.append(f"[dim]t+{_fmt_elapsed(elapsed_s)}[/dim]   [green]✓[/green] {tool_name}: {res}")
                             live.update(_live_agent_panel(thinking_lines, stream_text))
 
                         elif event_type == "error":
                             error_msg = data.get("error", "Unknown error")
-                            thinking_lines.append(f"✗ {error_msg}")
+                            thinking_lines.append(f"[dim]t+{_fmt_elapsed(elapsed_s)}[/dim] ✗ {error_msg}")
                             live.update(_live_agent_panel(thinking_lines, stream_text))
 
                         elif event_type == "done":
@@ -723,10 +740,11 @@ async def run_shell_plain(
             full_output = merge_transcript_with_tool_outputs(stream_text.plain, tool_transcript)
             _print_thinking_footer(thinking_lines, expanded=state.expand_thinking)
             if full_output.strip():
+                total_s = time.perf_counter() - t0
                 console.print(
                     Panel(
                         full_output,
-                        title="[bold green]Answer[/bold green]",
+                        title=f"[bold green]Answer[/bold green] [dim]({_fmt_elapsed(total_s)})[/dim]",
                         border_style="green",
                         padding=(0, 1),
                     )

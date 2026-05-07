@@ -77,13 +77,38 @@ class HumanApprovalMiddleware(AgentMiddleware):
         self.user_callback = user_callback
         self.agent_name = agent_name
 
+    @staticmethod
+    def _extract_tool_call(request: Any) -> tuple[str, dict[str, Any], str | None]:
+        """Pull ``(tool_name, args, tool_call_id)`` from a LangChain ``ToolCallRequest``.
+
+        Handles both LangChain >=1.x (``request.tool_call`` is a ``ToolCall`` dict with
+        ``{"name", "args", "id"}`` plus ``request.tool`` for the BaseTool) and older shapes
+        with flat ``request.name`` / ``request.args`` / ``request.tool_call_id``.
+        """
+        tc = getattr(request, "tool_call", None)
+        if isinstance(tc, dict):
+            name = tc.get("name") or ""
+            args = tc.get("args") or {}
+            tcid = tc.get("id")
+        else:
+            name = ""
+            args = {}
+            tcid = None
+        if not name:
+            name = (
+                getattr(request, "name", None)
+                or getattr(request, "tool_name", None)
+                or getattr(getattr(request, "tool", None), "name", None)
+                or ""
+            )
+        if not args:
+            args = getattr(request, "args", {}) or {}
+        if tcid is None:
+            tcid = getattr(request, "tool_call_id", None)
+        return name or "unknown_tool", dict(args) if isinstance(args, dict) else {}, tcid
+
     async def awrap_tool_call(self, request: Any, handler: Callable) -> Any:
-        tool_name: str = (
-            getattr(request, "name", None)
-            or getattr(request, "tool_name", None)
-            or getattr(getattr(request, "tool", None), "name", None)
-            or "unknown_tool"
-        )
+        tool_name, tool_args, raw_id = self._extract_tool_call(request)
 
         should_pause: bool = bool(self.interrupt_before_tools) and (
             "tools" in self.interrupt_before_tools or tool_name in self.interrupt_before_tools
@@ -94,17 +119,16 @@ class HumanApprovalMiddleware(AgentMiddleware):
 
         logger.event(f"{self.agent_name}[L2-HITL] Pausing before tool '{tool_name}'")
 
-        raw_id = getattr(request, "tool_call_id", None)
         tool_call_id = str(raw_id).strip() if raw_id is not None and str(raw_id).strip() else uuid.uuid4().hex
         payload: dict[str, Any] = {
             "tool_name": tool_name,
             "tool_call_id": tool_call_id,
             "agent_name": self.agent_name,
-            "args": getattr(request, "args", {}),
+            "args": tool_args,
             "detail": (
                 f"Agent : {self.agent_name}\n"
                 f"Tool  : {tool_name}\n"
-                f"Args  : {getattr(request, 'args', {})}\n"
+                f"Args  : {tool_args}\n"
                 f"\nType 'continue' to proceed or 'abort' to cancel."
             ),
         }

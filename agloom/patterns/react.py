@@ -97,6 +97,13 @@ REACT_TOOL_DISCIPLINE = """
 - Prefer **small, purposeful reads**: use ``read_file`` with ``limit`` (and increase ``offset`` using
   the continuation hint in the tool result) instead of pulling huge ranges in one call. Use
   **grep_files** when searching for a symbol or pattern across a file or tree.
+- Tool truthfulness contract: if you claim you **read/fetched/ran** something via a tool, you must
+  include the relevant excerpt in your final answer **or** explicitly mark it as incomplete and
+  continue. Never imply you saw data you did not receive.
+- UI-agnostic: never say “shown above / below” — the user only sees what you print in the Answer.
+- Completeness: if a tool returns an ``[agloom:tool_result]`` envelope with ``complete=false``, treat
+  the payload as **partial** (usually with a preview). Follow Recovery hints and paginate/narrow the
+  request; do not summarize as if complete.
 - After a tool returns, either call the **next** tool your plan needs or give the **final** answer —
   do not idle in a loop with redundant identical calls.
 - **Tool-calling turns (Groq / OpenAI-style)**: When you need a tool, emit **only** valid structured tool calls for that turn.
@@ -333,16 +340,17 @@ async def handle_react(
                         }
                         continue
 
-            logger.error(f"[React] ❌ Failed: {exc}")
+            logger.error(f"[React] ❌ Failed: {exc!r}")
             fail_note = (
                 "Provider rejected the model's tool output (tool_use_failed — usually prose instead of a structured tool call). "
                 if _exception_indicates_tool_use_failed(exc)
                 else ""
             )
+            exc_str = str(exc).strip() or repr(exc)
             return ExecutionResult(
                 pattern_used=PatternType.REACT,
                 query=query,
-                output=f"{fail_note}REACT execution failed: {exc}",
+                output=f"{fail_note}REACT execution failed: {exc_str}",
                 steps_taken=attempt,
                 success=False,
                 analysis=analysis,
@@ -547,6 +555,33 @@ async def _handle_react_streaming(
         )
 
 
+async def _emit_react_tool_steps_to_event_queue(agent: dict, tool_steps: list) -> None:
+    """Emit tool_call / tool_result events for plain ``ainvoke`` paths (HITL, stream fallback).
+
+    Without this, the CLI/TUI never sees tool traces when ReAct runs with
+    :class:`~agloom.patterns.middleware.HumanApprovalMiddleware` because that path
+    does not use ``astream_events``.
+    """
+    queue = agent.get("_event_queue")
+    if not queue:
+        return
+    for step in tool_steps:
+        if step.type not in (StepType.TOOL_CALL, StepType.TOOL_RESULT):
+            continue
+        event_type = "tool_call" if step.type == StepType.TOOL_CALL else "tool_result"
+        await queue.put(
+            AgentEvent(
+                type=event_type,
+                data={
+                    "name": step.name,
+                    "input": step.input,
+                    "output": step.output,
+                    **step.metadata,
+                },
+            )
+        )
+
+
 async def _handle_react_ainvoke_fallback(
     agent: dict,
     query: str,
@@ -562,7 +597,6 @@ async def _handle_react_ainvoke_fallback(
     tools = agent["tools"]
     system_prompt = agent["system_prompt"] + REACT_TOOL_DISCIPLINE
     steps: list = (config or {}).get("_steps", [])
-    event_queue = agent.get("_event_queue")
     ml = agent.get("max_step_output_length", 0)
 
     react_agent = create_agent(model=llm, tools=tools, system_prompt=system_prompt)
@@ -584,22 +618,7 @@ async def _handle_react_ainvoke_fallback(
 
         tool_steps_start = len(steps)
         _collect_tool_steps(response, steps, max_length=ml)
-
-        if event_queue:
-            for step in steps[tool_steps_start:]:
-                if step.type in (StepType.TOOL_CALL, StepType.TOOL_RESULT):
-                    event_type = "tool_call" if step.type == StepType.TOOL_CALL else "tool_result"
-                    await event_queue.put(
-                        AgentEvent(
-                            type=event_type,
-                            data={
-                                "name": step.name,
-                                "input": step.input,
-                                "output": step.output,
-                                **step.metadata,
-                            },
-                        )
-                    )
+        await _emit_react_tool_steps_to_event_queue(agent, steps[tool_steps_start:])
 
         steps.append(
             _make_step(
@@ -623,11 +642,12 @@ async def _handle_react_ainvoke_fallback(
             messages=response.get("messages", []),
         )
     except Exception as exc:
-        logger.error(f"[React|fallback] Failed: {exc}")
+        logger.error(f"[React|fallback] Failed: {exc!r}")
+        exc_str = str(exc).strip() or repr(exc)
         return ExecutionResult(
             pattern_used=PatternType.REACT,
             query=query,
-            output=f"REACT execution failed: {exc}",
+            output=f"REACT execution failed: {exc_str}",
             steps_taken=1,
             success=False,
             analysis=analysis,
@@ -718,6 +738,11 @@ async def _handle_react_hitl(
                 messages = list(msgs) + [HumanMessage(content=_human_message_after_stray_tool_json())]
                 continue
 
+            ml = agent.get("max_step_output_length", 0)
+            hitl_tool_steps: list = []
+            _collect_tool_steps(response, hitl_tool_steps, max_length=ml)
+            await _emit_react_tool_steps_to_event_queue(agent, hitl_tool_steps)
+
             output = _extract_last_ai_message(response)
             if not output:
                 output = "No output produced."
@@ -807,16 +832,19 @@ async def _handle_react_hitl(
                         response = None
                         continue
 
-            logger.error(f"[React|HITL] ❌ Failed: {exc}")
+            logger.error(f"[React|HITL] ❌ Failed: {exc!r}")
             fail_note = (
                 "Provider tool_use_failed (model used prose instead of a structured tool call) — not a human-approval block. "
                 if _exception_indicates_tool_use_failed(exc)
                 else ""
             )
+            # Use ``repr(exc)`` so empty-message exceptions still surface their class name —
+            # otherwise users see an unhelpful ``execution failed: `` with no diagnostic.
+            exc_str = str(exc).strip() or repr(exc)
             return ExecutionResult(
                 pattern_used=PatternType.REACT,
                 query=query,
-                output=f"{fail_note}REACT HITL execution failed: {exc}",
+                output=f"{fail_note}REACT HITL execution failed: {exc_str}",
                 steps_taken=attempt,
                 success=False,
                 analysis=analysis,

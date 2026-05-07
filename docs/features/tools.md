@@ -121,6 +121,17 @@ async def main():
 
 See [Human-in-the-Loop](hitl.md) for all 4 interrupt levels.
 
+## CLI built-ins: resilient argument types (`agloom_cli`)
+
+Models sometimes emit **string numbers**, **stringified JSON objects**, or **`null`** where the schema expects `int` or `dict`. Built-in tools under `agloom_cli.tools` normalize common cases and return clear **`Error: ...`** messages when conversion is impossible:
+
+- **HTTP** (`http_request`, `http_get`, `fetch_json`, …): `headers` / `params` accept a **dict** or a **JSON object string**; `body` accepts dict, list, plain string, or a JSON string (parsed to dict/list when valid); `timeout` is coerced with safe bounds.
+- **Filesystem**: `read_file` coerces `offset`, `limit`, and `max_size`; `grep_files` coerces `max_matches`.
+- **Shell**: `run_shell` coerces `timeout` and `env` (object or JSON string → string env values).
+- **Other**: `path_parent` (`levels`), `web_search` (`max_results`), task-tracker step indices — same pattern.
+
+Logic lives in `agloom_cli/tool_arg_coerce.py` so new tools can reuse the same helpers.
+
 ## Step Tracing for Tools
 
 Every tool call and result is recorded in the step trace with a unique `id` that links call to result:
