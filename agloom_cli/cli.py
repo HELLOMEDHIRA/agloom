@@ -106,6 +106,7 @@ _AGLOOM_CLI_REPLY_EPILOG = """
 
 ---
 [agloom CLI] Final replies: **short** and outcome-first. After tools succeed, state what changed (paths, results) — do not add tutorial-style "Step 1 / Step 2" prose for work you already completed with tools.
+**Answer text is plain language only** — never paste tool wire-format (no JSON objects that pair a tool identifier with argument maps, no lines that look like ``encoded-invocation -> result``). Tools are invoked by the runtime; your Answer summarizes outcomes in normal sentences.
 Tool truthfulness: never claim tool results without quoting them. If a tool returns ``[agloom:tool_result]`` with ``complete=false``, treat it as partial and follow Recovery hints; do not assume completeness. Never say “shown above / below”.
 """
 
@@ -954,7 +955,7 @@ async def _run(
     max_retries = max_retries or execution_config.get("max_retries", 2)
     retry_delay = retry_delay or execution_config.get("retry_delay", 1.0)
     llm_timeout = llm_timeout or execution_config.get("llm_timeout", 120.0)
-    classifier_timeout = classifier_timeout or execution_config.get("classifier_timeout", 30.0)
+    classifier_timeout = classifier_timeout or execution_config.get("classifier_timeout", 60.0)
 
     safety_config = build_working_safety_for_thread(cfg, thread_id)
     frozen = frozen or cfg.get("frozen", False)
@@ -991,39 +992,20 @@ async def _run(
     user_callback = None
     if require_approval:
         from .hitl import create_user_callback
-        from .hitl_allowlist import resolve_allowlist_path
 
         auto_list = [t.strip() for t in auto_approve_tools.split(",")] if auto_approve_tools else []
         persist_al = safety_config.get("persist_tool_allowlist", True)
-        raw_al_base = safety_config.get("allowlist_file")
-        al_basename: str | None = (
-            str(raw_al_base).strip() if raw_al_base is not None and str(raw_al_base).strip() else None
-        )
-        try:
-            al_path = resolve_allowlist_path(storage_dir(), al_basename)
-        except ValueError as exc:
-            console.print(f"[error]Invalid safety.allowlist_file:[/error] {exc}")
-            raise typer.Exit(1) from None
-        strict_al = bool(safety_config.get("allowlist_strict_tools", True))
         user_callback = create_user_callback(
             auto_approve_tools=auto_list,
             yaml_prefill_allow_tools=yaml_allow_tools,
-            persist_allowlist=bool(persist_al),
-            allowlist_path=al_path,
-            storage_root=storage_dir(),
-            allowlist_strict_tools=strict_al,
             persist_allowlist_session_id=(thread_id if persist_al else None),
         )
         console.print("[yellow]Human approval enabled for sensitive operations[/yellow]")
-        _al_src = tool_allowlist_bypass_sources(cfg, thread_id, allowlist_path=al_path)
+        _al_src = tool_allowlist_bypass_sources(cfg, thread_id)
         _scope_parts: list[str] = []
         if _al_src["project_yaml"]:
             _scope_parts.append(
                 f"[cyan]agloom.yaml[/cyan] → {', '.join(_al_src['project_yaml'])} [dim](every session)[/dim]"
-            )
-        if _al_src["allowlist_file"]:
-            _scope_parts.append(
-                f"[cyan]{al_path.name}[/cyan] → {', '.join(_al_src['allowlist_file'])} [dim](every session)[/dim]"
             )
         if _al_src["session_json"]:
             _tid_disp = f"{thread_id[:8]}…" if len(thread_id) > 8 else thread_id
@@ -1033,15 +1015,7 @@ async def _run(
             )
         if _scope_parts:
             console.print("[dim]HITL allowlist sources: " + " · ".join(_scope_parts) + "[/dim]")
-        bypass_set = {t for t in (yaml_allow_tools + (auto_list if not strict_al else [])) if t}
-        if strict_al and yaml_allow_tools:
-            bypass_set |= set(yaml_allow_tools)
-        if not strict_al:
-            bypass_set |= set(auto_list)
-        elif al_path and al_path.exists():
-            bypass_set |= set(yaml_allow_tools)
-        else:
-            bypass_set |= set(auto_list)
+        bypass_set = {t for t in yaml_allow_tools if t} | {t for t in auto_list if t}
         bypass_sorted = sorted(t for t in bypass_set if t)
         if bypass_sorted:
             console.print(

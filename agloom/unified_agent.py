@@ -714,7 +714,7 @@ async def _ensure_frozen_analysis(config: dict) -> None:
             llm=config["llm"],
             query=config["frozen_template"],
             tools=config.get("tools", []),
-            classifier_timeout=config.get("classifier_timeout", 30.0),
+            classifier_timeout=config.get("classifier_timeout", 60.0),
             structured_max_retries=config.get("structured_max_retries", 2),
             fallback_pattern=config.get("fallback_pattern"),
         )
@@ -912,7 +912,7 @@ async def run_fresh(
             query=augmented_query,
             tools=config.get("tools", []),
             skill_context=skill_ctx,
-            classifier_timeout=config.get("classifier_timeout", 30.0),
+            classifier_timeout=config.get("classifier_timeout", 60.0),
             structured_max_retries=config.get("structured_max_retries", 2),
             fallback_pattern=config.get("fallback_pattern"),
         )
@@ -1497,7 +1497,7 @@ class UnifiedAgent:
                 query=augmented_query,
                 tools=self.config.get("tools", []),
                 skill_context=skill_ctx,
-                classifier_timeout=self.config.get("classifier_timeout", 30.0),
+                classifier_timeout=self.config.get("classifier_timeout", 60.0),
                 structured_max_retries=self.config.get("structured_max_retries", 2),
                 fallback_pattern=self.config.get("fallback_pattern"),
             )
@@ -1976,7 +1976,7 @@ async def create_agent(
     max_retries: int = 2,
     retry_delay: float = 1.0,
     llm_timeout: float = 120.0,
-    classifier_timeout: float = 30.0,
+    classifier_timeout: float = 60.0,
     structured_max_retries: int = 2,
     rate_limit: float | None = None,
     low_score_threshold: float = 0.40,

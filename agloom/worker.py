@@ -9,15 +9,18 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
+from typing import Any, cast
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 
 from .logging_utils import get_logger
+from .llm_streaming import astream_llm_to_event_queue
 from .models import (
+    AgentEvent,
     AgentStep,
     ResolvedWorkerConfig,
     SignalType,
@@ -44,6 +47,15 @@ FINAL REPLY
 """.strip()
 
 _MEMORY_TOOLS = {"save_memory", "recall_memory"}
+
+
+def extend_invoke_config_with_event_queue(invoke_config: dict | None, event_queue: Any) -> dict | None:
+    """Attach parent ``_event_queue`` so workers can ``astream`` to the CLI (parallel + sequential)."""
+    if event_queue is None:
+        return invoke_config
+    base = dict(invoke_config or {})
+    base["_event_queue"] = event_queue
+    return base
 
 
 async def run_worker(
@@ -137,6 +149,74 @@ def _build_graph_config(
     return base
 
 
+async def _react_graph_astream_to_result(
+    config: ResolvedWorkerConfig,
+    lc_agent: Any,
+    task_content: str,
+    graph_config: dict,
+    event_queue: asyncio.Queue,
+) -> dict[str, Any]:
+    """Run worker ReAct graph with ``astream_events`` so tokens/tools stream to the CLI."""
+    state: dict[str, Any] = {"messages": [HumanMessage(content=task_content)]}
+    final_response: dict[str, Any] | None = None
+    _tool_run_ids: dict[str, str] = {}
+    wid = config.worker_id
+
+    async for event in lc_agent.astream_events(
+        state,
+        config=cast(RunnableConfig, graph_config),
+        version="v2",
+    ):
+        kind = event["event"]
+        if kind == "on_chat_model_stream":
+            chunk = event["data"]["chunk"]
+            content = getattr(chunk, "content", "")
+            if content:
+                c = content if isinstance(content, str) else str(content)
+                await event_queue.put(
+                    AgentEvent(type="token", data={"content": c, "worker_id": wid})
+                )
+        elif kind == "on_tool_start":
+            run_id = str(event.get("run_id", ""))
+            tool_name = event.get("name", "unknown")
+            tool_input = event.get("data", {}).get("input", {})
+            _tool_run_ids[run_id] = tool_name
+            await event_queue.put(
+                AgentEvent(
+                    type="tool_call",
+                    data={
+                        "id": run_id,
+                        "name": tool_name,
+                        "input": str(tool_input),
+                        "worker_id": wid,
+                    },
+                )
+            )
+        elif kind == "on_tool_end":
+            run_id = str(event.get("run_id", ""))
+            tool_name = _tool_run_ids.pop(run_id, event.get("name", "unknown"))
+            tool_output = str(event.get("data", {}).get("output", ""))
+            await event_queue.put(
+                AgentEvent(
+                    type="tool_result",
+                    data={
+                        "id": run_id,
+                        "name": tool_name,
+                        "output": tool_output,
+                        "worker_id": wid,
+                    },
+                )
+            )
+        elif kind == "on_chain_end":
+            output_data = event.get("data", {}).get("output")
+            if isinstance(output_data, dict) and "messages" in output_data:
+                final_response = output_data
+
+    if final_response is None:
+        raise ValueError("astream_events finished without a messages state")
+    return final_response
+
+
 async def _run_react(
     config: ResolvedWorkerConfig,
     llm: Any,
@@ -173,13 +253,22 @@ async def _run_react(
                 task_content = f"Context:\n{ctx_str}\n\n{config.task}"
 
             graph_config = _build_graph_config(config, invoke_config, "ReAct", attempt)
-            result = await asyncio.wait_for(
-                agent.ainvoke(  # type: ignore[no-matching-overload]
-                    {"messages": [HumanMessage(content=task_content)]},
-                    config=graph_config,
-                ),
-                timeout=config.llm_timeout,
-            )
+            eq = (invoke_config or {}).get("_event_queue")
+            if eq is not None:
+                result = await asyncio.wait_for(
+                    _react_graph_astream_to_result(
+                        config, agent, task_content, graph_config, eq
+                    ),
+                    timeout=config.llm_timeout,
+                )
+            else:
+                result = await asyncio.wait_for(
+                    agent.ainvoke(  # type: ignore[no-matching-overload]
+                        {"messages": [HumanMessage(content=task_content)]},
+                        config=graph_config,
+                    ),
+                    timeout=config.llm_timeout,
+                )
             output, usage = _extract_output(result)
             tool_steps = _extract_tool_steps(result)
 
@@ -290,27 +379,35 @@ async def _run_llm_only(
                 },
             )
 
-            resp = await asyncio.wait_for(
-                named_llm.ainvoke(
-                    [
-                        SystemMessage(content=config.system_prompt),
-                        HumanMessage(content=task_content),
-                    ]
-                ),
-                timeout=config.llm_timeout,
-            )
-            output = resp.content
-            usage = _extract_token_usage(resp)
+            input_msgs = [
+                SystemMessage(content=config.system_prompt),
+                HumanMessage(content=task_content),
+            ]
+            eq = (invoke_config or {}).get("_event_queue")
+            if eq is not None:
+                output, last_chunk = await astream_llm_to_event_queue(
+                    named_llm,
+                    input_msgs,
+                    eq,
+                    timeout=config.llm_timeout,
+                    worker_id=config.worker_id,
+                )
+                usage = _extract_token_usage(last_chunk) if last_chunk else {}
+                tail = last_chunk if last_chunk is not None else AIMessage(content=output)
+            else:
+                resp = await asyncio.wait_for(
+                    named_llm.ainvoke(input_msgs),
+                    timeout=config.llm_timeout,
+                )
+                output = resp.content
+                usage = _extract_token_usage(resp)
+                tail = resp
 
             attempt_ms = round((time.perf_counter() - t_attempt) * 1000, 1)
             logger.info(
                 f"[{config.worker_id}] LLM-only attempt {attempt} ok | "
                 f"attempt_ms={attempt_ms} | output_chars={len(output)}"
             )
-            input_msgs = [
-                SystemMessage(content=config.system_prompt),
-                HumanMessage(content=task_content),
-            ]
             return WorkerResult(
                 worker_id=config.worker_id,
                 task=config.task,
@@ -318,7 +415,7 @@ async def _run_llm_only(
                 signal=SignalType.SUCCESS,
                 attempt=attempt,
                 token_usage=usage,
-                messages=input_msgs + [resp],
+                messages=input_msgs + [tail],
             )
 
         except TimeoutError:

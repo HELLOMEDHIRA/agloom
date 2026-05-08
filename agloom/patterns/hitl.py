@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from .. import worker as worker_module
+from ..worker import extend_invoke_config_with_event_queue
 from ..hitl_contract import HITLEvent, call_user_callback
 from ..logging_utils import get_logger
 from ..models import ResolvedWorkerConfig, Signal, SignalType, WorkerResult
@@ -115,7 +116,8 @@ async def _run_parallel_workers(
                     signal=SignalType.FAILED,
                     error="HALT_ALL",
                 )
-            return await worker_module.run_worker(cfg, llm, invoke_config=invoke_config)
+            merged = extend_invoke_config_with_event_queue(invoke_config, agent.get("_event_queue"))
+            return await worker_module.run_worker(cfg, llm, invoke_config=merged)
 
     tasks: dict[asyncio.Task, ResolvedWorkerConfig] = {asyncio.create_task(_run_one(cfg)): cfg for cfg in configs}
 

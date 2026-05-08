@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 from typing import Any
 
 from rich.console import Console
@@ -23,8 +22,12 @@ from rich.prompt import Prompt
 from agloom.hitl_contract import HITLEvent
 from agloom.logging_utils import get_logger
 
-from .config import merge_tool_allowlist_into_session_json
-from .hitl_allowlist import load_allowlist, merge_allowlist_file, resolve_allowlist_path
+from .config import (
+    merge_pattern_allowlist_into_session_json,
+    merge_tool_allowlist_into_session_json,
+    merge_worker_allowlist_into_session_json,
+    read_session_safety,
+)
 from .hitl_ask import build_hitl_triple_ask_request, new_hitl_tool_call_id, triple_answer_to_token
 from .hitl_ask_types import AskUserRequest, AskUserWidgetResult
 from .safety_limits import clamp_hitl_detail
@@ -252,10 +255,6 @@ def create_user_callback(
     auto_approve_tools: list[str] | None = None,
     *,
     yaml_prefill_allow_tools: list[str] | None = None,
-    persist_allowlist: bool = True,
-    allowlist_path: Path | None = None,
-    storage_root: Path | None = None,
-    allowlist_strict_tools: bool = True,
     persist_allowlist_session_id: str | None = None,
 ):
     """Build a ``user_callback`` for interactive terminals (Rich).
@@ -266,60 +265,32 @@ def create_user_callback(
     (web UI, tests, logging) using the same event strings.
 
     Args:
-        auto_approve_tools: Tool names never prompted (from config ``safety.auto_approve``) when not strict.
-        yaml_prefill_allow_tools: Project + session ``safety.tool_allowlist`` (merged). Always unioned into
-            the runtime allowlist first — honored even when *allowlist_strict_tools* and the JSON file exist.
-        persist_allowlist: If True, "always allow" can append to the allowlist JSON under ``.agloom``.
-        allowlist_path: Resolved path (use :func:`resolve_allowlist_path`); must stay under *storage_root*.
-        storage_root: Active storage root (``storage_dir()``, i.e. project ``.agloom``). Used to validate *allowlist_path*.
-        allowlist_strict_tools: If True (default), when the allowlist file exists, **only** its ``tools`` list
-            applies; ``safety.auto_approve`` is ignored for tools. If False, yaml and JSON are unioned.
-            If the file does not exist yet, ``auto_approve_tools`` is used alone.
-        persist_allowlist_session_id: When set, "always allow" also appends to ``sessions/<id>.json``.
+        auto_approve_tools: Tool names never prompted (from ``safety.auto_approve``), unioned with *yaml_prefill*.
+        yaml_prefill_allow_tools: Project + session ``safety.tool_allowlist`` (merged in the CLI) before invoke.
+        persist_allowlist_session_id: When set, "Always allow" appends to ``sessions/<id>.json`` under
+            ``safety.tool_allowlist`` / ``pattern_allowlist`` / ``worker_allowlist``.
     """
     auto_tools = {t.strip() for t in (auto_approve_tools or []) if t.strip()}
     yaml_pre = {t.strip() for t in (yaml_prefill_allow_tools or []) if t.strip()}
+    runtime_tools = yaml_pre | auto_tools
 
-    path: Path | None = allowlist_path
-    if path is None and storage_root is not None:
-        path = resolve_allowlist_path(storage_root, None)
-    if path is not None and storage_root is not None:
-        root = storage_root.resolve()
-        if not path.resolve().is_relative_to(root):
-            raise ValueError(f"allowlist_path {path} must be under storage root {root}")
+    sess_patterns: set[str] = set()
+    sess_workers: set[str] = set()
+    sid0 = (persist_allowlist_session_id or "").strip()
+    if sid0:
+        ss = read_session_safety(sid0)
+        sess_patterns = set(ss.get("pattern_allowlist") or [])
+        sess_workers = set(ss.get("worker_allowlist") or [])
 
-    file_tools: set[str] = set()
-    file_patterns: set[str] = set()
-    file_workers: set[str] = set()
-    if path is not None and path.exists():
-        data = load_allowlist(path)
-        file_tools = set(data.get("tools", []))
-        file_patterns = set(data.get("patterns", []))
-        file_workers = set(data.get("workers", []))
-        file_exists = True
-    else:
-        file_exists = False
+    runtime_patterns = sess_patterns
+    runtime_workers = sess_workers
 
-    if allowlist_strict_tools and file_exists:
-        runtime_tools = yaml_pre | set(file_tools)
-    else:
-        runtime_tools = yaml_pre | set(auto_tools) | set(file_tools)
-    runtime_patterns = set(file_patterns)
-    runtime_workers = set(file_workers)
-
-    _hint_parts: list[str] = []
     if persist_allowlist_session_id:
         sid = persist_allowlist_session_id.strip()
         disp = f"{sid[:8]}…" if len(sid) > 8 else sid
-        _hint_parts.append(f"session [cyan]{disp}[/cyan].json")
-    # Only name the on-disk allowlist file once it exists; the resolved path defaults
-    # to tool_allowlist.json even before first save, which confused users.
-    if persist_allowlist and path is not None and file_exists:
-        _hint_parts.append(f"[cyan]{path.name}[/cyan]")
-    if _hint_parts:
-        persist_hint = "(writes to " + " + ".join(_hint_parts) + ")"
+        persist_hint = f"(writes to session [cyan]{disp}[/cyan].json)"
     else:
-        persist_hint = "(this session only — persistence off)"
+        persist_hint = "(this run only — no session id for persistence)"
 
     async def callback(event_type: str, message: str | dict) -> Any:
         nonlocal runtime_tools, runtime_patterns, runtime_workers
@@ -360,8 +331,7 @@ def create_user_callback(
                 console.print(
                     f"[dim]HITL:[/dim] [green]Auto-approved[/green] [bold]{tool_name}[/bold] "
                     f"[dim](allowlist). No card — remove it from [cyan]safety.tool_allowlist[/cyan] "
-                    f"in [cyan].agloom/sessions/<id>.json[/cyan], project YAML, or your allowlist file "
-                    f"under [cyan].agloom[/cyan] to gate this tool again.[/dim]"
+                    f"in [cyan].agloom/sessions/<id>.json[/cyan] or [cyan]agloom.yaml[/cyan].[/dim]"
                 )
                 return "continue"
 
@@ -372,7 +342,7 @@ def create_user_callback(
                 footer=f"[bold]Always allow[/bold] {persist_hint}",
                 row1="Accept (this time only)",
                 row2="Reject",
-                row3="Always allow — [dim]saved to session JSON / project allowlist (if used)[/dim]",
+                row3="Always allow — [dim]saved to session JSON[/dim]",
                 default="2",
                 tool_call_id=tool_call_id,
             )
@@ -380,37 +350,17 @@ def create_user_callback(
                 return "abort"
             if choice == "allowlist":
                 runtime_tools.add(tool_name)
-                wrote = False
                 if persist_allowlist_session_id:
                     try:
                         merge_tool_allowlist_into_session_json(persist_allowlist_session_id, tool_name)
                         console.print(f"[cyan]Saved '{tool_name}' to session JSON (safety.tool_allowlist).[/cyan]")
-                        wrote = True
                     except OSError as exc:
                         _logger.warning(
                             "hitl_session_allowlist_write_failed",
                             error=str(exc),
                             tool=tool_name,
                         )
-                if persist_allowlist and path is not None:
-                    try:
-                        merge_allowlist_file(path, tools=[tool_name])
-                        ap = path.resolve()
-                        try:
-                            al_disp = str(ap.relative_to(Path.cwd().resolve()))
-                        except ValueError:
-                            al_disp = str(ap)
-                        console.print(
-                            f"[cyan]Saved '{tool_name}' to project allowlist[/cyan] [dim]{al_disp}[/dim]"
-                        )
-                    except OSError as exc:
-                        _logger.warning(
-                            "hitl_allowlist_file_write_failed",
-                            path=str(path),
-                            error=str(exc),
-                            tool=tool_name,
-                        )
-                elif not wrote:
+                else:
                     console.print("[cyan]Allowlisted for this CLI run (not saved).[/cyan]")
             return "continue"
 
@@ -434,16 +384,25 @@ def create_user_callback(
                 footer=f"[bold]Always allow this pattern[/bold] {persist_hint}",
                 row1="Accept (this time only)",
                 row2="Reject",
-                row3="Always allow — [dim]saved to allowlist[/dim]",
+                row3="Always allow — [dim]saved to session JSON[/dim]",
                 default="2",
             )
             if choice == "reject":
                 return "no"
             if choice == "allowlist":
                 runtime_patterns.add(pattern)
-                if persist_allowlist and path is not None:
-                    merge_allowlist_file(path, patterns=[pattern])
-                    console.print(f"[cyan]Saved pattern '{pattern}' to allowlist.[/cyan]")
+                if persist_allowlist_session_id:
+                    try:
+                        merge_pattern_allowlist_into_session_json(persist_allowlist_session_id, pattern)
+                        console.print(
+                            f"[cyan]Saved pattern '{pattern}' to session JSON (safety.pattern_allowlist).[/cyan]"
+                        )
+                    except OSError as exc:
+                        _logger.warning(
+                            "hitl_session_pattern_allowlist_write_failed",
+                            error=str(exc),
+                            pattern=pattern,
+                        )
                 else:
                     console.print("[cyan]Allowlisted for this CLI run (not saved).[/cyan]")
             return True
@@ -497,16 +456,25 @@ def create_user_callback(
                 footer=f"[bold]Always allow this worker[/bold] {persist_hint}",
                 row1="Accept (this time only)",
                 row2="Reject",
-                row3="Always allow — [dim]saved to allowlist[/dim]",
+                row3="Always allow — [dim]saved to session JSON[/dim]",
                 default="2",
             )
             if choice == "reject":
                 return "skip"
             if choice == "allowlist":
                 runtime_workers.add(worker_id)
-                if persist_allowlist and path is not None:
-                    merge_allowlist_file(path, workers=[worker_id])
-                    console.print(f"[cyan]Saved worker '{worker_id}' to allowlist.[/cyan]")
+                if persist_allowlist_session_id:
+                    try:
+                        merge_worker_allowlist_into_session_json(persist_allowlist_session_id, worker_id)
+                        console.print(
+                            f"[cyan]Saved worker '{worker_id}' to session JSON (safety.worker_allowlist).[/cyan]"
+                        )
+                    except OSError as exc:
+                        _logger.warning(
+                            "hitl_session_worker_allowlist_write_failed",
+                            error=str(exc),
+                            worker=worker_id,
+                        )
                 else:
                     console.print("[cyan]Allowlisted for this CLI run (not saved).[/cyan]")
             return "continue"

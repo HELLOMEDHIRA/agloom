@@ -8,6 +8,8 @@
 
 ### Added
 
+- **HITL allowlist: session-only** — Removed `safety.allowlist_file` / `tool_allowlist.json` from the CLI. "Always allow" for tools uses `sessions/<id>.json` → `safety.tool_allowlist` only by default; `pattern_allowlist` / `worker_allowlist` appear there only after a persisted pattern/worker approval. `agloom_cli.hitl_allowlist` remains for tests and manual JSON utilities.
+
 - **CLI safety defaults** — Generated `agloom.yaml` pre-approves common read-only builtins, all harness tools (`initialize_project`, `bootstrap_progress`, `save_progress`, task CRUD, `git_*`), and `load_skill` under `safety.auto_approve` so they skip the HITL modal when `require_approval` is on. Remove names from that list to gate them again.
 
 - **CLI harness** — The interactive CLI passes `harness=True` by default (`harness.enabled` in `agloom.yaml`, overridable with `--harness` / `--no-harness` and `AGLOOM_HARNESS`). `graph_store.sqlite` under `.agloom/` is always used for harness/skills; `--memory` adds `checkpoints.sqlite` and LT memory tools.

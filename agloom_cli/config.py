@@ -34,7 +34,6 @@ The **agloom CLI** stores config and cached state **only** here — ``<project>/
 | ``graph_store.sqlite`` | LangGraph store (always: harness/skills; also session memory when memory is on) |
 | ``rules/`` | Cached project rules |
 | ``skills/`` | Skills (``SKILL.md`` trees, including learned skills) |
-| ``tool_allowlist.json`` (or ``safety.allowlist_file`` basename) | Per-project HITL allowlist; lives only under this folder |
 
 Optional: a ``.agloom.yaml`` in the **project root** (parent of this folder) is merged on top of ``agloom.yaml``; later files override earlier ones.
 
@@ -180,6 +179,7 @@ ai:
     ## Terminal agent style (CLI)
 
     - After a successful tool action, confirm in **1–3 short sentences** (paths, result). Do **not** teach how to do what you already did.
+    - **Answer panel:** Write plain sentences only. Never echo tool protocol (no JSON pairing tool identifiers with argument maps, no ``… -> …`` lines that mimic an invocation plus result). Tools run outside the Answer; summarize outcomes in words.
     - The session UI shows tool traces; avoid duplicating tool payloads or tutorial markdown unless asked.
     - You do **not** store project file bytes in memory across turns — if the user asks to show or reread a file, use **read_file** (or equivalent) again; never placeholders.
     - Tool truthfulness contract: if you claim you used a tool, include the relevant excerpt in your Answer (or explicitly mark it incomplete and continue).
@@ -246,7 +246,7 @@ execution:
   max_retries: 2
   retry_delay: 1.0
   llm_timeout: 120.0
-  classifier_timeout: 30.0
+  classifier_timeout: 60.0
 
 sandbox:
   enabled: false
@@ -257,9 +257,9 @@ safety:
   interrupt_before_tools: "tools"
   # Read-only helpers + harness + load_skill skip HITL; other tools still gated when require_approval is true
   auto_approve: "read_file,list_directory,get_working_directory,initialize_project,bootstrap_progress,save_progress,get_next_task,update_task,add_task,git_status,git_log,git_commit,git_checkpoint,git_revert_hint,load_skill"
+  # HITL "Always allow" persists under sessions/<id>.json (tool_allowlist; pattern/worker keys only if used).
   tool_allowlist: []
   allowlist_strict_tools: true
-  allowlist_file: ""
   persist_tool_allowlist: true
 
 session:
@@ -346,6 +346,7 @@ You have access to tools for:
 ## Terminal agent style (agloom CLI)
 
 - You run in a **coding-agent shell** (like Cursor / Claude Code). When tools succeeded, reply **briefly**: what changed (paths, commands), errors if any, optional one-line follow-up.
+- **Answer text:** Normal prose only — never paste tool wire-format or lines that look like ``encoded-call -> result``. Invoke tools through the runtime; the Answer summarizes what happened.
 - **Never** re-explain how to perform work you already completed with tools. Do not dump long tool JSON or full file contents unless the user asked to review them.
 - You **do not** retain a private byte-accurate copy of project files between turns. If the user asks to show, reread, or retry file contents, **call the file tools again** — do not answer from memory or placeholders.
 - Tool truthfulness contract: if you claim you used a tool, include the relevant excerpt in your final Answer (or explicitly mark it incomplete and continue).
@@ -759,12 +760,26 @@ def _write_session_json(thread_id: str, data: dict[str, Any]) -> None:
 
 
 def default_session_safety_skeleton() -> dict[str, Any]:
-    """Session JSON ``safety`` stub (``tool_allowlist``); merged in :func:`build_working_safety_for_thread`."""
+    """Session JSON ``safety`` stub: tools only. Pattern/worker allowlists are optional keys added on first HITL save."""
     return {"tool_allowlist": []}
 
 
+def _normalize_session_str_list(val: Any) -> list[str]:
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return [str(x).strip() for x in val if str(x).strip()]
+    if isinstance(val, str) and val.strip():
+        return [val.strip()]
+    return []
+
+
 def ensure_session_safety_structure(session_data: dict[str, Any]) -> None:
-    """Mutate *session_data* so a normal ``safety`` dict exists (idempotent)."""
+    """Mutate *session_data* so a normal ``safety`` dict exists (idempotent).
+
+    ``pattern_allowlist`` / ``worker_allowlist`` are omitted until the user persistently allowlists
+    a pattern or worker; empty lists are dropped after normalize.
+    """
     raw = session_data.get("safety")
     if not isinstance(raw, dict):
         session_data["safety"] = default_session_safety_skeleton()
@@ -774,10 +789,22 @@ def ensure_session_safety_structure(session_data: dict[str, Any]) -> None:
         raw["tool_allowlist"] = []
     elif not isinstance(tools, list):
         raw["tool_allowlist"] = normalized_safety_tool_allowlist(tools)
+    for key in ("pattern_allowlist", "worker_allowlist"):
+        if key not in raw:
+            continue
+        val = raw.get(key)
+        if not isinstance(val, list):
+            norm = _normalize_session_str_list(val)
+        else:
+            norm = [str(x).strip() for x in val if str(x).strip()]
+        if norm:
+            raw[key] = norm
+        else:
+            del raw[key]
 
 
 def read_session_safety(thread_id: str) -> dict[str, Any]:
-    """Return the ``safety`` block from session JSON (always a dict, with ``tool_allowlist`` list)."""
+    """Return HITL-related lists from session JSON ``safety`` (normalized, possibly empty)."""
     data = _read_session_json(thread_id)
     raw = data.get("safety")
     if not isinstance(raw, dict):
@@ -785,7 +812,17 @@ def read_session_safety(thread_id: str) -> dict[str, Any]:
     tools = raw.get("tool_allowlist")
     if not isinstance(tools, list):
         tools = []
-    return {"tool_allowlist": [str(t).strip() for t in tools if str(t).strip()]}
+    pl = raw.get("pattern_allowlist")
+    if not isinstance(pl, list):
+        pl = []
+    wl = raw.get("worker_allowlist")
+    if not isinstance(wl, list):
+        wl = []
+    return {
+        "tool_allowlist": [str(t).strip() for t in tools if str(t).strip()],
+        "pattern_allowlist": [str(p).strip() for p in pl if str(p).strip()],
+        "worker_allowlist": [str(w).strip() for w in wl if str(w).strip()],
+    }
 
 
 def merge_tool_allowlist_into_session_json(thread_id: str, tool_name: str) -> None:
@@ -816,6 +853,62 @@ def merge_tool_allowlist_into_session_json(thread_id: str, tool_name: str) -> No
     if tn not in norm:
         norm.append(tn)
     safety["tool_allowlist"] = norm
+    _write_session_json(thread_id, data)
+
+
+def merge_pattern_allowlist_into_session_json(thread_id: str, pattern_name: str) -> None:
+    """Append *pattern_name* to ``sessions/<id>.json`` ``safety.pattern_allowlist`` (idempotent)."""
+    pn = (pattern_name or "").strip()
+    if not pn:
+        return
+    data: dict[str, Any] = _read_session_json(thread_id)
+    if not data:
+        data = {
+            "id": normalize_cli_session_id(thread_id),
+            "started_at": datetime.now(UTC).isoformat(),
+            "last_active": datetime.now(UTC).isoformat(),
+            "turns": 0,
+            "messages": [],
+        }
+    safety = data.get("safety")
+    if not isinstance(safety, dict):
+        safety = {}
+        data["safety"] = safety
+    cur = safety.get("pattern_allowlist")
+    if not isinstance(cur, list):
+        cur = []
+    norm = [str(x).strip() for x in cur if str(x).strip()]
+    if pn not in norm:
+        norm.append(pn)
+    safety["pattern_allowlist"] = norm
+    _write_session_json(thread_id, data)
+
+
+def merge_worker_allowlist_into_session_json(thread_id: str, worker_id: str) -> None:
+    """Append *worker_id* to ``sessions/<id>.json`` ``safety.worker_allowlist`` (idempotent)."""
+    wid = (worker_id or "").strip()
+    if not wid:
+        return
+    data: dict[str, Any] = _read_session_json(thread_id)
+    if not data:
+        data = {
+            "id": normalize_cli_session_id(thread_id),
+            "started_at": datetime.now(UTC).isoformat(),
+            "last_active": datetime.now(UTC).isoformat(),
+            "turns": 0,
+            "messages": [],
+        }
+    safety = data.get("safety")
+    if not isinstance(safety, dict):
+        safety = {}
+        data["safety"] = safety
+    cur = safety.get("worker_allowlist")
+    if not isinstance(cur, list):
+        cur = []
+    norm = [str(x).strip() for x in cur if str(x).strip()]
+    if wid not in norm:
+        norm.append(wid)
+    safety["worker_allowlist"] = norm
     _write_session_json(thread_id, data)
 
 
@@ -1019,30 +1112,17 @@ def build_working_safety_for_thread(cfg: dict[str, Any], thread_id: str) -> dict
 def tool_allowlist_bypass_sources(
     cfg: dict[str, Any],
     thread_id: str,
-    *,
-    allowlist_path: Path | None,
 ) -> dict[str, list[str]]:
     """Split HITL tool allowlist entries by storage scope (for CLI transparency).
 
     - ``project_yaml``: ``agloom.yaml`` ``safety.tool_allowlist`` — applies to **every** session in this project.
     - ``session_json``: ``sessions/<thread_id>.json`` — **this** session only.
-    - ``allowlist_file``: default ``tool_allowlist.json`` (or ``safety.allowlist_file``) — **every** session.
     """
-    from .hitl_allowlist import load_allowlist
-
     project = cfg.get("safety")
     if not isinstance(project, dict):
         project = {}
     proj = normalized_safety_tool_allowlist(project.get("tool_allowlist") or project.get("allowlist_tools"))
     sess = read_session_safety(thread_id).get("tool_allowlist", [])
-    file_tools: list[str] = []
-    if allowlist_path is not None and allowlist_path.exists():
-        raw = load_allowlist(allowlist_path)
-        file_tools = []
-        for t in raw.get("tools", []):
-            s = (t if isinstance(t, str) else str(t)).strip()
-            if s:
-                file_tools.append(s)
 
     def _dedupe(xs: list[str]) -> list[str]:
         return list(dict.fromkeys(xs))
@@ -1050,7 +1130,6 @@ def tool_allowlist_bypass_sources(
     return {
         "project_yaml": _dedupe(proj),
         "session_json": _dedupe(sess),
-        "allowlist_file": _dedupe(file_tools),
     }
 
 

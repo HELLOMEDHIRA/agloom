@@ -3,6 +3,7 @@
 import re
 
 from .. import worker as worker_module
+from ..worker import extend_invoke_config_with_event_queue
 from ..logging_utils import get_logger
 from ..models import (
     ExecutionResult,
@@ -138,7 +139,8 @@ async def handle_reflection(
         gen_cfg = resolve_worker_configs(agent, [gen_plan])[0]
 
         logger.event(f"[Reflection] {agent_name} — iteration {iteration + 1}/{max_iterations}: generating...")
-        gen_result = await worker_module.run_worker(gen_cfg, llm, invoke_config=config)
+        merged = extend_invoke_config_with_event_queue(config, agent.get("_event_queue"))
+        gen_result = await worker_module.run_worker(gen_cfg, llm, invoke_config=merged)
         worker_results.append(gen_result)
         raw_messages.extend(getattr(gen_result, "messages", []))
         steps.append(
@@ -173,7 +175,7 @@ async def handle_reflection(
         critic_cfg = resolve_worker_configs(agent, [critic_plan])[0]
 
         logger.event(f"[Reflection] {agent_name} — iteration {iteration + 1}/{max_iterations}: critiquing...")
-        critic_result = await worker_module.run_worker(critic_cfg, llm, invoke_config=config)
+        critic_result = await worker_module.run_worker(critic_cfg, llm, invoke_config=merged)
         worker_results.append(critic_result)
         raw_messages.extend(getattr(critic_result, "messages", []))
         if critic_result.token_usage:

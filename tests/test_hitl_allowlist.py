@@ -55,9 +55,10 @@ def test_parse_tool_worker_pattern() -> None:
 
 @pytest.mark.asyncio
 async def test_callback_tool_allowlisted_skips_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    p = tmp_path / "tool_allowlist.json"
-    save_allowlist(p, {"tools": ["write_file"], "patterns": [], "workers": []})
-    cb = create_user_callback(auto_approve_tools=[], storage_root=tmp_path, allowlist_path=p)
+    cb = create_user_callback(
+        auto_approve_tools=[],
+        yaml_prefill_allow_tools=["write_file"],
+    )
     called: list[str] = []
 
     def boom(*_a, **_k):
@@ -78,8 +79,7 @@ async def test_tool_interrupt_before_accepts_dict_payload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Middleware-style dict (tool_name, tool_call_id, detail) is supported alongside legacy str."""
-    p = tmp_path / "tool_allowlist.json"
-    cb = create_user_callback(auto_approve_tools=[], storage_root=tmp_path, allowlist_path=p)
+    cb = create_user_callback()
     monkeypatch.setattr("agloom_cli.hitl.Prompt.ask", lambda *a, **k: "2")
     payload = {
         "tool_name": "run_shell",
@@ -94,8 +94,7 @@ async def test_tool_interrupt_before_accepts_dict_payload(
 
 @pytest.mark.asyncio
 async def test_callback_tool_reject_aborts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    p = tmp_path / "tool_allowlist.json"
-    cb = create_user_callback(auto_approve_tools=[], storage_root=tmp_path, allowlist_path=p)
+    cb = create_user_callback()
 
     monkeypatch.setattr("agloom_cli.hitl.Prompt.ask", lambda *a, **k: "2")
     out = await cb(
@@ -106,23 +105,20 @@ async def test_callback_tool_reject_aborts(tmp_path: Path, monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
-async def test_strict_tools_ignores_yaml_when_file_exists(
+async def test_callback_unions_yaml_prefill_and_auto_approve(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """allowlist_strict_tools + existing file => only JSON tools, not auto_approve."""
-    p = tmp_path / "tool_allowlist.json"
-    save_allowlist(p, {"tools": ["run_shell"], "patterns": [], "workers": []})
+    """Tools in yaml_prefill_allow_tools or auto_approve_tools skip the prompt."""
     cb = create_user_callback(
         auto_approve_tools=["read_file", "write_file"],
-        storage_root=tmp_path,
-        allowlist_path=p,
-        allowlist_strict_tools=True,
+        yaml_prefill_allow_tools=["run_shell"],
     )
     monkeypatch.setattr("agloom_cli.hitl.Prompt.ask", lambda *a, **k: "2")
 
     assert await cb("tool_interrupt_before", "Tool  : run_shell\nArgs  : {}") == "continue"
-    assert await cb("tool_interrupt_before", "Tool  : read_file\nArgs  : {}") == "abort"
-    assert await cb("tool_interrupt_before", "Tool  : write_file\nArgs  : {}") == "abort"
+    assert await cb("tool_interrupt_before", "Tool  : read_file\nArgs  : {}") == "continue"
+    assert await cb("tool_interrupt_before", "Tool  : write_file\nArgs  : {}") == "continue"
+    assert await cb("tool_interrupt_before", "Tool  : delete_everything\nArgs  : {}") == "abort"
 
 
 @pytest.mark.asyncio
@@ -136,10 +132,6 @@ async def test_always_allow_session_json_write_error_still_continues(
     monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
     sid = "b" * 32
     cb = create_user_callback(
-        auto_approve_tools=[],
-        storage_root=tmp_path,
-        allowlist_path=None,
-        persist_allowlist=False,
         persist_allowlist_session_id=sid,
     )
     monkeypatch.setattr("agloom_cli.hitl.Prompt.ask", lambda *a, **k: "3")
@@ -153,32 +145,6 @@ async def test_always_allow_session_json_write_error_still_continues(
 
 
 @pytest.mark.asyncio
-async def test_always_allow_merge_file_error_still_continues(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """If disk write for project allowlist fails, the current tool must still run."""
-    p = tmp_path / "tool_allowlist.json"
-    save_allowlist(p, {"tools": [], "patterns": [], "workers": []})
-    cb = create_user_callback(
-        auto_approve_tools=[],
-        storage_root=tmp_path,
-        allowlist_path=p,
-        persist_allowlist=True,
-        persist_allowlist_session_id=None,
-    )
-    monkeypatch.setattr("agloom_cli.hitl.Prompt.ask", lambda *a, **k: "3")
-
-    def boom_merge(*_a, **_k):
-        raise OSError("disk full")
-
-    monkeypatch.setattr("agloom_cli.hitl.merge_allowlist_file", boom_merge)
-    out = await cb("tool_interrupt_before", "Tool  : read_file\nArgs  : {}")
-    assert out == "continue"
-    data = json.loads(p.read_text(encoding="utf-8"))
-    assert "read_file" not in data["tools"]
-
-
-@pytest.mark.asyncio
 async def test_always_allow_persists_to_session_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Triple-gate choice 3 appends tool to ``sessions/<id>.json`` ``safety.tool_allowlist``."""
     store = tmp_path / ".agloom"
@@ -187,10 +153,6 @@ async def test_always_allow_persists_to_session_json(tmp_path: Path, monkeypatch
     monkeypatch.setattr("agloom_cli.config._cli_storage_dir", store)
     sid = "a" * 32
     cb = create_user_callback(
-        auto_approve_tools=[],
-        storage_root=tmp_path,
-        allowlist_path=None,
-        persist_allowlist=False,
         persist_allowlist_session_id=sid,
     )
     monkeypatch.setattr("agloom_cli.hitl.Prompt.ask", lambda *a, **k: "3")
@@ -200,19 +162,3 @@ async def test_always_allow_persists_to_session_json(tmp_path: Path, monkeypatch
     jpath = store / "sessions" / f"{sid}.json"
     data = json.loads(jpath.read_text(encoding="utf-8"))
     assert "my_tool" in (data.get("safety") or {}).get("tool_allowlist", [])
-
-
-@pytest.mark.asyncio
-async def test_strict_tools_false_unions_yaml_and_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    p = tmp_path / "tool_allowlist.json"
-    save_allowlist(p, {"tools": ["run_shell"], "patterns": [], "workers": []})
-    cb = create_user_callback(
-        auto_approve_tools=["read_file"],
-        storage_root=tmp_path,
-        allowlist_path=p,
-        allowlist_strict_tools=False,
-    )
-    monkeypatch.setattr("agloom_cli.hitl.Prompt.ask", lambda *a, **k: "2")
-
-    assert await cb("tool_interrupt_before", "Tool  : run_shell\nArgs  : {}") == "continue"
-    assert await cb("tool_interrupt_before", "Tool  : read_file\nArgs  : {}") == "continue"

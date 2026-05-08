@@ -1,4 +1,8 @@
-"""Persisted HITL allowlists (tools, patterns, workers) under ``storage_dir()``."""
+"""Standalone JSON helpers for tool/pattern/worker allowlists (tests and ad-hoc tooling).
+
+The **CLI** persists HITL "Always allow" only under ``sessions/<id>.json``; it does not create
+``tool_allowlist.json`` or read ``safety.allowlist_file``.
+"""
 
 from __future__ import annotations
 

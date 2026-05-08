@@ -9,6 +9,8 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 
 from .. import worker as worker_module
+from ..llm_streaming import astream_llm_to_event_queue
+from ..worker import extend_invoke_config_with_event_queue
 from ..logging_utils import get_logger
 from ..models import (
     ExecutionResult,
@@ -124,7 +126,8 @@ async def handle_blackboard(
             )
 
             logger.event(f"[Blackboard] Running KS '{ks_cfg.worker_id}' (round {round_num})")
-            result = await worker_module.run_worker(enriched_cfg, llm, invoke_config=config)
+            merged = extend_invoke_config_with_event_queue(config, agent.get("_event_queue"))
+            result = await worker_module.run_worker(enriched_cfg, llm, invoke_config=merged)
             worker_results.append(result)
             raw_messages.extend(getattr(result, "messages", []))
             steps.append(
@@ -209,15 +212,26 @@ async def handle_blackboard(
     try:
         _timeout = agent.get("llm_timeout", 120.0) if isinstance(agent, dict) else 120.0
         t_synth = time.perf_counter()
-        response = await asyncio.wait_for(
-            llm.ainvoke(synth_input),
-            timeout=_timeout,
-        )
-        raw_messages.extend(synth_input)
-        raw_messages.append(response)
+        event_queue = agent.get("_event_queue")
+        if event_queue is not None:
+            synthesis, last_chunk = await astream_llm_to_event_queue(
+                llm, synth_input, event_queue, timeout=_timeout
+            )
+            raw_messages.extend(synth_input)
+            if last_chunk is not None:
+                raw_messages.append(last_chunk)
+            synthesis = synthesis.strip()
+            synth_usage = _extract_token_usage(last_chunk) if last_chunk else {}
+        else:
+            response = await asyncio.wait_for(
+                llm.ainvoke(synth_input),
+                timeout=_timeout,
+            )
+            raw_messages.extend(synth_input)
+            raw_messages.append(response)
+            synthesis = response.content.strip()
+            synth_usage = _extract_token_usage(response)
         synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
-        synthesis = response.content.strip()
-        synth_usage = _extract_token_usage(response)
         if synth_usage:
             usage = _merge_token_usage(usage, synth_usage)
         steps.append(

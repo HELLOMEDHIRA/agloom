@@ -54,7 +54,10 @@ REACT_MAX_HITL_CYCLES = REACT_RECURSION_LIMIT // 2
 
 _MAX_TOOL_RETRIES = 5
 _RETRY_DELAY = 0.5
-_AINVOKE_TIMEOUT = 120  # cap waits so stuck LLM/tool calls cannot block forever
+# Cap ``ainvoke`` when **L2 HITL is off** — stuck model/tool loops cannot block forever.
+# The HITL path must not use this: ``ainvoke`` then includes time inside ``user_callback``
+# (approve/reject), which may take arbitrarily long.
+_AINVOKE_TIMEOUT = 120
 _STRAY_TOOL_JSON_RETRIES = 3
 
 
@@ -74,6 +77,21 @@ def _langchain_react_middleware(agent: dict, *extra: Any) -> list[Any]:
         chain.append(ReactUserTurnToolChoiceMiddleware())
     chain.extend(extra)
     return chain
+
+
+def _hitl_middleware_extras(agent: dict) -> list[Any]:
+    """L2 HumanApprovalMiddleware instances when ``interrupt_before_tools`` + ``user_callback`` are set."""
+    interrupt_before_tools = agent.get("interrupt_before_tools") or []
+    user_callback = agent.get("user_callback")
+    if not interrupt_before_tools or not user_callback:
+        return []
+    return [
+        HumanApprovalMiddleware(
+            interrupt_before_tools=list(interrupt_before_tools),
+            user_callback=user_callback,
+            agent_name=agent.get("name", "UnifiedAgent"),
+        )
+    ]
 
 
 async def _user_decision_after_tool_use_failed(user_callback: Any, exc: BaseException) -> str:
@@ -112,8 +130,9 @@ REACT_TOOL_DISCIPLINE = """
 
 === FINAL ANSWER — CODING-AGENT CLI ===
 - Never claim tool results (e.g. file contents) until the tool has returned — Groq will reject prose masquerading as a tool call.
+- **Final user-visible text = normal prose only.** Do not lead with pseudo-invocations: no ``left-hand-side -> outcome`` lines where the left side is structured arguments or JSON-like blobs, and no pasting of tool message shapes the runtime would emit. Summarize in sentences; the UI already shows real tool traces.
 - Behave like Cursor / Claude Code in the terminal: **outcome-first**, not a tutorial.
-- If tools already did the work (e.g. write_file, run_shell), the UI shows tool traces. Your **final** message must be **short**: what you did, file paths or command outcomes, errors if any, one optional next step. **Do not** write "Step 1 / Step 2" walkthroughs or explain *how* to do something you already finished with tools.
+- If tools already did the work, the UI shows tool traces. Your **final** message must be **short**: what you did, paths or command outcomes, errors if any, one optional next step. **Do not** write "Step 1 / Step 2" walkthroughs or explain *how* to do something you already finished with tools.
 - Do not repeat long tool arguments, JSON payloads, or full file bodies unless the user explicitly asked to review them.
 - Default length: a few sentences or a tiny bullet list. Go longer only when the user asks for depth, design, or teaching.
 """
@@ -146,23 +165,43 @@ async def handle_react(
     if not tools:
         logger.debug("[React] No tools — direct LLM fallback.")
         t0 = time.perf_counter()
-        resp = await asyncio.wait_for(
-            llm.ainvoke(
-                [
-                    SystemMessage(content=agent["system_prompt"]),
-                    HumanMessage(content=query),
-                ]
-            ),
-            timeout=_AINVOKE_TIMEOUT,
-        )
+        messages = [
+            SystemMessage(content=agent["system_prompt"]),
+            HumanMessage(content=query),
+        ]
+        event_queue = agent.get("_event_queue")
+        if event_queue is not None:
+            eq = event_queue
+            _timeout = float(agent.get("llm_timeout", 120.0))
+            chunks: list[str] = []
+            last_chunk = None
+
+            async def _stream_no_tools() -> None:
+                nonlocal last_chunk
+                async for chunk in llm.astream(messages):
+                    last_chunk = chunk
+                    content = getattr(chunk, "content", "")
+                    if content:
+                        content = content if isinstance(content, str) else str(content)
+                        chunks.append(content)
+                        await eq.put(AgentEvent(type="token", data={"content": content}))
+
+            await asyncio.wait_for(_stream_no_tools(), timeout=_timeout)
+            output = "".join(chunks) or "No output produced."
+            usage = _extract_token_usage(last_chunk) if last_chunk else {}
+            out_messages: list = messages + ([last_chunk] if last_chunk else [])
+        else:
+            resp = await asyncio.wait_for(llm.ainvoke(messages), timeout=_AINVOKE_TIMEOUT)
+            output = resp.content if isinstance(resp.content, str) else str(resp.content)
+            usage = _extract_token_usage(resp)
+            out_messages = messages + [resp]
         dur = round((time.perf_counter() - t0) * 1000, 1)
-        usage = _extract_token_usage(resp)
         steps.append(
             _make_step(
                 StepType.LLM_CALL,
                 "react_fallback_llm",
                 input=query,
-                output=resp.content,
+                output=output,
                 duration_ms=dur,
                 max_length=ml,
             )
@@ -170,17 +209,25 @@ async def handle_react(
         return ExecutionResult(
             pattern_used=PatternType.REACT,
             query=query,
-            output=resp.content,
+            output=output,
             steps_taken=1,
             success=True,
             analysis=analysis,
             steps=steps,
             token_usage=usage,
-            messages=[
-                SystemMessage(content=agent["system_prompt"]),
-                HumanMessage(content=query),
-                resp,
-            ],
+            messages=out_messages,
+        )
+
+    event_queue = agent.get("_event_queue")
+    if event_queue is not None:
+        # CLI / UIs: always drive ReAct with ``astream_events`` so tokens and tool traces are live.
+        # L2 HITL is layered via middleware on the same streaming agent (no ``ainvoke`` hot path).
+        return await _handle_react_streaming(
+            agent=agent,
+            query=query,
+            analysis=analysis,
+            config=config,
+            event_queue=event_queue,
         )
 
     if hitl_active:
@@ -195,16 +242,6 @@ async def handle_react(
             interrupt_before_tools=interrupt_before_tools,
             user_callback=user_callback,
             incoming_config=config,
-        )
-
-    event_queue = agent.get("_event_queue")
-    if event_queue is not None:
-        return await _handle_react_streaming(
-            agent=agent,
-            query=query,
-            analysis=analysis,
-            config=config,
-            event_queue=event_queue,
         )
 
     react_agent = create_agent(
@@ -393,11 +430,14 @@ async def _handle_react_streaming(
     steps: list = (config or {}).get("_steps", [])
     ml = agent.get("max_step_output_length", 0)
 
+    hitl_extras = _hitl_middleware_extras(agent)
+    hitl_active = bool(hitl_extras)
+
     react_agent = create_agent(
         model=llm,
         tools=tools,
         system_prompt=system_prompt,
-        middleware=_langchain_react_middleware(agent),
+        middleware=_langchain_react_middleware(agent, *hitl_extras),
     )
 
     invoke_config = cast(
@@ -490,10 +530,13 @@ async def _handle_react_streaming(
             recovery_state = {
                 "messages": list(msgs) + [HumanMessage(content=_human_message_after_stray_tool_json())]
             }
-            final_response = await asyncio.wait_for(
-                react_agent.ainvoke(recovery_state, config=invoke_config),  # type: ignore[arg-type]
-                timeout=_AINVOKE_TIMEOUT,
-            )
+            if hitl_active:
+                final_response = await react_agent.ainvoke(recovery_state, config=invoke_config)  # type: ignore[arg-type]
+            else:
+                final_response = await asyncio.wait_for(
+                    react_agent.ainvoke(recovery_state, config=invoke_config),  # type: ignore[arg-type]
+                    timeout=_AINVOKE_TIMEOUT,
+                )
             output = _extract_last_ai_message(final_response) or output
             if not output:
                 output = "No output produced."
@@ -556,11 +599,10 @@ async def _handle_react_streaming(
 
 
 async def _emit_react_tool_steps_to_event_queue(agent: dict, tool_steps: list) -> None:
-    """Emit tool_call / tool_result events for plain ``ainvoke`` paths (HITL, stream fallback).
+    """Emit tool_call / tool_result events for ``ainvoke`` paths (non-streaming HITL, stream fallback).
 
-    Without this, the CLI/TUI never sees tool traces when ReAct runs with
-    :class:`~agloom.patterns.middleware.HumanApprovalMiddleware` because that path
-    does not use ``astream_events``.
+    Streaming ReAct + HITL uses ``astream_events`` directly; this backfills the queue when we fall
+    back to ``ainvoke`` or use :func:`_handle_react_hitl`.
     """
     queue = agent.get("_event_queue")
     if not queue:
@@ -599,7 +641,15 @@ async def _handle_react_ainvoke_fallback(
     steps: list = (config or {}).get("_steps", [])
     ml = agent.get("max_step_output_length", 0)
 
-    react_agent = create_agent(model=llm, tools=tools, system_prompt=system_prompt)
+    hitl_extras = _hitl_middleware_extras(agent)
+    hitl_active = bool(hitl_extras)
+
+    react_agent = create_agent(
+        model=llm,
+        tools=tools,
+        system_prompt=system_prompt,
+        middleware=_langchain_react_middleware(agent, *hitl_extras),
+    )
     invoke_config = cast(
         RunnableConfig,  # noqa: TC006
         {**(config or {}), "recursion_limit": REACT_RECURSION_LIMIT},
@@ -608,10 +658,13 @@ async def _handle_react_ainvoke_fallback(
 
     try:
         t0 = time.perf_counter()
-        response = await asyncio.wait_for(
-            react_agent.ainvoke(state, config=invoke_config),
-            timeout=_AINVOKE_TIMEOUT,
-        )
+        if hitl_active:
+            response = await react_agent.ainvoke(state, config=invoke_config)
+        else:
+            response = await asyncio.wait_for(
+                react_agent.ainvoke(state, config=invoke_config),
+                timeout=_AINVOKE_TIMEOUT,
+            )
         dur = round((time.perf_counter() - t0) * 1000, 1)
         output = _extract_last_ai_message(response) or "No output produced."
         usage = _extract_token_usage(response)
@@ -667,7 +720,11 @@ async def _handle_react_hitl(
     user_callback: Any,
     incoming_config: dict | None = None,
 ) -> ExecutionResult:
-    """L2 HITL path — HumanApprovalMiddleware intercepts tool calls inline."""
+    """L2 HITL via ``ainvoke`` when no ``_event_queue`` (library / non-streaming callers).
+
+    The CLI always sets ``_event_queue`` and uses :func:`_handle_react_streaming` with the same
+    middleware so the UI stays on ``astream_events``.
+    """
     approval_middleware = HumanApprovalMiddleware(
         interrupt_before_tools=interrupt_before_tools,
         user_callback=user_callback,
@@ -716,12 +773,11 @@ async def _handle_react_hitl(
         attempt += 1
         silent_in_batch += 1
         try:
-            response = await asyncio.wait_for(
-                react_agent.ainvoke(  # type: ignore[no-matching-overload]
-                    {"messages": messages},
-                    config=invoke_config,
-                ),
-                timeout=_AINVOKE_TIMEOUT,
+            # No outer timeout: HumanApprovalMiddleware may await the CLI/TUI until the user
+            # decides — asyncio.wait_for would raise TimeoutError during an open prompt.
+            response = await react_agent.ainvoke(  # type: ignore[no-matching-overload]
+                {"messages": messages},
+                config=invoke_config,
             )
             msgs = (response or {}).get("messages", [])
             if (

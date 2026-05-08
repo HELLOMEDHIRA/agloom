@@ -5,6 +5,7 @@ import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from ..llm_streaming import astream_llm_to_event_queue
 from ..logging_utils import get_logger
 from ..models import (
     ExecutionResult,
@@ -158,17 +159,31 @@ async def handle_swarm(
     ]
     synthesis_error: str | None = None
     try:
-        synthesis_resp = await asyncio.wait_for(
-            llm.ainvoke(synth_input),
-            timeout=_timeout,
-        )
-        raw_messages.extend(synth_input)
-        raw_messages.append(synthesis_resp)
-        synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
-        synth_usage = _extract_token_usage(synthesis_resp)
-        if synth_usage:
-            usage = _merge_token_usage(usage, synth_usage)
-        synthesis = synthesis_resp.content.strip()
+        event_queue = agent.get("_event_queue")
+        if event_queue is not None:
+            synthesis, last_chunk = await astream_llm_to_event_queue(
+                llm, synth_input, event_queue, timeout=_timeout
+            )
+            raw_messages.extend(synth_input)
+            if last_chunk is not None:
+                raw_messages.append(last_chunk)
+            synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
+            synth_usage = _extract_token_usage(last_chunk) if last_chunk else {}
+            if synth_usage:
+                usage = _merge_token_usage(usage, synth_usage)
+            synthesis = synthesis.strip()
+        else:
+            synthesis_resp = await asyncio.wait_for(
+                llm.ainvoke(synth_input),
+                timeout=_timeout,
+            )
+            raw_messages.extend(synth_input)
+            raw_messages.append(synthesis_resp)
+            synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
+            synth_usage = _extract_token_usage(synthesis_resp)
+            if synth_usage:
+                usage = _merge_token_usage(usage, synth_usage)
+            synthesis = synthesis_resp.content.strip()
     except TimeoutError:
         synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
         synthesis_error = "SynthesisTimeout"

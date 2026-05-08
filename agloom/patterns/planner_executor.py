@@ -5,6 +5,7 @@ import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from ..llm_streaming import astream_llm_to_event_queue
 from ..logging_utils import get_logger
 from ..models import ExecutionResult, PatternType, QueryAnalysis, StepType, WorkerPlan, _make_step, _merge_token_usage
 from ._resolve import resolve_worker_configs
@@ -163,6 +164,15 @@ async def _synthesize(
 
     try:
         _timeout = agent.get("llm_timeout", 120.0)
+        event_queue = agent.get("_event_queue")
+        if event_queue is not None:
+            text, last_chunk = await astream_llm_to_event_queue(
+                agent["llm"], synth_input, event_queue, timeout=_timeout
+            )
+            if last_chunk is not None:
+                llm_messages.append(last_chunk)
+            logger.event(f"[PLANNER_EXECUTOR] Synthesis done — {len(text)} chars.")
+            return text, llm_messages
         resp = await asyncio.wait_for(
             agent["llm"].ainvoke(synth_input),
             timeout=_timeout,

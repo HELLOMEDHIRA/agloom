@@ -3,6 +3,7 @@
 from collections import deque
 
 from .. import worker as worker_module
+from ..worker import extend_invoke_config_with_event_queue
 from ..logging_utils import get_logger
 from ..models import ResolvedWorkerConfig, SignalType, WorkerResult
 from .worker_gates import drain_for_halt, get_signal_queue
@@ -171,7 +172,8 @@ async def run_sequential_workers(
             f"step {idx + 1}/{len(sorted_configs)} "
             f"worker='{config.worker_id}' depends_on={config.depends_on}"
         )
-        result = await worker_module.run_worker(config, llm, invoke_config=invoke_config)
+        merged = extend_invoke_config_with_event_queue(invoke_config, agent.get("_event_queue"))
+        result = await worker_module.run_worker(config, llm, invoke_config=merged)
         results_map[config.worker_id] = result
         ordered_results.append(result)
 

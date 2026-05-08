@@ -641,7 +641,7 @@ class AgentConfig(BaseModel):
         default=120.0, ge=1.0, description="Default timeout (s) for non-structured LLM ainvoke calls"
     )
     classifier_timeout: float = Field(
-        default=30.0, ge=1.0, description="Timeout (s) for the classifier structured call"
+        default=60.0, ge=1.0, description="Timeout (s) for the classifier structured call"
     )
     structured_max_retries: int = Field(
         default=2, ge=0, le=10, description="Max retries inside robust_structured_call()"

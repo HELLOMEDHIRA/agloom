@@ -16,9 +16,6 @@ from agloom_cli.config import (
     tool_allowlist_bypass_sources,
 )
 from agloom_cli.hitl import create_user_callback
-from agloom_cli.hitl_allowlist import save_allowlist
-
-
 def test_tool_allowlist_bypass_sources_session_not_shared_across_ids(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -35,8 +32,8 @@ def test_tool_allowlist_bypass_sources_session_not_shared_across_ids(
         encoding="utf-8",
     )
     cfg: dict = {"safety": {"tool_allowlist": []}}
-    assert tool_allowlist_bypass_sources(cfg, sa, allowlist_path=None)["session_json"] == ["read_file"]
-    assert tool_allowlist_bypass_sources(cfg, sb, allowlist_path=None)["session_json"] == []
+    assert tool_allowlist_bypass_sources(cfg, sa)["session_json"] == ["read_file"]
+    assert tool_allowlist_bypass_sources(cfg, sb)["session_json"] == []
 
 
 def test_build_working_safety_unions_tool_allowlist_from_session_json(
@@ -126,20 +123,15 @@ def test_merge_tool_allowlist_into_session_json_roundtrip(
 
 
 @pytest.mark.asyncio
-async def test_strict_plus_file_still_honors_allowlist_prefill(
+async def test_create_user_callback_prefill_and_auto_both_skip_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    p = tmp_path / "tool_allowlist.json"
-    save_allowlist(p, {"tools": ["run_shell"], "patterns": [], "workers": []})
     cb = create_user_callback(
         auto_approve_tools=["write_file"],
-        yaml_prefill_allow_tools=["read_file"],
-        storage_root=tmp_path,
-        allowlist_path=p,
-        allowlist_strict_tools=True,
+        yaml_prefill_allow_tools=["read_file", "run_shell"],
     )
     monkeypatch.setattr("agloom_cli.hitl.Prompt.ask", lambda *a, **k: "2")
 
     assert await cb("tool_interrupt_before", "Tool  : run_shell\nArgs  : {}") == "continue"
     assert await cb("tool_interrupt_before", "Tool  : read_file\nArgs  : {}") == "continue"
-    assert await cb("tool_interrupt_before", "Tool  : write_file\nArgs  : {}") == "abort"
+    assert await cb("tool_interrupt_before", "Tool  : write_file\nArgs  : {}") == "continue"

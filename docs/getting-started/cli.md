@@ -114,7 +114,7 @@ safety:
   require_approval: true
   # New installs pre-approve harness + load_skill by default; add read-only helpers as needed.
   auto_approve: "read_file,list_directory,get_working_directory,initialize_project,bootstrap_progress,save_progress,get_next_task,update_task,add_task,git_status,git_log,git_commit,git_checkpoint,git_revert_hint,load_skill"
-  # When tool_allowlist.json exists, only its tools apply (yaml auto_approve ignored). Set false to union both.
+  # HITL "Always allow" writes sessions/<id>.json only (no separate allowlist file).
   allowlist_strict_tools: true
 
 session:

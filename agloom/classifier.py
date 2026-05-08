@@ -217,7 +217,7 @@ async def analyze_query(
     tools: list,
     skill_context: str = "",
     *,
-    classifier_timeout: float = 30.0,
+    classifier_timeout: float = 60.0,
     structured_max_retries: int = 2,
     fallback_pattern: PatternType | None = None,
 ) -> QueryAnalysis:
@@ -299,7 +299,11 @@ async def analyze_query(
 
     except Exception as e:
         default_fb = fallback_pattern or (PatternType.REACT if has_tools else PatternType.DIRECT)
-        logger.warning(f"[Classifier] ⚠ Structured output failed ({e}) — falling back to {default_fb.value}.")
+        logger.warning(
+            f"[Classifier] ⚠ Structured output failed ({e}) — falling back to {default_fb.value}. "
+            "If logs show TimeoutError on json_schema/function_calling, increase "
+            "`execution.classifier_timeout` (seconds per attempt; slow models often need 90–120)."
+        )
 
         if default_fb != PatternType.DIRECT:
             return QueryAnalysis(

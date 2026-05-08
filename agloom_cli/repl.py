@@ -242,9 +242,29 @@ def _fmt_elapsed(elapsed_s: float) -> str:
     return f"{m}m{s:02d}s"
 
 
-# Tools whose raw output should appear in the final Answer / transcript when the model
-# only summarizes (common for read_file / grep).
-_TOOL_OUTPUT_MERGE_NAMES = frozenset({"read_file", "grep_files", "list_directory", "search_files"})
+# Tools whose raw output may be merged into the Answer when the stream would otherwise
+# omit useful detail (empty reply, or non-empty but only for “heavy” tools below).
+_TOOL_OUTPUT_MERGE_NAMES = frozenset(
+    {
+        "read_file",
+        "grep_files",
+        "list_directory",
+        "search_files",
+        "write_file",
+        "edit_file",
+    }
+)
+
+# When the model already produced a non-empty Answer, only append ``--- tool output ---``
+# for tools whose payloads are often missing from a short summary. Omitting list_directory /
+# write_file / edit_file here avoids duplicating the same line the model just said.
+_TOOL_OUTPUT_MERGE_WHEN_NONEMPTY_STREAM = frozenset(
+    {
+        "read_file",
+        "grep_files",
+        "search_files",
+    }
+)
 
 
 def append_tool_result_for_transcript(
@@ -265,9 +285,13 @@ def append_tool_result_for_transcript(
 def merge_transcript_with_tool_outputs(stream_plain: str, artifacts: list[tuple[str, str]]) -> str:
     if not artifacts:
         return stream_plain
+    base = stream_plain.rstrip()
+    if base:
+        artifacts = [(n, b) for n, b in artifacts if n in _TOOL_OUTPUT_MERGE_WHEN_NONEMPTY_STREAM]
+    if not artifacts:
+        return stream_plain
     blocks = [f"{n}:\n{body}" for n, body in artifacts]
     extra = "\n\n".join(blocks)
-    base = stream_plain.rstrip()
     if not base:
         return extra
     return f"{base}\n\n--- tool output ---\n\n{extra}"
