@@ -57,6 +57,10 @@ from .events import (
     MetricTokensData,
     PatternClassified,
     PatternClassifiedData,
+    PromptCancelled,
+    PromptCancelledData,
+    PromptRequested,
+    PromptRequestedData,
     SessionClosed,
     SessionClosedData,
     SessionCloseReason,
@@ -64,6 +68,12 @@ from .events import (
     SessionOpenedData,
     SessionResumed,
     SessionResumedData,
+    SkillApplied,
+    SkillAppliedData,
+    SkillLearned,
+    SkillLearnedData,
+    SkillLoaded,
+    SkillLoadedData,
     ThinkingStep,
     ThinkingStepData,
     TokenDelta,
@@ -652,6 +662,114 @@ class SessionEmitter:
                 duration_ms=duration_ms,
                 output_preview=output_preview,
                 error=error,
+            ),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_skill_loaded(
+        self,
+        *,
+        skill_name: str,
+        source: str = "tool",
+        version: str | None = None,
+        body_chars: int | None = None,
+        parent: str | None = None,
+    ) -> SkillLoaded:
+        evt = SkillLoaded(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=SkillLoadedData(
+                skill_name=skill_name,
+                source=source,  # type: ignore[arg-type]
+                version=version,
+                body_chars=body_chars,
+            ),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_skill_applied(
+        self,
+        *,
+        phase: str = "classifier",
+        injected_chars: int = 0,
+        parent: str | None = None,
+    ) -> SkillApplied:
+        evt = SkillApplied(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=SkillAppliedData(
+                phase=phase,  # type: ignore[arg-type]
+                injected_chars=injected_chars,
+            ),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_skill_learned(
+        self,
+        *,
+        skill_name: str,
+        pattern: str | None = None,
+        scope: str | None = None,
+        source: str | None = None,
+        parent: str | None = None,
+    ) -> SkillLearned:
+        evt = SkillLearned(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=SkillLearnedData(
+                skill_name=skill_name,
+                pattern=pattern,
+                scope=scope,
+                source=source,  # type: ignore[arg-type]
+            ),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_prompt_requested(
+        self,
+        *,
+        kind: str = "user_turn",
+        preview: str | None = None,
+        parent: str | None = None,
+    ) -> PromptRequested:
+        evt = PromptRequested(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=PromptRequestedData(
+                kind=kind,  # type: ignore[arg-type]
+                preview=preview,
+            ),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_prompt_cancelled(
+        self,
+        *,
+        reason: str,
+        detail: str | None = None,
+        parent: str | None = None,
+    ) -> PromptCancelled:
+        evt = PromptCancelled(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=PromptCancelledData(
+                reason=reason,  # type: ignore[arg-type]
+                detail=detail,
             ),
         )
         self._write(evt)

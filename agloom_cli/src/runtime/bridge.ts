@@ -15,6 +15,7 @@ import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import type { AGPEvent, AGPCommand } from '../types/agp.js'
+import { parseInboundAGPEventJSON } from '../types/agp.js'
 
 export type BridgeStatus = 'starting' | 'ready' | 'error' | 'exited'
 
@@ -94,7 +95,7 @@ export class AGPBridge extends EventEmitter {
         const trimmed = line.trim()
         if (!trimmed) continue
         try {
-          const evt = JSON.parse(trimmed) as AGPEvent
+          const evt = parseInboundAGPEventJSON(JSON.parse(trimmed))
           this.emit('event', evt)
           if (evt.type === 'session.opened') this.status = 'ready'
         } catch {

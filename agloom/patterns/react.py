@@ -1,6 +1,7 @@
 """ReAct pattern — single agent + tool-calling loop with optional L2 HITL."""
 
 import asyncio
+import json
 import time
 from typing import Any, cast
 
@@ -33,6 +34,19 @@ from .middleware import HumanApprovalMiddleware, ReactUserTurnToolChoiceMiddlewa
 from .react_tool_recovery import (
     exception_indicates_tool_use_failed as _exception_indicates_tool_use_failed,
 )
+
+
+def _tool_input_as_dict(tool_input: Any) -> dict[str, Any]:
+    if isinstance(tool_input, dict):
+        return tool_input
+    if isinstance(tool_input, str):
+        try:
+            parsed = json.loads(tool_input)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return {}
 from .react_tool_recovery import (
     extract_failed_generation_snippet as _extract_failed_generation_snippet,  # re-export for tests / consumers # noqa: F401
 )
@@ -449,6 +463,7 @@ async def _handle_react_streaming(
     t0 = time.perf_counter()
     final_response = None
     _tool_run_ids: dict[str, str] = {}
+    _tool_arg_dicts: dict[str, dict[str, Any]] = {}
 
     try:
         async for event in react_agent.astream_events(state, config=invoke_config, version="v2"):
@@ -466,6 +481,8 @@ async def _handle_react_streaming(
                 run_id = str(event.get("run_id", ""))
                 tool_name = event.get("name", "unknown")
                 tool_input = event.get("data", {}).get("input", {})
+                arg_dict = _tool_input_as_dict(tool_input)
+                _tool_arg_dicts[run_id] = arg_dict
                 _tool_run_ids[run_id] = tool_name
                 if event_queue:
                     await event_queue.put(
@@ -475,6 +492,7 @@ async def _handle_react_streaming(
                                 "id": run_id,
                                 "name": tool_name,
                                 "input": _trunc(str(tool_input), ml),
+                                "args": arg_dict,
                             },
                         )
                     )
@@ -492,6 +510,11 @@ async def _handle_react_streaming(
                 run_id = str(event.get("run_id", ""))
                 tool_name = _tool_run_ids.pop(run_id, event.get("name", "unknown"))
                 tool_output = str(event.get("data", {}).get("output", ""))
+                args_rem = _tool_arg_dicts.pop(run_id, {})
+                skill_name: str | None = None
+                if tool_name == "load_skill":
+                    n = args_rem.get("name")
+                    skill_name = n if isinstance(n, str) else None
                 if event_queue:
                     await event_queue.put(
                         AgentEvent(
@@ -500,6 +523,8 @@ async def _handle_react_streaming(
                                 "id": run_id,
                                 "name": tool_name,
                                 "output": _trunc(tool_output, ml),
+                                "args": args_rem,
+                                **({"skill_name": skill_name} if skill_name else {}),
                             },
                         )
                     )

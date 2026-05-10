@@ -1,8 +1,12 @@
 # Agloom Protocol (AGP) — v1
 
-**Status:** stable (v1). AGP is emitted by **`agloom-runtime serve`** (stdio or WebSocket); **agloom CLI**, web workspace, and other clients consume the same event stream.
+**Status:** **AGP v1 is stable** — the envelope (`v`, `id`, `ts`, `session`, `thread`, `seq`, `type`, `data`) and the event types listed below are implemented in `agloom.protocol` and emitted by **`agloom-runtime serve`** (stdio or WebSocket). **agloom CLI**, the web workspace, and other clients consume the same stream.
 
-AGP is a UI-agnostic, transport-agnostic, event-driven contract between the Python runtime and any frontend. This page is the wire-format reference; see **`agloom/docs/runtime/architecture.md`** for runtime layout.
+New **event types** and optional **payload fields** evolve **additively** (consumers must tolerate unknown `type` values). Domains **`skill.*`** and **`prompt.*`** are part of v1 (see below). A breaking wire change would ship as **`v="2"`**, not under v1.
+
+AGP is UI-agnostic and transport-agnostic. This page is the wire-format reference; see **`agloom/docs/runtime/architecture.md`** for runtime layout.
+
+> **Docs nav:** Older builds labeled this section “experimental”; that referred to early rollout, not the current contract. Treat **v1** as the supported specification.
 
 ---
 
@@ -36,13 +40,13 @@ One JSON object per line (NDJSON over stdio; one frame per WebSocket message whe
 | `type`     | `string`         | yes      | Dotted namespace (`<domain>.<entity>.<phase>`).                          |
 | `data`     | `object`         | yes      | Type-specific payload.                                                  |
 
-**Forward compatibility**: consumers MUST forward unknown `type` values (and unknown fields on `data`) rather than crash. The Pydantic discriminated union (`agloom.protocol.event_adapter`) is closed over Phase-0 types — UIs that need forward-compat parse the envelope first, then dispatch on `type` themselves.
+**Forward compatibility**: consumers MUST forward unknown `type` values (and unknown fields on `data`) rather than crash. The Pydantic discriminated union (`agloom.protocol.event_adapter`) only recognizes the **v1 catalog** below — UIs that must accept future event types should parse the envelope generically, then dispatch on `type` themselves.
 
 ---
 
-## Phase 0 / 0.7 events (this release)
+## Event types (v1 catalog)
 
-All shipped in `agloom.protocol`. Event types covering session lifecycle, execution graph, classification, reasoning, tokens, messages, tool execution, HITL, worker tree, metrics, and errors.
+Implemented in `agloom.protocol.events` — session lifecycle, execution graph, classification, reasoning, tokens, messages, tools, HITL, workers, memory, checkpoints, feedback, metrics, and errors.
 
 ### `session.opened`
 
@@ -125,11 +129,37 @@ Streaming token from the assistant (or a tool, when role=tool). Whitespace MUST 
 
 ### `message.user`
 
-Emitted once per `command.invoke`, immediately after `session.opened`, recording the prompt that triggered the turn. Replay tools rebuild the conversation from this + `message.assistant`.
+Emitted once per `command.invoke`, immediately after `session.opened`, recording the prompt that triggered the turn. Replay tools rebuild the conversation from this + `message.assistant`. The bridge then emits **`prompt.requested`** so observability layers see an explicit “turn accepted” boundary before streaming starts.
 
 ```jsonc
 { "type": "message.user",
   "data": { "content": "Read pyproject.toml", "message_id": "u1" } }
+```
+
+### `prompt.requested`
+
+Emitted once per invocation immediately after `message.user`. Marks that the runtime will stream agent work for this thread (`kind` is currently always `user_turn`). `preview` is a truncated copy of the user text for dashboards.
+
+```jsonc
+{ "type": "prompt.requested",
+  "data": { "kind": "user_turn", "preview": "Read pyproject.toml" } }
+```
+
+### `prompt.cancelled`
+
+Emitted when an invocation ends early before a normal assistant completion — immediately before the matching `session.closed` on that invocation’s emitter.
+
+| `reason`        | When |
+| --------------- | ---- |
+| `user_aborted`  | `command.cancel` (or targeted cancellation) — user stopped the turn. `detail` is typically `invocation_cancelled`. |
+| `shutdown`      | Process/WebSocket teardown or `command.runtime.shutdown` — runtime cancelled in-flight tasks. `detail` is typically `runtime_shutdown`. |
+
+```jsonc
+{ "type": "prompt.cancelled",
+  "data": { "reason": "user_aborted", "detail": "invocation_cancelled" } }
+
+{ "type": "prompt.cancelled",
+  "data": { "reason": "shutdown", "detail": "runtime_shutdown" } }
 ```
 
 ### `message.assistant`
@@ -139,6 +169,33 @@ Final assistant message for a turn. Carries the same content the UI just streame
 ```jsonc
 { "type": "message.assistant",
   "data": { "content": "Hello, world!", "message_id": "m1", "pattern": "REACT" } }
+```
+
+### `skill.loaded`
+
+Emitted when the agent successfully loads a skill body via the `load_skill` tool (after `tool.call.result` for that tool).
+
+```jsonc
+{ "type": "skill.loaded",
+  "data": { "skill_name": "lint_python", "source": "tool", "body_chars": 2048 } }
+```
+
+### `skill.applied`
+
+Emitted when skill-related context is injected into the classifier turn (non-empty skill/delegation catalogue before `analyze_query`).
+
+```jsonc
+{ "type": "skill.applied",
+  "data": { "phase": "classifier", "injected_chars": 420 } }
+```
+
+### `skill.learned`
+
+Emitted when a new skill is persisted: auto-seed bootstrap, on-demand generation after a successful run, or post-run `SkillLearner` extraction.
+
+```jsonc
+{ "type": "skill.learned",
+  "data": { "skill_name": "deploy_checklist", "pattern": "react", "scope": "global", "source": "post_run" } }
 ```
 
 ### `tool.call.start`
@@ -367,14 +424,13 @@ Emitted exactly once at the end. `reason` is `completed | user_aborted | error |
 
 ## Roadmap (additive — no schema bumps required)
 
-These domains are reserved for future phases:
+Already shipped (**v1**): `session.*`, `graph.*`, `pattern.*`, `thinking.*`, `token.*`, `message.*`, **`prompt.*`**, **`skill.*`**, `tool.*`, `hitl.*`, `worker.*`, `memory.*`, `checkpoint.*`, `feedback.*`, `metric.*`, `error.*`.
 
-| Domain         | Examples                                                        |
-| -------------- | --------------------------------------------------------------- |
-| `skill.*`      | `skill.loaded`, `skill.applied`, `skill.learned`                |
-| `prompt.*`     | `prompt.requested`, `prompt.cancelled`                          |
+Reserved namespaces for future events (not emitted yet): e.g. richer **`prompt.*`** phases (template assembly), **`skill.*`** revision events — follow the same dotted `type` convention and additive payload rules.
 
-Already shipped (v1): `session.*`, `graph.*`, `pattern.*`, `thinking.*`, `token.*`, `message.*`, `tool.*`, `hitl.*`, `worker.*`, `memory.*`, `checkpoint.*`, `feedback.*`, `metric.*`, `error.*`.
+### Machine-readable schemas
+
+`python -m agloom.protocol.schema --out agp-schema.json` exports **events** (`oneOf` at the root) plus an auxiliary **`agp_commands`** object describing inbound **`command.*`** payloads (merged into the same file’s `$defs`).
 
 ---
 
@@ -458,6 +514,17 @@ Reconnect to an existing session. The runtime emits `session.resumed` and, when 
   "data": { "thread": "thread_xyz", "from_seq": 5 } }
 ```
 
+### `command.snapshot.request`
+
+Request a **manual LangGraph checkpoint**; the runtime emits `checkpoint.saved` when it succeeds. The agent must have been created with a **`checkpointer`** — otherwise the runtime logs to stderr and skips emission.
+
+```jsonc
+{ "type": "command.snapshot.request",
+  "data": { "thread": "thread_xyz", "label": "manual-save" } }
+```
+
+`thread` and `label` are optional (`label` is stored as checkpoint metadata when supported).
+
 ### `command.runtime.shutdown`
 
 Graceful exit. Cancels in-flight invocations, resolves outstanding HITL gates as `cancelled`, emits `session.closed(reason="shutdown")`, and exits.
@@ -465,8 +532,6 @@ Graceful exit. Cancels in-flight invocations, resolves outstanding HITL gates as
 ```jsonc
 { "type": "command.runtime.shutdown" }
 ```
-
-Future commands (Phase 1+): `command.snapshot.request` (manual snapshots without a pending turn).
 
 ---
 

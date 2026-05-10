@@ -1,5 +1,219 @@
 {
   "$defs": {
+    "CheckpointRestored": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "checkpoint.restored",
+          "default": "checkpoint.restored",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CheckpointRestoredData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "CheckpointRestored",
+      "type": "object"
+    },
+    "CheckpointRestoredData": {
+      "additionalProperties": true,
+      "description": "Emitted when the runtime detects and resumes from an existing LangGraph checkpoint.\n\n``resumed_from_run_id`` identifies the previous run that created the checkpoint.",
+      "properties": {
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "resumed_from_run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resumed From Run Id"
+        }
+      },
+      "required": [
+        "thread"
+      ],
+      "title": "CheckpointRestoredData",
+      "type": "object"
+    },
+    "CheckpointSaved": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "checkpoint.saved",
+          "default": "checkpoint.saved",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CheckpointSavedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "CheckpointSaved",
+      "type": "object"
+    },
+    "CheckpointSavedData": {
+      "additionalProperties": true,
+      "description": "A LangGraph checkpoint was successfully persisted.\n\nEmitted after every successful ``_save_checkpoint`` call in ``run_fresh``.\n``label`` is an optional human-readable tag from ``command.snapshot.request``.\n``run_id`` identifies the agent run that produced this checkpoint.",
+      "properties": {
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        }
+      },
+      "required": [
+        "thread"
+      ],
+      "title": "CheckpointSavedData",
+      "type": "object"
+    },
     "ErrorData": {
       "additionalProperties": true,
       "description": "A runtime error surfaced to the frontend. ``fatal`` kills the session; ``transient`` does\nnot (e.g. a tool retry, a rate-limit backoff).",
@@ -199,6 +413,373 @@
         "data"
       ],
       "title": "ErrorTransient",
+      "type": "object"
+    },
+    "FeedbackScored": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "feedback.scored",
+          "default": "feedback.scored",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/FeedbackScoredData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "FeedbackScored",
+      "type": "object"
+    },
+    "FeedbackScoredData": {
+      "additionalProperties": true,
+      "description": "A user submitted feedback for a completed turn.\n\n``run_id`` correlates to ``message.assistant.run_id``.\n``rating`` is a string token (``\"positive\"`` / ``\"negative\"`` / numeric).\n``comment`` and ``correct`` are optional free-text elaboration.",
+      "properties": {
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "rating": {
+          "title": "Rating",
+          "type": "string"
+        },
+        "comment": {
+          "default": "",
+          "title": "Comment",
+          "type": "string"
+        },
+        "correct": {
+          "default": "",
+          "title": "Correct",
+          "type": "string"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "run_id",
+        "rating"
+      ],
+      "title": "FeedbackScoredData",
+      "type": "object"
+    },
+    "GraphNodeEnter": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "graph.node.enter",
+          "default": "graph.node.enter",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/GraphNodeEnterData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "GraphNodeEnter",
+      "type": "object"
+    },
+    "GraphNodeEnterData": {
+      "additionalProperties": true,
+      "description": "A LangGraph (or agloom pattern) node has started executing.\n\n``node`` is the node name (e.g. ``\"classify\"``, ``\"react\"``, ``\"synthesize\"``).\n``pattern`` identifies which of the 9 execution patterns owns the node.\n``input_preview`` is an optional truncated preview of the node's input for\nthe execution-DAG pane.",
+      "properties": {
+        "node": {
+          "title": "Node",
+          "type": "string"
+        },
+        "pattern": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pattern"
+        },
+        "input_preview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Preview"
+        }
+      },
+      "required": [
+        "node"
+      ],
+      "title": "GraphNodeEnterData",
+      "type": "object"
+    },
+    "GraphNodeExit": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "graph.node.exit",
+          "default": "graph.node.exit",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/GraphNodeExitData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "GraphNodeExit",
+      "type": "object"
+    },
+    "GraphNodeExitData": {
+      "additionalProperties": true,
+      "description": "A LangGraph (or agloom pattern) node has finished.\n\n``parent`` SHOULD be the matching ``graph.node.enter`` event id for\nlatency-attribution on execution-DAG visualisations.",
+      "properties": {
+        "node": {
+          "title": "Node",
+          "type": "string"
+        },
+        "pattern": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pattern"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "output_preview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Preview"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "required": [
+        "node"
+      ],
+      "title": "GraphNodeExitData",
       "type": "object"
     },
     "HITLAllowlisted": {
@@ -710,6 +1291,377 @@
       "title": "HITLRequestData",
       "type": "object"
     },
+    "MemoryLtRecall": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "memory.lt.recall",
+          "default": "memory.lt.recall",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/MemoryLtRecallData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "MemoryLtRecall",
+      "type": "object"
+    },
+    "MemoryLtRecallData": {
+      "additionalProperties": true,
+      "description": "Long-term memory was searched to build the query context.\n\n``hits`` is the number of results injected. ``namespace`` is the LT namespace.",
+      "properties": {
+        "namespace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Namespace"
+        },
+        "query_preview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query Preview"
+        },
+        "hits": {
+          "default": 0,
+          "title": "Hits",
+          "type": "integer"
+        },
+        "injected_chars": {
+          "default": 0,
+          "title": "Injected Chars",
+          "type": "integer"
+        }
+      },
+      "title": "MemoryLtRecallData",
+      "type": "object"
+    },
+    "MemoryLtStore": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "memory.lt.store",
+          "default": "memory.lt.store",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/MemoryLtStoreData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "MemoryLtStore",
+      "type": "object"
+    },
+    "MemoryLtStoreData": {
+      "additionalProperties": true,
+      "description": "A fact was persisted into long-term memory.\n\n``key`` is the storage key; ``namespace`` is the LT namespace.",
+      "properties": {
+        "namespace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Namespace"
+        },
+        "key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key"
+        },
+        "content_preview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Preview"
+        }
+      },
+      "title": "MemoryLtStoreData",
+      "type": "object"
+    },
+    "MemorySessionWrite": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "memory.session.write",
+          "default": "memory.session.write",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/MemorySessionWriteData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "MemorySessionWrite",
+      "type": "object"
+    },
+    "MemorySessionWriteData": {
+      "additionalProperties": true,
+      "description": "A turn was persisted into session (short-term) memory.\n\n``turn_count`` is the number of turns now stored for this thread.\n``query_preview`` and ``output_preview`` are truncated to 200 chars.",
+      "properties": {
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "query_preview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query Preview"
+        },
+        "output_preview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Preview"
+        },
+        "turn_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turn Count"
+        }
+      },
+      "required": [
+        "thread"
+      ],
+      "title": "MemorySessionWriteData",
+      "type": "object"
+    },
     "MessageAssistant": {
       "additionalProperties": false,
       "properties": {
@@ -802,6 +1754,18 @@
           ],
           "default": null,
           "title": "Message Id"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
         },
         "pattern": {
           "anyOf": [
@@ -1317,6 +2281,211 @@
       "title": "PatternClassifiedData",
       "type": "object"
     },
+    "PromptCancelled": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "prompt.cancelled",
+          "default": "prompt.cancelled",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/PromptCancelledData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "PromptCancelled",
+      "type": "object"
+    },
+    "PromptCancelledData": {
+      "additionalProperties": true,
+      "description": "The in-flight user turn will not produce a normal assistant completion.",
+      "properties": {
+        "reason": {
+          "enum": [
+            "user_aborted",
+            "shutdown"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "title": "PromptCancelledData",
+      "type": "object"
+    },
+    "PromptRequested": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "prompt.requested",
+          "default": "prompt.requested",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/PromptRequestedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "PromptRequested",
+      "type": "object"
+    },
+    "PromptRequestedData": {
+      "additionalProperties": true,
+      "description": "The runtime accepted a user turn and will stream agent work for this thread.",
+      "properties": {
+        "kind": {
+          "const": "user_turn",
+          "default": "user_turn",
+          "title": "Kind",
+          "type": "string"
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Preview"
+        }
+      },
+      "title": "PromptRequestedData",
+      "type": "object"
+    },
     "SessionClosed": {
       "additionalProperties": false,
       "properties": {
@@ -1533,6 +2702,483 @@
         "protocol_version"
       ],
       "title": "SessionOpenedData",
+      "type": "object"
+    },
+    "SessionResumed": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "session.resumed",
+          "default": "session.resumed",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/SessionResumedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "SessionResumed",
+      "type": "object"
+    },
+    "SessionResumedData": {
+      "additionalProperties": true,
+      "description": "A client has reconnected to an existing session.\n\nEmitted instead of ``session.opened`` when the runtime detects a known\n``thread_id`` (LangGraph checkpoint exists) or when a ``command.session.resume``\nis received.  ``resumed_from_thread`` is the thread the client was previously\nconnected to.  ``replayed_from_seq`` is the first sequence number replayed from\nthe :class:`~agloom.protocol.store.EventStore` (absent when no replay was done).",
+      "properties": {
+        "runtime_version": {
+          "title": "Runtime Version",
+          "type": "string"
+        },
+        "protocol_version": {
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        },
+        "resumed_from_thread": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resumed From Thread"
+        },
+        "replayed_from_seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Replayed From Seq"
+        }
+      },
+      "required": [
+        "runtime_version",
+        "protocol_version"
+      ],
+      "title": "SessionResumedData",
+      "type": "object"
+    },
+    "SkillApplied": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "skill.applied",
+          "default": "skill.applied",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/SkillAppliedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "SkillApplied",
+      "type": "object"
+    },
+    "SkillAppliedData": {
+      "additionalProperties": true,
+      "description": "Skill-related context was injected into the model prompt (pre-classify catalogue).",
+      "properties": {
+        "phase": {
+          "default": "classifier",
+          "enum": [
+            "classifier",
+            "worker"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "injected_chars": {
+          "default": 0,
+          "title": "Injected Chars",
+          "type": "integer"
+        }
+      },
+      "title": "SkillAppliedData",
+      "type": "object"
+    },
+    "SkillLearned": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "skill.learned",
+          "default": "skill.learned",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/SkillLearnedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "SkillLearned",
+      "type": "object"
+    },
+    "SkillLearnedData": {
+      "additionalProperties": true,
+      "description": "A new or updated skill was persisted to the registry.",
+      "properties": {
+        "skill_name": {
+          "title": "Skill Name",
+          "type": "string"
+        },
+        "pattern": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pattern"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "enum": [
+                "seed",
+                "on_demand",
+                "post_run"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        }
+      },
+      "required": [
+        "skill_name"
+      ],
+      "title": "SkillLearnedData",
+      "type": "object"
+    },
+    "SkillLoaded": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "skill.loaded",
+          "default": "skill.loaded",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/SkillLoadedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "SkillLoaded",
+      "type": "object"
+    },
+    "SkillLoadedData": {
+      "additionalProperties": true,
+      "description": "A skill's full body was loaded (typically via the ``load_skill`` tool).",
+      "properties": {
+        "skill_name": {
+          "title": "Skill Name",
+          "type": "string"
+        },
+        "source": {
+          "default": "tool",
+          "enum": [
+            "tool",
+            "disk",
+            "registry",
+            "seed",
+            "on_demand",
+            "post_run"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        },
+        "body_chars": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Body Chars"
+        }
+      },
+      "required": [
+        "skill_name"
+      ],
+      "title": "SkillLoadedData",
       "type": "object"
     },
     "ThinkingStep": {
@@ -2504,23 +4150,474 @@
       ],
       "title": "WorkerSpawnedData",
       "type": "object"
+    },
+    "CommandCancel": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.cancel",
+          "default": "command.cancel",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandCancelData"
+        }
+      },
+      "title": "CommandCancel",
+      "type": "object"
+    },
+    "CommandCancelData": {
+      "additionalProperties": true,
+      "description": "Cancel one (or all) in-flight invocations.\n\nWhen ``thread`` is supplied, only the matching invocation is cancelled.\nWhen absent, all running invocations on this session are cancelled.\nCancellation produces ``session.closed(reason=\"user_aborted\")`` on the wire.",
+      "properties": {
+        "thread": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread"
+        }
+      },
+      "title": "CommandCancelData",
+      "type": "object"
+    },
+    "CommandFeedback": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.feedback",
+          "default": "command.feedback",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandFeedbackData"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "CommandFeedback",
+      "type": "object"
+    },
+    "CommandFeedbackData": {
+      "additionalProperties": true,
+      "description": "Submit user feedback for a completed turn.\n\n``run_id`` identifies the agent invocation to rate (from ``message.assistant.run_id``).\n``rating`` is a string token: ``\"positive\"`` / ``\"negative\"`` / ``\"neutral\"`` or a numeric\nstring (``\"5\"``).  ``comment`` and ``correct`` carry free-text elaboration.\n``metadata`` is an optional pass-through dict stored alongside the rating.",
+      "properties": {
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "rating": {
+          "title": "Rating",
+          "type": "string"
+        },
+        "comment": {
+          "default": "",
+          "title": "Comment",
+          "type": "string"
+        },
+        "correct": {
+          "default": "",
+          "title": "Correct",
+          "type": "string"
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Metadata"
+        }
+      },
+      "required": [
+        "run_id",
+        "rating"
+      ],
+      "title": "CommandFeedbackData",
+      "type": "object"
+    },
+    "CommandHITLRespond": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.hitl.respond",
+          "default": "command.hitl.respond",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandHITLRespondData"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "CommandHITLRespond",
+      "type": "object"
+    },
+    "CommandHITLRespondData": {
+      "additionalProperties": true,
+      "description": "Resolve a pending ``hitl.request``.\n\n``decision`` must match the options listed in the original ``hitl.request``\n(e.g. ``accept``/``reject``/``allowlist`` for tool gates).  Unknown values\nnormalise to ``reject`` \u2014 the runtime never auto-approves on bad input.\n``text`` carries a free-text answer for ``clarification`` kind gates.",
+      "properties": {
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "decision": {
+          "default": "reject",
+          "title": "Decision",
+          "type": "string"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        },
+        "actor": {
+          "default": "user",
+          "title": "Actor",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id"
+      ],
+      "title": "CommandHITLRespondData",
+      "type": "object"
+    },
+    "CommandInvoke": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.invoke",
+          "default": "command.invoke",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandInvokeData"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "CommandInvoke",
+      "type": "object"
+    },
+    "CommandInvokeData": {
+      "additionalProperties": true,
+      "description": "Start a new agent turn. ``thread`` is optional \u2014 the runtime mints one when absent.",
+      "properties": {
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread"
+        },
+        "user_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User Id"
+        },
+        "context": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context"
+        }
+      },
+      "required": [
+        "prompt"
+      ],
+      "title": "CommandInvokeData",
+      "type": "object"
+    },
+    "CommandRuntimeShutdown": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.runtime.shutdown",
+          "default": "command.runtime.shutdown",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandRuntimeShutdownData"
+        }
+      },
+      "title": "CommandRuntimeShutdown",
+      "type": "object"
+    },
+    "CommandRuntimeShutdownData": {
+      "additionalProperties": true,
+      "description": "Graceful exit. Cancels in-flight invocations, resolves pending HITL gates\nas ``cancelled``, emits ``session.closed(reason=\"shutdown\")``, and exits.",
+      "properties": {},
+      "title": "CommandRuntimeShutdownData",
+      "type": "object"
+    },
+    "CommandSessionResume": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.session.resume",
+          "default": "command.session.resume",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandSessionResumeData"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "CommandSessionResume",
+      "type": "object"
+    },
+    "CommandSessionResumeData": {
+      "additionalProperties": true,
+      "description": "Reconnect to an existing session.\n\nThe runtime emits ``session.resumed`` (not ``session.opened``) and replays\nany buffered events since ``from_seq`` so the client catches up.  When\n``from_seq`` is absent the runtime only emits ``session.resumed`` without\nreplaying past events.",
+      "properties": {
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "from_seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "From Seq"
+        }
+      },
+      "required": [
+        "thread"
+      ],
+      "title": "CommandSessionResumeData",
+      "type": "object"
+    },
+    "CommandSnapshotRequest": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.snapshot.request",
+          "default": "command.snapshot.request",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandSnapshotRequestData"
+        }
+      },
+      "title": "CommandSnapshotRequest",
+      "type": "object"
+    },
+    "CommandSnapshotRequestData": {
+      "additionalProperties": true,
+      "description": "Ask the runtime to save a LangGraph checkpoint and emit ``checkpoint.saved``.\n\n``thread`` identifies which conversation thread to snapshot. When absent, the most\nrecently active thread on this session is used. ``label`` is a human-readable tag\nstored in the checkpoint metadata.",
+      "properties": {
+        "thread": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        }
+      },
+      "title": "CommandSnapshotRequestData",
+      "type": "object"
+    },
+    "CommandWorkerAssign": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.worker.assign",
+          "default": "command.worker.assign",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandWorkerAssignData"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "CommandWorkerAssign",
+      "type": "object"
+    },
+    "CommandWorkerAssignData": {
+      "additionalProperties": true,
+      "description": "Assign a task to a worker.\n\nIn Phase 1 (single-process) the runtime spawns an in-process agent and maps\nresults back onto the session via ``worker.*`` events. In Phase 2 (distributed)\nthis command routes to a remote worker node identified by ``worker_id``; the\nnode emits results back through the same AGP session.\n\n``parent_thread`` is the supervisor's thread id \u2014 used to correlate worker\nevents to the originating invocation when multiple invocations run concurrently.",
+      "properties": {
+        "worker_id": {
+          "title": "Worker Id",
+          "type": "string"
+        },
+        "task": {
+          "title": "Task",
+          "type": "string"
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread"
+        },
+        "parent_thread": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Thread"
+        },
+        "pattern": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pattern"
+        },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tools",
+          "type": "array"
+        },
+        "context": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context"
+        }
+      },
+      "required": [
+        "worker_id",
+        "task"
+      ],
+      "title": "CommandWorkerAssignData",
+      "type": "object"
     }
   },
   "discriminator": {
     "mapping": {
+      "checkpoint.restored": "#/$defs/CheckpointRestored",
+      "checkpoint.saved": "#/$defs/CheckpointSaved",
       "error.fatal": "#/$defs/ErrorFatal",
       "error.transient": "#/$defs/ErrorTransient",
+      "feedback.scored": "#/$defs/FeedbackScored",
+      "graph.node.enter": "#/$defs/GraphNodeEnter",
+      "graph.node.exit": "#/$defs/GraphNodeExit",
       "hitl.allowlisted": "#/$defs/HITLAllowlisted",
       "hitl.denied": "#/$defs/HITLDenied",
       "hitl.granted": "#/$defs/HITLGranted",
       "hitl.request": "#/$defs/HITLRequest",
+      "memory.lt.recall": "#/$defs/MemoryLtRecall",
+      "memory.lt.store": "#/$defs/MemoryLtStore",
+      "memory.session.write": "#/$defs/MemorySessionWrite",
       "message.assistant": "#/$defs/MessageAssistant",
       "message.user": "#/$defs/MessageUser",
       "metric.cost": "#/$defs/MetricCost",
       "metric.tokens": "#/$defs/MetricTokens",
       "pattern.classified": "#/$defs/PatternClassified",
+      "prompt.cancelled": "#/$defs/PromptCancelled",
+      "prompt.requested": "#/$defs/PromptRequested",
       "session.closed": "#/$defs/SessionClosed",
       "session.opened": "#/$defs/SessionOpened",
+      "session.resumed": "#/$defs/SessionResumed",
+      "skill.applied": "#/$defs/SkillApplied",
+      "skill.learned": "#/$defs/SkillLearned",
+      "skill.loaded": "#/$defs/SkillLoaded",
       "thinking.step": "#/$defs/ThinkingStep",
       "token.delta": "#/$defs/TokenDelta",
       "tool.call.error": "#/$defs/ToolCallError",
@@ -2535,6 +4632,9 @@
   "oneOf": [
     {
       "$ref": "#/$defs/SessionOpened"
+    },
+    {
+      "$ref": "#/$defs/SessionResumed"
     },
     {
       "$ref": "#/$defs/PatternClassified"
@@ -2582,6 +4682,45 @@
       "$ref": "#/$defs/WorkerFailed"
     },
     {
+      "$ref": "#/$defs/GraphNodeEnter"
+    },
+    {
+      "$ref": "#/$defs/GraphNodeExit"
+    },
+    {
+      "$ref": "#/$defs/SkillLoaded"
+    },
+    {
+      "$ref": "#/$defs/SkillApplied"
+    },
+    {
+      "$ref": "#/$defs/SkillLearned"
+    },
+    {
+      "$ref": "#/$defs/PromptRequested"
+    },
+    {
+      "$ref": "#/$defs/PromptCancelled"
+    },
+    {
+      "$ref": "#/$defs/MemorySessionWrite"
+    },
+    {
+      "$ref": "#/$defs/MemoryLtRecall"
+    },
+    {
+      "$ref": "#/$defs/MemoryLtStore"
+    },
+    {
+      "$ref": "#/$defs/CheckpointSaved"
+    },
+    {
+      "$ref": "#/$defs/CheckpointRestored"
+    },
+    {
+      "$ref": "#/$defs/FeedbackScored"
+    },
+    {
       "$ref": "#/$defs/MetricTokens"
     },
     {
@@ -2597,6 +4736,49 @@
       "$ref": "#/$defs/SessionClosed"
     }
   ],
+  "agp_commands": {
+    "title": "AGP inbound commands",
+    "description": "Typed JSON objects sent on the NDJSON stream from client to runtime \u2014 discriminated by top-level ``type`` (``command.*``). No AGP envelope fields.",
+    "discriminator": {
+      "mapping": {
+        "command.cancel": "#/$defs/CommandCancel",
+        "command.feedback": "#/$defs/CommandFeedback",
+        "command.hitl.respond": "#/$defs/CommandHITLRespond",
+        "command.invoke": "#/$defs/CommandInvoke",
+        "command.runtime.shutdown": "#/$defs/CommandRuntimeShutdown",
+        "command.session.resume": "#/$defs/CommandSessionResume",
+        "command.snapshot.request": "#/$defs/CommandSnapshotRequest",
+        "command.worker.assign": "#/$defs/CommandWorkerAssign"
+      },
+      "propertyName": "type"
+    },
+    "oneOf": [
+      {
+        "$ref": "#/$defs/CommandInvoke"
+      },
+      {
+        "$ref": "#/$defs/CommandCancel"
+      },
+      {
+        "$ref": "#/$defs/CommandHITLRespond"
+      },
+      {
+        "$ref": "#/$defs/CommandRuntimeShutdown"
+      },
+      {
+        "$ref": "#/$defs/CommandWorkerAssign"
+      },
+      {
+        "$ref": "#/$defs/CommandSessionResume"
+      },
+      {
+        "$ref": "#/$defs/CommandFeedback"
+      },
+      {
+        "$ref": "#/$defs/CommandSnapshotRequest"
+      }
+    ]
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AGP Event",
   "description": "Agloom Protocol (AGP) v1 \u2014 discriminated union over all known event types. Parse with the 'type' field as the discriminator. Unknown 'type' values MUST be forwarded rather than rejected (forward-compat rule)."

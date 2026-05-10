@@ -127,6 +127,11 @@ function summarise(evt: AGPEvent): string {
     case 'graph.node.enter':  return `graph: enter ${evt.data.node}`
     case 'graph.node.exit':   return `graph: exit ${evt.data.node} (${evt.data.duration_ms ?? 0}ms)`
     case 'checkpoint.saved':  return `checkpoint saved (thread=${evt.data.thread})`
+    case 'skill.loaded':        return `skill loaded: ${evt.data.skill_name}`
+    case 'skill.applied':       return `skill applied (${evt.data.phase ?? '?'}) ${evt.data.injected_chars ?? 0} chars`
+    case 'skill.learned':       return `skill learned: ${evt.data.skill_name}`
+    case 'prompt.requested':    return `prompt requested (${evt.data.preview?.slice(0, 40) ?? ''})`
+    case 'prompt.cancelled':    return `prompt cancelled (${evt.data.reason})`
     case 'error.fatal':       return `fatal: ${evt.data.message}`
     case 'error.transient':   return `transient: ${evt.data.message}`
     default:                  return evt.type

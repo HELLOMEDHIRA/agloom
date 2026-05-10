@@ -143,6 +143,7 @@ async def _session_loop(ws: Any, *, agent_factory: Any, store: EventStore | None
                             prompt=cmd.data.prompt,
                             thread=thread,
                             emitter=inv_emitter,
+                            hitl_bridge=hitl_bridge,
                         ),
                         name=f"invoke-{thread}",
                     )
@@ -153,10 +154,12 @@ async def _session_loop(ws: Any, *, agent_factory: Any, store: EventStore | None
                     if cmd.data.thread:
                         task_to_cancel = _tasks.get(cmd.data.thread)
                         if task_to_cancel and not task_to_cancel.done():
+                            hitl_bridge.prepare_invocation_cancel(task_to_cancel, reason="user_aborted")
                             task_to_cancel.cancel()
                     else:
                         for t in list(_tasks.values()):
                             if not t.done():
+                                hitl_bridge.prepare_invocation_cancel(t, reason="user_aborted")
                                 t.cancel()
 
                 elif isinstance(cmd, CommandHITLRespond):
@@ -189,6 +192,7 @@ async def _session_loop(ws: Any, *, agent_factory: Any, store: EventStore | None
                             prompt=cmd.data.task,
                             thread=wthread,
                             emitter=inv_emitter_w,
+                            hitl_bridge=hitl_bridge,
                         ),
                         name=f"worker-{cmd.data.worker_id}-{wthread}",
                     )
@@ -198,6 +202,7 @@ async def _session_loop(ws: Any, *, agent_factory: Any, store: EventStore | None
                 elif isinstance(cmd, CommandRuntimeShutdown):
                     for t in list(_tasks.values()):
                         if not t.done():
+                            hitl_bridge.prepare_invocation_cancel(t, reason="shutdown")
                             t.cancel()
                     emitter.close(reason="shutdown")
                     break
@@ -207,6 +212,7 @@ async def _session_loop(ws: Any, *, agent_factory: Any, store: EventStore | None
         finally:
             for t in list(_tasks.values()):
                 if not t.done():
+                    hitl_bridge.prepare_invocation_cancel(t, reason="shutdown")
                     t.cancel()
             if _tasks:
                 await asyncio.gather(*_tasks.values(), return_exceptions=True)

@@ -16,7 +16,10 @@ from agloom.protocol import (
     MessageUser,
     MetricTokens,
     PatternClassified,
+    PromptCancelled,
+    PromptRequested,
     SessionClosed,
+    SessionEmitter,
     SessionOpened,
     ThinkingStep,
     TokenDelta,
@@ -29,6 +32,8 @@ from agloom.protocol import (
     event_adapter,
 )
 from agloom.runtime import run_invocation_to_writer
+from agloom.runtime.bridge import run_invocation
+from agloom.runtime.hitl import HITLBridge
 from agloom.runtime.translator import translate
 
 # ── translator unit tests ────────────────────────────────────────────────────
@@ -92,6 +97,50 @@ def test_translate_done_emits_message_assistant() -> None:
     ]
 
 
+def test_translate_skill_context_emits_skill_applied() -> None:
+    em = _CaptureEmitter()
+    translate(
+        AgentEvent(type="skill_context", data={"phase": "classifier", "injected_chars": 120}),
+        em,  # type: ignore[arg-type]
+    )
+    assert em.calls == [("emit_skill_applied", {"phase": "classifier", "injected_chars": 120})]
+
+
+def test_translate_skill_learned_emits_skill_learned() -> None:
+    em = _CaptureEmitter()
+    translate(
+        AgentEvent(
+            type="skill_learned",
+            data={"skill_name": "foo_bar", "pattern": "react", "scope": "global", "source": "post_run"},
+        ),
+        em,  # type: ignore[arg-type]
+    )
+    assert em.calls == [
+        (
+            "emit_skill_learned",
+            {"skill_name": "foo_bar", "pattern": "react", "scope": "global", "source": "post_run"},
+        )
+    ]
+
+
+def test_translate_tool_result_load_skill_emits_skill_loaded() -> None:
+    em = _CaptureEmitter()
+    translate(
+        AgentEvent(
+            type="tool_result",
+            data={
+                "name": "load_skill",
+                "id": "tc_1",
+                "skill_name": "my_skill",
+                "output": "body text here",
+            },
+        ),
+        em,  # type: ignore[arg-type]
+    )
+    assert [c[0] for c in em.calls] == ["emit_tool_call_result", "emit_skill_loaded"]
+    assert em.calls[-1] == ("emit_skill_loaded", {"skill_name": "my_skill", "source": "tool", "body_chars": 14})
+
+
 def test_translate_unknown_event_forwarded_as_thinking() -> None:
     """Forward-compat: unknown ``AgentEvent.type`` strings must surface as ``thinking.step``."""
     em = _CaptureEmitter()
@@ -148,7 +197,7 @@ def _read_events(buf: io.StringIO) -> list:
 
 
 @pytest.mark.asyncio
-async def test_bridge_full_invocation_emits_seven_events() -> None:
+async def test_bridge_full_invocation_emits_prompt_requested_and_assistant() -> None:
     agent = _FakeAgent(
         [
             AgentEvent(type="classify", data={"pattern": "REACT", "complexity": 5, "output": "ok"}),
@@ -162,6 +211,9 @@ async def test_bridge_full_invocation_emits_seven_events() -> None:
     em = await run_invocation_to_writer(agent=agent, prompt="hi", writer=buf)
     events = _read_events(buf)
     assert isinstance(events[0], SessionOpened)
+    assert isinstance(events[1], MessageUser)
+    assert isinstance(events[2], PromptRequested)
+    assert events[2].data.kind == "user_turn"
     assert isinstance(events[-1], SessionClosed)
     assert events[-1].data.reason == "completed"
     assert any(isinstance(e, PatternClassified) for e in events)
@@ -250,8 +302,9 @@ async def test_bridge_emits_message_user_with_prompt() -> None:
     assert user_msgs[0].data.content == "hello world"
     # Order: must come after session.opened, before any model output
     types = [e.type for e in events]
-    assert types.index("message.user") < types.index("message.assistant")
     assert types.index("session.opened") < types.index("message.user")
+    assert types.index("message.user") < types.index("prompt.requested")
+    assert types.index("prompt.requested") < types.index("message.assistant")
 
 
 @pytest.mark.asyncio
@@ -467,11 +520,54 @@ async def test_bridge_cancellation_closes_session_with_user_aborted() -> None:
         await task
 
     events = _read_events(buf)
+    assert isinstance(events[-2], PromptCancelled)
+    assert events[-2].data.reason == "user_aborted"
     assert isinstance(events[-1], SessionClosed)
     assert events[-1].data.reason == "user_aborted"
     # No error.fatal — cancellation isn't a failure
     from agloom.protocol import ErrorFatal as _EF
     assert not any(isinstance(e, _EF) for e in events)
+
+
+@pytest.mark.asyncio
+async def test_bridge_shutdown_cancel_emits_prompt_shutdown() -> None:
+    """Runtime shutdown path: ``prepare_invocation_cancel(..., shutdown)`` → ``prompt.cancelled`` + ``session.closed`` use ``shutdown``."""
+
+    async def _slow():
+        await asyncio.sleep(10)
+        yield AgentEvent(type="done", data={"output": "x"})
+
+    class _SlowAgent:
+        def astream_events(self, query, *, thread_id=None):
+            return _slow()
+
+    buf = io.StringIO()
+    root = SessionEmitter(session="sess_sd", thread="main_th", writer=buf, capabilities=[])
+    hitl = HITLBridge(root)
+    root.open()
+    inv_emitter = root.fork_for_thread("inv_th")
+    task = asyncio.create_task(
+        run_invocation(
+            agent=_SlowAgent(),
+            prompt="hi",
+            thread="inv_th",
+            emitter=inv_emitter,
+            hitl_bridge=hitl,
+        )
+    )
+    hitl.bind_task_emitter(task, inv_emitter, thread="inv_th")
+    await asyncio.sleep(0)
+    hitl.prepare_invocation_cancel(task, reason="shutdown")
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    events = _read_events(buf)
+    pc = [e for e in events if isinstance(e, PromptCancelled)]
+    assert pc and pc[-1].data.reason == "shutdown"
+    assert pc[-1].data.detail == "runtime_shutdown"
+    assert isinstance(events[-1], SessionClosed)
+    assert events[-1].data.reason == "shutdown"
 
 
 @pytest.mark.asyncio

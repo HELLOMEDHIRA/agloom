@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from ..hitl_contract import HITLEvent
@@ -65,6 +65,9 @@ _TOOL_GATE_RETURN: dict[HITLDecision, str] = {
     "retry": "continue",  # not normally used for tool gates; tolerate gracefully
 }
 
+InvocationCancelReason = Literal["user_aborted", "shutdown"]
+"""Why :func:`~agloom.runtime.bridge.run_invocation` was cancelled — drives ``prompt.cancelled``."""
+
 _REACT_RECOVERY_RETURN: dict[HITLDecision, str] = {
     "retry": "retry",
     "accept": "retry",
@@ -97,9 +100,25 @@ class HITLBridge:
         self._req_task: dict[str, asyncio.Task[Any]] = {}  # request_id → owning task
         self._task_emitters: dict[asyncio.Task[Any], SessionEmitter] = {}
         self._task_thread: dict[asyncio.Task[Any], str] = {}  # task → thread_id
+        self._task_cancel_reason: dict[asyncio.Task[Any], InvocationCancelReason] = {}
         self._lock = asyncio.Lock()
 
     # ── emitter routing ───────────────────────────────────────────────────
+
+    def prepare_invocation_cancel(self, task: asyncio.Task[Any], *, reason: InvocationCancelReason) -> None:
+        """Register why *task* is about to be cancelled.
+
+        Call immediately before ``task.cancel()`` from the runtime loop so
+        :func:`~agloom.runtime.bridge.run_invocation` can emit ``prompt.cancelled`` with
+        ``reason=user_aborted`` vs ``reason=shutdown``.
+        """
+        self._task_cancel_reason[task] = reason
+
+    def consume_invocation_cancel_reason(self, task: asyncio.Task[Any] | None) -> InvocationCancelReason:
+        """Pop the cancel reason for *task* (default ``user_aborted``). Used inside ``run_invocation``."""
+        if task is None:
+            return "user_aborted"
+        return self._task_cancel_reason.pop(task, "user_aborted")
 
     def bind_task_emitter(self, task: asyncio.Task[Any], emitter: SessionEmitter, thread: str = "") -> None:
         """Associate *task* with *emitter* so HITL events emitted within that task land on
@@ -113,6 +132,7 @@ class HITLBridge:
         def _cleanup(t: asyncio.Task[Any]) -> None:
             self._task_emitters.pop(t, None)
             self._task_thread.pop(t, None)
+            self._task_cancel_reason.pop(t, None)
 
         task.add_done_callback(_cleanup)
 
@@ -304,4 +324,4 @@ def _decision_to_callback_value(kind: HITLKind, decision: HITLDecision, text: st
     return _TOOL_GATE_RETURN.get(decision, "abort")
 
 
-__all__ = ["HITLBridge"]
+__all__ = ["HITLBridge", "InvocationCancelReason"]

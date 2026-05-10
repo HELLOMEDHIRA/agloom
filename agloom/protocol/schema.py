@@ -25,6 +25,7 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
+from .commands import Command
 from .events import Event
 
 
@@ -34,9 +35,31 @@ def build_schema() -> dict[str, Any]:
     The top-level schema is a ``oneOf`` over all concrete event types, keyed by the
     ``type`` discriminator so validators can cheaply dispatch to the right sub-schema.
     The ``$defs`` section contains all shared models (envelope fields, data models).
+
+    Inbound **commands** (client → runtime) share ``$defs`` and are exposed under the
+    auxiliary key ``agp_commands`` — same JSON object shape as on the wire
+    (``type`` + ``data``, no session envelope).
     """
     adapter: TypeAdapter[Event] = TypeAdapter(Event)
     raw: dict[str, Any] = adapter.json_schema(mode="serialization")
+
+    cmd_adapter: TypeAdapter[Command] = TypeAdapter(Command)
+    cmd_raw: dict[str, Any] = cmd_adapter.json_schema(mode="serialization")
+
+    defs = raw.setdefault("$defs", {})
+    for key, val in cmd_raw.get("$defs", {}).items():
+        if key in defs and defs[key] != val:
+            raise ValueError(f"AGP schema merge collision in $defs[{key!r}]")
+        defs[key] = val
+
+    raw["agp_commands"] = {
+        "title": "AGP inbound commands",
+        "description": (
+            "Typed JSON objects sent on the NDJSON stream from client to runtime — "
+            "discriminated by top-level ``type`` (``command.*``). No AGP envelope fields."
+        ),
+        **{k: v for k, v in cmd_raw.items() if k != "$defs"},
+    }
 
     # Inject top-level metadata consumers expect.
     raw.setdefault("$schema", "https://json-schema.org/draft/2020-12/schema")

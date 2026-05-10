@@ -133,6 +133,13 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
             duration_ms=_int(data.get("duration_ms")),
             truncated=bool(out and len(out) > 1024),
         )
+        skill_name = _str(data.get("skill_name"))
+        if not skill_name:
+            args_obj = data.get("args")
+            if isinstance(args_obj, dict):
+                skill_name = _str(args_obj.get("name"))
+        if tool == "load_skill" and skill_name:
+            emitter.emit_skill_loaded(skill_name=skill_name, source="tool", body_chars=len(out) if out else 0)
         return
 
     if et == "graph_node_enter":
@@ -150,6 +157,22 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
             duration_ms=_int(data.get("duration_ms")),
             output_preview=_str(data.get("output_preview")) or _str(data.get("output")),
             error=_str(data.get("error")),
+        )
+        return
+
+    if et == "skill_context":
+        emitter.emit_skill_applied(
+            phase=_str(data.get("phase")) or "classifier",
+            injected_chars=_int(data.get("injected_chars")) or 0,
+        )
+        return
+
+    if et == "skill_learned":
+        emitter.emit_skill_learned(
+            skill_name=_str(data.get("skill_name")) or "unknown",
+            pattern=_str(data.get("pattern")) or None,
+            scope=_str(data.get("scope")) or None,
+            source=_str(data.get("source")) or None,
         )
         return
 

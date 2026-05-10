@@ -105,7 +105,7 @@ nav:
       - Timeouts & Retries: _packages/agloom/configuration/reliability.md
       - Logging & Debug: _packages/agloom/configuration/logging.md
       - Errors & Warnings: _packages/agloom/configuration/errors.md
-  - Protocol (experimental):
+  - Protocol (AGP v1):
       - "AGP — Agloom Protocol": _packages/agloom/protocol/agp.md
   - Guides:
       - Production Integration: _packages/agloom/guides/production.md

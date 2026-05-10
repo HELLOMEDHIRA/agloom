@@ -273,9 +273,46 @@ export interface ErrorFatalEvent extends Envelope {
   data: ErrorEventData
 }
 
+// ── skill.* / prompt.* ────────────────────────────────────────────────────────
+
+export interface SkillLoadedEvent extends Envelope {
+  type: 'skill.loaded'
+  data: {
+    skill_name: string
+    source?: 'tool' | 'disk' | 'registry' | 'seed' | 'on_demand' | 'post_run' | string
+    version?: string
+    body_chars?: number
+  }
+}
+
+export interface SkillAppliedEvent extends Envelope {
+  type: 'skill.applied'
+  data: { phase?: 'classifier' | 'worker' | string; injected_chars?: number }
+}
+
+export interface SkillLearnedEvent extends Envelope {
+  type: 'skill.learned'
+  data: {
+    skill_name: string
+    pattern?: string
+    scope?: string
+    source?: 'seed' | 'on_demand' | 'post_run' | string
+  }
+}
+
+export interface PromptRequestedEvent extends Envelope {
+  type: 'prompt.requested'
+  data: { kind?: 'user_turn' | string; preview?: string }
+}
+
+export interface PromptCancelledEvent extends Envelope {
+  type: 'prompt.cancelled'
+  data: { reason: 'user_aborted' | 'shutdown' | string; detail?: string }
+}
+
 // ── Discriminated union ───────────────────────────────────────────────────────
 
-export type AGPEvent =
+export type AGPKnownEvent =
   | SessionOpenedEvent
   | SessionResumedEvent
   | SessionClosedEvent
@@ -296,6 +333,11 @@ export type AGPEvent =
   | WorkerFailedEvent
   | GraphNodeEnterEvent
   | GraphNodeExitEvent
+  | SkillLoadedEvent
+  | SkillAppliedEvent
+  | SkillLearnedEvent
+  | PromptRequestedEvent
+  | PromptCancelledEvent
   | MemoryLtRecallEvent
   | MemorySessionWriteEvent
   | MemoryLtStoreEvent
@@ -306,6 +348,17 @@ export type AGPEvent =
   | MetricCostEvent
   | ErrorTransientEvent
   | ErrorFatalEvent
+
+/** Known AGP v1 catalogue + additive types above. Wire may carry other `type` strings — the runtime ``dispatch`` default branch must tolerate them (forward-compat). */
+export type AGPEvent = AGPKnownEvent
+
+/** Parse one NDJSON / WebSocket frame after ``JSON.parse``. Unknown ``type`` values are accepted at runtime and handled by store/UI default branches. */
+export function parseInboundAGPEventJSON(parsed: unknown): AGPEvent {
+  if (!parsed || typeof parsed !== 'object') {
+    throw new SyntaxError('AGP event root must be an object')
+  }
+  return parsed as AGPEvent
+}
 
 // ── Inbound commands (CLI / web → Python runtime) ────────────────────────────
 
@@ -339,6 +392,24 @@ export interface CommandSnapshotRequest {
   data?: { thread?: string; label?: string }
 }
 
+export interface CommandWorkerAssign {
+  type: 'command.worker.assign'
+  data: {
+    worker_id: string
+    task: string
+    thread?: string
+    parent_thread?: string
+    pattern?: string
+    tools?: string[]
+    context?: Record<string, unknown>
+  }
+}
+
+export interface CommandSessionResume {
+  type: 'command.session.resume'
+  data: { thread: string; from_seq?: number }
+}
+
 export type AGPCommand =
   | CommandInvoke
   | CommandCancel
@@ -346,6 +417,8 @@ export type AGPCommand =
   | CommandRuntimeShutdown
   | CommandFeedback
   | CommandSnapshotRequest
+  | CommandWorkerAssign
+  | CommandSessionResume
 
 // ── Utility types ──────────────────────────────────────────────────────────────
 

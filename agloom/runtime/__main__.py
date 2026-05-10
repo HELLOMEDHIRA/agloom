@@ -263,6 +263,7 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         shutdown.set()
         for t in invocation_tasks:
             if not t.done():
+                hitl_bridge.prepare_invocation_cancel(t, reason="shutdown")
                 t.cancel()
         if invocation_tasks:
             await asyncio.gather(*invocation_tasks, return_exceptions=True)
@@ -375,7 +376,13 @@ async def _dispatch_command(
         thread = cmd.data.thread or f"thread_{uuid4().hex[:16]}"
         inv_emitter = emitter.fork_for_thread(thread)
         task = asyncio.create_task(
-            run_invocation(agent=agent, prompt=cmd.data.prompt, thread=thread, emitter=inv_emitter),
+            run_invocation(
+                agent=agent,
+                prompt=cmd.data.prompt,
+                thread=thread,
+                emitter=inv_emitter,
+                hitl_bridge=hitl_bridge,
+            ),
             name=f"agp-invocation-{thread[:8]}",
         )
         hitl_bridge.bind_task_emitter(task, inv_emitter, thread=thread)
@@ -396,6 +403,7 @@ async def _dispatch_command(
             # O(1) exact match via the explicit mapping
             task = thread_tasks.get(target_thread)
             if task and not task.done():
+                hitl_bridge.prepare_invocation_cancel(task, reason="user_aborted")
                 task.cancel()
                 cancelled_n = 1
                 # Cancel only HITL requests bound to this specific thread
@@ -404,6 +412,7 @@ async def _dispatch_command(
             # No specific thread — cancel everything
             for t in list(invocation_tasks):
                 if not t.done():
+                    hitl_bridge.prepare_invocation_cancel(t, reason="user_aborted")
                     t.cancel()
                     cancelled_n += 1
             hitl_bridge.cancel_all()
@@ -425,7 +434,13 @@ async def _dispatch_command(
             task=cmd.data.task,
         )
         wtask = asyncio.create_task(
-            run_invocation(agent=agent, prompt=cmd.data.task, thread=wthread, emitter=w_emitter),
+            run_invocation(
+                agent=agent,
+                prompt=cmd.data.task,
+                thread=wthread,
+                emitter=w_emitter,
+                hitl_bridge=hitl_bridge,
+            ),
             name=f"agp-worker-{cmd.data.worker_id[:8]}",
         )
         hitl_bridge.bind_task_emitter(wtask, w_emitter, thread=wthread)

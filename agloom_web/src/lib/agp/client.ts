@@ -17,6 +17,7 @@
  */
 
 import type { AGPCommand, AGPEvent, ConnectionStatus } from './types.js'
+import { parseInboundAGPEventJSON } from './types.js'
 
 type Listener<T> = (value: T) => void
 
@@ -75,7 +76,7 @@ export class AGPClient {
 
     ws.onmessage = (ev: MessageEvent<string>) => {
       try {
-        const evt = JSON.parse(ev.data) as AGPEvent
+        const evt = parseInboundAGPEventJSON(JSON.parse(ev.data))
         this.eventListeners.forEach((l) => l(evt))
       } catch {
         this._emit('diagnostic', `[agp] non-JSON frame: ${String(ev.data).slice(0, 80)}`)

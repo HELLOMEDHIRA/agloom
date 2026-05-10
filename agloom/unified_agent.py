@@ -595,7 +595,11 @@ async def _ensure_mcp_connected(config: dict) -> None:
         config["_mcp_connected"] = True
 
 
-async def _ensure_skills_bootstrapped(config: dict) -> None:
+async def _ensure_skills_bootstrapped(
+    config: dict,
+    *,
+    event_queue: asyncio.Queue | None = None,
+) -> None:
     """Bootstrap skills on first call: load from disk, auto-seed if empty, run lifecycle hygiene."""
     if config.get("_skills_bootstrapped") or config.get("skill_registry") is None:
         return
@@ -624,6 +628,18 @@ async def _ensure_skills_bootstrapped(config: dict) -> None:
                         scope="global",
                         tags=["seed", "auto-generated"],
                     )
+                    if event_queue is not None:
+                        await event_queue.put(
+                            AgentEvent(
+                                type="skill_learned",
+                                data={
+                                    "skill_name": s.name,
+                                    "pattern": None,
+                                    "scope": "global",
+                                    "source": "seed",
+                                },
+                            )
+                        )
                 if seed_skills:
                     logger.event(
                         f"[{agent_name}] auto-generated {len(seed_skills)} seed skill(s) "
@@ -931,6 +947,13 @@ async def run_fresh(
             else (f"{harness_block}\n{processed_query}" if harness_ctx else processed_query)
         )
         eq = config.get("_event_queue")
+        if skill_ctx.strip() and eq is not None:
+            await eq.put(
+                AgentEvent(
+                    type="skill_context",
+                    data={"phase": "classifier", "injected_chars": len(skill_ctx)},
+                )
+            )
         if eq is not None:
             await eq.put(
                 AgentEvent(
@@ -1177,7 +1200,7 @@ async def run_fresh(
     skill_learner = config.get("skill_learner")
     if skill_learner:
         try:
-            skill_learner.maybe_learn(result, query, name)
+            skill_learner.maybe_learn(result, query, name, event_queue=config.get("_event_queue"))
         except Exception as exc:
             logger.warning(f"[{name}] skill_learner failed ({exc!r}) — non-fatal.")
 
@@ -1215,6 +1238,19 @@ async def run_fresh(
                         scope="global",
                         tags=["on-demand", "auto-generated"],
                     )
+                    _eq = config.get("_event_queue")
+                    if _eq is not None:
+                        await _eq.put(
+                            AgentEvent(
+                                type="skill_learned",
+                                data={
+                                    "skill_name": skill.name,
+                                    "pattern": None,
+                                    "scope": "global",
+                                    "source": "on_demand",
+                                },
+                            )
+                        )
             except Exception as exc:
                 logger.debug(f"[{name}] on-demand skill save failed: {exc!r}")
 
@@ -1658,7 +1694,7 @@ class UnifiedAgent:
                 effective_thread_id, effective_ltns, invoke_config = self.resolve_ids(thread_id, user_id, lt_namespace)
 
                 await _ensure_mcp_connected(self.config)
-                await _ensure_skills_bootstrapped(self.config)
+                await _ensure_skills_bootstrapped(self.config, event_queue=event_queue)
 
                 if self.config.get("frozen"):
                     await _ensure_frozen_analysis(self.config)

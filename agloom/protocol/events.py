@@ -21,6 +21,8 @@ The :data:`Event` type alias is a discriminated union over ``type``; use it (or 
 - ``worker.*`` — multi-agent worker tree (spawned, completed, failed)
 - ``graph.*`` — execution DAG node enter/exit
 - ``memory.*`` — session and long-term memory reads/writes
+- ``skill.*`` — skill registry lifecycle (loaded into context, classifier injection, learned)
+- ``prompt.*`` — user-turn prompt lifecycle (requested, cancelled)
 - ``checkpoint.*`` — LangGraph checkpoint persistence
 - ``feedback.*`` — user feedback on a completed turn
 - ``metric.*`` — token/cost accounting deltas
@@ -521,6 +523,91 @@ class GraphNodeExit(Envelope):
     data: GraphNodeExitData
 
 
+# ── skill.* ───────────────────────────────────────────────────────────────────
+
+
+SkillLoadedSource = Literal["tool", "disk", "registry", "seed", "on_demand", "post_run"]
+
+
+class SkillLoadedData(_DataBase):
+    """A skill's full body was loaded (typically via the ``load_skill`` tool)."""
+
+    skill_name: str
+    source: SkillLoadedSource = "tool"
+    version: str | None = None
+    body_chars: int | None = None
+
+
+class SkillLoaded(Envelope):
+    type: Literal["skill.loaded"] = "skill.loaded"
+    data: SkillLoadedData
+
+
+SkillAppliedPhase = Literal["classifier", "worker"]
+
+
+class SkillAppliedData(_DataBase):
+    """Skill-related context was injected into the model prompt (pre-classify catalogue)."""
+
+    phase: SkillAppliedPhase = "classifier"
+    injected_chars: int = 0
+
+
+class SkillApplied(Envelope):
+    type: Literal["skill.applied"] = "skill.applied"
+    data: SkillAppliedData
+
+
+SkillLearnedSource = Literal["seed", "on_demand", "post_run"]
+
+
+class SkillLearnedData(_DataBase):
+    """A new or updated skill was persisted to the registry."""
+
+    skill_name: str
+    pattern: str | None = None
+    scope: str | None = None
+    source: SkillLearnedSource | None = None
+
+
+class SkillLearned(Envelope):
+    type: Literal["skill.learned"] = "skill.learned"
+    data: SkillLearnedData
+
+
+# ── prompt.* ──────────────────────────────────────────────────────────────────
+
+
+PromptRequestedKind = Literal["user_turn"]
+
+
+class PromptRequestedData(_DataBase):
+    """The runtime accepted a user turn and will stream agent work for this thread."""
+
+    kind: PromptRequestedKind = "user_turn"
+    preview: str | None = None
+
+
+class PromptRequested(Envelope):
+    type: Literal["prompt.requested"] = "prompt.requested"
+    data: PromptRequestedData
+
+
+PromptCancelledReason = Literal["user_aborted", "shutdown"]
+
+
+class PromptCancelledData(_DataBase):
+    """The in-flight user turn will not produce a normal assistant completion."""
+
+    reason: PromptCancelledReason
+    detail: str | None = None
+
+
+class PromptCancelled(Envelope):
+    type: Literal["prompt.cancelled"] = "prompt.cancelled"
+    data: PromptCancelledData
+
+
 # ── session.resumed ────────────────────────────────────────────────────────────
 
 
@@ -607,6 +694,11 @@ Event = Annotated[
     | WorkerFailed
     | GraphNodeEnter
     | GraphNodeExit
+    | SkillLoaded
+    | SkillApplied
+    | SkillLearned
+    | PromptRequested
+    | PromptCancelled
     | MemorySessionWrite
     | MemoryLtRecall
     | MemoryLtStore
@@ -633,6 +725,21 @@ event_adapter: TypeAdapter[Event] = TypeAdapter(Event)
 
 
 __all__ = [
+    "PromptCancelled",
+    "PromptCancelledData",
+    "PromptCancelledReason",
+    "PromptRequested",
+    "PromptRequestedData",
+    "PromptRequestedKind",
+    "SkillApplied",
+    "SkillAppliedData",
+    "SkillAppliedPhase",
+    "SkillLearned",
+    "SkillLearnedData",
+    "SkillLearnedSource",
+    "SkillLoaded",
+    "SkillLoadedData",
+    "SkillLoadedSource",
     "CheckpointRestored",
     "CheckpointRestoredData",
     "CheckpointSaved",

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, field_validator
 
 from ..logging_utils import get_logger
+from ..models import AgentEvent
 
 logger = get_logger(__name__)
 
@@ -126,6 +128,8 @@ class SkillLearner:
         result: Any,
         query: str,
         agent_name: str = "Agent",
+        *,
+        event_queue: asyncio.Queue[AgentEvent] | asyncio.Queue[AgentEvent | None] | None = None,
     ) -> None:
         """Fire-and-forget background task. Never raises, never blocks."""
         pattern_val = result.pattern_used.value.lower() if result.pattern_used else ""
@@ -139,7 +143,7 @@ class SkillLearner:
         from ..llm_utils import safe_create_task
 
         safe_create_task(
-            self._extract(result, query, agent_name),
+            self._extract(result, query, agent_name, event_queue=event_queue),
             name=f"skill-learn-{agent_name[:8]}",
         )
 
@@ -148,6 +152,8 @@ class SkillLearner:
         result: Any,
         query: str,
         agent_name: str,
+        *,
+        event_queue: asyncio.Queue[AgentEvent] | asyncio.Queue[AgentEvent | None] | None = None,
     ) -> None:
         try:
             existing_manifests = await self._registry.list_manifests()
@@ -219,6 +225,18 @@ Should we store this run as a reusable skill?
                 tags=["learned", skill.pattern.lower()],
                 skill_data=skill.model_dump(),
             )
+            if event_queue is not None:
+                await event_queue.put(
+                    AgentEvent(
+                        type="skill_learned",
+                        data={
+                            "skill_name": skill.name,
+                            "pattern": skill.pattern,
+                            "scope": skill.scope,
+                            "source": "post_run",
+                        },
+                    )
+                )
             logger.info(
                 f"SkillLearner [{agent_name}]: "
                 f"stored new skill '{skill.name}' "

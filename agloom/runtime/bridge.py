@@ -25,6 +25,7 @@ from uuid import uuid4
 
 from ..models import AgentEvent
 from ..protocol import SessionEmitter
+from .hitl import HITLBridge
 from .translator import translate
 
 
@@ -54,11 +55,16 @@ async def run_invocation(
     prompt: str | dict,
     thread: str,
     emitter: SessionEmitter,
+    hitl_bridge: HITLBridge | None = None,
 ) -> None:
     """Run one ``ainvoke``-equivalent over AGP.
 
     The emitter MUST already match ``thread`` (i.e. ``emitter.thread_id == thread``). The
     caller owns ``open()``; the bridge owns ``close()`` (so failures always close the session).
+
+    Pass ``hitl_bridge`` when the runtime cancels tasks via ``task.cancel()`` so the bridge can
+    distinguish ``prompt.cancelled(reason=user_aborted)`` from ``reason=shutdown`` using
+    :meth:`HITLBridge.prepare_invocation_cancel`.
     """
     if not emitter.is_open:
         emitter.open()
@@ -67,6 +73,8 @@ async def run_invocation(
     # reconstruct the full turn from this single event + the assistant stream that follows.
     user_text = prompt if isinstance(prompt, str) else _stringify_prompt(prompt)
     emitter.emit_message_user(content=user_text)
+    _preview = user_text if len(user_text) <= 280 else f"{user_text[:277]}..."
+    emitter.emit_prompt_requested(kind="user_turn", preview=_preview)
 
     started = time.perf_counter()
     saw_message = False
@@ -78,10 +86,17 @@ async def run_invocation(
             translate(event, emitter)
 
     except asyncio.CancelledError:
-        # ``command.cancel`` (or a parent task being torn down). Distinct from generic failure
-        # — frontends should render this as "user stopped" rather than an error pane.
+        # ``command.cancel`` vs runtime shutdown both cancel the task; callers distinguish via
+        # :meth:`HITLBridge.prepare_invocation_cancel` immediately before ``task.cancel()``.
         elapsed = int((time.perf_counter() - started) * 1000)
-        emitter.close(reason="user_aborted", duration_ms=elapsed)
+        cancel_reason = (
+            hitl_bridge.consume_invocation_cancel_reason(asyncio.current_task())
+            if hitl_bridge
+            else "user_aborted"
+        )
+        detail = "invocation_cancelled" if cancel_reason == "user_aborted" else "runtime_shutdown"
+        emitter.emit_prompt_cancelled(reason=cancel_reason, detail=detail)
+        emitter.close(reason=cancel_reason, duration_ms=elapsed)
         raise  # propagate so the runtime task stays cancelled (asyncio invariant)
     except Exception as exc:
         # Two-event close path: emit ``error.fatal`` first (carries class + retryable hints) then
