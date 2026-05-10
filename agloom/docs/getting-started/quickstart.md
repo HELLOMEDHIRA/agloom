@@ -43,14 +43,56 @@ print(result.metadata)                # Additional metadata
 Give your agent capabilities and it will automatically switch to the **REACT** pattern:
 
 ```python
+import ast
 import asyncio
+import operator
 from langchain_core.tools import tool
 from agloom import create_agent
 
+def _safe_calc(expression: str) -> float:
+    """Arithmetic only (+ − × ÷ // % ** and parentheses). Rejects names and calls."""
+    tree = ast.parse(expression.strip(), mode="eval")
+
+    def _eval(node: ast.AST) -> float:
+        if isinstance(node, ast.Expression):
+            return _eval(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.UnaryOp):
+            match node.op:
+                case ast.UAdd():
+                    return operator.pos(_eval(node.operand))
+                case ast.USub():
+                    return operator.neg(_eval(node.operand))
+                case _:
+                    raise ValueError("only plain numeric arithmetic is allowed")
+        if isinstance(node, ast.BinOp):
+            match node.op:
+                case ast.Add():
+                    return operator.add(_eval(node.left), _eval(node.right))
+                case ast.Sub():
+                    return operator.sub(_eval(node.left), _eval(node.right))
+                case ast.Mult():
+                    return operator.mul(_eval(node.left), _eval(node.right))
+                case ast.Div():
+                    return operator.truediv(_eval(node.left), _eval(node.right))
+                case ast.FloorDiv():
+                    return operator.floordiv(_eval(node.left), _eval(node.right))
+                case ast.Mod():
+                    return operator.mod(_eval(node.left), _eval(node.right))
+                case ast.Pow():
+                    return operator.pow(_eval(node.left), _eval(node.right))
+                case _:
+                    raise ValueError("only plain numeric arithmetic is allowed")
+        raise ValueError("only plain numeric arithmetic is allowed")
+
+    return _eval(tree)
+
+
 @tool
 def calculate(expression: str) -> str:
-    """Evaluate a mathematical expression."""
-    return str(eval(expression))
+    """Evaluate a mathematical expression (safe arithmetic subset)."""
+    return str(_safe_calc(expression))
 
 async def main():
     agent = await create_agent(
@@ -134,14 +176,14 @@ agloom "Explain quantum computing in 2 sentences"
 agloom -m llama-3.3-70b-versatile  # Use Groq model
 ```
 
-See [CLI Shell](../../agloom_cli/index.md) for full reference.
+See [CLI Shell](../../../_packages/agloom_cli/index.md) (Node-based interactive shell in `agloom_cli/`). Link is relative to the MkDocs `docs/` root after `make docs-prepare`.
 
 ## What's Next?
 
 | Topic | Link |
 |-------|------|
 | Understand the 9 patterns | [Execution Patterns](../concepts/patterns.md) |
-| CLI Shell | [CLI Shell](../../agloom_cli/index.md) |
+| CLI Shell | [CLI Shell](../../../_packages/agloom_cli/index.md) (Node / Ink) |
 | Every parameter explained | [All Parameters](../configuration/parameters.md) |
 | Add memory to your agent | [Memory](../features/memory.md) |
 | Build streaming UIs | [Streaming & Events](../features/streaming.md) |

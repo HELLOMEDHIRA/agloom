@@ -11,13 +11,13 @@ import { Box, Text } from 'ink'
 import type { CompletedTurn } from '../store/session.js'
 import { ToolCallLine } from './ToolCallLine.js'
 import { WorkerLine } from './WorkerLine.js'
-import { renderMarkdown, truncate } from '../utils/format.js'
+import { renderMarkdown } from '../utils/format.js'
 
 interface Props {
   turn: CompletedTurn
 }
 
-export function CompletedTurnCard({ turn }: Props): React.ReactElement {
+export const CompletedTurnCard = ({ turn }: Props): React.ReactElement => {
   // Static renders outside the Ink tree so we read the terminal width directly.
   const termWidth = process.stdout.columns ?? 80
   const mdResponse = renderMarkdown(turn.assistantMessage, termWidth - 4)
@@ -98,6 +98,3 @@ export function CompletedTurnCard({ turn }: Props): React.ReactElement {
     </Box>
   )
 }
-
-// Silence unused import warning for renderMarkdown (used above via mdResponse)
-void truncate

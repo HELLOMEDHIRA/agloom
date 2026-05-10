@@ -108,6 +108,13 @@ export interface SessionStore {
   /** Wall-clock ms when `session.opened` / `session.resumed` arrived (client-side). */
   sessionOpenedAtMs: number | null
   model: string | null
+  /** From last `runtime.config` (tool roster on the wire). */
+  toolNames: string[] | null
+  capabilities: string[] | null
+  /** Recent AGP informational lines (config ack, feedback.scored, memory, …). */
+  protocolNotes: string[]
+  /** Latest todo list from ``todos.updated`` (``write_todos`` meta tool). */
+  todos: Array<{ id: string; text: string; done: boolean }>
   totalInputTokens: number
   totalOutputTokens: number
   /** Token deltas attributed to the in-flight turn only (reset each `message.user`). */
@@ -131,16 +138,24 @@ export interface SessionStore {
   clearError: () => void
   markExited: () => void
   reset: () => void
+  /** Slash/UI helpers — append one line to the metrics sidebar wire notes. */
+  appendProtocolNote: (line: string) => void
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 let _seq = 0
-function uid(): string {
+const uid = (): string => {
   return `${Date.now().toString(36)}_${(++_seq).toString(36)}`
 }
 
-function newActiveTurn(userMessage: string): ActiveTurnState {
+const PROTOCOL_NOTES_CAP = 28
+
+const pushProtocolNotes = (notes: string[], line: string): string[] => {
+  return [...notes, line].slice(-PROTOCOL_NOTES_CAP)
+}
+
+const newActiveTurn = (userMessage: string): ActiveTurnState => {
   return {
     id: uid(),
     userMessage,
@@ -163,6 +178,10 @@ export const useSessionStore = create<SessionStore>((set) => ({
   runtimeVersion: null,
   sessionOpenedAtMs: null,
   model: null,
+  toolNames: null,
+  capabilities: null,
+  protocolNotes: [],
+  todos: [],
   totalInputTokens: 0,
   totalOutputTokens: 0,
   turnInputTokens: 0,
@@ -208,6 +227,163 @@ export const useSessionStore = create<SessionStore>((set) => ({
             activeTurn: null,
           }
         }
+
+        case 'session.heartbeat':
+          return s
+
+        case 'stream.heartbeat':
+          return s
+
+        case 'agent.busy':
+          return {
+            ...s,
+            status: s.status === 'idle' ? 'running' : s.status,
+            protocolNotes: pushProtocolNotes(s.protocolNotes, `Agent busy${evt.data.thread ? ` (${evt.data.thread.slice(0, 12)}…)` : ''}`),
+          }
+
+        case 'agent.idle':
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(s.protocolNotes, 'Agent idle'),
+          }
+
+        case 'runtime.ready': {
+          const cli =
+            evt.data.cli_tools_count != null
+              ? ` · cli_tools=${evt.data.cli_tools_count}`
+              : ''
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `Runtime ready (${evt.data.agent_name ?? 'agent'})${cli}`,
+            ),
+          }
+        }
+
+        case 'runtime.config': {
+          const tools = evt.data.tool_names ?? []
+          const caps = evt.data.capabilities ?? []
+          const cli =
+            evt.data.cli_tools_count != null
+              ? ` · cli_tools=${evt.data.cli_tools_count}`
+              : ''
+          return {
+            ...s,
+            model: evt.data.model_id ?? s.model,
+            toolNames: tools.length ? tools : s.toolNames,
+            capabilities: caps.length ? caps : s.capabilities,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `runtime.config · model=${evt.data.model_id ?? '—'} · ${tools.length} tools${cli}`,
+            ),
+          }
+        }
+
+        case 'runtime.config.applied': {
+          const cli =
+            evt.data.cli_tools_count != null
+              ? ` · cli_tools=${evt.data.cli_tools_count}`
+              : ''
+          return {
+            ...s,
+            model: evt.data.model_id ?? s.model,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `Config applied · model=${evt.data.model_id ?? 'ok'}${cli}`,
+            ),
+          }
+        }
+
+        case 'todos.updated': {
+          const raw = evt.data.items ?? []
+          const todos = raw
+            .filter((row): row is Record<string, unknown> => row != null && typeof row === 'object')
+            .map((row, i) => ({
+              id: String(row.id ?? i),
+              text: String(row.text ?? row.title ?? ''),
+              done: Boolean(row.done ?? row.completed),
+            }))
+          return {
+            ...s,
+            todos,
+            protocolNotes: pushProtocolNotes(s.protocolNotes, `Todos updated (${todos.length})`),
+          }
+        }
+
+        case 'runtime.pong':
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `Pong${evt.data.ping_id ? ` · ${evt.data.ping_id}` : ''}`,
+            ),
+          }
+
+        case 'runtime.schema': {
+          const keys = evt.data.json_schema && typeof evt.data.json_schema === 'object'
+            ? Object.keys(evt.data.json_schema).length
+            : 0
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(s.protocolNotes, `Schema · ${keys} top-level keys`),
+          }
+        }
+
+        case 'runtime.tools': {
+          const names = evt.data.tools.map((t) => t.name).join(', ')
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `Tools (${evt.data.tools.length}): ${names || '—'}`,
+            ),
+          }
+        }
+
+        case 'runtime.sessions':
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `Sessions · ${evt.data.sessions.length}: ${evt.data.sessions.slice(0, 6).join(', ') || '—'}${evt.data.sessions.length > 6 ? ' …' : ''}`,
+            ),
+          }
+
+        case 'runtime.session.created':
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(s.protocolNotes, `Session created · ${evt.data.session_id}`),
+          }
+
+        case 'runtime.tool.result':
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              evt.data.ok ? 'tool.invoke · OK' : `tool.invoke · ${evt.data.error ?? 'error'}`,
+            ),
+          }
+
+        case 'prompt.requested': {
+          const pv = (evt.data.preview ?? '').slice(0, 72)
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `Prompt · ${evt.data.kind ?? '?'}${pv ? ` · ${pv}${evt.data.preview && evt.data.preview.length > 72 ? '…' : ''}` : ''}`,
+            ),
+          }
+        }
+
+        case 'prompt.cancelled':
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `Prompt cancelled · ${evt.data.reason}${evt.data.detail ? ` (${evt.data.detail})` : ''}`,
+            ),
+          }
 
         // ── message.user — marks the start of a new turn ──
         case 'message.user':
@@ -366,6 +542,21 @@ export const useSessionStore = create<SessionStore>((set) => ({
             },
           }
 
+        case 'graph.node.exit': {
+          const ms = evt.data.duration_ms != null ? `${evt.data.duration_ms}ms` : '?'
+          const line = `Graph exit · ${evt.data.node} · ${ms}`
+          return { ...s, protocolNotes: pushProtocolNotes(s.protocolNotes, line) }
+        }
+
+        case 'message.tool':
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `message.tool · ${evt.data.tool_name} · ${evt.data.phase ?? '—'}`,
+            ),
+          }
+
         // ── HITL ──
         case 'hitl.request': {
           const req: HITLRequest = {
@@ -457,6 +648,90 @@ export const useSessionStore = create<SessionStore>((set) => ({
             model: s.model ?? evt.data.model,
           }
 
+        case 'feedback.scored': {
+          const rid = evt.data.run_id
+          const short = rid.length > 14 ? `${rid.slice(0, 12)}…` : rid
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `Feedback scored · ${evt.data.rating} · run ${short}`,
+            ),
+          }
+        }
+
+        case 'checkpoint.saved':
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `Checkpoint saved · ${evt.data.thread}${evt.data.label ? ` · ${evt.data.label}` : ''}`,
+            ),
+          }
+
+        case 'checkpoint.restored':
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `Checkpoint restored · ${evt.data.thread}`,
+            ),
+          }
+
+        case 'memory.session.write':
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `memory.session.write · ${evt.data.thread}${evt.data.turn_count != null ? ` · turns ${evt.data.turn_count}` : ''}`,
+            ),
+          }
+
+        case 'memory.lt.recall':
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `memory.lt.recall · ${evt.data.hits} hits · +${evt.data.injected_chars} chars`,
+            ),
+          }
+
+        case 'memory.lt.store':
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `memory.lt.store · ${evt.data.key ?? evt.data.namespace ?? '—'}`,
+            ),
+          }
+
+        case 'skill.loaded':
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `Skill loaded · ${evt.data.skill_name}${evt.data.source ? ` (${evt.data.source})` : ''}`,
+            ),
+          }
+
+        case 'skill.applied':
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `Skill applied · ${evt.data.phase ?? '—'} · +${evt.data.injected_chars ?? 0} chars`,
+            ),
+          }
+
+        case 'skill.learned':
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `Skill learned · ${evt.data.skill_name}${evt.data.pattern ? ` · ${evt.data.pattern}` : ''}`,
+            ),
+          }
+
         // ── errors ──
         case 'error.fatal':
           return { ...s, status: 'error', errorMessage: evt.data.message }
@@ -479,12 +754,22 @@ export const useSessionStore = create<SessionStore>((set) => ({
 
   markExited: () => set((s) => ({ ...s, status: 'exited' })),
 
+  appendProtocolNote: (line: string) =>
+    set((s) => ({
+      ...s,
+      protocolNotes: pushProtocolNotes(s.protocolNotes, line),
+    })),
+
   reset: () =>
     set((s) => ({
       ...s,
       completedTurns: [],
       activeTurn: null,
       hitlQueue: [],
+      toolNames: null,
+      capabilities: null,
+      protocolNotes: [],
+      todos: [],
       totalInputTokens: 0,
       totalOutputTokens: 0,
       turnInputTokens: 0,

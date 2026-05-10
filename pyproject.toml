@@ -69,6 +69,7 @@ together = ["langchain-together>=0.4.0"]
 upstage = ["langchain-upstage>=0.7.7"]
 xai = ["langchain-xai>=1.2.2"]
 ws = ["websockets>=12.0"]
+readability = ["trafilatura>=2.0.0"]
 memory = [
     "qdrant-client>=1.17.1",
     "sentence-transformers>=5.4.1",
@@ -124,6 +125,7 @@ packages = ["agloom"]
 exclude = [
     "agloom/tests/**",
     "agloom/examples/**",
+    "agloom/docs/**", 
 ]
 
 # Sdist scope: ship the Python package + docs only. The Node packages

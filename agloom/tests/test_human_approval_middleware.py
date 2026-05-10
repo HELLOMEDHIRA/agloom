@@ -118,6 +118,30 @@ def test_awrap_tool_call_pauses_on_wildcard() -> None:
     assert payload["args"] == {"path": "foo"}
 
 
+def test_awrap_tool_call_skips_when_tool_allowlisted() -> None:
+    calls: list[str] = []
+
+    async def callback(event: str, payload: Any) -> str:
+        calls.append("cb")
+        return "continue"
+
+    allow = {"execute"}
+    mw = HumanApprovalMiddleware(
+        interrupt_before_tools=["execute"],
+        user_callback=callback,
+        agent_name="t",
+        tool_allowlist=allow,
+    )
+
+    async def handler(req: Any) -> str:
+        return "ran"
+
+    req = _make_request_v1("execute", {"command": "echo hi"})
+    result = asyncio.run(mw.awrap_tool_call(req, handler))
+    assert result == "ran"
+    assert calls == []
+
+
 def test_awrap_tool_call_aborts_on_user_reject() -> None:
     async def callback(event: str, payload: Any) -> str:
         return "abort"

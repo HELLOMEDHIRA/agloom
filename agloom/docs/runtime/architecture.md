@@ -1,6 +1,6 @@
 # agloom-runtime Architecture
 
-**Status**: Phase 1 (foundations shipped) | **Version**: 1.0  
+**Status**: Stable (foundations shipped) | **Version**: 1.0  
 **Last updated**: May 2026
 
 ---
@@ -109,20 +109,14 @@ class BaseWorker(ABC):
     async def health_check() -> WorkerHealth
 ```
 
-### Worker Types (current + roadmap)
+### Worker types (shipped)
 
-| Type | Phase | Description |
-|---|---|---|
-| `LocalAIWorker` | **P1** | Wraps `UnifiedAgent.astream_events`, runs in-process |
-| `ToolWorker` | **P1** | Executes a single tool call in isolation |
-| `SubprocessWorker` | **P2** | Spawns a child process, streams its stdout as AGP |
-| `RemoteHTTPWorker` | **P2** | POSTs tasks to a remote `agloom-runtime` endpoint |
-| `RemoteWSWorker` | **P2** | Maintains a persistent WS connection to a remote node |
-| `RayWorker` | **P3** | Dispatches tasks to a Ray cluster |
-| `GPUInferenceWorker` | **P3** | Wraps vLLM / Ollama / TGI for GPU-bound inference |
-| `SparkWorker` | **P4** | Submits Spark jobs, streams structured progress events |
-| `EmbeddingWorker` | **P3** | Batch embedding tasks (sentence-transformers, OpenAI) |
-| `BrowserWorker` | **P3** | Playwright automation, streams DOM/network events |
+| Type | Description |
+|---|---|
+| `LocalAIWorker` | Wraps `UnifiedAgent.astream_events`, runs in-process |
+| `ToolWorker` | Executes a single tool call in isolation |
+
+Additional worker kinds (remote brokers, GPU pools, browsers, etc.) are **extension points** — see the informal [product roadmap](https://github.com/HELLOMEDHIRA/agloom/blob/main/docs/ROADMAP.md) in the repo.
 
 ### Worker Capability Tags
 
@@ -141,7 +135,7 @@ Workers declare capabilities as string tags. The scheduler matches tasks to work
 
 ## 5. Scheduling Model
 
-**Phase 1**: Single-node priority queue (asyncio-native, zero infrastructure)
+**Current**: Single-node priority queue (asyncio-native, minimal infrastructure)
 
 ```
 WorkerTask
@@ -157,10 +151,7 @@ WorkerTask
 3. If no worker available → task waits in queue (bounded wait, configurable)
 4. On timeout → emit `error.transient` + retry (if policy allows) or `error.fatal`
 
-**Phase 2+**: Pluggable scheduler backends
-- `InProcessScheduler` — current asyncio queue
-- `RedisScheduler` — multi-process, same host (Redis Streams / Sorted Sets)
-- `BrokerScheduler` — multi-host (RabbitMQ / Kafka / NATS as transport)
+Heavier deployments may introduce pluggable schedulers (Redis, brokers) behind the same task API — without changing AGP envelopes.
 
 ---
 
@@ -206,9 +197,9 @@ Frontend receives: pattern.classified / thinking.step / token.delta /
 
 ## 7. Remote Worker Communication Strategy
 
-Three patterns, chosen by deployment need:
+Three patterns deployments may adopt:
 
-### Pattern A — Direct AGP over WebSocket (P2)
+### Pattern A — Direct AGP over WebSocket
 Remote worker runs `agloom-runtime serve --transport=ws`.
 Supervisor runtime connects as a WebSocket client and sends `command.worker.assign`.
 Worker streams AGP events back over the same connection.
@@ -219,12 +210,12 @@ Supervisor RuntimeNode ──WS──► Remote Worker RuntimeNode
   recv: AGP event stream  ◄───        emit: token.delta, message.assistant, ...
 ```
 
-### Pattern B — AGP over Message Broker (P3)
+### Pattern B — AGP over message broker
 Each `RuntimeNode` publishes/subscribes to topics on a broker (NATS / Kafka).
 Topic naming: `agp.session.<session_id>.commands` / `agp.session.<session_id>.events`.
 Enables fan-out to multiple consumers (dashboards, monitoring, logging).
 
-### Pattern C — Cloud Control Plane (P4)
+### Pattern C — Hosted control plane
 `agloom-cloud` control plane manages worker registration and assignment.
 Workers register capabilities; control plane matches tasks to workers globally.
 Heartbeat + capability refresh every 30s.
@@ -252,11 +243,11 @@ command.session.resume ───────────────────
 checkpoint.restored ◄─────────────────────────────────
 ```
 
-**EventStore backends** (already implemented):
+**EventStore backends** (shipped today):
 - `MemoryEventStore` — single process, no persistence
 - `SqliteEventStore` — single host, survives restarts
-- **P2**: `PostgresEventStore` — multi-host, production grade
-- **P3**: `CassandraEventStore` — large-scale audit log
+
+Larger deployments may add PostgreSQL or columnar stores behind the same replay semantics.
 
 ---
 
@@ -289,8 +280,7 @@ For full event sourcing:
 - `command.session.resume {from_seq: N}` replays events N..latest to reconnecting clients
 - Projections (dashboards, metrics) are just EventStore readers
 
-The missing piece for true event sourcing at scale: **P2 PostgresEventStore with
-append-only write path and indexed reads by `(session, seq)`**.
+At very large scale, prefer a durable append-only store with indexed reads by `(session, seq)` — same projection model as today, different backing DB.
 
 ---
 
@@ -328,169 +318,43 @@ class RetryPolicy:
 
 ---
 
-## 12. Scalability Considerations
+## 12. Scalability considerations
 
-| Dimension | Phase 1 | Phase 2 | Phase 3 |
-|---|---|---|---|
-| Workers per node | 1–8 | 1–32 | unlimited (auto-scale) |
-| Sessions per node | 100 | 1000 | 10000 |
-| Nodes | 1 | 2–10 | 100+ |
-| Event throughput | ~1k/s | ~10k/s | ~1M/s (broker-backed) |
-| State store | in-process | SQLite | PostgreSQL / Cassandra |
+Rough **current** sizing assumptions for the in-process runtime:
 
-**Key bottleneck to address early**: the `Translator` is synchronous inside an async
-loop. For high-throughput (>10k events/s), move to a dedicated translation thread.
+| Dimension | Typical range |
+|---|---|
+| Workers per node | 1–8 |
+| Sessions per node | up to ~100 (workload-dependent) |
+| Nodes | 1 |
+| Event throughput | ~1k/s order of magnitude |
+| State store | in-process / SQLite |
 
----
+**Bottleneck note**: the `Translator` runs in the asyncio loop; very high event rates may need a dedicated translation path.
 
-## 13. Multi-Runtime Coordination
-
-**P2 — Peer-to-peer**: RuntimeNodes discover each other through a shared registry
-(Redis / etcd). Each node exposes a WebSocket endpoint. Tasks are routed to nodes
-with matching capabilities.
-
-**P3 — Control plane**: A lightweight `agloom-coordinator` service holds global
-worker and session topology. RuntimeNodes register on startup and receive routing
-tables. The coordinator is stateless (uses PostgresEventStore as source of truth).
-
-**P4 — Kubernetes operator**: `AgloomRuntime` CRD. The operator manages pod
-lifecycle, scales worker replicas based on queue depth, and injects AGP routing
-config via environment variables.
+Multi-node coordination, broker-backed queues, and hosted control planes are **not** part of the baseline doc — see the repo **[ROADMAP.md](https://github.com/HELLOMEDHIRA/agloom/blob/main/docs/ROADMAP.md)** for informal directions.
 
 ---
 
-## 14. Runtime Observability Architecture
+## 13. Runtime observability
 
-Every AGP event emitted by any worker is an observation. The observability stack is:
-
-```
-Worker
-  │ AgentEvents
-  ▼
-Translator → AGP Envelopes
-  │
-  ├──► AsyncSessionEmitter → stdio/ws (to frontend)
-  │
-  ├──► EventStore (append-only audit log)
-  │
-  └──► MetricsCollector (future P2)
-           ├── Prometheus counter: agp_events_total{type, session}
-           ├── Histogram: worker_task_duration_ms{worker_type}
-           └── Gauge: worker_pool_active_tasks
-```
-
-**P2 additions**:
-- `metric.tokens` events aggregated to Prometheus `agp_tokens_total{model, phase}`
-- OpenTelemetry trace spans per `WorkerTask` (trace_id = thread_id)
-- Grafana dashboard seeded from Prometheus
+AGP events emitted on stdio/WebSocket can also be persisted and queried via the **`--obs`** HTTP API (SQLite + REST + SSE). See [Observability architecture](../observability/architecture.md).
 
 ---
 
-## 15. Future Compatibility
+## 14. Repository layout (`agloom/runtime`)
 
-### agloom-cloud
-RuntimeNode already has the right interface: `serve --transport=ws` exposes
-a WebSocket endpoint. `agloom-cloud` is a control plane that:
-1. Issues `command.worker.assign` to RuntimeNodes
-2. Aggregates AGP event streams from all nodes
-3. Provides session replay via centralized EventStore
-
-### Dashboards
-AGP events are already structured enough to drive real-time dashboards.
-A `DashboardAdapter` subscribes to all sessions, aggregates `metric.tokens`,
-`worker.spawned`, `tool.call` events, and writes to a time-series store.
-
-### Deployment systems
-`WorkerPool` already supports dynamic `register_worker()` / `deregister_worker()`.
-Kubernetes HPA can scale worker replicas; the operator calls these APIs via a
-sidecar health+register endpoint.
-
-### VSCode extension
-Same as agloom CLI: spawn `agloom-runtime serve --transport=ws`, connect from the
-extension's WebSocket client, render AGP events in a custom webview panel.
+The runtime package combines the AGP bridge (**`bridge.py`**), WebSocket transport (**`ws.py`**), translation (**`translator.py`**), HITL (**`hitl.py`**), **`RuntimeNode`**, **`WorkerPool`**, schedulers, registries, and **`workers/`** (`local`, types, …). Browse the directory for the authoritative file list.
 
 ---
 
-## 16. Package / Repository Structure
-
-```
-agloom/
-  runtime/
-    __init__.py         # public API: RuntimeNode, WorkerPool, Scheduler, ...
-    __main__.py         # CLI entry: `agloom-runtime serve`
-    bridge.py           # run_invocation, session helpers (existing)
-    hitl.py             # HITLBridge (existing)
-    translator.py       # AgentEvent → AGP Envelope (existing)
-    ws.py               # WebSocket transport (existing)
-    node.py             # ★ NEW: RuntimeNode assembly
-    pool.py             # ★ NEW: WorkerPool + health monitor
-    workers/
-      __init__.py       # BaseWorker ABC (★ NEW)
-      types.py          # WorkerTask, WorkerHealth, RetryPolicy (★ NEW)
-      local.py          # LocalAIWorker (★ NEW)
-      tool.py           # ToolWorker (★ NEW)
-      subprocess.py     # SubprocessWorker (P2)
-      remote_http.py    # RemoteHTTPWorker (P2)
-      remote_ws.py      # RemoteWSWorker (P2)
-      ray.py            # RayWorker (P3)
-      gpu.py            # GPUInferenceWorker (P3)
-    scheduler/
-      __init__.py       # Scheduler ABC + InProcessScheduler (★ NEW)
-      redis.py          # RedisScheduler (P2)
-      broker.py         # BrokerScheduler (P3)
-    registry/
-      __init__.py       # WorkerRegistry + InMemoryRegistry (★ NEW)
-      redis.py          # RedisRegistry (P2)
-      etcd.py           # EtcdRegistry (P3)
-    state/              # (P2 — PostgresEventStore etc.)
-```
-
----
-
-## 17. Phased Implementation Roadmap
-
-### Phase 1 — Runtime Foundations (NOW, this PR)
-- [x] `WorkerTask` / `WorkerHealth` / `RetryPolicy` data models
-- [x] `BaseWorker` ABC
-- [x] `LocalAIWorker` (wraps `UnifiedAgent`)
-- [x] `ToolWorker` (isolated tool execution)
-- [x] `InProcessScheduler` (asyncio priority queue + capability matching)
-- [x] `InMemoryRegistry`
-- [x] `WorkerPool` with health monitor
-- [x] `RuntimeNode` assembly
-- [x] `__main__.py` integration
-
-### Phase 2 — Remote Workers + Persistence (next sprint)
-- [ ] `SubprocessWorker` — child process worker
-- [ ] `RemoteHTTPWorker` + `RemoteWSWorker`
-- [ ] `RedisScheduler` + `RedisRegistry`
-- [ ] `PostgresEventStore`
-- [ ] Worker health endpoint (`GET /health`)
-- [ ] Prometheus metrics exporter
-
-### Phase 3 — GPU + Specialised Workers
-- [ ] `GPUInferenceWorker` (vLLM / Ollama)
-- [ ] `EmbeddingWorker` (sentence-transformers batch)
-- [ ] `BrowserWorker` (Playwright)
-- [ ] `RayWorker`
-- [ ] OpenTelemetry trace integration
-
-### Phase 4 — Cluster + Cloud
-- [ ] `agloom-coordinator` control plane service
-- [ ] Kubernetes operator (`AgloomRuntime` CRD)
-- [ ] `CassandraEventStore`
-- [ ] `BrokerScheduler` (NATS / Kafka)
-- [ ] Multi-node session routing
-
----
-
-## 18. Architectural Risks
+## 15. Architectural risks
 
 | Risk | Severity | Mitigation |
 |---|---|---|
 | Worker crashes leak session state | High | WorkerPool supervisor restarts workers; emit `error.transient` |
 | Scheduler queue grows unbounded | Medium | Configurable `max_queue_depth`; back-pressure signal to frontend |
 | AGP `astream_events()` is a public hook | Medium | Already behind `Translator` layer; keep Translator as the only consumer |
-| Single EventStore per RuntimeNode (Phase 1) | Low | Acceptable for local; Phase 2 adds PostgreSQL |
-| Over-engineering distributed infra too early | High | **Phased approach enforced**: Phase 1 is pure asyncio, zero infra deps |
+| Single-node EventStore | Low | Acceptable for local dev; scale-out swaps storage behind the same API |
+| Over-engineering distributed infra too early | High | Ship asyncio-first; add brokers only when measured need exists |
 | Thread-safety of `Translator` in async pool | Low | Each worker gets its own `AsyncSessionEmitter` instance; no sharing |

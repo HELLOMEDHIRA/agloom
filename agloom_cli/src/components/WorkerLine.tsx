@@ -23,7 +23,7 @@ interface Props {
   worker: Worker
 }
 
-export function WorkerLine({ worker }: Props): React.ReactElement {
+export const WorkerLine = ({ worker }: Props): React.ReactElement => {
   const icon = WORKER_ICON[worker.status]
   const color = WORKER_COLOR[worker.status]
   const taskStr = worker.task ? ` — ${truncate(worker.task, 40)}` : ''

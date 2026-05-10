@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, MutableSet
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
@@ -72,10 +72,12 @@ class HumanApprovalMiddleware(AgentMiddleware):
         interrupt_before_tools: list[str],
         user_callback: Callable,
         agent_name: str,
+        tool_allowlist: MutableSet[str] | None = None,
     ) -> None:
         self.interrupt_before_tools = interrupt_before_tools
         self.user_callback = user_callback
         self.agent_name = agent_name
+        self.tool_allowlist = tool_allowlist
 
     @staticmethod
     def _extract_tool_call(request: Any) -> tuple[str, dict[str, Any], str | None]:
@@ -113,6 +115,10 @@ class HumanApprovalMiddleware(AgentMiddleware):
         should_pause: bool = bool(self.interrupt_before_tools) and (
             "tools" in self.interrupt_before_tools or tool_name in self.interrupt_before_tools
         )
+
+        if should_pause and self.tool_allowlist is not None and tool_name in self.tool_allowlist:
+            logger.event(f"{self.agent_name}[L2-HITL] Allowlisted — executing '{tool_name}' without prompt")
+            return await handler(request)
 
         if not should_pause:
             return await handler(request)

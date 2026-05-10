@@ -29,7 +29,7 @@ interface Props {
   layoutWidth?: number
 }
 
-export function StatusBar({ thread, layoutWidth }: Props): React.ReactElement {
+export const StatusBar = ({ thread, layoutWidth }: Props): React.ReactElement => {
   const status = useSessionStore((s) => s.status)
   const sessionId = useSessionStore((s) => s.sessionId)
   const { columns } = useWindowSize()
@@ -40,6 +40,9 @@ export function StatusBar({ thread, layoutWidth }: Props): React.ReactElement {
 
   const sessionShort = sessionId ? sessionId.slice(0, 12) : '…'
   const threadShort = thread.slice(0, 12)
+  const toolNames = useSessionStore((s) => s.toolNames)
+  const toolsHint =
+    toolNames && toolNames.length > 0 ? `tools:${toolNames.length}` : null
 
   return (
     <Box
@@ -72,6 +75,17 @@ export function StatusBar({ thread, layoutWidth }: Props): React.ReactElement {
           </Text>
           <Text color="gray" dimColor>
             session:{sessionShort}
+          </Text>
+        </>
+      )}
+
+      {toolsHint && (
+        <>
+          <Text color="gray" dimColor>
+            {'  ·  '}
+          </Text>
+          <Text color="gray" dimColor>
+            {toolsHint}
           </Text>
         </>
       )}

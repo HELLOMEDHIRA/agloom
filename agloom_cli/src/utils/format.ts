@@ -3,14 +3,14 @@
  */
 
 /** Truncate a string to `max` chars, appending `…` if cut. */
-export function truncate(s: string, max: number): string {
+export const truncate = (s: string, max: number): string => {
   if (!s) return ''
   const clean = s.replace(/\s+/g, ' ').trim()
-  return clean.length <= max ? clean : clean.slice(0, max - 1) + '…'
+  return clean.length <= max ? clean : `${clean.slice(0, max - 1)}…`
 }
 
 /** Render a duration in milliseconds as a human-friendly string. */
-export function fmtDuration(ms: number | undefined): string {
+export const fmtDuration = (ms: number | undefined): string => {
   if (ms === undefined) return ''
   if (ms < 1000) return `${ms}ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
@@ -18,20 +18,20 @@ export function fmtDuration(ms: number | undefined): string {
 }
 
 /** Format a token count with a K suffix for large numbers. */
-export function fmtTokens(n: number): string {
+export const fmtTokens = (n: number): string => {
   if (n < 1000) return `${n}`
   return `${(n / 1000).toFixed(1)}k`
 }
 
 /** Compact USD for telemetry sidebars. */
-export function fmtUsd(n: number): string {
+export const fmtUsd = (n: number): string => {
   if (!Number.isFinite(n) || n <= 0) return '$0'
   if (n < 0.01) return `$${n.toFixed(4)}`
   return `$${n.toFixed(3)}`
 }
 
 /** Shorten a long id for narrow columns (middle ellipsis). */
-export function shortenMiddle(s: string, max: number): string {
+export const shortenMiddle = (s: string, max: number): string => {
   if (s.length <= max) return s
   const inner = max - 1
   const left = Math.ceil(inner / 2)
@@ -40,7 +40,7 @@ export function shortenMiddle(s: string, max: number): string {
 }
 
 /** Render a JSON args object as a compact one-line string. */
-export function fmtArgs(args: Record<string, unknown>, maxLen = 60): string {
+export const fmtArgs = (args: Record<string, unknown>, maxLen = 60): string => {
   try {
     const s = JSON.stringify(args)
     return truncate(s, maxLen)
@@ -50,7 +50,7 @@ export function fmtArgs(args: Record<string, unknown>, maxLen = 60): string {
 }
 
 /** Strip leading/trailing blank lines from a multi-line string. */
-export function trimLines(s: string): string {
+export const trimLines = (s: string): string => {
   return s.replace(/^\n+/, '').replace(/\n+$/, '')
 }
 
@@ -59,7 +59,7 @@ export function trimLines(s: string): string {
  * Handles the most common constructs without pulling in a heavy parser.
  * For richer rendering, swap this out for a proper markdown-to-terminal lib.
  */
-export function renderMarkdown(md: string, termWidth = 80): string {
+export const renderMarkdown = (md: string, termWidth = 80): string => {
   return md
     .split('\n')
     .map((line) => {
@@ -97,7 +97,7 @@ export function renderMarkdown(md: string, termWidth = 80): string {
 }
 
 /** Produce a coloured status badge string (no Ink dependency). */
-export function statusBadge(status: string): string {
+export const statusBadge = (status: string): string => {
   switch (status) {
     case 'running':
       return '\x1b[33mrunning\x1b[0m'

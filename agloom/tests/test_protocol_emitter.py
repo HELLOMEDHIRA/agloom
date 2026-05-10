@@ -24,6 +24,22 @@ def test_emitter_seq_starts_at_zero_then_increments() -> None:
     assert em.seq == 2
 
 
+def test_subscription_prefix_filters_wire_stream() -> None:
+    buf = io.StringIO()
+    em = SessionEmitter(session="s", thread="t", writer=buf)
+    em.open()
+    em.set_subscription_prefixes(["thinking."])
+    em.emit_pattern_classified(pattern="REACT")
+    em.emit_thinking_step(step="plan")
+    em.close()
+    events = _read_events(buf)
+    types = [e.type for e in events]
+    assert "pattern.classified" not in types
+    assert "thinking.step" in types
+    assert types[0] == "session.opened"
+    assert types[-1] == "session.closed"
+
+
 def test_emitter_full_lifecycle_writes_seven_events() -> None:
     buf = io.StringIO()
     em = SessionEmitter(session="sess_a", thread="thread_b", writer=buf)
@@ -140,13 +156,15 @@ def test_emitter_concurrent_emits_keep_seq_monotonic() -> None:
     assert len(seqs) == 1 + 200 + 1  # opened + 4*50 + closed
 
 
-def test_emitter_session_opened_carries_capabilities() -> None:
+def test_emitter_runtime_config_carries_capabilities() -> None:
     buf = io.StringIO()
-    em = SessionEmitter(session="s", thread="t", writer=buf, capabilities=["agp.v1.minimal", "tools"])
+    em = SessionEmitter(session="s", thread="t", writer=buf, capabilities=["tools"])
     em.open()
+    em.emit_runtime_config(model_id="m1", tool_names=["t1"])
     events = _read_events(buf)
     assert events[0].type == "session.opened"
-    assert events[0].data.capabilities == ["agp.v1.minimal", "tools"]
+    assert events[1].type == "runtime.config"
+    assert events[1].data.capabilities == ["tools"]
 
 
 # ── Phase 0.5: tool.* / message.user / error.* emit_* shortcuts ──────────────

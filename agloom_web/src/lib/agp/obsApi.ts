@@ -3,7 +3,7 @@
  * Base URL: VITE_OBS_API_URL (default: http://localhost:8766)
  */
 
-const BASE = (import.meta.env['VITE_OBS_API_URL'] ?? 'http://localhost:8766') + '/observe'
+const BASE = `${import.meta.env['VITE_OBS_API_URL'] ?? 'http://localhost:8766'  }/observe`
 
 export interface SessionSummary {
   session_id:    string
@@ -75,7 +75,7 @@ export interface GlobalSummary {
   avg_session_duration_ms:  number
 }
 
-async function get<T>(path: string): Promise<T> {
+const get = async <T>(path: string): Promise<T> => {
   const res = await fetch(`${BASE}${path}`)
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json() as Promise<T>

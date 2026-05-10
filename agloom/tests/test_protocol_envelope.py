@@ -119,12 +119,12 @@ def test_session_opened_round_trip() -> None:
         data=SessionOpenedData(
             runtime_version="0.1.0",
             protocol_version="1",
-            capabilities=["agp.v1.minimal"],
+            capabilities_override=["custom.extension"],
         ),
     )
     d = _round_trip(evt)
     assert d["type"] == "session.opened"
-    assert d["data"]["capabilities"] == ["agp.v1.minimal"]
+    assert d["data"]["capabilities_override"] == ["custom.extension"]
 
 
 def test_pattern_classified_round_trip() -> None:

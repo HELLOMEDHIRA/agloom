@@ -15,10 +15,14 @@ import asyncio
 import sys
 import threading
 from collections.abc import Callable
-from typing import IO, Any
+from typing import IO, Any, Literal
 
 from .envelope import PROTOCOL_MODULE_VERSION, Envelope
 from .events import (
+    AgentBusy,
+    AgentBusyData,
+    AgentIdle,
+    AgentIdleData,
     CheckpointRestored,
     CheckpointRestoredData,
     CheckpointSaved,
@@ -49,6 +53,8 @@ from .events import (
     MemorySessionWriteData,
     MessageAssistant,
     MessageAssistantData,
+    MessageTool,
+    MessageToolData,
     MessageUser,
     MessageUserData,
     MetricCost,
@@ -61,9 +67,30 @@ from .events import (
     PromptCancelledData,
     PromptRequested,
     PromptRequestedData,
+    RuntimeConfig,
+    RuntimeConfigApplied,
+    RuntimeConfigAppliedData,
+    RuntimeConfigData,
+    RuntimePong,
+    RuntimePongData,
+    RuntimeReady,
+    RuntimeReadyData,
+    RuntimeSchemaPayload,
+    RuntimeSchemaPayloadData,
+    RuntimeSessionCreated,
+    RuntimeSessionCreatedData,
+    RuntimeSessionsPayload,
+    RuntimeSessionsPayloadData,
+    RuntimeToolEntry,
+    RuntimeToolInvokeResult,
+    RuntimeToolInvokeResultData,
+    RuntimeToolsPayload,
+    RuntimeToolsPayloadData,
     SessionClosed,
     SessionClosedData,
     SessionCloseReason,
+    SessionHeartbeat,
+    SessionHeartbeatData,
     SessionOpened,
     SessionOpenedData,
     SessionResumed,
@@ -74,8 +101,12 @@ from .events import (
     SkillLearnedData,
     SkillLoaded,
     SkillLoadedData,
+    StreamHeartbeat,
+    StreamHeartbeatData,
     ThinkingStep,
     ThinkingStepData,
+    TodosUpdated,
+    TodosUpdatedData,
     TokenDelta,
     TokenDeltaData,
     ToolCallError,
@@ -121,6 +152,16 @@ class _SharedSeq:
         return self._seq
 
 
+class _SubscriptionFilter:
+    """Shared mutable prefix filter — forks reference the same instance so ``command.subscribe``
+    applies to every thread-bound emitter in the session."""
+
+    __slots__ = ("prefixes",)
+
+    def __init__(self) -> None:
+        self.prefixes: list[str] | None = None
+
+
 class SessionEmitter:
     """Emit AGP events to *writer* as NDJSON.
 
@@ -140,6 +181,7 @@ class SessionEmitter:
         store: Any | None = None,
         _shared_seq: _SharedSeq | None = None,
         _write_lock: threading.Lock | None = None,
+        _sub_filter: _SubscriptionFilter | None = None,
     ) -> None:
         self._session = session
         self._thread = thread
@@ -151,6 +193,7 @@ class SessionEmitter:
         self._store = store  # optional EventStore for persistence / replay
         self._shared_seq: _SharedSeq = _shared_seq if _shared_seq is not None else _SharedSeq()
         self._write_lock: threading.Lock = _write_lock if _write_lock is not None else threading.Lock()
+        self._sub_filter: _SubscriptionFilter = _sub_filter if _sub_filter is not None else _SubscriptionFilter()
         self._opened = False
         self._closed = False
 
@@ -178,14 +221,19 @@ class SessionEmitter:
         inst._store = None
         inst._shared_seq = _shared_seq if _shared_seq is not None else _SharedSeq()
         inst._write_lock = threading.Lock()
+        inst._sub_filter = _SubscriptionFilter()
         inst._opened = False
         inst._closed = False
         return inst
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
-    def open(self) -> SessionOpened:
-        """Emit ``session.opened``. Idempotent."""
+    def open(self, *, capabilities_override: list[str] | None = None) -> SessionOpened:
+        """Emit ``session.opened``. Idempotent.
+
+        ``capabilities_override`` is optional; canonical capability tokens belong on
+        :meth:`emit_runtime_config`.
+        """
         if self._opened:
             return self._last_open  # type: ignore[has-type]
         self._opened = True
@@ -196,7 +244,7 @@ class SessionEmitter:
             data=SessionOpenedData(
                 runtime_version=PROTOCOL_MODULE_VERSION,
                 protocol_version="1",
-                capabilities=list(self._capabilities),
+                capabilities_override=capabilities_override,
             ),
         )
         self._write(evt)
@@ -232,6 +280,7 @@ class SessionEmitter:
         *,
         resumed_from_thread: str | None = None,
         replayed_from_seq: int | None = None,
+        capabilities_override: list[str] | None = None,
     ) -> SessionResumed:
         """Emit ``session.resumed`` instead of ``session.opened`` on reconnects.
 
@@ -249,7 +298,7 @@ class SessionEmitter:
             data=SessionResumedData(
                 runtime_version=PROTOCOL_MODULE_VERSION,
                 protocol_version="1",
-                capabilities=list(self._capabilities),
+                capabilities_override=capabilities_override,
                 resumed_from_thread=resumed_from_thread,
                 replayed_from_seq=replayed_from_seq,
             ),
@@ -970,6 +1019,236 @@ class SessionEmitter:
         self._write(evt)
         return evt
 
+    def emit_runtime_ready(
+        self,
+        *,
+        agent_name: str | None = None,
+        cli_tools_enabled: bool | None = None,
+        cli_tools_count: int | None = None,
+        parent: str | None = None,
+    ) -> RuntimeReady:
+        evt = RuntimeReady(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=RuntimeReadyData(
+                agent_name=agent_name,
+                cli_tools_enabled=cli_tools_enabled,
+                cli_tools_count=cli_tools_count,
+            ),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_runtime_config(
+        self,
+        *,
+        model_id: str | None = None,
+        tool_names: list[str] | None = None,
+        capabilities: list[str] | None = None,
+        cli_tools_enabled: bool | None = None,
+        cli_tools_count: int | None = None,
+        parent: str | None = None,
+    ) -> RuntimeConfig:
+        caps = list(capabilities) if capabilities is not None else list(self._capabilities)
+        evt = RuntimeConfig(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=RuntimeConfigData(
+                model_id=model_id,
+                tool_names=list(tool_names or []),
+                capabilities=caps,
+                cli_tools_enabled=cli_tools_enabled,
+                cli_tools_count=cli_tools_count,
+            ),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_runtime_pong(self, *, ping_id: str | None = None, parent: str | None = None) -> RuntimePong:
+        evt = RuntimePong(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=RuntimePongData(ping_id=ping_id),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_runtime_schema(self, *, json_schema: dict[str, Any], parent: str | None = None) -> RuntimeSchemaPayload:
+        evt = RuntimeSchemaPayload(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=RuntimeSchemaPayloadData(json_schema=json_schema),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_runtime_tools(
+        self,
+        *,
+        tools: list[tuple[str, str | None]],
+        parent: str | None = None,
+    ) -> RuntimeToolsPayload:
+        entries = [RuntimeToolEntry(name=n, description=d) for n, d in tools]
+        evt = RuntimeToolsPayload(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=RuntimeToolsPayloadData(tools=entries),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_runtime_sessions(self, *, sessions: list[str], parent: str | None = None) -> RuntimeSessionsPayload:
+        evt = RuntimeSessionsPayload(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=RuntimeSessionsPayloadData(sessions=list(sessions)),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_runtime_session_created(self, *, session_id: str, parent: str | None = None) -> RuntimeSessionCreated:
+        evt = RuntimeSessionCreated(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=RuntimeSessionCreatedData(session_id=session_id),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_runtime_tool_result(
+        self,
+        *,
+        ok: bool,
+        result: Any | None = None,
+        error: str | None = None,
+        parent: str | None = None,
+    ) -> RuntimeToolInvokeResult:
+        evt = RuntimeToolInvokeResult(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=RuntimeToolInvokeResultData(ok=ok, result=result, error=error),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_runtime_config_applied(
+        self,
+        *,
+        model_id: str | None = None,
+        cli_tools_enabled: bool | None = None,
+        cli_tools_count: int | None = None,
+        parent: str | None = None,
+    ) -> RuntimeConfigApplied:
+        evt = RuntimeConfigApplied(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=RuntimeConfigAppliedData(
+                model_id=model_id,
+                cli_tools_enabled=cli_tools_enabled,
+                cli_tools_count=cli_tools_count,
+            ),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_todos_updated(self, *, items: list[dict[str, Any]], parent: str | None = None) -> TodosUpdated:
+        evt = TodosUpdated(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=TodosUpdatedData(items=list(items)),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_session_heartbeat(self, *, uptime_ms: int | None = None, parent: str | None = None) -> SessionHeartbeat:
+        evt = SessionHeartbeat(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=SessionHeartbeatData(uptime_ms=uptime_ms),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_agent_busy(self, *, thread: str | None = None, parent: str | None = None) -> AgentBusy:
+        evt = AgentBusy(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=AgentBusyData(thread=thread or self._thread),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_agent_idle(self, *, thread: str | None = None, parent: str | None = None) -> AgentIdle:
+        evt = AgentIdle(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=AgentIdleData(thread=thread or self._thread),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_message_tool(
+        self,
+        *,
+        tool_name: str,
+        phase: Literal["start", "progress", "end"] = "progress",
+        detail: str | None = None,
+        call_id: str | None = None,
+        parent: str | None = None,
+    ) -> MessageTool:
+        evt = MessageTool(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=MessageToolData(tool_name=tool_name, phase=phase, detail=detail, call_id=call_id),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_stream_heartbeat(
+        self,
+        *,
+        thread: str | None = None,
+        chars_since_last: int | None = None,
+        parent: str | None = None,
+    ) -> StreamHeartbeat:
+        evt = StreamHeartbeat(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=StreamHeartbeatData(thread=thread or self._thread, chars_since_last=chars_since_last),
+        )
+        self._write(evt)
+        return evt
+
     def emit_error(
         self,
         *,
@@ -1039,12 +1318,38 @@ class SessionEmitter:
             writer=self._writer,
             capabilities=list(self._capabilities),
             on_emit=self._on_emit,
+            store=self._store,
             _shared_seq=self._shared_seq,
             _write_lock=self._write_lock,
+            _sub_filter=self._sub_filter,
         )
         # Mark as already open so the child doesn't re-emit session.opened.
         child._opened = True
         return child
+
+    # ── subscription filter (command.subscribe / unsubscribe) ─────────────────
+
+    def set_subscription_prefixes(self, prefixes: list[str] | None) -> None:
+        """Restrict outbound NDJSON to events whose ``type`` matches a prefix (plus passthrough).
+
+        ``None`` or an empty list clears the filter (full stream). Forked emitters share state.
+        """
+        if prefixes:
+            self._sub_filter.prefixes = list(prefixes)
+        else:
+            self._sub_filter.prefixes = None
+
+    def clear_subscription(self) -> None:
+        """Clear any active subscription filter (same as ``set_subscription_prefixes(None)``)."""
+        self._sub_filter.prefixes = None
+
+    def _subscription_allows_wire(self, typ: str) -> bool:
+        prefs = self._sub_filter.prefixes
+        if prefs is None:
+            return True
+        if typ.startswith(("session.", "error.", "runtime.", "prompt.", "hitl.")):
+            return True
+        return any(typ.startswith(p) for p in prefs)
 
     # ── plumbing ─────────────────────────────────────────────────────────────
 
@@ -1052,8 +1357,10 @@ class SessionEmitter:
         return self._shared_seq.next()
 
     def _write(self, evt: Envelope) -> None:
-        if self._writer is not None:
-            line = evt.model_dump_json(by_alias=True, exclude_none=True)
+        typ = str(getattr(evt, "type", ""))
+        wire_ok = self._subscription_allows_wire(typ)
+        line = evt.model_dump_json(by_alias=True, exclude_none=True)
+        if self._writer is not None and wire_ok:
             with self._write_lock:
                 self._writer.write(line + "\n")
                 self._writer.flush()
@@ -1113,6 +1420,7 @@ class AsyncSessionEmitter(SessionEmitter):
         queue_maxsize: int = 0,
         _shared_seq: _SharedSeq | None = None,
         _write_lock: threading.Lock | None = None,
+        _sub_filter: _SubscriptionFilter | None = None,
     ) -> None:
         # Do NOT pass writer to parent — we manage writes ourselves via the queue.
         super().__init__(
@@ -1124,6 +1432,7 @@ class AsyncSessionEmitter(SessionEmitter):
             store=store,
             _shared_seq=_shared_seq,
             _write_lock=_write_lock,
+            _sub_filter=_sub_filter,
         )
         # Parent __init__ defaults to sys.stdout; override to None since AsyncSessionEmitter
         # routes all writes through its internal queue — the async_writer is the real target.
@@ -1160,8 +1469,11 @@ class AsyncSessionEmitter(SessionEmitter):
     # ── override _write to enqueue instead of block ─────────────────────────
 
     def _write(self, evt: Envelope) -> None:
+        typ = str(getattr(evt, "type", ""))
+        wire_ok = self._subscription_allows_wire(typ)
         line = evt.model_dump_json(by_alias=True, exclude_none=True)
-        self._queue.put_nowait(line)
+        if wire_ok:
+            self._queue.put_nowait(line)
         if self._on_emit is not None:
             try:
                 self._on_emit(evt)
@@ -1206,6 +1518,7 @@ class AsyncSessionEmitter(SessionEmitter):
             store=self._store,
             _shared_seq=self._shared_seq,
             _write_lock=self._write_lock,
+            _sub_filter=self._sub_filter,
         )
         # Share the same queue so a single drain task handles all forked emitters.
         child._queue = self._queue
@@ -1214,4 +1527,4 @@ class AsyncSessionEmitter(SessionEmitter):
         return child
 
 
-__all__ = ["AsyncSessionEmitter", "SessionEmitter", "WriterLike", "_SharedSeq", "event_to_dict"]
+__all__ = ["AsyncSessionEmitter", "SessionEmitter", "WriterLike", "event_to_dict"]

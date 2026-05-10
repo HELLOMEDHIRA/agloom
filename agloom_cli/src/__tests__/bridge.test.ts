@@ -3,7 +3,7 @@
  * Process spawning is mocked — no Python runtime required.
  */
 
-import { AGPBridge } from '../runtime/bridge'
+import { createAGPBridge } from '../runtime/bridge'
 import { EventEmitter } from 'node:events'
 
 // ── mock child_process ────────────────────────────────────────────────────────
@@ -32,13 +32,13 @@ jest.mock('node:child_process', () => ({
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function newBridge() {
-  const bridge = new AGPBridge()
+const newBridge = () => {
+  const bridge = createAGPBridge()
   bridge.start()
   return bridge
 }
 
-function lastWritten(): Record<string, unknown> {
+const lastWritten = (): Record<string, unknown> => {
   const calls = mockWrite.mock.calls
   const last = calls[calls.length - 1]?.[0] as string | undefined
   if (!last) throw new Error('No write calls recorded')
@@ -49,7 +49,7 @@ function lastWritten(): Record<string, unknown> {
 
 describe('AGPBridge — initial state', () => {
   it('starts with status "starting"', () => {
-    const bridge = new AGPBridge()
+    const bridge = createAGPBridge()
     expect(bridge.status).toBe('starting')
   })
 
@@ -68,20 +68,20 @@ describe('AGPBridge — NDJSON parsing', () => {
 
   it('emits typed event for a valid NDJSON line', (done) => {
     const bridge = newBridge()
-    const payload = { type: 'session.opened', session: 's1', seq: 1, ts: '2026-01-01T00:00:00Z', data: { runtime_version: '0.1.0', protocol_version: '1', capabilities: [] } }
+    const payload = { type: 'session.opened', session: 's1', seq: 1, ts: '2026-01-01T00:00:00Z', data: { runtime_version: '0.1.0', protocol_version: '1' } }
 
     bridge.on('event', (evt) => {
       expect(evt.type).toBe('session.opened')
       done()
     })
 
-    mockStdoutEmitter.emit('data', JSON.stringify(payload) + '\n')
+    mockStdoutEmitter.emit('data', `${JSON.stringify(payload)  }\n`)
   })
 
   it('sets status to "ready" on session.opened', () => {
     const bridge = newBridge()
-    const payload = { type: 'session.opened', session: 's1', seq: 1, ts: '2026-01-01T00:00:00Z', data: { runtime_version: '0.1.0', protocol_version: '1', capabilities: [] } }
-    mockStdoutEmitter.emit('data', JSON.stringify(payload) + '\n')
+    const payload = { type: 'session.opened', session: 's1', seq: 1, ts: '2026-01-01T00:00:00Z', data: { runtime_version: '0.1.0', protocol_version: '1' } }
+    mockStdoutEmitter.emit('data', `${JSON.stringify(payload)  }\n`)
     expect(bridge.status).toBe('ready')
   })
 
@@ -103,7 +103,7 @@ describe('AGPBridge — NDJSON parsing', () => {
     const line2 = JSON.stringify({ type: 'pattern.classified', session: 's1', seq: 2, ts: '2026-01-01T00:00:00Z', data: { pattern: 'REACT' } })
 
     // Both lines arrive in a single data chunk
-    mockStdoutEmitter.emit('data', line1 + '\n' + line2 + '\n')
+    mockStdoutEmitter.emit('data', `${line1  }\n${  line2  }\n`)
     expect(events).toHaveLength(2)
   })
 
@@ -120,7 +120,7 @@ describe('AGPBridge — NDJSON parsing', () => {
     expect(events).toHaveLength(0)
 
     // Second chunk completes the line
-    mockStdoutEmitter.emit('data', full.slice(half) + '\n')
+    mockStdoutEmitter.emit('data', `${full.slice(half)  }\n`)
     expect(events).toHaveLength(1)
   })
 })

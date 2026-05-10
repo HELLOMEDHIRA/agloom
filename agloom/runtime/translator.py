@@ -107,6 +107,7 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
             args=args,
             worker=_str(data.get("worker")) or _str(data.get("worker_id")),
         )
+        emitter.emit_message_tool(tool_name=tool, phase="start", detail="dispatched", call_id=tcid)
         return
 
     if et == "tool_result":
@@ -123,6 +124,7 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
                 error_class=_str(data.get("error_class")),
                 duration_ms=_int(data.get("duration_ms")),
             )
+            emitter.emit_message_tool(tool_name=tool, phase="end", detail="error", call_id=tcid)
             return
         out = _str(data.get("output")) or _str(data.get("content")) or ""
         emitter.emit_tool_call_result(
@@ -140,6 +142,7 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
                 skill_name = _str(args_obj.get("name"))
         if tool == "load_skill" and skill_name:
             emitter.emit_skill_loaded(skill_name=skill_name, source="tool", body_chars=len(out) if out else 0)
+        emitter.emit_message_tool(tool_name=tool, phase="end", detail="completed", call_id=tcid)
         return
 
     if et == "graph_node_enter":

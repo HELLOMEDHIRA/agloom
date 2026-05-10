@@ -13,7 +13,7 @@ interface HeaderProps {
   layoutWidth?: number
 }
 
-export function Header({ layoutWidth }: HeaderProps): React.ReactElement {
+export const Header = ({ layoutWidth }: HeaderProps): React.ReactElement => {
   const runtimeVersion = useSessionStore((s) => s.runtimeVersion)
   const model = useSessionStore((s) => s.model)
   const totalIn = useSessionStore((s) => s.totalInputTokens)

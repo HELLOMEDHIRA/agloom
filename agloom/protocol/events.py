@@ -26,6 +26,11 @@ The :data:`Event` type alias is a discriminated union over ``type``; use it (or 
 - ``checkpoint.*`` — LangGraph checkpoint persistence
 - ``feedback.*`` — user feedback on a completed turn
 - ``metric.*`` — token/cost accounting deltas
+- ``runtime.*`` — runtime readiness, config snapshot, control-plane replies (pong, schema, tools)
+- ``session.heartbeat`` — periodic keep-alive / uptime hints
+- ``agent.*`` — busy/idle markers around invocations
+- ``message.tool`` — coarse tool progress (alongside ``tool.call.*``)
+- ``stream.heartbeat`` — optional streaming liveness
 - ``error.*`` — transient and fatal errors
 
 New event types are additive — existing types stay stable.
@@ -50,7 +55,13 @@ class _DataBase(BaseModel):
 class SessionOpenedData(_DataBase):
     runtime_version: str
     protocol_version: str
-    capabilities: list[str] = Field(default_factory=list)
+    capabilities_override: list[str] | None = Field(
+        default=None,
+        description=(
+            "Optional session-level capability hints. When present, clients SHOULD apply these "
+            "on top of or instead of ``runtime.config.capabilities`` per product policy."
+        ),
+    )
 
 
 class SessionOpened(Envelope):
@@ -623,7 +634,10 @@ class SessionResumedData(_DataBase):
 
     runtime_version: str
     protocol_version: str
-    capabilities: list[str] = Field(default_factory=list)
+    capabilities_override: list[str] | None = Field(
+        default=None,
+        description="Same semantics as :attr:`SessionOpenedData.capabilities_override` on reconnect.",
+    )
     resumed_from_thread: str | None = None
     replayed_from_seq: int | None = None
 
@@ -631,6 +645,183 @@ class SessionResumedData(_DataBase):
 class SessionResumed(Envelope):
     type: Literal["session.resumed"] = "session.resumed"
     data: SessionResumedData
+
+
+# ── runtime.* (lifecycle + control-plane replies) ─────────────────────────────
+
+
+class RuntimeReadyData(_DataBase):
+    agent_name: str | None = None
+    cli_tools_enabled: bool | None = None
+    cli_tools_count: int | None = None
+
+
+class RuntimeReady(Envelope):
+    type: Literal["runtime.ready"] = "runtime.ready"
+    data: RuntimeReadyData
+
+
+class RuntimeConfigData(_DataBase):
+    model_id: str | None = None
+    tool_names: list[str] = Field(default_factory=list)
+    capabilities: list[str] = Field(
+        default_factory=list,
+        description="Canonical capability tokens advertised by this runtime attachment.",
+    )
+    cli_tools_enabled: bool | None = None
+    cli_tools_count: int | None = None
+
+
+class RuntimeConfig(Envelope):
+    type: Literal["runtime.config"] = "runtime.config"
+    data: RuntimeConfigData
+
+
+class RuntimePongData(_DataBase):
+    ping_id: str | None = None
+
+
+class RuntimePong(Envelope):
+    type: Literal["runtime.pong"] = "runtime.pong"
+    data: RuntimePongData
+
+
+class RuntimeSchemaPayloadData(_DataBase):
+    json_schema: dict[str, Any] = Field(default_factory=dict)
+
+
+class RuntimeSchemaPayload(Envelope):
+    type: Literal["runtime.schema"] = "runtime.schema"
+    data: RuntimeSchemaPayloadData
+
+
+class RuntimeToolEntry(_DataBase):
+    name: str
+    description: str | None = None
+
+
+class RuntimeToolsPayloadData(_DataBase):
+    tools: list[RuntimeToolEntry] = Field(default_factory=list)
+
+
+class RuntimeToolsPayload(Envelope):
+    type: Literal["runtime.tools"] = "runtime.tools"
+    data: RuntimeToolsPayloadData
+
+
+class RuntimeSessionsPayloadData(_DataBase):
+    sessions: list[str] = Field(default_factory=list)
+
+
+class RuntimeSessionsPayload(Envelope):
+    type: Literal["runtime.sessions"] = "runtime.sessions"
+    data: RuntimeSessionsPayloadData
+
+
+class RuntimeSessionCreatedData(_DataBase):
+    session_id: str
+
+
+class RuntimeSessionCreated(Envelope):
+    type: Literal["runtime.session.created"] = "runtime.session.created"
+    data: RuntimeSessionCreatedData
+
+
+class RuntimeToolInvokeResultData(_DataBase):
+    ok: bool
+    result: Any | None = None
+    error: str | None = None
+
+
+class RuntimeToolInvokeResult(Envelope):
+    type: Literal["runtime.tool.result"] = "runtime.tool.result"
+    data: RuntimeToolInvokeResultData
+
+
+class RuntimeConfigAppliedData(_DataBase):
+    model_id: str | None = None
+    cli_tools_enabled: bool | None = None
+    cli_tools_count: int | None = None
+
+
+class RuntimeConfigApplied(Envelope):
+    type: Literal["runtime.config.applied"] = "runtime.config.applied"
+    data: RuntimeConfigAppliedData
+
+
+# ── todos.updated ──────────────────────────────────────────────────────────────
+
+
+class TodosUpdatedData(_DataBase):
+    """Session-scoped todo list snapshot (from ``write_todos`` meta tool)."""
+
+    items: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class TodosUpdated(Envelope):
+    type: Literal["todos.updated"] = "todos.updated"
+    data: TodosUpdatedData
+
+
+# ── session.heartbeat ───────────────────────────────────────────────────────────
+
+
+class SessionHeartbeatData(_DataBase):
+    uptime_ms: int | None = None
+
+
+class SessionHeartbeat(Envelope):
+    type: Literal["session.heartbeat"] = "session.heartbeat"
+    data: SessionHeartbeatData
+
+
+# ── agent.busy / agent.idle ─────────────────────────────────────────────────────
+
+
+class AgentBusyData(_DataBase):
+    thread: str | None = None
+
+
+class AgentBusy(Envelope):
+    type: Literal["agent.busy"] = "agent.busy"
+    data: AgentBusyData
+
+
+class AgentIdleData(_DataBase):
+    thread: str | None = None
+
+
+class AgentIdle(Envelope):
+    type: Literal["agent.idle"] = "agent.idle"
+    data: AgentIdleData
+
+
+# ── message.tool (human-readable tool progress, complements tool.call.*) ──────
+
+
+class MessageToolData(_DataBase):
+    tool_name: str
+    phase: Literal["start", "progress", "end"] = "progress"
+    detail: str | None = None
+    call_id: str | None = None
+
+
+class MessageTool(Envelope):
+    type: Literal["message.tool"] = "message.tool"
+    data: MessageToolData
+
+
+# ── stream.heartbeat ────────────────────────────────────────────────────────────
+
+
+class StreamHeartbeatData(_DataBase):
+    thread: str | None = None
+    chars_since_last: int | None = None
+
+
+class StreamHeartbeat(Envelope):
+    type: Literal["stream.heartbeat"] = "stream.heartbeat"
+    data: StreamHeartbeatData
 
 
 # ── error.* ───────────────────────────────────────────────────────────────────
@@ -677,6 +868,21 @@ class ErrorFatal(Envelope):
 Event = Annotated[
     SessionOpened
     | SessionResumed
+    | RuntimeReady
+    | RuntimeConfig
+    | RuntimePong
+    | RuntimeSchemaPayload
+    | RuntimeToolsPayload
+    | RuntimeSessionsPayload
+    | RuntimeSessionCreated
+    | RuntimeToolInvokeResult
+    | RuntimeConfigApplied
+    | TodosUpdated
+    | SessionHeartbeat
+    | AgentBusy
+    | AgentIdle
+    | MessageTool
+    | StreamHeartbeat
     | PatternClassified
     | ThinkingStep
     | TokenDelta
@@ -725,6 +931,12 @@ event_adapter: TypeAdapter[Event] = TypeAdapter(Event)
 
 
 __all__ = [
+    "AgentBusy",
+    "AgentBusyData",
+    "AgentIdle",
+    "AgentIdleData",
+    "MessageTool",
+    "MessageToolData",
     "PromptCancelled",
     "PromptCancelledData",
     "PromptCancelledReason",
@@ -740,6 +952,8 @@ __all__ = [
     "SkillLoaded",
     "SkillLoadedData",
     "SkillLoadedSource",
+    "StreamHeartbeat",
+    "StreamHeartbeatData",
     "CheckpointRestored",
     "CheckpointRestoredData",
     "CheckpointSaved",
@@ -778,17 +992,40 @@ __all__ = [
     "MetricCostData",
     "MetricTokens",
     "MetricTokensData",
+    "RuntimeConfig",
+    "RuntimeConfigApplied",
+    "RuntimeConfigAppliedData",
+    "RuntimeConfigData",
+    "RuntimePong",
+    "RuntimePongData",
+    "RuntimeReady",
+    "RuntimeReadyData",
+    "RuntimeSchemaPayload",
+    "RuntimeSchemaPayloadData",
+    "RuntimeSessionCreated",
+    "RuntimeSessionCreatedData",
+    "RuntimeSessionsPayload",
+    "RuntimeSessionsPayloadData",
+    "RuntimeToolEntry",
+    "RuntimeToolInvokeResult",
+    "RuntimeToolInvokeResultData",
+    "RuntimeToolsPayload",
+    "RuntimeToolsPayloadData",
     "PatternClassified",
     "PatternClassifiedData",
     "SessionCloseReason",
     "SessionClosed",
     "SessionClosedData",
+    "SessionHeartbeat",
+    "SessionHeartbeatData",
     "SessionOpened",
     "SessionOpenedData",
     "SessionResumed",
     "SessionResumedData",
     "ThinkingStep",
     "ThinkingStepData",
+    "TodosUpdated",
+    "TodosUpdatedData",
     "TokenDelta",
     "TokenDeltaData",
     "ToolCallError",

@@ -14,7 +14,7 @@ import { WorkerLine } from './WorkerLine.js'
 import { useSpinner } from '../hooks/useSpinner.js'
 import { truncate } from '../utils/format.js'
 
-export function ActiveTurn(): React.ReactElement | null {
+export const ActiveTurn = (): React.ReactElement | null => {
   const activeTurn = useSessionStore((s) => s.activeTurn)
   const status = useSessionStore((s) => s.status)
   const spinner = useSpinner()

@@ -17,3 +17,11 @@ Documentation for the **PyPI library**: execution patterns, `create_agent`, memo
 - [All parameters](configuration/parameters.md)
 
 CLI and web clients live in sibling packages; see the **CLI** and **Web** sections of the main docs site.
+
+## Embedding & AGP (integrators)
+
+- [Package developer overview](guides/developer-overview.md) — Door 1 vs Door 2 (`runtime`, `protocol`, `observability`, `llm`)
+- [Embedding the runtime](guides/embedding-runtime.md)
+- [AGP from Python](guides/agp-python.md)
+- [Observability API](guides/observability-python.md)
+- [LLM resolution](guides/llm-resolution.md)

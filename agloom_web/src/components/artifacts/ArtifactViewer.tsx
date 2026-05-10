@@ -11,7 +11,7 @@ import { useSessionStore } from '../../store/session.js'
 import { cn, truncate } from '../../lib/utils/cn.js'
 import { Package, Copy, Check } from 'lucide-react'
 
-export function ArtifactViewer(): React.ReactElement {
+export const ArtifactViewer = (): React.ReactElement => {
   const artifacts = useSessionStore((s) => s.artifacts)
   const [selected, setSelected] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)

@@ -26,7 +26,7 @@ interface Props {
   showResult?: boolean
 }
 
-export function ToolCallLine({ tc, showResult = true }: Props): React.ReactElement {
+export const ToolCallLine = ({ tc, showResult = true }: Props): React.ReactElement => {
   const icon = STATUS_ICON[tc.status]
   const color = STATUS_COLOR[tc.status]
   const argsStr = fmtArgs(tc.args, 55)

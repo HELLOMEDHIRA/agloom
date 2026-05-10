@@ -22,7 +22,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'replay',   label: 'Replay' },
 ]
 
-export function SessionTrace(): React.ReactElement {
+export const SessionTrace = (): React.ReactElement => {
   const { sessionId } = useParams<{ sessionId: string }>()
   const [tab, setTab] = useState<Tab>('timeline')
 

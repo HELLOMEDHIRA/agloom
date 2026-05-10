@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+from pathlib import Path
 
 import pytest
 
@@ -223,3 +224,27 @@ async def test_string_message_extracts_tool_name_from_detail() -> None:
     assert req.data.detail == "Tool: search_web\nArgs: {q:cats}"
     bridge.respond(req.data.request_id, "accept")
     await task
+
+
+@pytest.mark.asyncio
+async def test_allowlist_decision_persists_named_tool(tmp_path: Path) -> None:
+    from agloom.runtime.hitl_allowlist import load_tool_allowlist
+
+    buf = io.StringIO()
+    em = SessionEmitter(session="s", thread="t", writer=buf)
+    em.open()
+    path = tmp_path / "allow.json"
+    shared: set[str] = set()
+    bridge = HITLBridge(em, tool_allowlist=shared, allowlist_persist_path=path)
+    task = asyncio.create_task(
+        bridge.callback(
+            HITLEvent.TOOL_INTERRUPT_BEFORE,
+            {"tool_name": "execute", "agent_name": "g", "args": {}},
+        )
+    )
+    await asyncio.sleep(0)
+    req = next(e for e in _read_events(buf) if isinstance(e, HITLRequest))
+    bridge.respond(req.data.request_id, "allowlist")
+    await task
+    assert "execute" in shared
+    assert "execute" in load_tool_allowlist(path)

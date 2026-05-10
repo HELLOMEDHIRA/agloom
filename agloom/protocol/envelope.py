@@ -15,6 +15,9 @@ Compatibility rules (must hold across the lifetime of ``v=1``):
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _distribution_version
+from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
@@ -23,12 +26,37 @@ from pydantic import BaseModel, ConfigDict, Field
 PROTOCOL_VERSION: Literal["1"] = "1"
 """Major version of the Agloom Protocol. Bumped only on breaking schema changes."""
 
-PROTOCOL_MODULE_VERSION = "0.1.54"
-"""Version of this *implementation* of AGP — distinct from :data:`PROTOCOL_VERSION`.
 
-Bumped whenever this Python package's behaviour changes (additive event types, perf, bug fixes).
-The on-the-wire ``v`` field is :data:`PROTOCOL_VERSION` and changes only on breaking schema bumps.
-"""
+def _protocol_module_version() -> str:
+    """Same version as the ``agloom`` distribution (:file:`pyproject.toml` ``project.version``).
+
+    Uses installed package metadata when available; otherwise walks upward from this file to find
+    ``pyproject.toml`` (e.g. bare ``PYTHONPATH`` runs without an install).
+    """
+    try:
+        return _distribution_version("agloom")
+    except PackageNotFoundError:
+        pass
+    import tomllib
+
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / "pyproject.toml"
+        if not candidate.is_file():
+            continue
+        try:
+            data = tomllib.loads(candidate.read_text(encoding="utf-8"))
+        except OSError:
+            break
+        ver = data.get("project", {}).get("version")
+        if isinstance(ver, str) and ver.strip():
+            return ver.strip()
+        break
+    return "0.0.0+unknown"
+
+
+PROTOCOL_MODULE_VERSION = _protocol_module_version()
+"""Agloom package version (see :file:`pyproject.toml`). Distinct from :data:`PROTOCOL_VERSION` (wire ``v``)."""
 
 
 def new_event_id() -> str:
@@ -63,4 +91,4 @@ class Envelope(BaseModel):
     trace: str | None = None
 
 
-__all__ = ["PROTOCOL_VERSION", "Envelope", "new_event_id", "now_utc"]
+__all__ = ["PROTOCOL_MODULE_VERSION", "PROTOCOL_VERSION", "Envelope", "new_event_id", "now_utc"]

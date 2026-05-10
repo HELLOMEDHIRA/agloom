@@ -32,7 +32,7 @@ export interface Envelope {
 
 export interface SessionOpenedEvent extends Envelope {
   type: 'session.opened'
-  data: { runtime_version: string; protocol_version: string; capabilities: string[] }
+  data: { runtime_version: string; protocol_version: string; capabilities_override?: string[] }
 }
 
 export interface SessionResumedEvent extends Envelope {
@@ -40,7 +40,7 @@ export interface SessionResumedEvent extends Envelope {
   data: {
     runtime_version: string
     protocol_version: string
-    capabilities: string[]
+    capabilities_override?: string[]
     resumed_from_thread?: string
     replayed_from_seq?: number
   }
@@ -87,6 +87,16 @@ export interface MessageUserEvent extends Envelope {
 export interface MessageAssistantEvent extends Envelope {
   type: 'message.assistant'
   data: { content: string; message_id?: string; run_id?: string; pattern?: string }
+}
+
+export interface MessageToolEvent extends Envelope {
+  type: 'message.tool'
+  data: {
+    tool_name: string
+    phase?: 'start' | 'progress' | 'end'
+    detail?: string
+    call_id?: string
+  }
 }
 
 // ── tool.* ───────────────────────────────────────────────────────────────────
@@ -310,17 +320,123 @@ export interface PromptCancelledEvent extends Envelope {
   data: { reason: 'user_aborted' | 'shutdown' | string; detail?: string }
 }
 
+// ── runtime.* & session heartbeat / agent markers / stream liveness ───────────
+
+export interface RuntimeReadyEvent extends Envelope {
+  type: 'runtime.ready'
+  data: {
+    agent_name?: string
+    cli_tools_enabled?: boolean
+    cli_tools_count?: number
+  }
+}
+
+export interface RuntimeConfigEvent extends Envelope {
+  type: 'runtime.config'
+  data: {
+    model_id?: string
+    tool_names?: string[]
+    capabilities?: string[]
+    cli_tools_enabled?: boolean
+    cli_tools_count?: number
+  }
+}
+
+export interface RuntimePongEvent extends Envelope {
+  type: 'runtime.pong'
+  data: { ping_id?: string }
+}
+
+export interface RuntimeSchemaEvent extends Envelope {
+  type: 'runtime.schema'
+  data: { json_schema: Record<string, unknown> }
+}
+
+export interface RuntimeToolEntry {
+  name: string
+  description?: string
+}
+
+export interface RuntimeToolsEvent extends Envelope {
+  type: 'runtime.tools'
+  data: { tools: RuntimeToolEntry[] }
+}
+
+export interface RuntimeSessionsEvent extends Envelope {
+  type: 'runtime.sessions'
+  data: { sessions: string[] }
+}
+
+export interface RuntimeSessionCreatedEvent extends Envelope {
+  type: 'runtime.session.created'
+  data: { session_id: string }
+}
+
+export interface RuntimeToolResultEvent extends Envelope {
+  type: 'runtime.tool.result'
+  data: { ok: boolean; result?: unknown; error?: string }
+}
+
+export interface RuntimeConfigAppliedEvent extends Envelope {
+  type: 'runtime.config.applied'
+  data: {
+    model_id?: string
+    cli_tools_enabled?: boolean
+    cli_tools_count?: number
+  }
+}
+
+export interface TodosUpdatedEvent extends Envelope {
+  type: 'todos.updated'
+  data: { items?: Array<Record<string, unknown>> }
+}
+
+export interface SessionHeartbeatEvent extends Envelope {
+  type: 'session.heartbeat'
+  data: { uptime_ms?: number }
+}
+
+export interface AgentBusyEvent extends Envelope {
+  type: 'agent.busy'
+  data: { thread?: string }
+}
+
+export interface AgentIdleEvent extends Envelope {
+  type: 'agent.idle'
+  data: { thread?: string }
+}
+
+export interface StreamHeartbeatEvent extends Envelope {
+  type: 'stream.heartbeat'
+  data: { thread?: string; chars_since_last?: number }
+}
+
 // ── Discriminated union ───────────────────────────────────────────────────────
 
 export type AGPKnownEvent =
   | SessionOpenedEvent
   | SessionResumedEvent
   | SessionClosedEvent
+  | SessionHeartbeatEvent
   | PatternClassifiedEvent
   | ThinkingStepEvent
   | TokenDeltaEvent
   | MessageUserEvent
   | MessageAssistantEvent
+  | MessageToolEvent
+  | AgentBusyEvent
+  | AgentIdleEvent
+  | StreamHeartbeatEvent
+  | RuntimeReadyEvent
+  | RuntimeConfigEvent
+  | RuntimePongEvent
+  | RuntimeSchemaEvent
+  | RuntimeToolsEvent
+  | RuntimeSessionsEvent
+  | RuntimeSessionCreatedEvent
+  | RuntimeToolResultEvent
+  | RuntimeConfigAppliedEvent
+  | TodosUpdatedEvent
   | ToolCallStartEvent
   | ToolCallResultEvent
   | ToolCallErrorEvent
@@ -353,7 +469,7 @@ export type AGPKnownEvent =
 export type AGPEvent = AGPKnownEvent
 
 /** Parse one NDJSON / WebSocket frame after ``JSON.parse``. Unknown ``type`` values are accepted at runtime and handled by store/UI default branches. */
-export function parseInboundAGPEventJSON(parsed: unknown): AGPEvent {
+export const parseInboundAGPEventJSON = (parsed: unknown): AGPEvent => {
   if (!parsed || typeof parsed !== 'object') {
     throw new SyntaxError('AGP event root must be an object')
   }
@@ -410,6 +526,56 @@ export interface CommandSessionResume {
   data: { thread: string; from_seq?: number }
 }
 
+export interface CommandPing {
+  type: 'command.ping'
+  data?: { ping_id?: string }
+}
+
+export interface CommandSchemaRequestCmd {
+  type: 'command.schema.request'
+  data?: Record<string, unknown>
+}
+
+export interface CommandToolListCmd {
+  type: 'command.tool.list'
+  data?: Record<string, unknown>
+}
+
+export interface CommandSubscribeCmd {
+  type: 'command.subscribe'
+  data: { prefixes: string[] }
+}
+
+export interface CommandUnsubscribeCmd {
+  type: 'command.unsubscribe'
+  data?: Record<string, unknown>
+}
+
+export interface CommandSessionListCmd {
+  type: 'command.session.list'
+  data?: Record<string, unknown>
+}
+
+export interface CommandSessionCreateCmd {
+  type: 'command.session.create'
+  data?: { session_id?: string }
+}
+
+export interface CommandSessionDeleteCmd {
+  type: 'command.session.delete'
+  data: { session_id: string }
+}
+
+export interface CommandToolInvokeCmd {
+  type: 'command.tool.invoke'
+  data: { name: string; arguments?: Record<string, unknown> }
+}
+
+export interface CommandConfigSetCmd {
+  type: 'command.config.set'
+  data: { model_id: string; cli_tools?: Record<string, unknown> }
+}
+
 export type AGPCommand =
   | CommandInvoke
   | CommandCancel
@@ -419,6 +585,16 @@ export type AGPCommand =
   | CommandSnapshotRequest
   | CommandWorkerAssign
   | CommandSessionResume
+  | CommandPing
+  | CommandSchemaRequestCmd
+  | CommandToolListCmd
+  | CommandSubscribeCmd
+  | CommandUnsubscribeCmd
+  | CommandSessionListCmd
+  | CommandSessionCreateCmd
+  | CommandSessionDeleteCmd
+  | CommandToolInvokeCmd
+  | CommandConfigSetCmd
 
 // ── Utility types ──────────────────────────────────────────────────────────────
 

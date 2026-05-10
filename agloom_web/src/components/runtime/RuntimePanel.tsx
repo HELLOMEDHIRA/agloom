@@ -10,10 +10,9 @@ import { ArtifactViewer } from '../artifacts/ArtifactViewer.js'
 
 interface Props {
   activeTab: RightTab
-  onTabChange: (t: RightTab) => void
 }
 
-export function RuntimePanel({ activeTab }: Props): React.ReactElement {
+export const RuntimePanel = ({ activeTab }: Props): React.ReactElement => {
   switch (activeTab) {
     case 'graph':     return <RuntimeGraph />
     case 'workers':   return <WorkerTree />

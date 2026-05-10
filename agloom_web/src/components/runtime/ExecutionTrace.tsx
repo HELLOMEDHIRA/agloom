@@ -27,7 +27,7 @@ const EVENT_COLOR: Record<string, string> = {
   'error.transient':    'text-red-400',
 }
 
-export function ExecutionTrace(): React.ReactElement {
+export const ExecutionTrace = (): React.ReactElement => {
   const trace = useSessionStore((s) => s.executionTrace)
   const bottomRef = useRef<HTMLDivElement>(null)
 

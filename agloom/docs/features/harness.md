@@ -4,6 +4,9 @@ The **harness** is an **optional** layer in the **`agloom`** library. It helps a
 
 You can turn it on from **`create_agent`** or from the **agloom CLI** (see below). In both cases it only takes effect when a **`store`** is in use — without a store, `harness=True` is **ignored** and a warning is logged.
 
+!!! note "`from agloom import Task` and related symbols"
+    There is **no** separate PyPI extra such as `agloom[harness]` — harness code ships **inside** the main **`agloom`** wheel. Names like **`Task`**, **`GitSession`**, **`ProgressTracker`**, … are re-exported from the top-level package only when **`import agloom.harness`** succeeds during **`import agloom`**. If that fails (broken partial install, corrupted checkout), those symbols are missing and `from agloom import Task` raises **`ImportError`**. **Fix:** reinstall with `pip install --force-reinstall agloom`, or from a git checkout use your project's full dev install (e.g. `uv sync --group dev`). You can always enable behaviour with **`create_agent(..., harness=True)`** without importing harness types. Runtime **`git_*`** tools still need **`git`** on `PATH`.
+
 ## When to use it
 
 - Multi-session coding or PM-style agents where you want a **durable task list** and explicit **pass/fail verification** before marking work done.
@@ -33,7 +36,7 @@ async def main():
 
 ## Harness + interactive frontends
 
-When you use the **agloom CLI** (`agloom_cli/`) or your own driver, enable the harness through **`agloom.yaml`** (or `create_agent(..., harness=True, …)` in code).
+When you use the **Node-based agloom CLI** (repo: `agloom_cli/`) or your own driver, enable the harness through **`agloom.yaml`** (or `create_agent(..., harness=True, …)` in code).
 
 Typical behaviour with a project-local `.agloom/` layout:
 

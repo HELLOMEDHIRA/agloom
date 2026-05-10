@@ -26,6 +26,7 @@ from uuid import uuid4
 from ..models import AgentEvent
 from ..protocol import SessionEmitter
 from .hitl import HITLBridge
+from .invocation_context import attach_invocation_context, reset_invocation_context
 from .translator import translate
 
 
@@ -75,51 +76,60 @@ async def run_invocation(
     emitter.emit_message_user(content=user_text)
     _preview = user_text if len(user_text) <= 280 else f"{user_text[:277]}..."
     emitter.emit_prompt_requested(kind="user_turn", preview=_preview)
+    emitter.emit_agent_busy(thread=thread)
 
     started = time.perf_counter()
     saw_message = False
 
+    tokens = attach_invocation_context(hitl_bridge, emitter)
     try:
-        async for event in agent.astream_events(prompt, thread_id=thread):
-            if event.type in ("done", "answer", "message_assistant"):
-                saw_message = True
-            translate(event, emitter)
+        try:
+            async for event in agent.astream_events(prompt, thread_id=thread):
+                if event.type in ("done", "answer", "message_assistant"):
+                    saw_message = True
+                translate(event, emitter)
 
-    except asyncio.CancelledError:
-        # ``command.cancel`` vs runtime shutdown both cancel the task; callers distinguish via
-        # :meth:`HITLBridge.prepare_invocation_cancel` immediately before ``task.cancel()``.
-        elapsed = int((time.perf_counter() - started) * 1000)
-        cancel_reason = (
-            hitl_bridge.consume_invocation_cancel_reason(asyncio.current_task())
-            if hitl_bridge
-            else "user_aborted"
-        )
-        detail = "invocation_cancelled" if cancel_reason == "user_aborted" else "runtime_shutdown"
-        emitter.emit_prompt_cancelled(reason=cancel_reason, detail=detail)
-        emitter.close(reason=cancel_reason, duration_ms=elapsed)
-        raise  # propagate so the runtime task stays cancelled (asyncio invariant)
-    except Exception as exc:
-        # Two-event close path: emit ``error.fatal`` first (carries class + retryable hints) then
-        # ``session.closed(reason="error")`` so consumers that subscribed only to ``error.*``
-        # still get a complete failure record.
-        elapsed = int((time.perf_counter() - started) * 1000)
-        emitter.emit_error(
-            severity="fatal",
-            message=str(exc).strip() or repr(exc),
-            error_class=type(exc).__name__,
-            stage="invocation",
-            retryable=False,
-        )
-        emitter.close(reason="error", duration_ms=elapsed, error=repr(exc))
-        return
+        except asyncio.CancelledError:
+            emitter.emit_agent_idle(thread=thread)
+            # ``command.cancel`` vs runtime shutdown both cancel the task; callers distinguish via
+            # :meth:`HITLBridge.prepare_invocation_cancel` immediately before ``task.cancel()``.
+            elapsed = int((time.perf_counter() - started) * 1000)
+            cancel_reason = (
+                hitl_bridge.consume_invocation_cancel_reason(asyncio.current_task())
+                if hitl_bridge
+                else "user_aborted"
+            )
+            detail = "invocation_cancelled" if cancel_reason == "user_aborted" else "runtime_shutdown"
+            emitter.emit_prompt_cancelled(reason=cancel_reason, detail=detail)
+            emitter.close(reason=cancel_reason, duration_ms=elapsed)
+            raise  # propagate so the runtime task stays cancelled (asyncio invariant)
+        except Exception as exc:
+            emitter.emit_agent_idle(thread=thread)
+            # Two-event close path: emit ``error.fatal`` first (carries class + retryable hints) then
+            # ``session.closed(reason="error")`` so consumers that subscribed only to ``error.*``
+            # still get a complete failure record.
+            elapsed = int((time.perf_counter() - started) * 1000)
+            emitter.emit_error(
+                severity="fatal",
+                message=str(exc).strip() or repr(exc),
+                error_class=type(exc).__name__,
+                stage="invocation",
+                retryable=False,
+            )
+            emitter.close(reason="error", duration_ms=elapsed, error=repr(exc))
+            return
 
-    # If the stream ended without an explicit ``done``, the agent finished silently — synthesize
-    # an empty assistant message so consumers get a clean turn boundary.
-    if not saw_message:
-        emitter.emit_message_assistant(content="", pattern=None)
+        emitter.emit_agent_idle(thread=thread)
 
-    duration_ms = int((time.perf_counter() - started) * 1000)
-    emitter.close(reason="completed", duration_ms=duration_ms)
+        # If the stream ended without an explicit ``done``, the agent finished silently — synthesize
+        # an empty assistant message so consumers get a clean turn boundary.
+        if not saw_message:
+            emitter.emit_message_assistant(content="", pattern=None)
+
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        emitter.close(reason="completed", duration_ms=duration_ms)
+    finally:
+        reset_invocation_context(tokens)
 
 
 def _stringify_prompt(prompt: dict) -> str:

@@ -198,6 +198,134 @@ class CommandSnapshotRequest(_CmdBase):
     data: CommandSnapshotRequestData = Field(default_factory=CommandSnapshotRequestData)
 
 
+# ── command.ping ───────────────────────────────────────────────────────────────
+
+
+class CommandPingData(_CmdBase):
+    """Optional correlator echoed back on ``runtime.pong``."""
+
+    ping_id: str | None = None
+
+
+class CommandPing(_CmdBase):
+    type: Literal["command.ping"] = "command.ping"
+    data: CommandPingData = Field(default_factory=CommandPingData)
+
+
+# ── command.schema.request ─────────────────────────────────────────────────────
+
+
+class CommandSchemaRequestData(_CmdBase):
+    """Ask the runtime to emit ``runtime.schema`` (full AGP JSON Schema document)."""
+
+
+class CommandSchemaRequest(_CmdBase):
+    type: Literal["command.schema.request"] = "command.schema.request"
+    data: CommandSchemaRequestData = Field(default_factory=CommandSchemaRequestData)
+
+
+# ── command.tool.list ──────────────────────────────────────────────────────────
+
+
+class CommandToolListData(_CmdBase):
+    """Enumerate tools exposed by the current agent (names + descriptions)."""
+
+
+class CommandToolList(_CmdBase):
+    type: Literal["command.tool.list"] = "command.tool.list"
+    data: CommandToolListData = Field(default_factory=CommandToolListData)
+
+
+# ── command.subscribe / command.unsubscribe ──────────────────────────────────────
+
+
+class CommandSubscribeData(_CmdBase):
+    """Restrict streamed events to ``type`` prefixes (session/error/runtime/prompt/hitl always pass)."""
+
+    prefixes: list[str] = Field(default_factory=list)
+
+
+class CommandSubscribe(_CmdBase):
+    type: Literal["command.subscribe"] = "command.subscribe"
+    data: CommandSubscribeData
+
+
+class CommandUnsubscribeData(_CmdBase):
+    """Clear subscription filter (restore full stream)."""
+
+
+class CommandUnsubscribe(_CmdBase):
+    type: Literal["command.unsubscribe"] = "command.unsubscribe"
+    data: CommandUnsubscribeData = Field(default_factory=CommandUnsubscribeData)
+
+
+# ── command.session.list / create / delete ───────────────────────────────────────
+
+
+class CommandSessionListData(_CmdBase):
+    """List sessions present in the configured :class:`~agloom.protocol.store.EventStore`."""
+
+
+class CommandSessionList(_CmdBase):
+    type: Literal["command.session.list"] = "command.session.list"
+    data: CommandSessionListData = Field(default_factory=CommandSessionListData)
+
+
+class CommandSessionCreateData(_CmdBase):
+    """Mint a new opaque session id (store-backed listing uses ids once events are appended)."""
+
+    session_id: str | None = None
+
+
+class CommandSessionCreate(_CmdBase):
+    type: Literal["command.session.create"] = "command.session.create"
+    data: CommandSessionCreateData = Field(default_factory=CommandSessionCreateData)
+
+
+class CommandSessionDeleteData(_CmdBase):
+    """Drop replay buffer rows for ``session_id`` (destructive)."""
+
+    session_id: str
+
+
+class CommandSessionDelete(_CmdBase):
+    type: Literal["command.session.delete"] = "command.session.delete"
+    data: CommandSessionDeleteData
+
+
+# ── command.tool.invoke ──────────────────────────────────────────────────────────
+
+
+class CommandToolInvokeData(_CmdBase):
+    """Direct tool invocation (bounded — argument JSON size limits enforced by the runtime)."""
+
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class CommandToolInvoke(_CmdBase):
+    type: Literal["command.tool.invoke"] = "command.tool.invoke"
+    data: CommandToolInvokeData
+
+
+# ── command.config.set ───────────────────────────────────────────────────────────
+
+
+class CommandConfigSetData(_CmdBase):
+    """Swap the chat model by id string (``resolve_model``).
+
+    Optional ``cli_tools`` is reserved for future hot-reconfiguration of built-in tools; ignored today.
+    """
+
+    model_id: str
+    cli_tools: dict[str, Any] | None = None
+
+
+class CommandConfigSet(_CmdBase):
+    type: Literal["command.config.set"] = "command.config.set"
+    data: CommandConfigSetData
+
+
 # ── Discriminated union & adapter ─────────────────────────────────────────────
 
 
@@ -209,7 +337,17 @@ Command = Annotated[
     | CommandWorkerAssign
     | CommandSessionResume
     | CommandFeedback
-    | CommandSnapshotRequest,
+    | CommandSnapshotRequest
+    | CommandPing
+    | CommandSchemaRequest
+    | CommandToolList
+    | CommandSubscribe
+    | CommandUnsubscribe
+    | CommandSessionList
+    | CommandSessionCreate
+    | CommandSessionDelete
+    | CommandToolInvoke
+    | CommandConfigSet,
     Field(discriminator="type"),
 ]
 """Discriminated union over all known AGP command types.
@@ -228,18 +366,38 @@ __all__ = [
     "Command",
     "CommandCancel",
     "CommandCancelData",
+    "CommandConfigSet",
+    "CommandConfigSetData",
     "CommandFeedback",
     "CommandFeedbackData",
     "CommandHITLRespond",
     "CommandHITLRespondData",
     "CommandInvoke",
     "CommandInvokeData",
+    "CommandPing",
+    "CommandPingData",
     "CommandRuntimeShutdown",
     "CommandRuntimeShutdownData",
+    "CommandSchemaRequest",
+    "CommandSchemaRequestData",
+    "CommandSessionCreate",
+    "CommandSessionCreateData",
+    "CommandSessionDelete",
+    "CommandSessionDeleteData",
+    "CommandSessionList",
+    "CommandSessionListData",
     "CommandSessionResume",
     "CommandSessionResumeData",
     "CommandSnapshotRequest",
     "CommandSnapshotRequestData",
+    "CommandSubscribe",
+    "CommandSubscribeData",
+    "CommandToolInvoke",
+    "CommandToolInvokeData",
+    "CommandToolList",
+    "CommandToolListData",
+    "CommandUnsubscribe",
+    "CommandUnsubscribeData",
     "CommandWorkerAssign",
     "CommandWorkerAssignData",
     "command_adapter",

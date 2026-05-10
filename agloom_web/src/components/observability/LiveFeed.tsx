@@ -28,7 +28,7 @@ interface LiveEvent {
 }
 
 let _counter = 0
-function summarise(evt: AGPEvent): string {
+const summarise = (evt: AGPEvent): string => {
   const d = (evt as unknown as Record<string, unknown>)['data'] as Record<string, unknown> ?? {}
   switch (evt.type) {
     case 'session.opened':    return `session opened`
@@ -43,7 +43,7 @@ function summarise(evt: AGPEvent): string {
   }
 }
 
-export function LiveFeed(): React.ReactElement {
+export const LiveFeed = (): React.ReactElement => {
   const [events, setEvents] = useState<LiveEvent[]>([])
   const [connected, setConnected] = useState(false)
   const esRef = useRef<EventSource | null>(null)
@@ -76,7 +76,11 @@ export function LiveFeed(): React.ReactElement {
       } catch { /* non-JSON heartbeat */ }
     }
 
-    return () => { es.close(); esRef.current = null; setConnected(false) }
+    return () => {
+      esRef.current = null
+      setConnected(false)
+      es.close()
+    }
   }, [])
 
   useEffect(() => {

@@ -1,6 +1,6 @@
 /**
- * AGPBridge — spawns the Python `agloom-runtime serve --transport=stdio`
- * process and provides a typed EventEmitter interface over its NDJSON stream.
+ * AGP bridge — spawns the Python `agloom-runtime serve --transport=<stdio>`
+ * process and exposes a typed event surface over its NDJSON stream.
  *
  * Outbound (CLI → Python): JSON commands written to the child's stdin.
  * Inbound  (Python → CLI): NDJSON events read from the child's stdout.
@@ -11,7 +11,7 @@
  *   2. `agloom-runtime` (installed script via pip)
  */
 
-import { spawn } from 'node:child_process'
+import { execSync, spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import type { AGPEvent, AGPCommand } from '../types/agp.js'
@@ -24,30 +24,46 @@ export interface BridgeExitInfo {
   signal: string | null
 }
 
-/**
- * Declaration merging — provides fully-typed `on`/`once`/`off`/`emit`
- * overloads without conflicting with EventEmitter's own implementation
- * signatures (which is what caused `override` errors in TS 6).
- */
-// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
+/** Typed bridge API — created by {@link createAGPBridge}. */
 export interface AGPBridge {
-  on(event: 'event', listener: (evt: AGPEvent) => void): this
-  on(event: 'diagnostic', listener: (line: string) => void): this
-  on(event: 'exit', listener: (info: BridgeExitInfo) => void): this
-  on(event: 'error', listener: (err: Error) => void): this
-  on(event: string, listener: (...args: unknown[]) => void): this
+  readonly status: BridgeStatus
+  readonly pid: number | undefined
 
-  once(event: 'event', listener: (evt: AGPEvent) => void): this
-  once(event: 'diagnostic', listener: (line: string) => void): this
-  once(event: 'exit', listener: (info: BridgeExitInfo) => void): this
-  once(event: 'error', listener: (err: Error) => void): this
-  once(event: string, listener: (...args: unknown[]) => void): this
+  /**
+   * Spawn the Python runtime. `extraArgs` are appended after `serve --transport=…`.
+   *
+   * **Transport:** this npm client only supports driving the runtime over **stdio**
+   * (child stdin/stdout NDJSON). A remote `--transport=ws` server is not wired here;
+   * use a WebSocket-capable client or run `agloom-runtime serve --transport=ws` separately.
+   */
+  start(extraArgs?: string[], options?: { transport?: 'stdio' }): void
 
-  off(event: 'event', listener: (evt: AGPEvent) => void): this
-  off(event: 'diagnostic', listener: (line: string) => void): this
-  off(event: 'exit', listener: (info: BridgeExitInfo) => void): this
-  off(event: 'error', listener: (err: Error) => void): this
-  off(event: string, listener: (...args: unknown[]) => void): this
+  send(cmd: AGPCommand): void
+  invoke(prompt: string, thread?: string): void
+  cancel(thread?: string): void
+  hitlRespond(requestId: string, decision: string, text?: string): void
+  feedback(runId: string, rating: string, comment?: string): void
+  snapshot(thread?: string, label?: string): void
+  shutdown(): void
+  kill(): void
+
+  on(event: 'event', listener: (evt: AGPEvent) => void): AGPBridge
+  on(event: 'diagnostic', listener: (line: string) => void): AGPBridge
+  on(event: 'exit', listener: (info: BridgeExitInfo) => void): AGPBridge
+  on(event: 'error', listener: (err: Error) => void): AGPBridge
+  on(event: string, listener: (...args: unknown[]) => void): AGPBridge
+
+  once(event: 'event', listener: (evt: AGPEvent) => void): AGPBridge
+  once(event: 'diagnostic', listener: (line: string) => void): AGPBridge
+  once(event: 'exit', listener: (info: BridgeExitInfo) => void): AGPBridge
+  once(event: 'error', listener: (err: Error) => void): AGPBridge
+  once(event: string, listener: (...args: unknown[]) => void): AGPBridge
+
+  off(event: 'event', listener: (evt: AGPEvent) => void): AGPBridge
+  off(event: 'diagnostic', listener: (line: string) => void): AGPBridge
+  off(event: 'exit', listener: (info: BridgeExitInfo) => void): AGPBridge
+  off(event: 'error', listener: (err: Error) => void): AGPBridge
+  off(event: string, listener: (...args: unknown[]) => void): AGPBridge
 
   emit(event: 'event', evt: AGPEvent): boolean
   emit(event: 'diagnostic', line: string): boolean
@@ -56,140 +72,143 @@ export interface AGPBridge {
   emit(event: string, ...args: unknown[]): boolean
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
-export class AGPBridge extends EventEmitter {
-  public status: BridgeStatus = 'starting'
-  public pid: number | undefined
+/**
+ * Create a stdio AGP bridge. Uses an internal `EventEmitter` for `on` / `once` / `emit`.
+ */
+export const createAGPBridge = (): AGPBridge => {
+  const emitter = new EventEmitter()
+  let proc: ChildProcess | null = null
+  let buf = ''
+  let status: BridgeStatus = 'starting'
+  let pid: number | undefined
 
-  private proc: ChildProcess | null = null
-  private buf = ''
+  const send = (cmd: AGPCommand): void => {
+    if (!proc?.stdin?.writable) return
+    proc.stdin.write(`${JSON.stringify(cmd)}\n`)
+  }
 
-  // ── Lifecycle ──────────────────────────────────────────────────────────────
-
-  /**
-   * Spawn the Python runtime. `extraArgs` are appended after
-   * `serve --transport=stdio` (e.g. `['--store', 'sqlite']`).
-   */
-  start(extraArgs: string[] = []): void {
+  const start = (extraArgs: string[] = [], options?: { transport?: 'stdio' }): void => {
     const cmd = process.env['AGLOOM_RUNTIME'] ?? 'agloom-runtime'
-    const args = ['serve', '--transport=stdio', ...extraArgs]
+    const transport = options?.transport ?? 'stdio'
+    const args = ['serve', `--transport=${transport}`, ...extraArgs]
 
-    this.proc = spawn(cmd, args, {
+    proc = spawn(cmd, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env },
       shell: false,
-      // POSIX: create a new process group so we can kill by `-pid`; no-op on Windows.
       detached: process.platform !== 'win32',
     })
 
-    this.pid = this.proc.pid
+    pid = proc.pid
 
-    // ── stdout: NDJSON event stream ──
-    this.proc.stdout?.setEncoding('utf8')
-    this.proc.stdout?.on('data', (chunk: string) => {
-      this.buf += chunk
-      const lines = this.buf.split('\n')
-      this.buf = lines.pop() ?? ''
+    proc.stdout?.setEncoding('utf8')
+    proc.stdout?.on('data', (chunk: string) => {
+      buf += chunk
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
 
       for (const line of lines) {
         const trimmed = line.trim()
         if (!trimmed) continue
         try {
           const evt = parseInboundAGPEventJSON(JSON.parse(trimmed))
-          this.emit('event', evt)
-          if (evt.type === 'session.opened') this.status = 'ready'
+          emitter.emit('event', evt)
+          if (evt.type === 'session.opened') status = 'ready'
         } catch {
-          this.emit('diagnostic', `[stdout] ${trimmed}`)
+          emitter.emit('diagnostic', `[stdout] ${trimmed}`)
         }
       }
     })
 
-    // ── stderr: diagnostic lines ──
-    this.proc.stderr?.setEncoding('utf8')
-    this.proc.stderr?.on('data', (chunk: string) => {
+    proc.stderr?.setEncoding('utf8')
+    proc.stderr?.on('data', (chunk: string) => {
       for (const line of chunk.split('\n')) {
         const t = line.trim()
-        if (t) this.emit('diagnostic', t)
+        if (t) emitter.emit('diagnostic', t)
       }
     })
 
-    // ── process exit ──
-    this.proc.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
-      this.status = 'exited'
-      this.emit('exit', { code, signal })
+    proc.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
+      status = 'exited'
+      emitter.emit('exit', { code, signal })
     })
 
-    this.proc.on('error', (err: NodeJS.ErrnoException) => {
+    proc.on('error', (err: NodeJS.ErrnoException) => {
       const guidance =
         err.code === 'ENOENT'
           ? new Error(
-              `Cannot find 'agloom-runtime'. ` +
-                `Install agloom: pip install agloom\n` +
-                `Or set AGLOOM_RUNTIME=/path/to/python to point to your interpreter.`
+              `Cannot find 'agloom-runtime'. Install agloom: pip install agloom\nOr set AGLOOM_RUNTIME=/path/to/python to point to your interpreter.`,
             )
           : err
-      this.status = 'error'
-      this.emit('error', guidance)
+      status = 'error'
+      emitter.emit('error', guidance)
     })
   }
 
-  // ── Command dispatch ───────────────────────────────────────────────────────
-
-  send(cmd: AGPCommand): void {
-    if (!this.proc?.stdin?.writable) return
-    this.proc.stdin.write(JSON.stringify(cmd) + '\n')
-  }
-
-  invoke(prompt: string, thread?: string): void {
-    this.send({ type: 'command.invoke', data: { prompt, thread } })
-  }
-
-  cancel(thread?: string): void {
-    this.send({ type: 'command.cancel', data: { thread } })
-  }
-
-  hitlRespond(requestId: string, decision: string, text?: string): void {
-    this.send({ type: 'command.hitl.respond', data: { request_id: requestId, decision, text } })
-  }
-
-  feedback(runId: string, rating: string, comment?: string): void {
-    this.send({ type: 'command.feedback', data: { run_id: runId, rating, comment } })
-  }
-
-  snapshot(thread?: string, label?: string): void {
-    this.send({ type: 'command.snapshot.request', data: { thread, label } })
-  }
-
-  shutdown(): void {
-    this.send({ type: 'command.runtime.shutdown' })
-  }
-
-  kill(): void {
-    if (!this.proc) return
-    const pid = this.proc.pid
-    if (pid == null) {
-      this.proc.kill('SIGTERM')
+  const kill = (): void => {
+    if (!proc) return
+    const childPid = proc.pid
+    if (childPid == null) {
+      proc.kill('SIGTERM')
       return
     }
     if (process.platform === 'win32') {
-      // On Windows, SIGTERM only kills the top-level process; grandchildren (e.g. a uv subprocess)
-      // are left orphaned. Use `taskkill /F /T` to kill the entire process tree.
-      import('node:child_process').then(({ execSync }) => {
-        try {
-          execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' })
-        } catch {
-          // Process may have already exited; swallow the error.
-        }
-      }).catch(() => {
-        this.proc?.kill('SIGTERM')
-      })
-    } else {
-      // POSIX: send SIGTERM to the process group so shell-spawned children are also signalled.
       try {
-        process.kill(-pid, 'SIGTERM')
+        execSync(`taskkill /F /T /PID ${childPid}`, { stdio: 'ignore' })
       } catch {
-        this.proc.kill('SIGTERM')
+        proc.kill('SIGTERM')
+      }
+    } else {
+      try {
+        process.kill(-childPid, 'SIGTERM')
+      } catch {
+        proc.kill('SIGTERM')
       }
     }
   }
+
+  const bridgeRef: { current: AGPBridge | null } = { current: null }
+
+  const bridge: AGPBridge = {
+    get status(): BridgeStatus {
+      return status
+    },
+    get pid(): number | undefined {
+      return pid
+    },
+    start,
+    send,
+    invoke: (prompt: string, thread?: string) =>
+      send({ type: 'command.invoke', data: { prompt, thread } }),
+    cancel: (thread?: string) => send({ type: 'command.cancel', data: { thread } }),
+    hitlRespond: (requestId: string, decision: string, text?: string) =>
+      send({ type: 'command.hitl.respond', data: { request_id: requestId, decision, text } }),
+    feedback: (runId: string, rating: string, comment?: string) =>
+      send({ type: 'command.feedback', data: { run_id: runId, rating, comment } }),
+    snapshot: (thread?: string, label?: string) =>
+      send({ type: 'command.snapshot.request', data: { thread, label } }),
+    shutdown: () => send({ type: 'command.runtime.shutdown' }),
+    kill,
+
+    on: ((event: string, listener: (...args: unknown[]) => void) => {
+      emitter.on(event, listener)
+      return bridgeRef.current!
+    }) as AGPBridge['on'],
+
+    once: ((event: string, listener: (...args: unknown[]) => void) => {
+      emitter.once(event, listener)
+      return bridgeRef.current!
+    }) as AGPBridge['once'],
+
+    off: ((event: string, listener: (...args: unknown[]) => void) => {
+      emitter.off(event, listener)
+      return bridgeRef.current!
+    }) as AGPBridge['off'],
+
+    // AGPBridge narrows EventEmitter's emit/on overloads for AGP types; bind keeps runtime dispatch, cast satisfies the surface.
+    emit: emitter.emit.bind(emitter) as AGPBridge['emit'],
+  }
+
+  bridgeRef.current = bridge
+  return bridge
 }

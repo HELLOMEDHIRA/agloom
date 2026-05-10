@@ -16,6 +16,13 @@ export default tseslint.config(
   {
     files: ['src/**/*.{ts,tsx}'],
     rules: {
+      'no-var': 'error',
+      'prefer-const': 'error',
+      'object-shorthand': ['error', 'always'],
+      'prefer-template': 'error',
+      'prefer-rest-params': 'error',
+      'prefer-spread': 'error',
+      'prefer-exponentiation-operator': 'error',
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       '@typescript-eslint/explicit-module-boundary-types': 'off',
@@ -25,6 +32,6 @@ export default tseslint.config(
 
   // Ignore build outputs and config files
   {
-    ignores: ['dist/**', 'node_modules/**', '*.cjs', 'coverage/**'],
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**'],
   },
 )

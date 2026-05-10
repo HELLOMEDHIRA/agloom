@@ -180,6 +180,15 @@ async def test_memory_store_multiple_sessions():
     assert len(b) == 1
 
 
+@pytest.mark.asyncio
+async def test_memory_store_list_session_ids():
+    store = MemoryEventStore()
+    assert await store.list_session_ids() == []
+    await store.append("z_sess", {"seq": 1})
+    await store.append("a_sess", {"seq": 1})
+    assert await store.list_session_ids() == ["a_sess", "z_sess"]
+
+
 # ── SqliteEventStore ───────────────────────────────────────────────────────────
 
 
@@ -212,6 +221,16 @@ async def test_sqlite_store_count_and_clear():
     assert await store.count("s_1") == 5
     await store.clear("s_1")
     assert await store.count("s_1") == 0
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_store_list_session_ids():
+    store = SqliteEventStore(":memory:")
+    assert await store.list_session_ids() == []
+    await store.append("s_b", {"seq": 1, "type": "x"})
+    await store.append("s_a", {"seq": 1, "type": "x"})
+    assert await store.list_session_ids() == ["s_a", "s_b"]
     store.close()
 
 

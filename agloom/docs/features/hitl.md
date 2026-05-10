@@ -159,6 +159,10 @@ for step in result.steps:
         print(f"Interrupted: {step.name}")
 ```
 
+## Persistent tool allowlist (runtime)
+
+When using **`agloom-runtime`** with tool-level HITL, approved tools can be persisted so repeat calls skip the prompt. See **[HITL tool allowlist](hitl-allowlist.md)** for JSON format and **`--hitl-allowlist-path`** / **`--no-hitl-allowlist-persist`**.
+
 ## Disabling HITL
 
 Simply don't pass any interrupt parameters — HITL is opt-in, not opt-out:

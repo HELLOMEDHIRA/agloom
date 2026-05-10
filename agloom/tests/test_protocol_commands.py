@@ -11,8 +11,11 @@ from agloom.protocol.commands import (
     CommandCancel,
     CommandHITLRespond,
     CommandInvoke,
+    CommandPing,
     CommandRuntimeShutdown,
     CommandSessionResume,
+    CommandSubscribe,
+    CommandToolInvoke,
     CommandWorkerAssign,
     command_adapter,
 )
@@ -146,6 +149,28 @@ def test_runtime_shutdown():
 def test_runtime_shutdown_with_data():
     cmd = _parse({"type": "command.runtime.shutdown", "data": {}})
     assert isinstance(cmd, CommandRuntimeShutdown)
+
+
+# ── command.ping / subscribe / tool.invoke ────────────────────────────────────
+
+
+def test_ping_optional_id():
+    cmd = _parse({"type": "command.ping", "data": {"ping_id": "p1"}})
+    assert isinstance(cmd, CommandPing)
+    assert cmd.data.ping_id == "p1"
+
+
+def test_subscribe_prefixes():
+    cmd = _parse({"type": "command.subscribe", "data": {"prefixes": ["tool.", "thinking."]}})
+    assert isinstance(cmd, CommandSubscribe)
+    assert cmd.data.prefixes == ["tool.", "thinking."]
+
+
+def test_tool_invoke():
+    cmd = _parse({"type": "command.tool.invoke", "data": {"name": "echo", "arguments": {"x": 1}}})
+    assert isinstance(cmd, CommandToolInvoke)
+    assert cmd.data.name == "echo"
+    assert cmd.data.arguments == {"x": 1}
 
 
 # ── Unknown type raises ────────────────────────────────────────────────────────

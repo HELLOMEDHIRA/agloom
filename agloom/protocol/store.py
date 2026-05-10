@@ -74,6 +74,10 @@ class EventStore(ABC):
     async def clear(self, session_id: str) -> None:
         """Delete all events for ``session_id``.  Useful for tests and TTL eviction."""
 
+    @abstractmethod
+    async def list_session_ids(self) -> list[str]:
+        """Return distinct session ids that have at least one stored event, sorted lexically."""
+
 
 # ── MemoryEventStore ───────────────────────────────────────────────────────────
 
@@ -106,6 +110,10 @@ class MemoryEventStore(EventStore):
     async def clear(self, session_id: str) -> None:
         async with self._lock:
             self._store.pop(session_id, None)
+
+    async def list_session_ids(self) -> list[str]:
+        async with self._lock:
+            return sorted(self._store.keys())
 
 
 # ── SqliteEventStore ───────────────────────────────────────────────────────────
@@ -175,6 +183,11 @@ class SqliteEventStore(EventStore):
         conn.execute("DELETE FROM agp_events WHERE session = ?", (session_id,))
         conn.commit()
 
+    def _sync_list_sessions(self) -> list[str]:
+        conn = self._connect()
+        rows = conn.execute("SELECT DISTINCT session FROM agp_events ORDER BY session").fetchall()
+        return [str(r[0]) for r in rows]
+
     async def append(self, session_id: str, event: dict) -> None:
         loop = asyncio.get_running_loop()
         async with self._write_lock:
@@ -195,6 +208,10 @@ class SqliteEventStore(EventStore):
         loop = asyncio.get_running_loop()
         async with self._write_lock:
             await loop.run_in_executor(None, self._sync_clear, session_id)
+
+    async def list_session_ids(self) -> list[str]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._sync_list_sessions)
 
     def close(self) -> None:
         if self._conn is not None:

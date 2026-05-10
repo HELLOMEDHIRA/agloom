@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react'
 
 const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
-export function useSpinner(intervalMs = 80): string {
+export const useSpinner = (intervalMs = 80): string => {
   const [frame, setFrame] = useState(0)
 
   useEffect(() => {

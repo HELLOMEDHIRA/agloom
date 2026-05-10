@@ -15,7 +15,7 @@ interface Props {
   isRunning?: boolean
 }
 
-export function ChatInput({ onSubmit, onCancel, disabled, isRunning }: Props): React.ReactElement {
+export const ChatInput = ({ onSubmit, onCancel, disabled, isRunning }: Props): React.ReactElement => {
   const [value, setValue] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const totalIn = useSessionStore((s) => s.totalInputTokens)

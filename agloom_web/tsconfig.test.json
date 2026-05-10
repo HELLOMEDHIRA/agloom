@@ -1,10 +1,9 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "module": "CommonJS",
-    "moduleResolution": "node",
-    "types": ["node", "jest"],
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "outDir": "./dist-test"
-  }
+    "types": ["node", "jest", "vite/client"],
+    "noEmit": true
+  },
+  "include": ["src", "jest.setup.ts"],
+  "exclude": ["node_modules", "dist"]
 }

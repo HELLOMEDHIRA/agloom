@@ -34,6 +34,20 @@ from .middleware import HumanApprovalMiddleware, ReactUserTurnToolChoiceMiddlewa
 from .react_tool_recovery import (
     exception_indicates_tool_use_failed as _exception_indicates_tool_use_failed,
 )
+from .react_tool_recovery import (
+    extract_failed_generation_snippet as _extract_failed_generation_snippet,  # noqa: F401 — re-export
+)
+from .react_tool_recovery import (
+    human_message_after_stray_tool_json as _human_message_after_stray_tool_json,
+)
+from .react_tool_recovery import (
+    human_message_after_tool_use_failed as _human_message_after_tool_use_failed,
+)
+from .react_tool_recovery import (
+    last_ai_message_is_stray_tool_json as _last_ai_message_is_stray_tool_json,
+)
+
+logger = get_logger(__name__)
 
 
 def _tool_input_as_dict(tool_input: Any) -> dict[str, Any]:
@@ -47,20 +61,6 @@ def _tool_input_as_dict(tool_input: Any) -> dict[str, Any]:
         except (json.JSONDecodeError, ValueError):
             pass
     return {}
-from .react_tool_recovery import (
-    extract_failed_generation_snippet as _extract_failed_generation_snippet,  # re-export for tests / consumers # noqa: F401
-)
-from .react_tool_recovery import (
-    human_message_after_stray_tool_json as _human_message_after_stray_tool_json,
-)
-from .react_tool_recovery import (
-    human_message_after_tool_use_failed as _human_message_after_tool_use_failed,
-)
-from .react_tool_recovery import (
-    last_ai_message_is_stray_tool_json as _last_ai_message_is_stray_tool_json,
-)
-
-logger = get_logger(__name__)
 
 
 REACT_RECURSION_LIMIT = 25
@@ -104,6 +104,7 @@ def _hitl_middleware_extras(agent: dict) -> list[Any]:
             interrupt_before_tools=list(interrupt_before_tools),
             user_callback=user_callback,
             agent_name=agent.get("name", "UnifiedAgent"),
+            tool_allowlist=agent.get("_hitl_tool_allowlist"),
         )
     ]
 
@@ -754,6 +755,7 @@ async def _handle_react_hitl(
         interrupt_before_tools=interrupt_before_tools,
         user_callback=user_callback,
         agent_name=name,
+        tool_allowlist=agent.get("_hitl_tool_allowlist"),
     )
 
     react_agent = create_agent(

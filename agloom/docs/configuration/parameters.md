@@ -67,11 +67,20 @@ await create_agent(model=ChatGroq(model="llama-3.3-70b-versatile"))
 | `max_retries` | `int` | `2` | Worker retry count (0-10) |
 | `retry_delay` | `float` | `1.0` | Seconds between retries |
 | `llm_timeout` | `float` | `120.0` | LLM call timeout in seconds |
-| `classifier_timeout` | `float` | `30.0` | Classifier timeout in seconds |
+| `classifier_timeout` | `float` | `60.0` | Classifier timeout in seconds |
 | `structured_max_retries` | `int` | `2` | Structured output retry count |
 | `rate_limit` | `float` | `None` | Max LLM calls per second. `None` = no limit |
 
 See [Timeouts & Retries](reliability.md) for details.
+
+### ReAct resilience & skills mirror
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `react_force_tool_choice_on_user_turn` | `bool` | `True` | After each user message, ReAct requests a structured tool call (`tool_choice=required`) so providers that omit tools still emit a valid tool payload. |
+| `react_tool_use_failed_auto_retries_hitl` | `int` | `2` | Automatic HITL-backed retries when the model returns malformed tool JSON. |
+| `react_tool_use_failed_user_rounds` | `int` | `3` | Max user-visible rounds for tool-use recovery before failing the turn. |
+| `skills_disk_mirror` | `Path \| str \| None` | `None` | Optional directory path; when set, mirrors skill artifacts on disk for inspection or backup. |
 
 ## Feedback System
 
@@ -121,14 +130,15 @@ Delegation can also be configured at runtime:
 |-----------|------|---------|-------------|
 | `middleware` | `list` | `()` | Before/after agent middleware. See [Middleware](../features/middleware.md) |
 | `response_format` | Pydantic model | `None` | Structured output schema (extra LLM reformat pass). See [Structured Output](../guides/production.md#structured-output) |
-| `state_schema` | `type` | `None` | Reserved for future use |
-| `context_schema` | `type` | `None` | Reserved for future use |
+| `state_schema` | `type` | `None` | Stored on `AgentConfig` for LangGraph compatibility (custom compiled graphs). The default `UnifiedAgent` execution path does not require it. |
+| `context_schema` | `type` | `None` | Same as `state_schema` — optional LangGraph context typing when you compile graphs that consume it. |
 | `checkpointer` | `Checkpointer` | `None` | LangGraph checkpointer for state persistence. See [Checkpointer](../guides/production.md#checkpointer-state-persistence-and-inspection) |
 | `mcp_servers` | `list[MCPServerConfig]` | `None` | MCP server connections. See [MCP Servers](../features/mcp.md) |
 | `max_step_output_length` | `int` | `0` | Max chars for step input/output in traces. `0` = no truncation (default — full output preserved). Set to e.g. `500` to limit memory usage |
 | `fallback_pattern` | `PatternType \| None` | `None` | Override classifier fallback when structured output fails. `None` = auto (REACT with tools, DIRECT without) |
 | `harness` | `bool` | `False` | Inject progress + git tools (`initialize_project`, `bootstrap_progress`, task CRUD, `git_*`). **Requires `store=`**; ignored without a store. See [Harness](../features/harness.md) |
 | `harness_project_name` | `str` | `"project"` | Scopes the `ProgressTracker` / artifact key together with `name` |
+| `cli_tools` | `bool \| dict \| None` | `None` | Built-in sandboxed CLI tools (`read_file`, `bash`, …). `True` uses defaults; dict overrides `working_dir`, `allow_shell`, `allow_network`, `sandbox`, `task_tool`. See [CLI tools](../features/cli-tools.md) |
 
 ## Runtime Parameters (Method Signatures)
 

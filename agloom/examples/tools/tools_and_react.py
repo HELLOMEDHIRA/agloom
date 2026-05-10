@@ -1,6 +1,8 @@
 """Agent with custom tools — demonstrates REACT pattern with tool calling."""
 
+import ast
 import asyncio
+import operator
 import os
 
 from langchain_core.tools import tool
@@ -14,11 +16,50 @@ llm = ChatGroq(
     temperature=0,
 )
 
+def _safe_calc(expression: str) -> float:
+    """Arithmetic only (+ − × ÷ // % ** and parentheses). No eval()."""
+    tree = ast.parse(expression.strip(), mode="eval")
+
+    def _eval(node: ast.AST) -> float:
+        if isinstance(node, ast.Expression):
+            return _eval(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.UnaryOp):
+            match node.op:
+                case ast.UAdd():
+                    return operator.pos(_eval(node.operand))
+                case ast.USub():
+                    return operator.neg(_eval(node.operand))
+                case _:
+                    raise ValueError("only plain numeric arithmetic is allowed")
+        if isinstance(node, ast.BinOp):
+            match node.op:
+                case ast.Add():
+                    return operator.add(_eval(node.left), _eval(node.right))
+                case ast.Sub():
+                    return operator.sub(_eval(node.left), _eval(node.right))
+                case ast.Mult():
+                    return operator.mul(_eval(node.left), _eval(node.right))
+                case ast.Div():
+                    return operator.truediv(_eval(node.left), _eval(node.right))
+                case ast.FloorDiv():
+                    return operator.floordiv(_eval(node.left), _eval(node.right))
+                case ast.Mod():
+                    return operator.mod(_eval(node.left), _eval(node.right))
+                case ast.Pow():
+                    return operator.pow(_eval(node.left), _eval(node.right))
+                case _:
+                    raise ValueError("only plain numeric arithmetic is allowed")
+        raise ValueError("only plain numeric arithmetic is allowed")
+
+    return _eval(tree)
+
 
 @tool
 def calculate(expression: str) -> str:
     """Evaluate a mathematical expression and return the result."""
-    return str(eval(expression))
+    return str(_safe_calc(expression))
 
 
 @tool

@@ -4,25 +4,18 @@ Each connecting client gets its own :class:`~agloom.protocol.emitter.AsyncSessio
 and :class:`~agloom.runtime.bridge.run_invocation` loop.  Events flow *out* as NDJSON lines
 over the WebSocket; commands flow *in* as NDJSON lines in the opposite direction.
 
-The implementation is intentionally minimal (no auth, no TLS termination — run behind a
-reverse proxy for production):
+Features:
 
-* Connection → ``session.opened`` emitted immediately.
-* Inbound JSON line parsed via :data:`~agloom.protocol.command_adapter`.
-* ``command.invoke`` → spawns an asyncio task that drives ``run_invocation``.
-* ``command.cancel`` → cancels the matching task.
-* ``command.hitl.respond`` → forwarded to :class:`~agloom.runtime.hitl.HITLBridge`.
-* ``command.session.resume`` → replays buffered events from the :class:`~agloom.protocol.store.EventStore`.
-* ``command.runtime.shutdown`` → graceful shutdown.
-* Unknown commands → logged, not fatal.
+* Optional bearer-token check on the HTTP upgrade (``Authorization: Bearer …``).
+* ``max_size`` / ``max_queue`` forwarded to ``websockets`` for frame limits and back-pressure.
+* Optional negotiated subprotocol (default ``agp-v1``).
+* Same auxiliary commands as stdio (ping, schema, tool list, subscribe, session ops, …).
+
+TLS termination and browser CORS policies belong in a reverse proxy.
 
 Optional dependency: ``websockets>=12.0``.  Install via::
 
     pip install "agloom[ws]"
-
-or directly::
-
-    pip install "websockets>=12.0"
 """
 
 from __future__ import annotations
@@ -31,7 +24,10 @@ import asyncio
 import json
 import logging
 import sys
-from typing import TYPE_CHECKING, Any
+import time
+from collections.abc import Sequence
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -46,25 +42,17 @@ async def serve_ws(
     host: str = "127.0.0.1",
     port: int = 8765,
     store: EventStore | None = None,
+    auth_token: str | None = None,
+    max_size: int | None = 4 * 1024 * 1024,
+    max_queue: int | None = 64,
+    subprotocols: Sequence[str] | None = ("agp-v1",),
+    heartbeat_interval: float = 0.0,
+    hitl_allowlist_persist_path: Path | None = None,
 ) -> None:
-    """Start the AGP WebSocket server and block until SIGINT/SIGTERM.
+    """Start the AGP WebSocket server and block until cancelled.
 
-    ``agent_factory`` is a callable ``() -> UnifiedAgent`` (or any object with
-    ``astream_events``).  Called once per connection — each session gets a fresh
-    agent with its own in-process state.
-
-    ``store`` is an optional :class:`~agloom.protocol.store.EventStore` wired into
-    every emitter for replay-on-reconnect.
-
-    Example::
-
-        from agloom import create_agent
-        from agloom.runtime.ws import serve_ws
-
-        async def main():
-            await serve_ws(agent_factory=lambda: create_agent(name="bot", llm=my_llm))
-
-        asyncio.run(main())
+    ``agent_factory`` is invoked once per connection. ``store`` enables replay on
+    ``command.session.resume``.
     """
     try:
         import websockets  # type: ignore[import-untyped]
@@ -76,26 +64,67 @@ async def serve_ws(
         )
         raise SystemExit(1) from exc
 
-    async def _handle(ws: ServerConnection) -> None:
-        await _session_loop(ws, agent_factory=agent_factory, store=store)
+    async def _process_request(connection: ServerConnection, request: Any) -> Any:
+        if auth_token:
+            auth = request.headers.get("Authorization", "")
+            if auth != f"Bearer {auth_token}":
+                return connection.respond(401, "Unauthorized")
+        return None
 
+    async def _handle(ws: ServerConnection) -> None:
+        await _session_loop(
+            ws,
+            agent_factory=agent_factory,
+            store=store,
+            heartbeat_interval=heartbeat_interval,
+            hitl_allowlist_persist_path=hitl_allowlist_persist_path,
+        )
+
+    proto_list: tuple[str, ...] | None = tuple(subprotocols) if subprotocols else None
     sys.stderr.write(f"[agloom-runtime] WebSocket server listening on ws://{host}:{port}\n")
-    async with websockets.serve(_handle, host, port):
+    async with websockets.serve(
+        _handle,
+        host,
+        port,
+        max_size=max_size,
+        max_queue=max_queue,
+        subprotocols=proto_list,  # type: ignore[arg-type]
+        process_request=_process_request,
+    ):
         await asyncio.Future()  # run forever
 
 
-async def _session_loop(ws: Any, *, agent_factory: Any, store: EventStore | None) -> None:
+async def _session_loop(
+    ws: Any,
+    *,
+    agent_factory: Any,
+    store: EventStore | None,
+    heartbeat_interval: float,
+    hitl_allowlist_persist_path: Path | None = None,
+) -> None:
     """Handle one WebSocket connection as one AGP session."""
     from agloom.protocol import AsyncSessionEmitter, command_adapter
     from agloom.protocol.commands import (
         CommandCancel,
+        CommandConfigSet,
+        CommandFeedback,
         CommandHITLRespond,
         CommandInvoke,
+        CommandPing,
         CommandRuntimeShutdown,
+        CommandSchemaRequest,
+        CommandSessionCreate,
+        CommandSessionDelete,
+        CommandSessionList,
         CommandSessionResume,
+        CommandSnapshotRequest,
+        CommandSubscribe,
+        CommandToolInvoke,
+        CommandToolList,
+        CommandUnsubscribe,
         CommandWorkerAssign,
     )
-    from agloom.runtime.bridge import run_invocation
+    from agloom.runtime.bridge import new_session_id, run_invocation
     from agloom.runtime.hitl import HITLBridge
 
     session_id = f"ws_{uuid4().hex[:16]}"
@@ -106,11 +135,19 @@ async def _session_loop(ws: Any, *, agent_factory: Any, store: EventStore | None
         thread=f"t_{uuid4().hex[:12]}",
         writer=ws.send,
         store=store,
+        capabilities=[],
     )
 
-    hitl_bridge = HITLBridge(emitter)
+    cfg = cast("dict[str, Any]", agent.config)
+    if not isinstance(cfg.get("_hitl_tool_allowlist"), set):
+        cfg["_hitl_tool_allowlist"] = set()
+    _al_set = cfg["_hitl_tool_allowlist"]
+    hitl_bridge = HITLBridge(
+        emitter,
+        tool_allowlist=_al_set,
+        allowlist_persist_path=hitl_allowlist_persist_path,
+    )
 
-    # Active invocation tasks keyed by thread id.
     _tasks: dict[str, asyncio.Task[None]] = {}
 
     async def _send_error(msg: str) -> None:
@@ -119,8 +156,43 @@ async def _session_loop(ws: Any, *, agent_factory: Any, store: EventStore | None
         except Exception:
             pass
 
+    stop_hb = asyncio.Event()
+    hb_task: asyncio.Task[None] | None = None
+    if heartbeat_interval > 0:
+        started_mono = time.perf_counter()
+
+        async def _heartbeat() -> None:
+            while not stop_hb.is_set():
+                await asyncio.sleep(heartbeat_interval)
+                if stop_hb.is_set():
+                    break
+                emitter.emit_session_heartbeat(uptime_ms=int((time.perf_counter() - started_mono) * 1000))
+
+        hb_task = asyncio.create_task(_heartbeat(), name="agp-ws-session-heartbeat")
+
     async with emitter:
         emitter.open()
+
+        from agloom.cli_tools import CLI_TOOL_NAMES
+
+        agent_label = getattr(agent, "config", {}).get("name", "agloom-runtime")
+        tool_objs = getattr(agent, "config", {}).get("tools", []) or []
+        _names = {getattr(t, "name", None) for t in tool_objs}
+        _ct_ct = sum(1 for n in _names if n in CLI_TOOL_NAMES)
+        _ct_en = _ct_ct > 0
+        emitter.emit_runtime_ready(agent_name=str(agent_label), cli_tools_enabled=_ct_en, cli_tools_count=_ct_ct)
+        llm_obj = getattr(agent, "config", {}).get("llm")
+        model_id_guess = None
+        if llm_obj is not None:
+            model_id_guess = getattr(llm_obj, "model_name", None) or getattr(llm_obj, "model", None)
+            if model_id_guess is None:
+                model_id_guess = type(llm_obj).__name__
+        emitter.emit_runtime_config(
+            model_id=str(model_id_guess) if model_id_guess else None,
+            tool_names=[getattr(t, "name", str(t)) for t in tool_objs],
+            cli_tools_enabled=_ct_en,
+            cli_tools_count=_ct_ct,
+        )
 
         try:
             async for raw in ws:
@@ -147,7 +219,7 @@ async def _session_loop(ws: Any, *, agent_factory: Any, store: EventStore | None
                         ),
                         name=f"invoke-{thread}",
                     )
-                    hitl_bridge.bind_task_emitter(task, inv_emitter)
+                    hitl_bridge.bind_task_emitter(task, inv_emitter, thread=thread)
                     _tasks[thread] = task
 
                 elif isinstance(cmd, CommandCancel):
@@ -156,11 +228,13 @@ async def _session_loop(ws: Any, *, agent_factory: Any, store: EventStore | None
                         if task_to_cancel and not task_to_cancel.done():
                             hitl_bridge.prepare_invocation_cancel(task_to_cancel, reason="user_aborted")
                             task_to_cancel.cancel()
+                            hitl_bridge.cancel_for_thread(cmd.data.thread)
                     else:
                         for t in list(_tasks.values()):
                             if not t.done():
                                 hitl_bridge.prepare_invocation_cancel(t, reason="user_aborted")
                                 t.cancel()
+                        hitl_bridge.cancel_all()
 
                 elif isinstance(cmd, CommandHITLRespond):
                     hitl_bridge.respond(
@@ -173,18 +247,26 @@ async def _session_loop(ws: Any, *, agent_factory: Any, store: EventStore | None
                 elif isinstance(cmd, CommandSessionResume):
                     from_seq = cmd.data.from_seq or 0
                     if store is not None:
-                        emitter.resume(resumed_from_thread=cmd.data.thread, replayed_from_seq=from_seq if from_seq > 0 else None)
+                        emitter.resume(
+                            resumed_from_thread=cmd.data.thread,
+                            replayed_from_seq=from_seq if from_seq > 0 else None,
+                        )
                         async for evt_dict in store.replay(session_id, from_seq=from_seq):
-                            await ws.send(json.dumps(evt_dict) + "\n")
+                            await ws.send(json.dumps(evt_dict, ensure_ascii=False) + "\n")
                     else:
                         emitter.resume(resumed_from_thread=cmd.data.thread)
 
                 elif isinstance(cmd, CommandWorkerAssign):
-                    # In-process worker stub — Phase 1.
                     from agloom.runtime.bridge import run_invocation as _run_inv
 
                     wthread = cmd.data.thread or f"wt_{uuid4().hex[:12]}"
                     w_emitter = emitter.fork_for_thread(wthread)
+                    w_emitter.emit_worker_spawned(
+                        worker_id=cmd.data.worker_id,
+                        name=cmd.data.worker_id,
+                        pattern=cmd.data.pattern,
+                        task=cmd.data.task,
+                    )
                     inv_emitter_w: AsyncSessionEmitter = w_emitter  # type: ignore[assignment]
                     wtask: asyncio.Task[None] = asyncio.create_task(
                         _run_inv(
@@ -196,8 +278,139 @@ async def _session_loop(ws: Any, *, agent_factory: Any, store: EventStore | None
                         ),
                         name=f"worker-{cmd.data.worker_id}-{wthread}",
                     )
-                    hitl_bridge.bind_task_emitter(wtask, inv_emitter_w)
+                    hitl_bridge.bind_task_emitter(wtask, inv_emitter_w, thread=wthread)
                     _tasks[wthread] = wtask
+
+                elif isinstance(cmd, CommandFeedback):
+                    feedback_handler = getattr(agent, "config", {}).get("feedback_handler")
+                    if feedback_handler is None:
+                        logger.warning("command.feedback but no feedback_handler configured")
+                    else:
+                        try:
+                            await feedback_handler.on_feedback(
+                                run_id=cmd.data.run_id,
+                                rating=cmd.data.rating,
+                                comment=cmd.data.comment,
+                                correct=cmd.data.correct,
+                                metadata=cmd.data.metadata,
+                            )
+                        except Exception as exc:
+                            logger.warning("feedback handler error: %r", exc)
+                    emitter.emit_feedback_scored(
+                        run_id=cmd.data.run_id,
+                        rating=cmd.data.rating,
+                        comment=cmd.data.comment,
+                        correct=cmd.data.correct,
+                        metadata=cmd.data.metadata,
+                    )
+
+                elif isinstance(cmd, CommandSnapshotRequest):
+                    checkpointer = getattr(agent, "config", {}).get("checkpointer")
+                    label = cmd.data.label
+                    thread = cmd.data.thread or session_id
+                    if checkpointer is None:
+                        logger.warning("command.snapshot.request: no checkpointer configured")
+                    else:
+                        try:
+                            from agloom.models import ExecutionResult, PatternType
+                            from agloom.unified_agent import _save_checkpoint
+
+                            dummy_result = ExecutionResult(
+                                pattern_used=PatternType.DIRECT,
+                                query="",
+                                output="",
+                                steps_taken=0,
+                                success=True,
+                                run_id=f"snap_{uuid4().hex[:8]}",
+                            )
+                            await _save_checkpoint(checkpointer, thread, dummy_result, "snapshot")
+                            emitter.emit_checkpoint_saved(thread=thread, label=label)
+                        except Exception as exc:
+                            logger.warning("snapshot failed: %r", exc)
+
+                elif isinstance(cmd, CommandPing):
+                    emitter.emit_runtime_pong(ping_id=cmd.data.ping_id)
+
+                elif isinstance(cmd, CommandSchemaRequest):
+                    from agloom.protocol.schema import build_schema
+
+                    emitter.emit_runtime_schema(json_schema=build_schema())
+
+                elif isinstance(cmd, CommandToolList):
+                    tools = getattr(agent, "config", {}).get("tools", []) or []
+                    rows: list[tuple[str, str | None]] = []
+                    for t in tools:
+                        nm = getattr(t, "name", "?")
+                        desc = getattr(t, "description", None)
+                        rows.append((nm, str(desc) if desc else None))
+                    emitter.emit_runtime_tools(tools=rows)
+
+                elif isinstance(cmd, CommandSubscribe):
+                    emitter.set_subscription_prefixes(cmd.data.prefixes if cmd.data.prefixes else None)
+
+                elif isinstance(cmd, CommandUnsubscribe):
+                    emitter.clear_subscription()
+
+                elif isinstance(cmd, CommandSessionList):
+                    if store is None:
+                        emitter.emit_error(
+                            severity="transient",
+                            message="command.session.list requires EventStore",
+                            stage="session.list",
+                        )
+                        emitter.emit_runtime_sessions(sessions=[])
+                    else:
+                        ids = await store.list_session_ids()
+                        emitter.emit_runtime_sessions(sessions=ids)
+
+                elif isinstance(cmd, CommandSessionCreate):
+                    sid = cmd.data.session_id or new_session_id()
+                    emitter.emit_runtime_session_created(session_id=sid)
+
+                elif isinstance(cmd, CommandSessionDelete):
+                    if store is None:
+                        emitter.emit_error(
+                            severity="transient",
+                            message="command.session.delete requires EventStore",
+                            stage="session.delete",
+                        )
+                    else:
+                        await store.clear(cmd.data.session_id)
+
+                elif isinstance(cmd, CommandToolInvoke):
+                    raw_sz = len(json.dumps(cmd.data.arguments, ensure_ascii=False))
+                    if raw_sz > 32_000:
+                        emitter.emit_runtime_tool_result(ok=False, error="arguments too large")
+                    else:
+                        tools = getattr(agent, "config", {}).get("tools", []) or []
+                        tool = next((x for x in tools if getattr(x, "name", None) == cmd.data.name), None)
+                        if tool is None:
+                            emitter.emit_runtime_tool_result(ok=False, error="unknown_tool")
+                        else:
+                            try:
+                                out = await tool.ainvoke(cmd.data.arguments)
+                                emitter.emit_runtime_tool_result(ok=True, result=out)
+                            except Exception as exc:
+                                emitter.emit_runtime_tool_result(ok=False, error=str(exc))
+
+                elif isinstance(cmd, CommandConfigSet):
+                    try:
+                        from agloom.unified_agent import resolve_model
+
+                        agent.config["llm"] = resolve_model(cmd.data.model_id)
+                    except Exception as exc:
+                        emitter.emit_error(severity="transient", message=str(exc), stage="config.set")
+                    else:
+                        emitter.emit_runtime_config_applied(model_id=cmd.data.model_id)
+                        llm_after = agent.config.get("llm")
+                        mid = getattr(llm_after, "model_name", None) or getattr(llm_after, "model", None)
+                        if mid is None and llm_after is not None:
+                            mid = type(llm_after).__name__
+                        tools_after = agent.config.get("tools", []) or []
+                        emitter.emit_runtime_config(
+                            model_id=str(mid) if mid else cmd.data.model_id,
+                            tool_names=[getattr(t, "name", str(t)) for t in tools_after],
+                        )
 
                 elif isinstance(cmd, CommandRuntimeShutdown):
                     for t in list(_tasks.values()):
@@ -210,6 +423,13 @@ async def _session_loop(ws: Any, *, agent_factory: Any, store: EventStore | None
         except Exception as exc:
             logger.exception("ws session %s error: %s", session_id, exc)
         finally:
+            stop_hb.set()
+            if hb_task is not None:
+                hb_task.cancel()
+                try:
+                    await hb_task
+                except (asyncio.CancelledError, Exception):
+                    pass
             for t in list(_tasks.values()):
                 if not t.done():
                     hitl_bridge.prepare_invocation_cancel(t, reason="shutdown")

@@ -8,7 +8,7 @@ import type { AGPEvent } from '../types/agp'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-function env(overrides: Partial<Pick<AGPEvent, 'v' | 'session' | 'seq' | 'ts' | 'id'>> = {}): Pick<AGPEvent, 'v' | 'session' | 'seq' | 'ts' | 'id'> {
+const env = (overrides: Partial<Pick<AGPEvent, 'v' | 'session' | 'seq' | 'ts' | 'id'>> = {}): Pick<AGPEvent, 'v' | 'session' | 'seq' | 'ts' | 'id'> => {
   return {
     v: '1',
     session: 'test-session',
@@ -19,11 +19,11 @@ function env(overrides: Partial<Pick<AGPEvent, 'v' | 'session' | 'seq' | 'ts' | 
   }
 }
 
-function dispatch(evt: AGPEvent) {
+const dispatch = (evt: AGPEvent) => {
   useSessionStore.getState().dispatch(evt)
 }
 
-function state() {
+const state = () => {
   return useSessionStore.getState()
 }
 
@@ -37,7 +37,7 @@ beforeEach(() => {
 
 describe('session.opened', () => {
   it('sets sessionId and runtimeVersion', () => {
-    dispatch({ ...env(), type: 'session.opened', data: { runtime_version: '0.1.0', protocol_version: '1', capabilities: [] } })
+    dispatch({ ...env(), type: 'session.opened', data: { runtime_version: '0.1.0', protocol_version: '1' } })
     expect(state().sessionId).toBe('test-session')
     expect(state().runtimeVersion).toBe('0.1.0')
     expect(state().sessionOpenedAtMs).toEqual(expect.any(Number))
@@ -283,6 +283,8 @@ describe('reset', () => {
     dispatch({ ...env(), type: 'message.user', data: { content: 'q' } })
     dispatch({ ...env(), type: 'metric.tokens', data: { model: 'gpt-4', input_tokens: 50, output_tokens: 20 } })
     dispatch({ ...env(), type: 'metric.cost', data: { cost: 0.01 } })
+    dispatch({ ...env(), type: 'runtime.config', data: { model_id: 'x', tool_names: ['a'], capabilities: [] } })
+    useSessionStore.getState().appendProtocolNote('manual note')
     useSessionStore.getState().reset()
     const s = state()
     expect(s.completedTurns).toHaveLength(0)
@@ -291,5 +293,40 @@ describe('reset', () => {
     expect(s.metricsHistory).toHaveLength(0)
     expect(s.totalCostUsd).toBe(0)
     expect(s.status).toBe('idle')
+    expect(s.protocolNotes).toHaveLength(0)
+    expect(s.toolNames).toBeNull()
+  })
+})
+
+describe('runtime.config', () => {
+  it('updates model, toolNames, and protocol notes', () => {
+    dispatch({
+      ...env(),
+      type: 'runtime.config',
+      data: { model_id: 'gpt-4o', tool_names: ['read_file'], capabilities: ['hitl'] },
+    })
+    const s = state()
+    expect(s.model).toBe('gpt-4o')
+    expect(s.toolNames).toEqual(['read_file'])
+    expect(s.capabilities).toEqual(['hitl'])
+    expect(s.protocolNotes.some((n) => n.includes('runtime.config'))).toBe(true)
+  })
+})
+
+describe('feedback.scored', () => {
+  it('appends a wire note', () => {
+    dispatch({
+      ...env(),
+      type: 'feedback.scored',
+      data: { run_id: 'run_abcdef123456', rating: '5', comment: 'ok' },
+    })
+    expect(state().protocolNotes.some((n) => n.includes('Feedback scored'))).toBe(true)
+  })
+})
+
+describe('graph.node.exit', () => {
+  it('records a protocol note', () => {
+    dispatch({ ...env(), type: 'graph.node.exit', data: { node: 'react', duration_ms: 120 } })
+    expect(state().protocolNotes.some((n) => n.includes('Graph exit'))).toBe(true)
   })
 })

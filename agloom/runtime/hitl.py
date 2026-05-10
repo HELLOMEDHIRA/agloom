@@ -29,11 +29,13 @@ from __future__ import annotations
 
 import asyncio
 import re
+from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
 from ..hitl_contract import HITLEvent
 from ..protocol import HITLDecision, HITLKind, SessionEmitter
+from .hitl_allowlist import save_tool_allowlist
 
 # Map agloom HITLEvent.* strings → AGP ``hitl.request.kind`` values. Keep the agloom contract
 # stable: when a new HITLEvent type appears, add a row here (and a translator branch in
@@ -93,8 +95,18 @@ class HITLBridge:
     independent ``hitl.request`` events without cross-talk.
     """
 
-    def __init__(self, emitter: SessionEmitter) -> None:
+    def __init__(
+        self,
+        emitter: SessionEmitter,
+        *,
+        tool_allowlist: set[str] | None = None,
+        allowlist_persist_path: Path | str | None = None,
+    ) -> None:
         self._default_emitter = emitter
+        self._tool_allowlist: set[str] = tool_allowlist if tool_allowlist is not None else set()
+        self._allowlist_persist_path = (
+            Path(allowlist_persist_path).expanduser().resolve() if allowlist_persist_path else None
+        )
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._kinds: dict[str, HITLKind] = {}  # request_id → kind
         self._req_task: dict[str, asyncio.Task[Any]] = {}  # request_id → owning task
@@ -159,7 +171,11 @@ class HITLBridge:
         if kind == "react_recovery":
             options, default = ["retry", "stop"], "stop"
         elif kind == "clarification":
-            options, default = [], None
+            raw_choices = params.get("choices")
+            if isinstance(raw_choices, list) and raw_choices:
+                options, default = [str(x) for x in raw_choices], None
+            else:
+                options, default = [], None
         else:
             options, default = ["accept", "reject", "allowlist"], "reject"
 
@@ -230,6 +246,15 @@ class HITLBridge:
             text=text,
             parent=request_evt.id,
         )
+        if kind == "tool_approval" and decision == "allowlist":
+            tn = params.get("tool_name")
+            if isinstance(tn, str) and tn.strip():
+                self._tool_allowlist.add(tn.strip())
+                if self._allowlist_persist_path is not None:
+                    try:
+                        save_tool_allowlist(self._allowlist_persist_path, self._tool_allowlist)
+                    except OSError:
+                        pass
         return _decision_to_callback_value(kind, decision, text)
 
     # ── inbound from the wire (command.hitl.respond) ────────────────────────
@@ -279,6 +304,19 @@ class HITLBridge:
     @property
     def pending_count(self) -> int:
         return sum(1 for f in self._pending.values() if not f.done())
+
+    async def request_clarification(self, question: str, choices: list[str] | None = None) -> str:
+        """Emit a ``hitl.request`` of kind ``clarification`` and await ``command.hitl.respond``."""
+        from ..hitl_contract import HITLEvent
+
+        payload: dict[str, Any] = {
+            "question": question,
+            "detail": question,
+        }
+        if choices:
+            payload["choices"] = list(choices)
+        result = await self.callback(HITLEvent.CLARIFICATION_REQUEST, payload)
+        return str(result) if result is not None else ""
 
 
 # ── helpers (module-level so they're trivially testable) ─────────────────────

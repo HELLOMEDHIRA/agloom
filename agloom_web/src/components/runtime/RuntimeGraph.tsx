@@ -18,7 +18,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import { useSessionStore } from '../../store/session.js'
 
-export function RuntimeGraph(): React.ReactElement {
+export const RuntimeGraph = (): React.ReactElement => {
   const activeGraphNodes = useSessionStore((s) => s.activeTurn?.graphNodes)
   const lastGraphNodes = useSessionStore((s) => s.completedTurns.at(-1)?.graphNodes)
 

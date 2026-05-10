@@ -28,10 +28,11 @@ const RIGHT_TABS: { id: RightTab; label: string; icon: React.ReactNode }[] = [
   { id: 'artifacts', label: 'Files',   icon: <Package size={13} /> },
 ]
 
-export function WorkspaceLayout({ leftSlot, centerSlot, rightSlot, rightTab, onRightTabChange }: Props): React.ReactElement {
+export const WorkspaceLayout = ({ leftSlot, centerSlot, rightSlot, rightTab, onRightTabChange }: Props): React.ReactElement => {
   const navigate = useNavigate()
   const connStatus = useSessionStore((s) => s.connectionStatus)
   const status = useSessionStore((s) => s.status)
+  const lastProtocolNote = useSessionStore((s) => s.protocolNotes.at(-1) ?? '')
 
   const statusDot = {
     open:       'bg-emerald-400',
@@ -71,6 +72,15 @@ export function WorkspaceLayout({ leftSlot, centerSlot, rightSlot, rightTab, onR
           </Link>
         </div>
       </header>
+
+      {lastProtocolNote ? (
+        <div
+          className="shrink-0 px-4 py-1.5 text-xs text-amber-300/90 bg-amber-950/30 border-b border-amber-900/40 truncate"
+          title={lastProtocolNote}
+        >
+          {lastProtocolNote}
+        </div>
+      ) : null}
 
       {/* ── Body ── */}
       <div className="flex flex-1 overflow-hidden">

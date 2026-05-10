@@ -13,14 +13,15 @@ def search_web(query: str) -> str:
     return f"Results for: {query}"
 
 @tool
-def calculate(expression: str) -> str:
-    """Evaluate a math expression."""
-    return str(eval(expression))
+def word_count(text: str) -> str:
+    """Count whitespace-separated words (safe — never eval user input)."""
+
+    return str(len(text.split()))
 
 async def main():
     agent = await create_agent(
         model=llm,
-        tools=[search_web, calculate],
+        tools=[search_web, word_count],
         name="tool-agent",
     )
 ```

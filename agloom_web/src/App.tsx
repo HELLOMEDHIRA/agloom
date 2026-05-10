@@ -10,7 +10,7 @@
 
 import React, { useMemo, useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { AGPClient, AGPClientContext } from './lib/agp/client.js'
+import { createAGPClient, AGPClientContext } from './lib/agp/client.js'
 import { WorkspaceHome } from './routes/WorkspaceHome.js'
 import { SessionWorkspace } from './routes/SessionWorkspace.js'
 import { SettingsPage } from './routes/SettingsPage.js'
@@ -20,16 +20,14 @@ import { SessionTrace } from './routes/SessionTrace.js'
 // Read runtime WebSocket URL from env or default to proxied dev URL.
 const RUNTIME_URL = import.meta.env['VITE_AGP_WS_URL'] ?? '/agp-ws'
 
-export function App(): React.ReactElement {
+export const App = (): React.ReactElement => {
   // One AGPClient instance per app lifetime — shared across all routes.
   const client = useMemo(() => {
-    const c = new AGPClient(
-      // In dev: Vite proxies /agp-ws → ws://localhost:8765
-      // In prod: set VITE_AGP_WS_URL=wss://your-runtime.example.com
+    const url =
       RUNTIME_URL.startsWith('/')
         ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${RUNTIME_URL}`
         : RUNTIME_URL
-    )
+    const c = createAGPClient(url)
     c.connect()
     return c
   }, [])

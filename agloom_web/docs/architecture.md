@@ -1,6 +1,5 @@
 # agloom Web Platform — Architecture
 
-> Status: **Phase 1 implementation complete**
 > Stack: React Router 7 · Vite 8 · TypeScript 6 · TailwindCSS 4 · Zustand 5 · React Flow · Monaco Editor
 
 ---
@@ -22,13 +21,13 @@ This guarantees AGP remains the single stable runtime abstraction across all fro
 │  │ UnifiedAgent        │      │ serve --transport=stdio (agloom CLI)        │   │
 │  └─────────────────────┘      └──────────┬───────────────────────────────────┘   │
 │                                          │ AGP (Envelopes over WS / stdio)        │
-│                 ┌────────────────────────┼────────────────────────────────┐       │
-│                 │                        │                                │       │
-│      agloom_cli (agloom CLI)    agloom_web (React Router)          future:   │      │
-│         AGPBridge (stdio)       AGPClient (WebSocket)            VSCode ext│      │
-│         Zustand store           Zustand store                    dashboards│      │
-│                 │                        │                                │       │
-│                 └────────────────────────┴────────────────────────────────┘       │
+│                 ┌────────────────────────┼────────────────────────────────┐        │
+│                 │                        │                                │        │
+│                 │  agloom_cli · AGPBridge (stdio)                         │        │
+│                 │  agloom_web · AGPClient (WebSocket)                     │        │
+│                 │  Zustand stores                                        │        │
+│                 │                        │                                │        │
+│                 └────────────────────────┴────────────────────────────────┘        │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -43,7 +42,7 @@ This guarantees AGP remains the single stable runtime abstraction across all fro
 | Language               | TypeScript                  | 6.0      | Same baseline as agloom CLI; latest strict mode   |
 | Styling                | TailwindCSS 4               | 4.3      | Vite plugin; zero-config                         |
 | State                  | Zustand                     | 5.0      | Same store shape as agloom CLI; no boilerplate    |
-| Data fetching          | @tanstack/react-query       | 5.100    | REST calls (settings, session list, etc.)        |
+| Data fetching          | @tanstack/react-query       | 5.100    | REST calls (observability HTTP API, etc.)        |
 | Graph viz              | @xyflow/react               | 12.10    | LangGraph node visualization                     |
 | Code editor            | @monaco-editor/react        | 4.7      | Artifact viewer; full IDE editing future         |
 | Charts                 | recharts                    | 3.8      | Token/metric dashboards                          |
@@ -69,7 +68,7 @@ agloom_web/
     ├── lib/
     │   ├── agp/
     │   │   ├── types.ts              # TypeScript mirror of AGP Pydantic models
-    │   │   └── client.ts             # AGPClient (WebSocket) + React context
+    │   │   └── client.ts             # createAGPClient() (WebSocket) + React context
     │   ├── hooks/
     │   │   └── useAGPStream.ts       # Wire AGPClient events → Zustand dispatch
     │   └── utils/
@@ -113,9 +112,9 @@ In production set `VITE_AGP_WS_URL=wss://your-runtime.example.com`.
 ### Connection lifecycle
 
 ```
-App.tsx creates one AGPClient on mount → calls client.connect()
+App.tsx creates one client via createAGPClient() on mount → calls client.connect()
 │
-├─ AGPClient opens WebSocket
+├─ WebSocket opens to runtime
 ├─ onStatus('open') → store.setConnectionStatus('open')
 ├─ onEvent(evt)     → store.dispatch(evt)        ← same reducer as agloom CLI
 │
@@ -149,18 +148,14 @@ AGP event received
 store.dispatch(evt)
       │
       ├── appended to executionTrace (all events except token.delta)
-      ├── matched on evt.type →
-      │     session.opened      → set sessionId, runtimeVersion
-      │     message.user        → create activeTurn
-      │     token.delta         → activeTurn.streamedTokens += token
-      │     tool.call/result    → upsert into activeTurn.toolCalls
-      │     worker.*            → upsert into activeTurn.workers
-      │     graph.node.*        → upsert into activeTurn.graphNodes
-      │     hitl.request        → push to hitlQueue, status='hitl'
-      │     message.assistant   → promote activeTurn → completedTurn
-      │                            extract code/markdown artifacts
-      │     metric.tokens       → totalInputTokens / totalOutputTokens
-      │     error.*             → errorMessage, status
+      ├── matched on evt.type → exhaustive branches for every AGPKnownEvent
+      │     session.* / agent.* / stream.* / runtime.*
+      │     message.* / pattern / thinking / token.delta
+      │     tool.call.* / worker.* / graph.node.*
+      │     hitl.* / memory.* / checkpoint.* / feedback.*
+      │     metric.tokens · metric.cost · skill.* · prompt.*
+      │     error.*
+      │     (+ protocolNotes for operational visibility — surfaced under the header in workspace)
       └── return next state (immutable)
 ```
 
@@ -204,25 +199,15 @@ npm run dev           # → http://localhost:3000
 # cd ..  &&  uv run python -m agloom.runtime serve --transport=ws --port 8765
 ```
 
----
+**Tests:** `npm run test` runs Jest with **jsdom** — Zustand reducer coverage in `store.test.ts`, **`createAGPClient`** WebSocket behaviour (mock transport), **`useAGPClient`** context contract, and smoke tests for **`SettingsPage`** (environment copy) + **`ChatInput`**. Expand component coverage incrementally as panels stabilize.
 
-## 8. Phased Roadmap
-
-| Phase | Scope |
-| ----- | ----- |
-| **1 (now)** | Core workspace: chat, streaming, HITL, React Flow graph, worker tree, execution trace, artifact viewer |
-| **2** | Session persistence sidebar; session list; resume from checkpoint via `session.resumed` AGP event |
-| **3** | Token / latency charts (recharts); cost dashboard; model comparison |
-| **4** | Workflow builder (React Flow editable graph → `command.invoke` with graph spec) |
-| **5** | Multi-runtime view: connect to multiple `agloom-runtime` instances simultaneously |
-| **6** | Collaborative workspaces; real-time multi-user cursors (via presence channel on AGP) |
-| **7** | agloom Cloud integration; deployment management; remote runtime provisioning |
+Informal product directions live in the repo **[ROADMAP.md](https://github.com/HELLOMEDHIRA/agloom/blob/main/docs/ROADMAP.md)** (not part of the MkDocs nav).
 
 ---
 
-## 9. Extension Points
+## 8. Extension Points
 
-The web platform is designed to remain an **AGP consumer** through all phases.  
+The web platform is designed to remain an **AGP consumer**.  
 New capabilities are added by:
 
 1. Adding AGP event types in `agloom/protocol/events.py`
@@ -231,3 +216,22 @@ New capabilities are added by:
 4. Adding a new component or extending an existing panel
 
 No changes to AGP transport, WebSocket server, or Python runtime are needed.
+
+---
+
+## 9. Deployment hardening
+
+### `index.html` caching
+
+Vite emits **content-hashed** JS/CSS under `dist/assets/`. Those files can be cached aggressively (`Cache-Control: immutable`).
+
+**`index.html`** must **not** be cached for a long TTL: otherwise clients keep an old shell that references deleted chunks after deploy. Prefer **`Cache-Control: no-cache`** (revalidate) or a short `max-age` for `index.html` only.
+
+### CSP / WebSocket
+
+- **Browser:** If you use **Content-Security-Policy**, allow connect sources for your AGP endpoint, e.g. **`connect-src 'self' wss://your-runtime.example.com`** (adjust host/path).
+- **Runtime:** Configure the Python WebSocket server for allowed **Origins** if it validates `Origin` (production setups often terminate TLS at a reverse proxy and forward WebSocket upgrades).
+
+### Source maps
+
+Production **`vite build`** uses **`build.sourcemap: 'hidden'`**: `.map` files are written for offline debugging but **not** linked from shipped JS, avoiding accidental exposure of raw sources to browsers.

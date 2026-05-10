@@ -76,13 +76,18 @@ nav:
   - agloom CLI:
       - Quick Start: _packages/agloom_cli/index.md
       - Developer reference (AGP / I/O): _packages/agloom_cli/reference.md
-      - Smart Context: _packages/agloom_cli/smart-context.md
   - Python package:
       - Overview: _packages/agloom/index.md
       - Why agloom?: _packages/agloom/getting-started/why-agloom.md
       - Installation: _packages/agloom/getting-started/installation.md
       - Quick Start (API): _packages/agloom/getting-started/quickstart.md
       - Requirements: _packages/agloom/getting-started/requirements.md
+  - For package developers:
+      - Overview (two doors): _packages/agloom/guides/developer-overview.md
+      - Embedding the runtime: _packages/agloom/guides/embedding-runtime.md
+      - AGP from Python: _packages/agloom/guides/agp-python.md
+      - Observability API: _packages/agloom/guides/observability-python.md
+      - LLM resolution: _packages/agloom/guides/llm-resolution.md
   - Core Concepts:
       - How It Works: _packages/agloom/concepts/how-it-works.md
       - Execution Patterns: _packages/agloom/concepts/patterns.md
@@ -94,10 +99,13 @@ nav:
       - Feedback & Evaluation: _packages/agloom/features/feedback.md
       - Streaming & Events: _packages/agloom/features/streaming.md
       - Human-in-the-Loop: _packages/agloom/features/hitl.md
+      - HITL tool allowlist: _packages/agloom/features/hitl-allowlist.md
+      - CLI tools (built-ins): _packages/agloom/features/cli-tools.md
       - Middleware: _packages/agloom/features/middleware.md
       - MCP Servers: _packages/agloom/features/mcp.md
       - Frozen Agents: _packages/agloom/features/frozen-agents.md
       - Task Delegation: _packages/agloom/features/delegation.md
+      - Reflection pattern: _packages/agloom/features/reflection.md
       - Long-running harness: _packages/agloom/features/harness.md
       - Observability & LangSmith: _packages/agloom/features/observability.md
   - Configuration:
@@ -112,6 +120,7 @@ nav:
   - Examples:
       - Python examples (repo): _packages/agloom/examples/python-examples.md
   - Architecture:
+      - Runtime CLI (`serve`): _packages/agloom/runtime/cli.md
       - Runtime (Python bridge): _packages/agloom/runtime/architecture.md
       - Observability backend: _packages/agloom/observability/architecture.md
       - Web UI overview: _packages/agloom_web/index.md

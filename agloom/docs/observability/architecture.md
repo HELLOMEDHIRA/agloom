@@ -1,6 +1,5 @@
 # agloom Observability Platform — Architecture
 
-> Status: **Phase 1 implementation complete**
 > Stack: FastAPI · SQLite (aiosqlite) · SSE · AGP event sourcing · React · recharts · React Flow
 
 ---
@@ -25,7 +24,7 @@ agloom-core / agloom-runtime
   agloom_web  /observe/session/:id  (trace viewer)
 ```
 
-No external systems required for Phase 1. DuckDB, ClickHouse, or OpenTelemetry can be layered on later without changing the AGP contract.
+The default stack uses SQLite only. Heavier analytics backends can be layered on later without changing the AGP contract.
 
 ---
 
@@ -139,7 +138,7 @@ POST /observe/ingest                             → accepts a single AGP Envelo
 ```
 
 In practice the `ObservabilityStore` is injected directly into the `RuntimeNode`  
-and envelopes are appended in-process — no HTTP ingest needed for Phase 1.
+and envelopes are appended in-process — no separate HTTP ingest endpoint is required.
 
 ---
 
@@ -196,16 +195,9 @@ This maps directly to OpenTelemetry spans:
 
 ---
 
-## 7. Scalability Evolution Path
+## 7. Scaling & backends
 
-| Phase | Storage | Query | Notes |
-|-------|---------|-------|-------|
-| 1 (now) | SQLite (aiosqlite) | SQL | Zero dependencies; local dev; single process |
-| 2 | PostgreSQL | SQL | Multi-process / multi-runtime; hosted options |
-| 3 | ClickHouse | Column-store SQL | 100M+ events; OLAP-grade analytics |
-| 4 | OpenTelemetry collector | OTLP → any backend | Enterprise; Datadog/Grafana/Jaeger compatibility |
-
-The API surface and AGP contract do not change across phases — only the storage backend is swapped.
+Today the observability store is **SQLite** suitable for single-process and local deployments. Larger deployments may swap in PostgreSQL, columnar warehouses, or OTLP export while keeping the same REST/SSE API shapes.
 
 ---
 
@@ -228,8 +220,9 @@ node = await RuntimeNode.create_local(
 
 - The observability API is **read-only** by default
 - Ingest is in-process only (no unauthenticated HTTP ingest endpoint exposed)
-- Replay streams require `session_id` — no enumeration endpoint without auth
-- Phase 2: JWT-gated API, row-level session ownership
+- Replay streams require `session_id` — treat open deployments like internal dashboards until auth is configured.
+
+Future hardening may add JWT-gated APIs and row-level session ownership.
 
 ---
 

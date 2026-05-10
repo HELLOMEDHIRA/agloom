@@ -117,14 +117,15 @@ MCP tools are merged with any tools you pass to `create_agent`:
 from langchain_core.tools import tool
 
 @tool
-def calculate(expression: str) -> str:
-    """Evaluate a math expression."""
-    return str(eval(expression))
+def word_count(text: str) -> str:
+    """Count whitespace-separated words (safe — never eval user input)."""
+
+    return str(len(text.split()))
 
 async def main():
     agent = await create_agent(
         model=llm,
-        tools=[calculate],          # local tool
+        tools=[word_count],          # local tool
         mcp_servers=[mcp_config],   # + MCP tools discovered at runtime
         name="hybrid-agent",
     )

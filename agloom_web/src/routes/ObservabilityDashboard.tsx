@@ -10,7 +10,7 @@ import { cn, fmtTokens, fmtDuration } from '../lib/utils/cn.js'
 import { Activity, Database, Users, Zap, Clock, AlertTriangle, CheckCircle } from 'lucide-react'
 import { LiveFeed } from '../components/observability/LiveFeed.js'
 
-export function ObservabilityDashboard(): React.ReactElement {
+export const ObservabilityDashboard = (): React.ReactElement => {
   const { data: summary } = useQuery<GlobalSummary>({
     queryKey: ['obs', 'summary'],
     queryFn: obsApi.summary,

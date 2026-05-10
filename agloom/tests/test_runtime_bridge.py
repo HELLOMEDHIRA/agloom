@@ -137,8 +137,9 @@ def test_translate_tool_result_load_skill_emits_skill_loaded() -> None:
         ),
         em,  # type: ignore[arg-type]
     )
-    assert [c[0] for c in em.calls] == ["emit_tool_call_result", "emit_skill_loaded"]
-    assert em.calls[-1] == ("emit_skill_loaded", {"skill_name": "my_skill", "source": "tool", "body_chars": 14})
+    assert [c[0] for c in em.calls] == ["emit_tool_call_result", "emit_skill_loaded", "emit_message_tool"]
+    assert em.calls[1] == ("emit_skill_loaded", {"skill_name": "my_skill", "source": "tool", "body_chars": 14})
+    assert em.calls[2][0] == "emit_message_tool"
 
 
 def test_translate_unknown_event_forwarded_as_thinking() -> None:

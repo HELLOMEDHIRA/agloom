@@ -4,7 +4,7 @@
 
 Without streaming, users stare at a loading spinner for 5-30 seconds, then see a wall of text. With streaming, they see the response being generated in real time — and can even watch the agent "think."
 
-agloom provides three streaming APIs:
+agloom provides complementary streaming APIs (tokens, rich agent events, and optional AGP envelopes):
 
 ## 1. Token Streaming — `astream()`
 
@@ -51,6 +51,30 @@ async for token in agent.astream(
 ## 2. Event Streaming — `astream_events()`
 
 For building ChatGPT-style "thinking" UIs that show the agent's internal steps **and** stream tokens in real-time.
+
+### AGP-shaped events — `astream_agp_events()`
+
+If you are building a **custom CLI, web UI, or test harness** that should consume the same **Agloom Protocol (AGP)** event model as `agloom-runtime` (typed envelopes, not ad-hoc `AgentEvent` dicts), use `UnifiedAgent.astream_agp_events()`. It runs the same pipeline as `astream_events()`, but each item is a Pydantic :class:`~agloom.protocol.Envelope` subclass (`TokenDelta`, `PatternClassified`, `ToolCallStart`, …) produced via :func:`agloom.runtime.translator.translate`.
+
+The stream is bracketed by **`session.opened`** at the start and **`session.closed`** at the end, so you can treat one call as a self-contained AGP session without constructing a :class:`~agloom.protocol.SessionEmitter` yourself.
+
+```python
+async for evt in agent.astream_agp_events(
+    "Read pyproject.toml",
+    thread_id="t_demo",
+    session_id="s_demo",
+):
+    if evt.type == "token.delta":
+        print(evt.data.text, end="", flush=True)
+    elif evt.type == "worker.spawned":
+        print(f"[worker] {evt.data.worker_id}: {evt.data.task}")
+    elif evt.type == "metric.tokens":
+        print(f"tokens: {evt.data.input_tokens}↑ {evt.data.output_tokens}↓")
+```
+
+Wire-format details, command vocabulary, and schema export live in [**AGP — Agloom Protocol**](../protocol/agp.md). For embedding the runtime bridge and stores in Python, see [AGP from Python](../guides/agp-python.md) and [Embedding the runtime](../guides/embedding-runtime.md).
+
+Everything below applies to **`astream_events()`**, which yields **`AgentEvent`** instances (`event.type` string + `event.data` dict) until the run completes.
 
 !!! tip "Combined token + event streaming"
     `astream_events()` provides **both** structured step events **and** real-time token chunks in a single stream. This matches the industry standard set by LangGraph's `astream_events(version="v2")`.
@@ -274,7 +298,7 @@ for wr in result.worker_results:
 
 ## Enabling / Disabling
 
-Streaming is always available — there's nothing to enable or disable. All three APIs (`astream`, `astream_events`, step tracing) work out of the box.
+Streaming is always available — there's nothing to enable or disable. `astream`, `astream_events`, `astream_agp_events`, and post-hoc step tracing on `ExecutionResult` all work out of the box.
 
 To get token usage, just access `result.token_usage` after any `ainvoke` call.
 
@@ -283,7 +307,8 @@ To get token usage, just access `result.token_usage` after any `ainvoke` call.
 | Need | API | Details |
 |------|-----|---------|
 | Simple chat UI | `astream()` | Token chunks only, simplest integration |
-| Rich "thinking" UI | `astream_events()` | Steps + tokens + tool tracking in one stream |
+| Rich "thinking" UI | `astream_events()` | Steps + tokens + tool tracking in one stream (`AgentEvent`) |
+| Same shapes as AGP / runtime | `astream_agp_events()` | Typed `Envelope` subclasses; bracketed `session.opened` / `session.closed` |
 | Post-run analysis | `ainvoke()` + `result.steps` | Full trace with timing data |
 | Raw message access | `ainvoke()` + `result.messages` | Full LangChain message objects |
-| Server-Sent Events | `astream_events()` | Each event serializes cleanly via `event.model_dump_json()` |
+| NDJSON / SSE bridges | `astream_agp_events()` or `astream_events()` | AGP events serialize to JSON lines; agent events via `model_dump_json()` |

@@ -11,7 +11,7 @@ import { Box, Text } from 'ink'
 import { useSessionStore, type MetricTokensSlice, type ToolCall } from '../store/session.js'
 import { fmtDuration, fmtTokens, fmtUsd, shortenMiddle, truncate } from '../utils/format.js'
 
-function rollupPhases(history: MetricTokensSlice[]): Map<string, { input: number; output: number }> {
+const rollupPhases = (history: MetricTokensSlice[]): Map<string, { input: number; output: number }> => {
   const m = new Map<string, { input: number; output: number }>()
   for (const h of history) {
     const key = (h.phase ?? '').trim() || '—'
@@ -23,12 +23,12 @@ function rollupPhases(history: MetricTokensSlice[]): Map<string, { input: number
   return m
 }
 
-function collectRecentTools(
+const collectRecentTools = (
   completedTurns: { toolCalls: ToolCall[] }[],
   activeToolCalls: ToolCall[] | undefined,
   completedCount: number,
   max: number,
-): Array<{ turnLabel: string; tc: ToolCall }> {
+): Array<{ turnLabel: string; tc: ToolCall }> => {
   const rows: Array<{ turnLabel: string; tc: ToolCall }> = []
   completedTurns.forEach((t, i) => {
     for (const tc of t.toolCalls) rows.push({ turnLabel: `${i + 1}`, tc })
@@ -52,7 +52,7 @@ interface Props {
   width: number
 }
 
-export function MetricsPanel({ thread, width }: Props): React.ReactElement {
+export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
   const [nowMs, setNowMs] = useState(() => Date.now())
   useEffect(() => {
     const id = setInterval(() => setNowMs(Date.now()), 1000)
@@ -72,6 +72,8 @@ export function MetricsPanel({ thread, width }: Props): React.ReactElement {
   const metricsHistory = useSessionStore((s) => s.metricsHistory)
   const totalCostUsd = useSessionStore((s) => s.totalCostUsd)
   const status = useSessionStore((s) => s.status)
+  const protocolNotes = useSessionStore((s) => s.protocolNotes)
+  const toolNames = useSessionStore((s) => s.toolNames)
 
   const uptimeMs = sessionOpenedAtMs ? nowMs - sessionOpenedAtMs : 0
   const turnCount = completedTurns.length + (activeTurn ? 1 : 0)
@@ -120,6 +122,14 @@ export function MetricsPanel({ thread, width }: Props): React.ReactElement {
         <Text color="white">{sid}</Text>
         <Text color="gray">thread</Text>
         <Text color="white">{th}</Text>
+        {toolNames != null && toolNames.length > 0 && (
+          <>
+            <Text color="gray">tools ({toolNames.length})</Text>
+            <Text color="gray" dimColor>
+              {truncate(toolNames.join(', '), innerW)}
+            </Text>
+          </>
+        )}
       </Box>
 
       <Box marginTop={1} flexDirection="column">
@@ -233,6 +243,19 @@ export function MetricsPanel({ thread, width }: Props): React.ReactElement {
           {truncate('Tool time = wall clock. LLM tokens roll up by phase.', innerW)}
         </Text>
       </Box>
+
+      {protocolNotes.length > 0 && (
+        <Box marginTop={1} flexDirection="column">
+          <Text bold color="white">
+            Wire notes
+          </Text>
+          {protocolNotes.slice(-8).map((line, i) => (
+            <Text key={`${i}-${line.slice(0, 20)}`} color="gray" dimColor>
+              {truncate(line, innerW)}
+            </Text>
+          ))}
+        </Box>
+      )}
     </Box>
   )
 }

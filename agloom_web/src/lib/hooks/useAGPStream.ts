@@ -5,7 +5,7 @@ import { useEffect, useRef } from 'react'
 import type { AGPClient } from '../agp/client.js'
 import { useSessionStore } from '../../store/session.js'
 
-export function useAGPStream(client: AGPClient): void {
+export const useAGPStream = (client: AGPClient): void => {
   const dispatch = useSessionStore((s) => s.dispatch)
   const setStatus = useSessionStore((s) => s.setConnectionStatus)
   const attached = useRef(false)

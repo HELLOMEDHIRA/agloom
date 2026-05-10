@@ -31,6 +31,7 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -40,12 +41,22 @@ from uuid import uuid4
 from ..protocol import SessionEmitter
 from ..protocol.commands import (
     CommandCancel,
+    CommandConfigSet,
     CommandFeedback,
     CommandHITLRespond,
     CommandInvoke,
+    CommandPing,
     CommandRuntimeShutdown,
+    CommandSchemaRequest,
+    CommandSessionCreate,
+    CommandSessionDelete,
+    CommandSessionList,
     CommandSessionResume,
     CommandSnapshotRequest,
+    CommandSubscribe,
+    CommandToolInvoke,
+    CommandToolList,
+    CommandUnsubscribe,
     CommandWorkerAssign,
     command_adapter,
 )
@@ -57,6 +68,40 @@ from .hitl import HITLBridge
 def _eprint(msg: str) -> None:
     """Print to stderr — never to stdout (stdout is AGP only)."""
     print(msg, file=sys.stderr, flush=True)
+
+
+def _cli_tools_options_from_args(args: argparse.Namespace) -> dict[str, Any] | None:
+    if not getattr(args, "with_cli_tools", False):
+        return None
+    return {
+        "working_dir": getattr(args, "cli_tools_working_dir", ".") or ".",
+        "allow_shell": not getattr(args, "cli_tools_no_shell", False),
+        "allow_network": not getattr(args, "cli_tools_no_network", False),
+        "sandbox": not getattr(args, "cli_tools_no_sandbox", False),
+    }
+
+
+def _runtime_cli_tool_metrics(agent: Any) -> tuple[bool, int]:
+    from ..cli_tools import CLI_TOOL_NAMES
+
+    tool_objs = getattr(agent, "config", {}).get("tools", []) or []
+    names = {getattr(t, "name", None) for t in tool_objs}
+    count = sum(1 for n in names if n in CLI_TOOL_NAMES)
+    return count > 0, count
+
+
+def _hitl_allowlist_runtime_setup(args: argparse.Namespace) -> tuple[set[str], Path | None]:
+    """Load persisted tool allowlist (``decision=allowlist``); optional path disabled via flags."""
+    from .hitl_allowlist import load_tool_allowlist
+
+    if getattr(args, "no_hitl_allowlist_persist", False):
+        return set(), None
+    raw = getattr(args, "hitl_allowlist_path", None)
+    path = Path.cwd() / ".agloom" / "hitl_tool_allowlist.json"
+    if isinstance(raw, str) and raw.strip():
+        path = Path(raw).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return load_tool_allowlist(path), path
 
 
 async def _noop_langgraph_store_cleanup() -> None:
@@ -164,17 +209,16 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         store = MemoryEventStore()
 
     session_id = args.session or new_session_id()
-    capabilities = ["agp.v1.minimal", "hitl.v1"]
-
     initial_thread = f"thread_{uuid4().hex[:16]}"
     emitter = SessionEmitter(
         session=session_id,
         thread=initial_thread,
         writer=sys.stdout,
-        capabilities=capabilities,
+        capabilities=[],
         store=store,
     )
-    hitl_bridge = HITLBridge(emitter)
+    _al_set, _al_path = _hitl_allowlist_runtime_setup(args)
+    hitl_bridge = HITLBridge(emitter, tool_allowlist=_al_set, allowlist_persist_path=_al_path)
 
     lg_store, lg_store_cleanup = await _open_runtime_langgraph_store(args)
     use_harness = lg_store is not None and not getattr(args, "no_harness", False)
@@ -193,12 +237,32 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             user_callback=hitl_bridge.callback,
             store=lg_store,
             harness=use_harness,
+            cli_tools=_cli_tools_options_from_args(args),
         )
     except Exception:
         await lg_store_cleanup()
         raise
 
+    agent.config["_hitl_tool_allowlist"] = _al_set
+
     emitter.open()
+
+    agent_label = getattr(agent, "config", {}).get("name", "agloom-runtime")
+    _ct_en, _ct_ct = _runtime_cli_tool_metrics(agent)
+    emitter.emit_runtime_ready(agent_name=str(agent_label), cli_tools_enabled=_ct_en, cli_tools_count=_ct_ct)
+    llm_obj = getattr(agent, "config", {}).get("llm")
+    model_id_guess = None
+    if llm_obj is not None:
+        model_id_guess = getattr(llm_obj, "model_name", None) or getattr(llm_obj, "model", None)
+        if model_id_guess is None:
+            model_id_guess = type(llm_obj).__name__
+    tool_objs = getattr(agent, "config", {}).get("tools", []) or []
+    emitter.emit_runtime_config(
+        model_id=str(model_id_guess) if model_id_guess else None,
+        tool_names=[getattr(t, "name", str(t)) for t in tool_objs],
+        cli_tools_enabled=_ct_en,
+        cli_tools_count=_ct_ct,
+    )
 
     obs_store = None
     obs_server_task: asyncio.Task | None = None
@@ -237,6 +301,20 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
     thread_tasks: dict[str, asyncio.Task[None]] = {}
     shutdown = asyncio.Event()
 
+    hb_interval = float(getattr(args, "heartbeat_interval", 30.0) or 0.0)
+    hb_task: asyncio.Task[None] | None = None
+    if hb_interval > 0:
+        started_mono = time.perf_counter()
+
+        async def _session_heartbeat_loop() -> None:
+            while not shutdown.is_set():
+                await asyncio.sleep(hb_interval)
+                if shutdown.is_set():
+                    break
+                emitter.emit_session_heartbeat(uptime_ms=int((time.perf_counter() - started_mono) * 1000))
+
+        hb_task = asyncio.create_task(_session_heartbeat_loop(), name="agp-session-heartbeat")
+
     try:
         while not shutdown.is_set():
             line = await cmd_queue.get()
@@ -261,6 +339,12 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             )
     finally:
         shutdown.set()
+        if hb_task is not None:
+            hb_task.cancel()
+            try:
+                await hb_task
+            except (asyncio.CancelledError, Exception):
+                pass
         for t in invocation_tasks:
             if not t.done():
                 hitl_bridge.prepare_invocation_cancel(t, reason="shutdown")
@@ -298,6 +382,7 @@ async def _serve_ws(args: argparse.Namespace) -> int:
 
     from agloom import create_agent
 
+    from .invocation_context import runtime_hitl_user_callback
     from .ws import serve_ws
 
     store = None
@@ -319,22 +404,34 @@ async def _serve_ws(args: argparse.Namespace) -> int:
             "(skills + LT memory tools + optional harness; sqlite=async aiosqlite)"
         )
     try:
+        _ws_al_set, _ws_al_path = _hitl_allowlist_runtime_setup(args)
         shared_agent = await create_agent(
             model=llm,
             name="agloom-runtime",
+            user_callback=runtime_hitl_user_callback,
             store=lg_store,
             harness=use_harness,
+            cli_tools=_cli_tools_options_from_args(args),
         )
+        shared_agent.config["_hitl_tool_allowlist"] = _ws_al_set
 
         async def _agent_factory() -> Any:
             assert shared_agent is not None
             return shared_agent
 
+        sub = getattr(args, "ws_subprotocol", "") or ""
+        subprotocols = [sub] if sub else None
         await serve_ws(
             agent_factory=_agent_factory,
             host=args.host,
             port=args.port,
             store=store,
+            auth_token=getattr(args, "ws_token", None),
+            max_size=getattr(args, "ws_max_message_bytes", None),
+            max_queue=getattr(args, "ws_max_queue", None),
+            subprotocols=subprotocols,
+            heartbeat_interval=float(getattr(args, "heartbeat_interval", 0.0) or 0.0),
+            hitl_allowlist_persist_path=_ws_al_path,
         )
     finally:
         if shared_agent is not None:
@@ -518,6 +615,107 @@ async def _dispatch_command(
                 _eprint(f"[agloom-runtime] snapshot failed: {exc!r}")
         return
 
+    if isinstance(cmd, CommandPing):
+        emitter.emit_runtime_pong(ping_id=cmd.data.ping_id)
+        return
+
+    if isinstance(cmd, CommandSchemaRequest):
+        from ..protocol.schema import build_schema
+
+        emitter.emit_runtime_schema(json_schema=build_schema())
+        return
+
+    if isinstance(cmd, CommandToolList):
+        tools = getattr(agent, "config", {}).get("tools", []) or []
+        rows: list[tuple[str, str | None]] = []
+        for t in tools:
+            nm = getattr(t, "name", "?")
+            desc = getattr(t, "description", None)
+            rows.append((nm, str(desc) if desc else None))
+        emitter.emit_runtime_tools(tools=rows)
+        return
+
+    if isinstance(cmd, CommandSubscribe):
+        emitter.set_subscription_prefixes(cmd.data.prefixes if cmd.data.prefixes else None)
+        return
+
+    if isinstance(cmd, CommandUnsubscribe):
+        emitter.clear_subscription()
+        return
+
+    if isinstance(cmd, CommandSessionList):
+        if store is None:
+            emitter.emit_error(
+                severity="transient",
+                message="command.session.list requires --store",
+                stage="session.list",
+            )
+            emitter.emit_runtime_sessions(sessions=[])
+        else:
+            ids = await store.list_session_ids()
+            emitter.emit_runtime_sessions(sessions=ids)
+        return
+
+    if isinstance(cmd, CommandSessionCreate):
+        sid = cmd.data.session_id or new_session_id()
+        emitter.emit_runtime_session_created(session_id=sid)
+        return
+
+    if isinstance(cmd, CommandSessionDelete):
+        if store is None:
+            emitter.emit_error(
+                severity="transient",
+                message="command.session.delete requires --store",
+                stage="session.delete",
+            )
+        else:
+            await store.clear(cmd.data.session_id)
+        return
+
+    if isinstance(cmd, CommandToolInvoke):
+        raw_sz = len(json.dumps(cmd.data.arguments, ensure_ascii=False))
+        if raw_sz > 32_000:
+            emitter.emit_runtime_tool_result(ok=False, error="arguments too large")
+            return
+        tools = getattr(agent, "config", {}).get("tools", []) or []
+        tool = next((x for x in tools if getattr(x, "name", None) == cmd.data.name), None)
+        if tool is None:
+            emitter.emit_runtime_tool_result(ok=False, error="unknown_tool")
+            return
+        try:
+            out = await tool.ainvoke(cmd.data.arguments)
+            emitter.emit_runtime_tool_result(ok=True, result=out)
+        except Exception as exc:
+            emitter.emit_runtime_tool_result(ok=False, error=str(exc))
+        return
+
+    if isinstance(cmd, CommandConfigSet):
+        try:
+            from agloom.unified_agent import resolve_model
+
+            agent.config["llm"] = resolve_model(cmd.data.model_id)
+        except Exception as exc:
+            emitter.emit_error(severity="transient", message=str(exc), stage="config.set")
+            return
+        _cta, _ctb = _runtime_cli_tool_metrics(agent)
+        emitter.emit_runtime_config_applied(
+            model_id=cmd.data.model_id,
+            cli_tools_enabled=_cta,
+            cli_tools_count=_ctb,
+        )
+        llm_after = agent.config.get("llm")
+        mid = getattr(llm_after, "model_name", None) or getattr(llm_after, "model", None)
+        if mid is None and llm_after is not None:
+            mid = type(llm_after).__name__
+        tools_after = agent.config.get("tools", []) or []
+        emitter.emit_runtime_config(
+            model_id=str(mid) if mid else cmd.data.model_id,
+            tool_names=[getattr(t, "name", str(t)) for t in tools_after],
+            cli_tools_enabled=_cta,
+            cli_tools_count=_ctb,
+        )
+        return
+
     _eprint(f"[agloom-runtime] unsupported command type: {type(cmd).__name__!r}")
 
 
@@ -586,6 +784,56 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Disable harness tools (progress + git). LT memory and skills stay on if --agent-store is not none.",
     )
     serve.add_argument(
+        "--with-cli-tools",
+        dest="with_cli_tools",
+        action="store_true",
+        default=False,
+        help="Inject built-in CLI tools (filesystem, optional shell/network, meta). Off by default.",
+    )
+    serve.add_argument(
+        "--cli-tools-working-dir",
+        dest="cli_tools_working_dir",
+        default=".",
+        help="Working directory root for sandboxed CLI tools (with --with-cli-tools). Default: .",
+    )
+    serve.add_argument(
+        "--cli-tools-no-shell",
+        dest="cli_tools_no_shell",
+        action="store_true",
+        default=False,
+        help="Disable shell tools: execute, bash, and bash_background (start/status/stop).",
+    )
+    serve.add_argument(
+        "--cli-tools-no-network",
+        dest="cli_tools_no_network",
+        action="store_true",
+        default=False,
+        help="Disable fetch_url, read_url_markdown, and web_search.",
+    )
+    serve.add_argument(
+        "--cli-tools-no-sandbox",
+        dest="cli_tools_no_sandbox",
+        action="store_true",
+        default=False,
+        help="Allow absolute paths outside --cli-tools-working-dir (dangerous).",
+    )
+    serve.add_argument(
+        "--hitl-allowlist-path",
+        dest="hitl_allowlist_path",
+        default=None,
+        help=(
+            "JSON file backing persistent HITL tool allowlist (wire decision=allowlist). "
+            "Default when omitted: .agloom/hitl_tool_allowlist.json under cwd."
+        ),
+    )
+    serve.add_argument(
+        "--no-hitl-allowlist-persist",
+        dest="no_hitl_allowlist_persist",
+        action="store_true",
+        default=False,
+        help="Disable loading/saving the HITL tool allowlist file (memory-only for this process).",
+    )
+    serve.add_argument(
         "--obs",
         action="store_true",
         default=False,
@@ -603,6 +851,39 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8766,
         help="HTTP port for the observability REST/SSE API (when --obs is set). Default: 8766",
+    )
+    serve.add_argument(
+        "--heartbeat-interval",
+        dest="heartbeat_interval",
+        type=float,
+        default=30.0,
+        help="Emit session.heartbeat every N seconds on stdio (0 disables). Default: 30",
+    )
+    serve.add_argument(
+        "--ws-token",
+        dest="ws_token",
+        default=None,
+        help="When --transport=ws, require Authorization: Bearer <token> on the handshake.",
+    )
+    serve.add_argument(
+        "--ws-max-message-bytes",
+        dest="ws_max_message_bytes",
+        type=int,
+        default=4 * 1024 * 1024,
+        help="WebSocket max incoming message size (bytes). Default: 4194304",
+    )
+    serve.add_argument(
+        "--ws-max-queue",
+        dest="ws_max_queue",
+        type=int,
+        default=64,
+        help="WebSocket inbound frame queue high-water mark. Default: 64",
+    )
+    serve.add_argument(
+        "--ws-subprotocol",
+        dest="ws_subprotocol",
+        default="agp-v1",
+        help="Negotiated WebSocket subprotocol (empty string to disable). Default: agp-v1",
     )
 
     return parser

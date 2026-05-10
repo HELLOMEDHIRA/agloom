@@ -39,7 +39,7 @@ const SWIMLANE_ORDER = [
   'session', 'pattern', 'graph', 'worker', 'tool', 'thinking', 'message', 'hitl', 'metric', 'error',
 ]
 
-function lane(type: string): string {
+const lane = (type: string): string => {
   if (type.startsWith('session'))   return 'session'
   if (type.startsWith('pattern'))   return 'pattern'
   if (type.startsWith('graph'))     return 'graph'
@@ -53,7 +53,7 @@ function lane(type: string): string {
   return 'other'
 }
 
-function shortLabel(type: string, data: Record<string, unknown>): string {
+const shortLabel = (type: string, data: Record<string, unknown>): string => {
   const d = data as Record<string, string>
   switch (type) {
     case 'tool.call':         return `${d['tool'] ?? '?'}()`
@@ -69,7 +69,7 @@ function shortLabel(type: string, data: Record<string, unknown>): string {
   }
 }
 
-export function TraceTimeline({ sessionId }: Props): React.ReactElement {
+export const TraceTimeline = ({ sessionId }: Props): React.ReactElement => {
   const { data: events = [], isLoading } = useQuery<EventRow[]>({
     queryKey: ['obs', 'events', sessionId],
     queryFn: () => obsApi.events(sessionId, 1000),

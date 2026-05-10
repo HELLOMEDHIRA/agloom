@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'node:path'
 
-export default defineConfig({
+export default defineConfig(({ command, mode }) => ({
   plugins: [
     react(),
     tailwindcss(),
@@ -17,25 +17,26 @@ export default defineConfig({
     port: 3000,
     // Proxy AGP WebSocket to the Python runtime during development.
     // In production the reverse proxy (nginx / Caddy) handles this.
-      proxy: {
-        '/agp-ws': {
-          target: 'ws://localhost:8765',
-          ws: true,
-          rewrite: (path) => path.replace(/^\/agp-ws/, ''),
-        },
-        '/api': {
-          target: 'http://localhost:8765',
-          changeOrigin: true,
-        },
-        '/observe': {
-          target: 'http://localhost:8766',
-          changeOrigin: true,
-        },
+    proxy: {
+      '/agp-ws': {
+        target: 'ws://localhost:8765',
+        ws: true,
+        rewrite: (path) => path.replace(/^\/agp-ws/, ''),
       },
+      '/api': {
+        target: 'http://localhost:8765',
+        changeOrigin: true,
+      },
+      '/observe': {
+        target: 'http://localhost:8766',
+        changeOrigin: true,
+      },
+    },
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    // Production: write .map files for debugging but omit sourceMappingURL from JS (no source leak in browser).
+    sourcemap: command === 'build' && mode === 'production' ? 'hidden' : true,
     rollupOptions: {
       output: {
         manualChunks(id) {
@@ -48,4 +49,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))

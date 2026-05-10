@@ -1,5 +1,191 @@
 {
   "$defs": {
+    "AgentBusy": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "agent.busy",
+          "default": "agent.busy",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/AgentBusyData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "AgentBusy",
+      "type": "object"
+    },
+    "AgentBusyData": {
+      "additionalProperties": true,
+      "properties": {
+        "thread": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread"
+        }
+      },
+      "title": "AgentBusyData",
+      "type": "object"
+    },
+    "AgentIdle": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "agent.idle",
+          "default": "agent.idle",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/AgentIdleData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "AgentIdle",
+      "type": "object"
+    },
+    "AgentIdleData": {
+      "additionalProperties": true,
+      "properties": {
+        "thread": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread"
+        }
+      },
+      "title": "AgentIdleData",
+      "type": "object"
+    },
     "CheckpointRestored": {
       "additionalProperties": false,
       "properties": {
@@ -1786,6 +1972,128 @@
       "title": "MessageAssistantData",
       "type": "object"
     },
+    "MessageTool": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "message.tool",
+          "default": "message.tool",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/MessageToolData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "MessageTool",
+      "type": "object"
+    },
+    "MessageToolData": {
+      "additionalProperties": true,
+      "properties": {
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        },
+        "phase": {
+          "default": "progress",
+          "enum": [
+            "start",
+            "progress",
+            "end"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Call Id"
+        }
+      },
+      "required": [
+        "tool_name"
+      ],
+      "title": "MessageToolData",
+      "type": "object"
+    },
     "MessageUser": {
       "additionalProperties": false,
       "properties": {
@@ -2486,6 +2794,879 @@
       "title": "PromptRequestedData",
       "type": "object"
     },
+    "RuntimeConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "runtime.config",
+          "default": "runtime.config",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RuntimeConfigData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "RuntimeConfig",
+      "type": "object"
+    },
+    "RuntimeConfigApplied": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "runtime.config.applied",
+          "default": "runtime.config.applied",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RuntimeConfigAppliedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "RuntimeConfigApplied",
+      "type": "object"
+    },
+    "RuntimeConfigAppliedData": {
+      "additionalProperties": true,
+      "properties": {
+        "model_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Id"
+        }
+      },
+      "title": "RuntimeConfigAppliedData",
+      "type": "object"
+    },
+    "RuntimeConfigData": {
+      "additionalProperties": true,
+      "properties": {
+        "model_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Id"
+        },
+        "tool_names": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tool Names",
+          "type": "array"
+        },
+        "capabilities": {
+          "description": "Canonical capability tokens advertised by this runtime attachment.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        }
+      },
+      "title": "RuntimeConfigData",
+      "type": "object"
+    },
+    "RuntimePong": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "runtime.pong",
+          "default": "runtime.pong",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RuntimePongData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "RuntimePong",
+      "type": "object"
+    },
+    "RuntimePongData": {
+      "additionalProperties": true,
+      "properties": {
+        "ping_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ping Id"
+        }
+      },
+      "title": "RuntimePongData",
+      "type": "object"
+    },
+    "RuntimeReady": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "runtime.ready",
+          "default": "runtime.ready",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RuntimeReadyData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "RuntimeReady",
+      "type": "object"
+    },
+    "RuntimeReadyData": {
+      "additionalProperties": true,
+      "properties": {
+        "agent_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Name"
+        }
+      },
+      "title": "RuntimeReadyData",
+      "type": "object"
+    },
+    "RuntimeSchemaPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "runtime.schema",
+          "default": "runtime.schema",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RuntimeSchemaPayloadData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "RuntimeSchemaPayload",
+      "type": "object"
+    },
+    "RuntimeSchemaPayloadData": {
+      "additionalProperties": true,
+      "properties": {
+        "json_schema": {
+          "additionalProperties": true,
+          "title": "Json Schema",
+          "type": "object"
+        }
+      },
+      "title": "RuntimeSchemaPayloadData",
+      "type": "object"
+    },
+    "RuntimeSessionCreated": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "runtime.session.created",
+          "default": "runtime.session.created",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RuntimeSessionCreatedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "RuntimeSessionCreated",
+      "type": "object"
+    },
+    "RuntimeSessionCreatedData": {
+      "additionalProperties": true,
+      "properties": {
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "title": "RuntimeSessionCreatedData",
+      "type": "object"
+    },
+    "RuntimeSessionsPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "runtime.sessions",
+          "default": "runtime.sessions",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RuntimeSessionsPayloadData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "RuntimeSessionsPayload",
+      "type": "object"
+    },
+    "RuntimeSessionsPayloadData": {
+      "additionalProperties": true,
+      "properties": {
+        "sessions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Sessions",
+          "type": "array"
+        }
+      },
+      "title": "RuntimeSessionsPayloadData",
+      "type": "object"
+    },
+    "RuntimeToolEntry": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "RuntimeToolEntry",
+      "type": "object"
+    },
+    "RuntimeToolInvokeResult": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "runtime.tool.result",
+          "default": "runtime.tool.result",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RuntimeToolInvokeResultData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "RuntimeToolInvokeResult",
+      "type": "object"
+    },
+    "RuntimeToolInvokeResultData": {
+      "additionalProperties": true,
+      "properties": {
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "result": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "title": "RuntimeToolInvokeResultData",
+      "type": "object"
+    },
+    "RuntimeToolsPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "runtime.tools",
+          "default": "runtime.tools",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RuntimeToolsPayloadData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "RuntimeToolsPayload",
+      "type": "object"
+    },
+    "RuntimeToolsPayloadData": {
+      "additionalProperties": true,
+      "properties": {
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/RuntimeToolEntry"
+          },
+          "title": "Tools",
+          "type": "array"
+        }
+      },
+      "title": "RuntimeToolsPayloadData",
+      "type": "object"
+    },
     "SessionClosed": {
       "additionalProperties": false,
       "properties": {
@@ -2604,6 +3785,99 @@
       "title": "SessionClosedData",
       "type": "object"
     },
+    "SessionHeartbeat": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "session.heartbeat",
+          "default": "session.heartbeat",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/SessionHeartbeatData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "SessionHeartbeat",
+      "type": "object"
+    },
+    "SessionHeartbeatData": {
+      "additionalProperties": true,
+      "properties": {
+        "uptime_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uptime Ms"
+        }
+      },
+      "title": "SessionHeartbeatData",
+      "type": "object"
+    },
     "SessionOpened": {
       "additionalProperties": false,
       "properties": {
@@ -2689,12 +3963,21 @@
           "title": "Protocol Version",
           "type": "string"
         },
-        "capabilities": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Capabilities",
-          "type": "array"
+        "capabilities_override": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional session-level capability hints. When present, clients SHOULD apply these on top of or instead of ``runtime.config.capabilities`` per product policy.",
+          "title": "Capabilities Override"
         }
       },
       "required": [
@@ -2790,12 +4073,21 @@
           "title": "Protocol Version",
           "type": "string"
         },
-        "capabilities": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Capabilities",
-          "type": "array"
+        "capabilities_override": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Same semantics as :attr:`SessionOpenedData.capabilities_override` on reconnect.",
+          "title": "Capabilities Override"
         },
         "resumed_from_thread": {
           "anyOf": [
@@ -3179,6 +4471,111 @@
         "skill_name"
       ],
       "title": "SkillLoadedData",
+      "type": "object"
+    },
+    "StreamHeartbeat": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "stream.heartbeat",
+          "default": "stream.heartbeat",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/StreamHeartbeatData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "StreamHeartbeat",
+      "type": "object"
+    },
+    "StreamHeartbeatData": {
+      "additionalProperties": true,
+      "properties": {
+        "thread": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread"
+        },
+        "chars_since_last": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chars Since Last"
+        }
+      },
+      "title": "StreamHeartbeatData",
       "type": "object"
     },
     "ThinkingStep": {
@@ -4187,6 +5584,40 @@
       "title": "CommandCancelData",
       "type": "object"
     },
+    "CommandConfigSet": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.config.set",
+          "default": "command.config.set",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandConfigSetData"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "CommandConfigSet",
+      "type": "object"
+    },
+    "CommandConfigSetData": {
+      "additionalProperties": true,
+      "description": "Swap the chat model by id string (``resolve_model``).",
+      "properties": {
+        "model_id": {
+          "title": "Model Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "model_id"
+      ],
+      "title": "CommandConfigSetData",
+      "type": "object"
+    },
     "CommandFeedback": {
       "additionalProperties": true,
       "properties": {
@@ -4376,6 +5807,42 @@
       "title": "CommandInvokeData",
       "type": "object"
     },
+    "CommandPing": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.ping",
+          "default": "command.ping",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandPingData"
+        }
+      },
+      "title": "CommandPing",
+      "type": "object"
+    },
+    "CommandPingData": {
+      "additionalProperties": true,
+      "description": "Optional correlator echoed back on ``runtime.pong``.",
+      "properties": {
+        "ping_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ping Id"
+        }
+      },
+      "title": "CommandPingData",
+      "type": "object"
+    },
     "CommandRuntimeShutdown": {
       "additionalProperties": true,
       "properties": {
@@ -4397,6 +5864,122 @@
       "description": "Graceful exit. Cancels in-flight invocations, resolves pending HITL gates\nas ``cancelled``, emits ``session.closed(reason=\"shutdown\")``, and exits.",
       "properties": {},
       "title": "CommandRuntimeShutdownData",
+      "type": "object"
+    },
+    "CommandSchemaRequest": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.schema.request",
+          "default": "command.schema.request",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandSchemaRequestData"
+        }
+      },
+      "title": "CommandSchemaRequest",
+      "type": "object"
+    },
+    "CommandSchemaRequestData": {
+      "additionalProperties": true,
+      "description": "Ask the runtime to emit ``runtime.schema`` (full AGP JSON Schema document).",
+      "properties": {},
+      "title": "CommandSchemaRequestData",
+      "type": "object"
+    },
+    "CommandSessionCreate": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.session.create",
+          "default": "command.session.create",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandSessionCreateData"
+        }
+      },
+      "title": "CommandSessionCreate",
+      "type": "object"
+    },
+    "CommandSessionCreateData": {
+      "additionalProperties": true,
+      "description": "Mint a new opaque session id (store-backed listing uses ids once events are appended).",
+      "properties": {
+        "session_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Id"
+        }
+      },
+      "title": "CommandSessionCreateData",
+      "type": "object"
+    },
+    "CommandSessionDelete": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.session.delete",
+          "default": "command.session.delete",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandSessionDeleteData"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "CommandSessionDelete",
+      "type": "object"
+    },
+    "CommandSessionDeleteData": {
+      "additionalProperties": true,
+      "description": "Drop replay buffer rows for ``session_id`` (destructive).",
+      "properties": {
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "title": "CommandSessionDeleteData",
+      "type": "object"
+    },
+    "CommandSessionList": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.session.list",
+          "default": "command.session.list",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandSessionListData"
+        }
+      },
+      "title": "CommandSessionList",
+      "type": "object"
+    },
+    "CommandSessionListData": {
+      "additionalProperties": true,
+      "description": "List sessions present in the configured :class:`~agloom.protocol.store.EventStore`.",
+      "properties": {},
+      "title": "CommandSessionListData",
       "type": "object"
     },
     "CommandSessionResume": {
@@ -4491,6 +6074,125 @@
         }
       },
       "title": "CommandSnapshotRequestData",
+      "type": "object"
+    },
+    "CommandSubscribe": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.subscribe",
+          "default": "command.subscribe",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandSubscribeData"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "CommandSubscribe",
+      "type": "object"
+    },
+    "CommandSubscribeData": {
+      "additionalProperties": true,
+      "description": "Restrict streamed events to ``type`` prefixes (session/error/runtime/prompt/hitl always pass).",
+      "properties": {
+        "prefixes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Prefixes",
+          "type": "array"
+        }
+      },
+      "title": "CommandSubscribeData",
+      "type": "object"
+    },
+    "CommandToolInvoke": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.tool.invoke",
+          "default": "command.tool.invoke",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandToolInvokeData"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "CommandToolInvoke",
+      "type": "object"
+    },
+    "CommandToolInvokeData": {
+      "additionalProperties": true,
+      "description": "Direct tool invocation (bounded \u2014 argument JSON size limits enforced by the runtime).",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "arguments": {
+          "additionalProperties": true,
+          "title": "Arguments",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "CommandToolInvokeData",
+      "type": "object"
+    },
+    "CommandToolList": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.tool.list",
+          "default": "command.tool.list",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandToolListData"
+        }
+      },
+      "title": "CommandToolList",
+      "type": "object"
+    },
+    "CommandToolListData": {
+      "additionalProperties": true,
+      "description": "Enumerate tools exposed by the current agent (names + descriptions).",
+      "properties": {},
+      "title": "CommandToolListData",
+      "type": "object"
+    },
+    "CommandUnsubscribe": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.unsubscribe",
+          "default": "command.unsubscribe",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandUnsubscribeData"
+        }
+      },
+      "title": "CommandUnsubscribe",
+      "type": "object"
+    },
+    "CommandUnsubscribeData": {
+      "additionalProperties": true,
+      "description": "Clear subscription filter (restore full stream).",
+      "properties": {},
+      "title": "CommandUnsubscribeData",
       "type": "object"
     },
     "CommandWorkerAssign": {
@@ -4591,6 +6293,8 @@
   },
   "discriminator": {
     "mapping": {
+      "agent.busy": "#/$defs/AgentBusy",
+      "agent.idle": "#/$defs/AgentIdle",
       "checkpoint.restored": "#/$defs/CheckpointRestored",
       "checkpoint.saved": "#/$defs/CheckpointSaved",
       "error.fatal": "#/$defs/ErrorFatal",
@@ -4606,18 +6310,30 @@
       "memory.lt.store": "#/$defs/MemoryLtStore",
       "memory.session.write": "#/$defs/MemorySessionWrite",
       "message.assistant": "#/$defs/MessageAssistant",
+      "message.tool": "#/$defs/MessageTool",
       "message.user": "#/$defs/MessageUser",
       "metric.cost": "#/$defs/MetricCost",
       "metric.tokens": "#/$defs/MetricTokens",
       "pattern.classified": "#/$defs/PatternClassified",
       "prompt.cancelled": "#/$defs/PromptCancelled",
       "prompt.requested": "#/$defs/PromptRequested",
+      "runtime.config": "#/$defs/RuntimeConfig",
+      "runtime.config.applied": "#/$defs/RuntimeConfigApplied",
+      "runtime.pong": "#/$defs/RuntimePong",
+      "runtime.ready": "#/$defs/RuntimeReady",
+      "runtime.schema": "#/$defs/RuntimeSchemaPayload",
+      "runtime.session.created": "#/$defs/RuntimeSessionCreated",
+      "runtime.sessions": "#/$defs/RuntimeSessionsPayload",
+      "runtime.tool.result": "#/$defs/RuntimeToolInvokeResult",
+      "runtime.tools": "#/$defs/RuntimeToolsPayload",
       "session.closed": "#/$defs/SessionClosed",
+      "session.heartbeat": "#/$defs/SessionHeartbeat",
       "session.opened": "#/$defs/SessionOpened",
       "session.resumed": "#/$defs/SessionResumed",
       "skill.applied": "#/$defs/SkillApplied",
       "skill.learned": "#/$defs/SkillLearned",
       "skill.loaded": "#/$defs/SkillLoaded",
+      "stream.heartbeat": "#/$defs/StreamHeartbeat",
       "thinking.step": "#/$defs/ThinkingStep",
       "token.delta": "#/$defs/TokenDelta",
       "tool.call.error": "#/$defs/ToolCallError",
@@ -4635,6 +6351,48 @@
     },
     {
       "$ref": "#/$defs/SessionResumed"
+    },
+    {
+      "$ref": "#/$defs/RuntimeReady"
+    },
+    {
+      "$ref": "#/$defs/RuntimeConfig"
+    },
+    {
+      "$ref": "#/$defs/RuntimePong"
+    },
+    {
+      "$ref": "#/$defs/RuntimeSchemaPayload"
+    },
+    {
+      "$ref": "#/$defs/RuntimeToolsPayload"
+    },
+    {
+      "$ref": "#/$defs/RuntimeSessionsPayload"
+    },
+    {
+      "$ref": "#/$defs/RuntimeSessionCreated"
+    },
+    {
+      "$ref": "#/$defs/RuntimeToolInvokeResult"
+    },
+    {
+      "$ref": "#/$defs/RuntimeConfigApplied"
+    },
+    {
+      "$ref": "#/$defs/SessionHeartbeat"
+    },
+    {
+      "$ref": "#/$defs/AgentBusy"
+    },
+    {
+      "$ref": "#/$defs/AgentIdle"
+    },
+    {
+      "$ref": "#/$defs/MessageTool"
+    },
+    {
+      "$ref": "#/$defs/StreamHeartbeat"
     },
     {
       "$ref": "#/$defs/PatternClassified"
@@ -4742,12 +6500,22 @@
     "discriminator": {
       "mapping": {
         "command.cancel": "#/$defs/CommandCancel",
+        "command.config.set": "#/$defs/CommandConfigSet",
         "command.feedback": "#/$defs/CommandFeedback",
         "command.hitl.respond": "#/$defs/CommandHITLRespond",
         "command.invoke": "#/$defs/CommandInvoke",
+        "command.ping": "#/$defs/CommandPing",
         "command.runtime.shutdown": "#/$defs/CommandRuntimeShutdown",
+        "command.schema.request": "#/$defs/CommandSchemaRequest",
+        "command.session.create": "#/$defs/CommandSessionCreate",
+        "command.session.delete": "#/$defs/CommandSessionDelete",
+        "command.session.list": "#/$defs/CommandSessionList",
         "command.session.resume": "#/$defs/CommandSessionResume",
         "command.snapshot.request": "#/$defs/CommandSnapshotRequest",
+        "command.subscribe": "#/$defs/CommandSubscribe",
+        "command.tool.invoke": "#/$defs/CommandToolInvoke",
+        "command.tool.list": "#/$defs/CommandToolList",
+        "command.unsubscribe": "#/$defs/CommandUnsubscribe",
         "command.worker.assign": "#/$defs/CommandWorkerAssign"
       },
       "propertyName": "type"
@@ -4776,6 +6544,36 @@
       },
       {
         "$ref": "#/$defs/CommandSnapshotRequest"
+      },
+      {
+        "$ref": "#/$defs/CommandPing"
+      },
+      {
+        "$ref": "#/$defs/CommandSchemaRequest"
+      },
+      {
+        "$ref": "#/$defs/CommandToolList"
+      },
+      {
+        "$ref": "#/$defs/CommandSubscribe"
+      },
+      {
+        "$ref": "#/$defs/CommandUnsubscribe"
+      },
+      {
+        "$ref": "#/$defs/CommandSessionList"
+      },
+      {
+        "$ref": "#/$defs/CommandSessionCreate"
+      },
+      {
+        "$ref": "#/$defs/CommandSessionDelete"
+      },
+      {
+        "$ref": "#/$defs/CommandToolInvoke"
+      },
+      {
+        "$ref": "#/$defs/CommandConfigSet"
       }
     ]
   },

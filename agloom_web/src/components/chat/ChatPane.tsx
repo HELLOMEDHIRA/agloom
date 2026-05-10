@@ -16,7 +16,7 @@ interface Props {
   thread: string
 }
 
-export function ChatPane({ client, thread }: Props): React.ReactElement {
+export const ChatPane = ({ client, thread }: Props): React.ReactElement => {
   const completedTurns = useSessionStore((s) => s.completedTurns)
   const activeTurn = useSessionStore((s) => s.activeTurn)
   const hitlQueue = useSessionStore((s) => s.hitlQueue)

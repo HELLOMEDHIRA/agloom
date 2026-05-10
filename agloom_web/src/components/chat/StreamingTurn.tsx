@@ -9,7 +9,7 @@ import { Loader2, Wrench, Users, Brain } from 'lucide-react'
 
 interface Props { turn: ActiveTurnState }
 
-export function StreamingTurn({ turn }: Props): React.ReactElement {
+export const StreamingTurn = ({ turn }: Props): React.ReactElement => {
   const { userMessage, thinkingSteps, toolCalls, workers, streamedTokens, pattern } = turn
 
   return (

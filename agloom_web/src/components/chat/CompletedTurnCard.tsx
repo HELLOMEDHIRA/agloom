@@ -11,7 +11,7 @@ import { CheckCircle, XCircle, Clock, Wrench, Users } from 'lucide-react'
 
 interface Props { turn: CompletedTurn }
 
-export const CompletedTurnCard = memo(function CompletedTurnCard({ turn }: Props) {
+export const CompletedTurnCard = memo(({ turn }: Props) => {
   return (
     <article className="flex flex-col gap-4">
       {/* User message */}
@@ -81,3 +81,5 @@ export const CompletedTurnCard = memo(function CompletedTurnCard({ turn }: Props
     </article>
   )
 })
+
+CompletedTurnCard.displayName = 'CompletedTurnCard'

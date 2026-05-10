@@ -7,7 +7,7 @@ import { Users, Wrench, CheckCircle, XCircle, Loader2 } from 'lucide-react'
 import { useSessionStore } from '../../store/session.js'
 import { cn, fmtDuration } from '../../lib/utils/cn.js'
 
-export function WorkerTree(): React.ReactElement {
+export const WorkerTree = (): React.ReactElement => {
   const activeTurn = useSessionStore((s) => s.activeTurn)
   const lastTurn = useSessionStore((s) => s.completedTurns.at(-1))
   const workers = activeTurn?.workers ?? lastTurn?.workers ?? []

@@ -18,7 +18,7 @@ import textwrap
 import pytest
 
 from agloom.protocol import event_adapter
-from agloom.protocol.events import MessageAssistant, SessionClosed, SessionOpened, TokenDelta
+from agloom.protocol.events import MessageAssistant, RuntimeConfig, SessionClosed, SessionOpened, TokenDelta
 
 FAKE_RUNTIME_SCRIPT = textwrap.dedent("""\
     import json, sys, time
@@ -40,16 +40,17 @@ FAKE_RUNTIME_SCRIPT = textwrap.dedent("""\
         }
 
     events = [
-        evt("session.opened", 1, {
-            "runtime_version": "0.1.0",
-            "protocol_version": "1",
-            "capabilities": ["agp.v1.minimal"],
-        }),
-        evt("message.user", 2, {"content": "hello world"}),
-        evt("token.delta", 3, {"text": "Hi ", "role": "assistant"}),
-        evt("token.delta", 4, {"text": "there!", "role": "assistant"}),
-        evt("message.assistant", 5, {"content": "Hi there!", "message_id": None, "pattern": None}),
-        evt("session.closed", 6, {"reason": "completed", "duration_ms": 42}),
+        evt("session.opened", 1, {"runtime_version": "0.1.0", "protocol_version": "1"}),
+        evt(
+            "runtime.config",
+            2,
+            {"model_id": None, "tool_names": [], "capabilities": []},
+        ),
+        evt("message.user", 3, {"content": "hello world"}),
+        evt("token.delta", 4, {"text": "Hi ", "role": "assistant"}),
+        evt("token.delta", 5, {"text": "there!", "role": "assistant"}),
+        evt("message.assistant", 6, {"content": "Hi there!", "message_id": None, "pattern": None}),
+        evt("session.closed", 7, {"reason": "completed", "duration_ms": 42}),
     ]
 
     for e in events:
@@ -71,13 +72,14 @@ async def test_stdio_transport_round_trip() -> None:
     assert result.returncode == 0, f"script failed:\n{result.stderr}"
 
     lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
-    assert len(lines) == 6, f"expected 6 NDJSON lines, got {len(lines)}"
+    assert len(lines) == 7, f"expected 7 NDJSON lines, got {len(lines)}"
 
     parsed = [event_adapter.validate_python(json.loads(ln)) for ln in lines]
 
     types = [p.type for p in parsed]
     assert types == [
         "session.opened",
+        "runtime.config",
         "message.user",
         "token.delta",
         "token.delta",
@@ -89,16 +91,19 @@ async def test_stdio_transport_round_trip() -> None:
     opened = parsed[0]
     assert isinstance(opened, SessionOpened)
     assert opened.data.runtime_version == "0.1.0"
-    assert "agp.v1.minimal" in opened.data.capabilities
 
-    token1 = parsed[2]
+    cfg = parsed[1]
+    assert isinstance(cfg, RuntimeConfig)
+    assert cfg.data.capabilities == []
+
+    token1 = parsed[3]
     assert isinstance(token1, TokenDelta)
     assert token1.data.text == "Hi "
     assert token1.data.role == "assistant"
 
-    assert isinstance(parsed[4], MessageAssistant)
+    assert isinstance(parsed[5], MessageAssistant)
 
-    closed = parsed[5]
+    closed = parsed[6]
     assert isinstance(closed, SessionClosed)
     assert closed.data.reason == "completed"
     assert closed.data.duration_ms == 42
@@ -109,4 +114,4 @@ async def test_stdio_transport_round_trip() -> None:
 
     seqs = [p.seq for p in parsed]
     assert seqs == sorted(seqs)
-    assert seqs == list(range(1, 7))
+    assert seqs == list(range(1, 8))

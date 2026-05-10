@@ -22,7 +22,7 @@ interface WorkerRow {
   duration_ms?:    number
 }
 
-function buildWorkers(events: EventRow[]): WorkerRow[] {
+const buildWorkers = (events: EventRow[]): WorkerRow[] => {
   const map = new Map<string, WorkerRow>()
   for (const ev of events) {
     const d = ev.data as Record<string, string>
@@ -54,7 +54,7 @@ function buildWorkers(events: EventRow[]): WorkerRow[] {
   return [...map.values()]
 }
 
-export function WorkerMonitor({ sessionId }: Props): React.ReactElement {
+export const WorkerMonitor = ({ sessionId }: Props): React.ReactElement => {
   const { data: events = [], isLoading } = useQuery<EventRow[]>({
     queryKey: ['obs', 'workers', sessionId],
     queryFn: () => obsApi.workers(sessionId),

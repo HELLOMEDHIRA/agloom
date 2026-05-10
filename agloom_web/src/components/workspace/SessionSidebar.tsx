@@ -9,7 +9,7 @@ import React from 'react'
 import { useSessionStore } from '../../store/session.js'
 import { MessageSquare, Cpu } from 'lucide-react'
 
-export function SessionSidebar(): React.ReactElement {
+export const SessionSidebar = (): React.ReactElement => {
   const completedTurns = useSessionStore((s) => s.completedTurns)
   const sessionId = useSessionStore((s) => s.sessionId)
   const status = useSessionStore((s) => s.status)

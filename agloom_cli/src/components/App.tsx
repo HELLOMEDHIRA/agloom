@@ -29,17 +29,16 @@ import { MetricsPanel } from './MetricsPanel.js'
 import { useAGPStream } from '../hooks/useAGPStream.js'
 import { useSessionStore } from '../store/session.js'
 import type { AGPBridge } from '../runtime/bridge.js'
+import { SLASH_HELP_LINES } from '../utils/slashCommands.js'
 
 interface AppProps {
   bridge: AGPBridge
   initialThread: string
-  /** Optional session id for resumption */
-  session?: string
   /** Show diagnostic log pane */
   showDiag?: boolean
 }
 
-export function App({ bridge, initialThread, session: _session, showDiag = false }: AppProps): React.ReactElement {
+export const App = ({ bridge, initialThread, showDiag = false }: AppProps): React.ReactElement => {
   const { exit } = useApp()
 
   // Wire the bridge into the store
@@ -52,11 +51,13 @@ export function App({ bridge, initialThread, session: _session, showDiag = false
   const diagnostics = useSessionStore((s) => s.diagnostics)
   const reset = useSessionStore((s) => s.reset)
   const clearError = useSessionStore((s) => s.clearError)
+  const appendProtocolNote = useSessionStore((s) => s.appendProtocolNote)
 
   const [thread] = useState(initialThread)
   const [input, setInput] = useState('')
   const [diagOpen, setDiagOpen] = useState(showDiag)
   const [metricsSidebarOpen, setMetricsSidebarOpen] = useState(true)
+  const [slashHelpOpen, setSlashHelpOpen] = useState(false)
 
   const { columns } = useWindowSize()
   const termWidth = columns ?? 80
@@ -69,6 +70,10 @@ export function App({ bridge, initialThread, session: _session, showDiag = false
 
   // ── Global keyboard shortcuts ──────────────────────────────────────────────
   useInput((char, key) => {
+    if (slashHelpOpen) {
+      if (key.escape || char === 'q') setSlashHelpOpen(false)
+      return
+    }
     if (key.ctrl && char === 'c') {
       bridge.shutdown()
       setTimeout(() => exit(), 600)
@@ -100,7 +105,7 @@ export function App({ bridge, initialThread, session: _session, showDiag = false
 
     switch (command) {
       case '/help':
-        // Help is rendered inline — just clear input, the hints are shown by InputBar
+        setSlashHelpOpen((v) => !v)
         break
 
       case '/exit':
@@ -139,9 +144,10 @@ export function App({ bridge, initialThread, session: _session, showDiag = false
       }
 
       case '/model': {
-        const model = useSessionStore.getState().model
-        // Will show up in the next render cycle naturally via header
-        void model
+        const st = useSessionStore.getState()
+        const model = st.model ?? '—'
+        const nTools = st.toolNames?.length
+        appendProtocolNote(`/model · ${model}${nTools != null ? ` · ${nTools} tools` : ''}`)
         break
       }
 
@@ -166,6 +172,26 @@ export function App({ bridge, initialThread, session: _session, showDiag = false
       <Box flexDirection="column" width={mainColumnWidth}>
         {/* Top metadata bar */}
         <Header layoutWidth={mainColumnWidth} />
+
+        {slashHelpOpen && (
+          <Box
+            flexDirection="column"
+            borderStyle="round"
+            borderColor="cyan"
+            paddingX={1}
+            marginX={1}
+            marginBottom={0}
+          >
+            {SLASH_HELP_LINES.map((line, i) => (
+              <Text key={i} color={line.startsWith('  ') || line === '' ? 'gray' : 'white'}>
+                {line || ' '}
+              </Text>
+            ))}
+            <Text dimColor color="gray">
+              Esc or q — close
+            </Text>
+          </Box>
+        )}
 
         {/* Completed turns — Static: written once, never diff'd again */}
         <Static items={completedTurns}>

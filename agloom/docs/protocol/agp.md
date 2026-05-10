@@ -42,6 +42,12 @@ One JSON object per line (NDJSON over stdio; one frame per WebSocket message whe
 
 **Forward compatibility**: consumers MUST forward unknown `type` values (and unknown fields on `data`) rather than crash. The Pydantic discriminated union (`agloom.protocol.event_adapter`) only recognizes the **v1 catalog** below — UIs that must accept future event types should parse the envelope generically, then dispatch on `type` themselves.
 
+### Capabilities
+
+Canonical **capability tokens** (opaque strings for client routing) live on **`runtime.config`** as `data.capabilities`.
+
+Optionally, **`session.opened`** / **`session.resumed`** may include `data.capabilities_override` (array). When present, clients SHOULD treat it as **session-level hints that override or augment** `runtime.config.capabilities` for that boundary (product-defined merge rule). The reference runtime omits `capabilities_override` and emits an empty `runtime.config.capabilities` unless the embedder configures the emitter’s internal capability list.
+
 ---
 
 ## Event types (v1 catalog)
@@ -56,8 +62,20 @@ Emitted once at the start of every **new** session.
 { "type": "session.opened",
   "data": {
     "runtime_version": "0.1.0",
-    "protocol_version": "1",
-    "capabilities": ["agp.v1.minimal"]
+    "protocol_version": "1"
+  } }
+```
+
+### `runtime.config`
+
+Emitted after `runtime.ready` (same startup bundle). Carries **`model_id`**, **`tool_names`**, and canonical **`capabilities`** (see **Capabilities** above).
+
+```jsonc
+{ "type": "runtime.config",
+  "data": {
+    "model_id": "gpt-4.1",
+    "tool_names": [],
+    "capabilities": []
   } }
 ```
 
@@ -70,7 +88,6 @@ Emitted instead of `session.opened` when a client **reconnects** to an existing 
   "data": {
     "runtime_version": "0.1.0",
     "protocol_version": "1",
-    "capabilities": ["agp.v1.minimal"],
     "resumed_from_thread": "thread_abc",
     "replayed_from_seq": 5
   } }
@@ -422,11 +439,11 @@ Emitted exactly once at the end. `reason` is `completed | user_aborted | error |
 
 ---
 
-## Roadmap (additive — no schema bumps required)
+## Versioning & namespace reservation
 
 Already shipped (**v1**): `session.*`, `graph.*`, `pattern.*`, `thinking.*`, `token.*`, `message.*`, **`prompt.*`**, **`skill.*`**, `tool.*`, `hitl.*`, `worker.*`, `memory.*`, `checkpoint.*`, `feedback.*`, `metric.*`, `error.*`.
 
-Reserved namespaces for future events (not emitted yet): e.g. richer **`prompt.*`** phases (template assembly), **`skill.*`** revision events — follow the same dotted `type` convention and additive payload rules.
+Additional event types may appear under existing namespaces without bumping **`v`** — follow the same dotted `type` convention and additive payload rules. Names not listed above remain available for new envelopes under those namespaces.
 
 ### Machine-readable schemas
 
@@ -489,7 +506,7 @@ Submit user feedback for a completed turn. The runtime calls the agent's `feedba
 
 ### `command.worker.assign`
 
-Dispatch a task to a named worker. In Phase 1 (single-process) the runtime spawns an in-process agent task; in Phase 2 (distributed) this routes to a remote worker node via a message broker. The supervisor sees a `worker.spawned` event immediately, then `worker.completed` or `worker.failed` when the task ends.
+Dispatch a task to a named worker. The runtime starts an in-process worker task and streams lifecycle events; routing to remote nodes would use the same command shape as an optional future extension. The supervisor sees a `worker.spawned` event immediately, then `worker.completed` or `worker.failed` when the task ends.
 
 `parent_thread` correlates the worker's events to the originating supervisor invocation.
 

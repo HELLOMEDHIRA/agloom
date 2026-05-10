@@ -16,7 +16,7 @@ interface Props { sessionId: string }
 const SPEEDS = [0.5, 1, 2, 5, 0] as const
 const SPEED_LABELS: Record<number, string> = { 0.5: '0.5×', 1: '1×', 2: '2×', 5: '5×', 0: 'instant' }
 
-export function ReplayPlayer({ sessionId }: Props): React.ReactElement {
+export const ReplayPlayer = ({ sessionId }: Props): React.ReactElement => {
   const [speed, setSpeed] = useState<number>(1)
   const [playing, setPlaying] = useState(false)
   const [done, setDone] = useState(false)

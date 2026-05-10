@@ -49,6 +49,7 @@ except ImportError:
     pass
 del _warnings
 
+from .cli_tools import CLI_TOOL_NAMES, SafetyContext, get_cli_tools  # noqa: E402
 from .delegation import (  # noqa: E402 — must follow the warning suppression above
     BackgroundDelegationManager,
     BackgroundTask,
@@ -123,7 +124,10 @@ __all__ = [
     "WorkerResult",
     "SessionMemory",
     "LongTermStore",
+    "CLI_TOOL_NAMES",
     "HITLEvent",
+    "SafetyContext",
+    "get_cli_tools",
     "BackgroundDelegationManager",
     "BackgroundTask",
     "BackgroundTaskStatus",

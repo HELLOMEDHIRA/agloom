@@ -11,6 +11,7 @@ import asyncio
 import inspect
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from functools import lru_cache
 from pathlib import Path
@@ -2217,6 +2218,7 @@ async def create_agent(
     frozen_analysis_ttl: float = 0,
     harness: bool = False,
     harness_project_name: str = "project",
+    cli_tools: bool | dict[str, Any] | None = None,
     skills_disk_mirror: Path | str | None = None,
     react_force_tool_choice_on_user_turn: bool = True,
     react_tool_use_failed_auto_retries_hitl: int = 2,
@@ -2240,6 +2242,22 @@ async def create_agent(
     """
     configure_package_logging(debug)
 
+    from .cli_tools import get_cli_tools, normalize_cli_tools_kwargs
+
+    cli_tools_kw = normalize_cli_tools_kwargs(cli_tools)
+    ibi_merged = list(interrupt_before_tools or [])
+    if cli_tools_kw and cli_tools_kw.get("allow_shell", True):
+        if "tools" not in ibi_merged:
+            for token in (
+                "execute",
+                "bash",
+                "bash_background",
+                "bash_background_status",
+                "bash_background_stop",
+            ):
+                if token not in ibi_merged:
+                    ibi_merged.append(token)
+
     AgentConfig(
         model=model,
         name=name or "UnifiedAgent",
@@ -2256,7 +2274,7 @@ async def create_agent(
         query_cache=query_cache,
         interrupt_before=interrupt_before or [],
         interrupt_after=interrupt_after or [],
-        interrupt_before_tools=interrupt_before_tools or [],
+        interrupt_before_tools=ibi_merged,
         interrupt_before_workers=interrupt_before_workers or [],
         interrupt_after_workers=interrupt_after_workers or [],
         user_callback=user_callback,
@@ -2294,6 +2312,21 @@ async def create_agent(
     agent_name = (name or "UnifiedAgent").strip()
     resolved_tools = normalize_tools(tools or [])
     _check_reserved_tool_names(resolved_tools)
+    _task_agent_cell: list[Any | None] | None = None
+    if cli_tools_kw is not None and bool(cli_tools_kw.get("task_tool", True)):
+        _task_agent_cell = [None]
+    if cli_tools_kw is not None:
+        builtins = get_cli_tools(
+            working_dir=cli_tools_kw["working_dir"],
+            allow_shell=bool(cli_tools_kw.get("allow_shell", True)),
+            allow_network=bool(cli_tools_kw.get("allow_network", True)),
+            sandbox=bool(cli_tools_kw.get("sandbox", True)),
+            task_agent_cell=_task_agent_cell,
+        )
+        merged = OrderedDict((t.name, t) for t in builtins)
+        for t in resolved_tools:
+            merged[t.name] = t
+        resolved_tools = list(merged.values())
 
     resolved_store: LongTermStore | None = None
     if store is not None:
@@ -2416,7 +2449,7 @@ async def create_agent(
         "reflection_threshold": reflection_threshold,
         "interrupt_before": list(interrupt_before or []),
         "interrupt_after": list(interrupt_after or []),
-        "interrupt_before_tools": list(interrupt_before_tools or []),
+        "interrupt_before_tools": list(ibi_merged),
         "interrupt_before_workers": list(interrupt_before_workers or []),
         "interrupt_after_workers": list(interrupt_after_workers or []),
         "user_callback": user_callback,
@@ -2449,6 +2482,8 @@ async def create_agent(
         "_handoff_targets": [],
         "_delegate_targets": [],
         "_bg_delegation_manager": BackgroundDelegationManager(),
+        "_cli_tools": cli_tools_kw,
+        "_hitl_tool_allowlist": set(),
     }
 
     if delegates:
@@ -2565,7 +2600,10 @@ async def create_agent(
         f"feedback={'yes' if config['_feedback'] else 'no'}"
     )
 
-    return UnifiedAgent(config)
+    ua = UnifiedAgent(config)
+    if _task_agent_cell is not None:
+        _task_agent_cell[0] = ua
+    return ua
 
 
 def create_agent_sync(

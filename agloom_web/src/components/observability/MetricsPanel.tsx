@@ -13,7 +13,7 @@ interface Props { metrics?: SessionMetrics }
 
 const COLORS = ['#6366f1','#22d3ee','#a78bfa','#34d399','#fbbf24','#f87171']
 
-export function MetricsPanel({ metrics }: Props): React.ReactElement {
+export const MetricsPanel = ({ metrics }: Props): React.ReactElement => {
   if (!metrics) return <div className="flex items-center justify-center h-48 text-neutral-600 text-sm">Loading metrics…</div>
 
   const tokenData = [

@@ -11,7 +11,7 @@ import type { AGPBridge } from '../runtime/bridge.js'
 import { useSessionStore } from '../store/session.js'
 import type { AGPEvent } from '../types/agp.js'
 
-export function useAGPStream(bridge: AGPBridge): void {
+export const useAGPStream = (bridge: AGPBridge): void => {
   const dispatch = useSessionStore((s) => s.dispatch)
   const addDiagnostic = useSessionStore((s) => s.addDiagnostic)
   const markExited = useSessionStore((s) => s.markExited)

@@ -112,6 +112,8 @@ flowchart TD
 
 Configurable via `max_reflection_iterations` (default: 3) and `reflection_threshold` (default: 7/10).
 
+Walkthrough (runtime behaviour, parameters, HITL): [Reflection pattern](../features/reflection.md).
+
 ---
 
 ### SWARM — Parallel Perspectives

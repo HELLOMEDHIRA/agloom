@@ -1,17 +1,44 @@
 /**
  * WorkspaceHome — landing page: recent sessions + new session button.
  */
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PlusCircle, Zap, Activity, GitBranch } from 'lucide-react'
 import { cn } from '../lib/utils/cn.js'
+import { useAGPClient } from '../lib/agp/client.js'
+import type { AGPEvent } from '../lib/agp/types.js'
 
-const RECENT: { id: string; title: string; ts: string; pattern: string }[] = []
-
-export function WorkspaceHome(): React.ReactElement {
+export const WorkspaceHome = (): React.ReactElement => {
   const navigate = useNavigate()
+  const client = useAGPClient()
+  const [sessions, setSessions] = useState<string[]>([])
+  const [listed, setListed] = useState(false)
 
-  const startSession = () => {
+  useEffect(() => {
+    const requestList = (): void => {
+      client.send({ type: 'command.session.list', data: {} })
+    }
+
+    const offStatus = client.onStatus((s) => {
+      if (s === 'open') requestList()
+    })
+    const offEv = client.onEvent((evt: AGPEvent) => {
+      if (evt.type === 'runtime.sessions') {
+        const ids = evt.data.sessions ?? []
+        setSessions(ids)
+        setListed(true)
+      }
+    })
+
+    if (client.status === 'open') requestList()
+
+    return () => {
+      offStatus()
+      offEv()
+    }
+  }, [client])
+
+  const startSession = (): void => {
     const id = `s_${Date.now().toString(36)}`
     navigate(`/session/${id}`)
   }
@@ -27,6 +54,7 @@ export function WorkspaceHome(): React.ReactElement {
 
       {/* New session CTA */}
       <button
+        type="button"
         onClick={startSession}
         className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 transition-colors rounded-xl text-white font-semibold text-sm shadow-lg shadow-indigo-900/40"
       >
@@ -47,23 +75,26 @@ export function WorkspaceHome(): React.ReactElement {
         ))}
       </div>
 
-      {/* Recent sessions */}
-      {RECENT.length > 0 && (
+      {/* Sessions from runtime */}
+      {listed && sessions.length > 0 && (
         <div className="w-full max-w-md">
-          <p className="text-neutral-500 text-xs mb-3">Recent sessions</p>
+          <p className="text-neutral-500 text-xs mb-3">Sessions on runtime</p>
           <div className="flex flex-col gap-2">
-            {RECENT.map((s) => (
+            {sessions.map((id) => (
               <button
-                key={s.id}
-                onClick={() => navigate(`/session/${s.id}`)}
+                type="button"
+                key={id}
+                onClick={() => navigate(`/session/${id}`)}
                 className="flex items-center justify-between px-4 py-3 rounded-xl bg-neutral-900 border border-neutral-800 hover:border-neutral-700 transition-colors text-left"
               >
-                <span className="text-sm text-white truncate">{s.title}</span>
-                <span className="text-xs text-neutral-500 shrink-0 ml-3">{s.ts}</span>
+                <span className="text-sm text-white font-mono truncate">{id}</span>
               </button>
             ))}
           </div>
         </div>
+      )}
+      {listed && sessions.length === 0 && (
+        <p className="text-neutral-600 text-xs">No sessions reported yet — start one above.</p>
       )}
     </div>
   )

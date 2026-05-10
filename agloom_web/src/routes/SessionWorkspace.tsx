@@ -19,7 +19,7 @@ import { ArtifactViewer } from '../components/artifacts/ArtifactViewer.js'
 
 export type RightTab = 'graph' | 'workers' | 'trace' | 'artifacts'
 
-export function SessionWorkspace(): React.ReactElement {
+export const SessionWorkspace = (): React.ReactElement => {
   const { sessionId } = useParams<{ sessionId: string }>()
   const client = useAGPClient()
 
@@ -38,7 +38,7 @@ export function SessionWorkspace(): React.ReactElement {
       rightSlot={
         rightTab === 'artifacts'
           ? <ArtifactViewer />
-          : <RuntimePanel activeTab={rightTab} onTabChange={setRightTab} />
+          : <RuntimePanel activeTab={rightTab} />
       }
       rightTab={rightTab}
       onRightTabChange={setRightTab}
