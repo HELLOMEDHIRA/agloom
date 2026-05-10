@@ -2,7 +2,7 @@
 SHELL := /bin/bash
 
 # Paths checked by CI (ruff + pyrefly). Keep in sync with .github/workflows/ci.yml.
-PY_PKGS := agloom agloom_cli tests
+PY_PKGS := agloom
 
 # ── Development ──────────────────────────────────────────────────────────────
 
@@ -33,8 +33,8 @@ format-check: ## Check formatting without changing files
 	uv run ruff format --check $(PY_PKGS)
 
 .PHONY: typecheck
-typecheck: ## Run pyrefly on library, CLI, examples, and tests (same as CI)
-	uv run pyrefly check agloom agloom_cli examples tests
+typecheck: ## Run pyrefly on the Python package (same as CI)
+	uv run pyrefly check agloom
 
 .PHONY: pyrefly
 pyrefly: typecheck ## Alias for typecheck
@@ -49,7 +49,7 @@ fix: lint-fix format ## Auto-fix lint issues and format code (does not run pyref
 
 .PHONY: test
 test: ## Run pytest suite (no API keys required)
-	uv run pytest tests -q
+	uv run pytest -q
 
 # ── Build & Publish ──────────────────────────────────────────────────────────
 
@@ -67,13 +67,21 @@ publish: build ## Publish to PyPI (requires UV_PUBLISH_TOKEN)
 
 # ── Docs ─────────────────────────────────────────────────────────────────────
 
+.PHONY: docs-prepare
+docs-prepare: ## Copy package docs into docs/_packages/ for MkDocs (no Python script; shell only)
+	rm -rf docs/_packages
+	mkdir -p docs/_packages
+	cp -R agloom/docs docs/_packages/agloom
+	cp -R agloom_cli/docs docs/_packages/agloom_cli
+	cp -R agloom_web/docs docs/_packages/agloom_web
+
 .PHONY: docs
-docs: ## Serve docs locally (http://127.0.0.1:8000)
+docs: docs-prepare ## Serve docs locally (http://127.0.0.1:8000)
 	uv run mkdocs serve
 
 .PHONY: docs-build
-docs-build: ## Build static docs site
-	uv run mkdocs build
+docs-build: docs-prepare ## Build static docs site (strict mode)
+	uv run mkdocs build --strict
 
 # ── Cleanup ──────────────────────────────────────────────────────────────────
 

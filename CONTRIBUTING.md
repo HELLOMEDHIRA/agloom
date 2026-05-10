@@ -4,7 +4,8 @@ Thank you for considering contributing to agloom. This guide covers setup and wo
 
 ## Prerequisites
 
-- Python 3.12.x (required by the bundled `agsuperbrain` CLI dependency)
+- Python 3.12.x only (`requires-python = ">=3.12,<3.13"` in `pyproject.toml`)
+- Node.js >=24.15.0 when working on `agloom_cli/` or `agloom_web/` (`npm install` in that package directory — no repo-root Node workspace)
 - [uv](https://docs.astral.sh/uv/) package manager
 - Git
 
@@ -33,18 +34,18 @@ uv run pre-commit install --hook-type commit-msg
 4. Verify locally:
 
 ```bash
-uv run ruff check agloom agloom_cli tests
-uv run ruff format --check agloom agloom_cli tests
-uv run pyrefly check agloom agloom_cli examples tests
-uv run pytest tests -q
+uv run ruff check agloom
+uv run ruff format --check agloom
+uv run pyrefly check agloom
+uv run pytest -q
 ```
 
 ## Running Tests
 
-Tests live under `tests/` and use **pytest** (with **pytest-asyncio** for async cases). They do not require API keys or network access.
+Tests live under `agloom/tests/` and use **pytest** (with **pytest-asyncio** for async cases). Most tests do not require API keys or network access.
 
 ```bash
-uv run pytest tests
+uv run pytest
 ```
 
 ## Code Quality
@@ -52,23 +53,32 @@ uv run pytest tests
 ### Linting (ruff)
 
 ```bash
-uv run ruff check agloom agloom_cli tests
-uv run ruff check agloom agloom_cli tests --fix
+uv run ruff check agloom
+uv run ruff check agloom --fix
 ```
 
 ### Formatting (ruff)
 
 ```bash
-uv run ruff format agloom agloom_cli tests
-uv run ruff format --check agloom agloom_cli tests
+uv run ruff format agloom
+uv run ruff format --check agloom
 ```
 
 ### Type Checking (pyrefly)
 
-Pyrefly targets the published packages (`agloom`, `agloom_cli`). The `tests/` tree is linted with ruff and executed with pytest.
+Pyrefly type-checks the `agloom` Python package; TypeScript projects under `agloom_cli/` and `agloom_web/` use ESLint + `tsc`.
 
 ```bash
-uv run pyrefly check agloom agloom_cli examples tests
+uv run pyrefly check agloom
+```
+
+### agloom CLI and web (`agloom_cli/`, `agloom_web/`)
+
+Each folder is its own npm package: run **install and scripts inside that directory** (there is no repo-root `package.json`).
+
+```bash
+cd agloom_cli && npm install && npm run build && npm test
+cd agloom_web && npm install && npm run build && npm test
 ```
 
 ### Pre-commit (all hooks)
@@ -112,10 +122,11 @@ docs: add streaming examples to README
 
 2. Before opening a PR, ensure:
 
-   - Tests pass: `uv run pytest tests`
-   - Lint: `uv run ruff check agloom agloom_cli tests`
-   - Format: `uv run ruff format --check agloom agloom_cli tests`
-   - Types: `uv run pyrefly check agloom agloom_cli examples tests`
+   - Tests pass: `uv run pytest`
+   - Lint: `uv run ruff check agloom`
+   - Format: `uv run ruff format --check agloom`
+   - Types: `uv run pyrefly check agloom`
+   - If you changed `agloom_cli/` or `agloom_web/`: `npm install`, `npm run build`, and `npm test` in that folder
 
 3. Commit with a conventional commit message.
 
@@ -127,11 +138,10 @@ docs: add streaming examples to README
 
 ```
 agloom/
-├── agloom/              # Core library
-├── agloom_cli/          # CLI package (`agloom` command)
-├── tests/               # Pytest suite
-├── examples/            # Usage examples
-├── docs/                # MkDocs sources
+├── agloom/              # Core library (`agloom/tests/`, `agloom/examples/`, `agloom/docs/`)
+├── agloom_cli/          # agloom CLI — terminal client, npm package ``agloom-cli`` (`agloom_cli/docs/`)
+├── agloom_web/          # Vite workspace (`agloom_web/docs/`)
+├── docs/                # MkDocs root: `index.md`, `contributing.md`, `requirements.txt`; `docs/_packages/` is copied before build
 ├── pyproject.toml       # Metadata and tool configuration
 └── .github/workflows/   # CI/CD
 ```

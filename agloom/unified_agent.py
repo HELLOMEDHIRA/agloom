@@ -11,10 +11,10 @@ import asyncio
 import inspect
 import time
 import uuid
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Awaitable, cast
+from typing import Any, cast
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -252,6 +252,19 @@ _STEP_TO_EVENT: dict[StepType, str] = {
 
 def _step_type_to_event_type(st: StepType) -> str:
     return _STEP_TO_EVENT.get(st, st.value)
+
+
+async def _emit_graph_node_event(config: dict, event_type: str, *, node: str, pattern: str | None = None, **kwargs: object) -> None:
+    """Emit a graph node enter/exit event to ``_event_queue`` when present."""
+    queue = config.get("_event_queue")
+    if queue is None:
+        return
+    await queue.put(
+        AgentEvent(
+            type=event_type,
+            data={"node": node, "pattern": pattern, **{k: v for k, v in kwargs.items() if v is not None}},
+        )
+    )
 
 
 async def _emit_step_event(config: dict, step: AgentStep) -> None:
@@ -509,6 +522,9 @@ async def _save_checkpoint(
     thread_id: str,
     result: ExecutionResult,
     query: str,
+    *,
+    event_queue: Any = None,
+    label: str | None = None,
 ) -> None:
     """Best-effort checkpoint write for ``get_state`` / ``get_history``."""
     if checkpointer is None:
@@ -549,6 +565,14 @@ async def _save_checkpoint(
         elif hasattr(checkpointer, "put"):
             await asyncio.to_thread(checkpointer.put, config, checkpoint, metadata, channel_versions)
         logger.debug(f"Checkpoint saved: thread_id={thread_id} run_id={result.run_id}")
+        # Emit AGP checkpoint.saved so frontends / EventStore consumers know the state is durable.
+        if event_queue is not None:
+            await event_queue.put(
+                AgentEvent(
+                    type="checkpoint_saved",
+                    data={"thread": thread_id, "run_id": result.run_id, "label": label},
+                )
+            )
     except Exception as exc:
         logger.warning(f"_save_checkpoint failed ({exc!r}) — non-fatal.")
 
@@ -834,6 +858,18 @@ async def run_fresh(
         query=processed_query,
         last_n=_memory_injection_last_n(config),
     )
+    # Emit memory.lt.recall when LT store was actually searched.
+    if store is not None:
+        injected = len(memory_ctx) if memory_ctx else 0
+        await _emit_graph_node_event(
+            config,
+            "memory_lt_recall",
+            node="memory.lt.recall",
+            namespace=".".join(str(p) for p in effective_ltns) if effective_ltns else None,
+            query_preview=processed_query[:200],
+            hits=1 if injected > 0 else 0,
+            injected_chars=injected,
+        )
 
     is_frozen = config.get("frozen") and config.get("frozen_analysis") is not None
 
@@ -907,6 +943,7 @@ async def run_fresh(
                 )
             )
         t_classify = time.perf_counter()
+        await _emit_graph_node_event(config, "graph_node_enter", node="classify", input_preview=augmented_query[:200])
         analysis: QueryAnalysis = await analyze_query(
             llm=config["llm"],
             query=augmented_query,
@@ -928,6 +965,13 @@ async def run_fresh(
         )
         _steps.append(classify_step)
         await _emit_step_event(config, classify_step)
+        await _emit_graph_node_event(
+            config,
+            "graph_node_exit",
+            node="classify",
+            duration_ms=round(classify_ms),
+            output_preview=f"pattern={analysis.pattern.value} complexity={analysis.complexity}",
+        )
         logger.event(
             f"[{name}] classify → pattern={analysis.pattern.value} "
             f"complexity={analysis.complexity} "
@@ -1082,8 +1126,18 @@ async def run_fresh(
     assert handler is not None, "handler must be set by frozen or dynamic path"
     exec_invoke_config = {**(invoke_config or {}), "_steps": _steps}
     t_exec = time.perf_counter()
+    await _emit_graph_node_event(config, "graph_node_enter", node=pattern_val, pattern=pattern_val, input_preview=augmented_query[:200])
     result: ExecutionResult = await handler(config, augmented_query, analysis, exec_invoke_config)
     exec_ms = round((time.perf_counter() - t_exec) * 1000, 1)
+    await _emit_graph_node_event(
+        config,
+        "graph_node_exit",
+        node=pattern_val,
+        pattern=pattern_val,
+        duration_ms=round(exec_ms),
+        output_preview=result.output[:200] if result.output else None,
+        error=None if result.success else "execution failed",
+    )
     logger.debug(f"[{name}] pattern execution took {exec_ms}ms")
 
     if pattern_val in config.get("interrupt_after", []):
@@ -1258,7 +1312,7 @@ class UnifiedAgent:
                     try:
                         await client.__aexit__(None, None, None)
                     except NotImplementedError:
-                        pass
+                        logger.debug(f"[{self.name}] MCP client __aexit__ not implemented (expected for MultiServerMCPClient)")
             except Exception as exc:
                 logger.debug(f"[{self.name}] MCP client cleanup: {exc!r}")
             self.config["_mcp_client"] = None
@@ -1399,9 +1453,21 @@ class UnifiedAgent:
     ) -> AsyncGenerator[Any, None]:
         """Stream output chunks.
 
-        ``stream_mode="tokens"``: uses the chat model's ``astream`` when the request is
-        classified as DIRECT (non-frozen); otherwise falls back to word chunks from
-        ``ainvoke``. ``stream_mode="result"`` yields one ``ExecutionResult``.
+        ``stream_mode="tokens"``
+            * **DIRECT pattern** (non-frozen, single-LLM call): yields real LLM
+              token strings as they arrive from the model, giving true streaming
+              latency.
+            * **All other patterns** (SUPERVISOR, SEQUENTIAL, REFLECTION, …):
+              ``ainvoke`` is called first and the final answer is then yielded
+              word-by-word via ``asyncio.sleep(0)``.  This is *simulated*
+              streaming — useful for consistent API shape but **not** true
+              token-level streaming.  For real token deltas from multi-agent
+              patterns use :meth:`astream_events` and listen for
+              ``token.delta`` AGP events.
+
+        ``stream_mode="result"``
+            Yields a single :class:`ExecutionResult` after the invocation
+            completes, regardless of pattern.
         """
         if stream_mode == "tokens" and isinstance(query, str) and not self.config.get("frozen"):
             streamed = await self._try_direct_stream(
@@ -1543,20 +1609,32 @@ class UnifiedAgent:
         context: dict | None = None,
         max_concurrent: int = 5,
     ) -> list[ExecutionResult]:
-        """Concurrent ``ainvoke`` for each query, bounded by ``max_concurrent``."""
+        """Concurrent ``ainvoke`` for each query, bounded by ``max_concurrent``.
+
+        Each query runs in its **own isolated thread** so that LangGraph
+        checkpoints never collide.  If ``thread_id`` is supplied it is used as
+        a *prefix* — the final thread for query *i* becomes
+        ``"{thread_id}_batch_{i}"``.  This preserves the ability to resume a
+        batch run while preventing cross-query state leakage.
+        """
+        from uuid import uuid4 as _uuid4
+
         sem = asyncio.Semaphore(max_concurrent)
 
-        async def _run_one(q: str | dict) -> ExecutionResult:
+        async def _run_one(q: str | dict, idx: int) -> ExecutionResult:
+            per_query_thread = (
+                f"{thread_id}_batch_{idx}" if thread_id else f"batch_{_uuid4().hex[:12]}"
+            )
             async with sem:
                 return await self.ainvoke(
                     q,
-                    thread_id=thread_id,
+                    thread_id=per_query_thread,
                     user_id=user_id,
                     lt_namespace=lt_namespace,
                     context=context,
                 )
 
-        return list(await asyncio.gather(*[_run_one(q) for q in queries]))
+        return list(await asyncio.gather(*[_run_one(q, i) for i, q in enumerate(queries)]))
 
     async def astream_events(
         self,
@@ -1632,6 +1710,109 @@ class UnifiedAgent:
             if event is None:
                 break
             yield event
+
+        if task.done() and not task.cancelled():
+            exc = task.exception()
+            if exc is not None:
+                raise exc
+
+    async def astream_agp_events(
+        self,
+        query: str | dict,
+        *,
+        thread_id: str | None = None,
+        user_id: str | None = None,
+        lt_namespace: tuple | None = None,
+        context: dict | None = None,
+        session_id: str | None = None,
+    ) -> AsyncGenerator[Any, None]:
+        """Stream typed AGP :class:`~agloom.protocol.Envelope` events.
+
+        This is the **unified** streaming path — the same event objects that
+        ``agloom.runtime`` writes to the AGP wire are now delivered directly to
+        in-process consumers (CLI, TUI, tests) without going through JSON
+        serialisation.  Every ``AgentEvent`` emitted by the execution engine is
+        translated via :func:`agloom.runtime.translator.translate` before being
+        yielded, so callers receive fully-typed Pydantic instances (``TokenDelta``,
+        ``WorkerSpawned``, ``MetricTokens``, …) rather than loose ``{type, data}``
+        dicts.
+
+        The stream always starts with ``session.opened`` and ends with
+        ``session.closed`` so consumers can treat it as a self-contained AGP
+        session without needing a separate ``SessionEmitter``.
+
+        Example::
+
+            async for evt in agent.astream_agp_events("Read pyproject.toml"):
+                if evt.type == "token.delta":
+                    print(evt.data.text, end="", flush=True)
+                elif evt.type == "worker.spawned":
+                    print(f"[worker] {evt.data.worker_id}: {evt.data.task}")
+                elif evt.type == "metric.tokens":
+                    print(f"tokens: {evt.data.input_tokens}↑ {evt.data.output_tokens}↓")
+        """
+        from uuid import uuid4 as _uuid4
+
+        from .protocol import SessionEmitter
+        from .runtime.translator import translate
+
+        eff_session = session_id or f"sess_{_uuid4().hex[:16]}"
+        eff_thread = thread_id or f"thread_{_uuid4().hex[:16]}"
+
+        # Collect AGP Envelope objects via on_emit (no JSON written — callback-only mode).
+        agp_queue: asyncio.Queue[Any] = asyncio.Queue()
+
+        def _on_emit(evt: Any) -> None:
+            agp_queue.put_nowait(evt)
+
+        emitter = SessionEmitter._callback_only(
+            session=eff_session,
+            thread=eff_thread,
+            on_emit=_on_emit,
+        )
+        emitter.open()
+
+        async def _translate_stream() -> None:
+            try:
+                async for agent_event in self.astream_events(
+                    query,
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    lt_namespace=lt_namespace,
+                    context=context,
+                ):
+                    translate(agent_event, emitter)
+            except asyncio.CancelledError:
+                emitter.close(reason="user_aborted")
+                raise
+            except Exception as exc:
+                emitter.emit_error(
+                    severity="fatal",
+                    message=str(exc).strip() or repr(exc),
+                    error_class=type(exc).__name__,
+                    stage="invocation",
+                )
+                emitter.close(reason="error")
+                agp_queue.put_nowait(None)  # sentinel — must send even on error
+                return
+            emitter.close(reason="completed")
+            agp_queue.put_nowait(None)  # sentinel
+
+        task = asyncio.create_task(_translate_stream())
+
+        try:
+            while True:
+                item = await agp_queue.get()
+                if item is None:
+                    break
+                yield item
+        finally:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
         if task.done() and not task.cancelled():
             exc = task.exception()
@@ -2133,7 +2314,7 @@ async def create_agent(
         # (create_agent is async — safe). Without this, ``bootstrap_progress_tool()`` etc.
         # raised TypeError (missing ``tracker``).
         _aw_get_pt = cast(
-            Callable[[Any, str, str], Awaitable[Any]],
+            "Callable[[Any, str, str], Awaitable[Any]]",
             get_progress_tracker,
         )
         _harness_progress_tracker = await _aw_get_pt(

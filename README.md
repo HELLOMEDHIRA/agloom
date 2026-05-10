@@ -6,10 +6,10 @@
 
 # agloom
 
-### The intelligent fabric for AI agents.
+**Build agents that route themselves.**  
+One familiar API — classification, memory, streaming, guardrails, and learning included.
 
-Nine execution patterns. Auto-classified. Self-learning. One API.<br>
-Drop-in replacement for LangChain's `create_agent` — with superpowers.
+Nine execution patterns. Auto-selected per task. Skills improve over time.
 
 <br>
 
@@ -18,199 +18,27 @@ Drop-in replacement for LangChain's `create_agent` — with superpowers.
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Docs](https://readthedocs.org/projects/agloom/badge/?version=latest)](https://agloom.readthedocs.io)
 
-[Documentation](https://agloom.readthedocs.io) · [PyPI](https://pypi.org/project/agloom/) · [Examples](https://github.com/HELLOMEDHIRA/agloom/tree/main/examples) · [Issues](https://github.com/HELLOMEDHIRA/agloom/issues)
+**[Documentation](https://agloom.readthedocs.io)** · **[Quick Start](https://agloom.readthedocs.io/_packages/agloom/getting-started/quickstart/)** · [PyPI](https://pypi.org/project/agloom/) · [Examples](https://github.com/HELLOMEDHIRA/agloom/tree/main/agloom/examples) · [Issues](https://github.com/HELLOMEDHIRA/agloom/issues)
 
 </div>
 
 <br>
 
-## You write this:
+## Start here
 
-`create_agent` is **async** (like the rest of the stack). Use `await`, or `create_agent_sync` if you are not in an async context.
+**agloom** is a Python framework for production-minded agents on **LangChain / LangGraph**. You describe the model and tools; agloom picks how to run the task (single-shot, ReAct, supervisor-style delegation, pipelines, and more), tracks steps and tokens, and can learn reusable **skills** from what worked.
 
-```python
-from agloom import create_agent
-
-async def main():
-    agent = await create_agent(model=llm, tools=[search, calculate], name="analyst")
-    result = await agent.ainvoke("Analyze Q3 sales across 3 regions and recommend strategy")
-```
-
-## agloom does this:
-
-```
-1. Classifies query         → SUPERVISOR (multi-faceted, parallelizable)
-2. Decomposes into 3 tasks  → [Region A, Region B, Region C]
-3. Spawns parallel workers   → 3 LLM calls running concurrently
-4. Synthesizes results       → Unified strategy recommendation
-5. Learns the pattern        → Saved as reusable skill for next time
-6. Auto-evaluates quality    → Scored, tracked, trend-detected
-```
-
-**A short async function — two core calls (`create_agent`, `ainvoke`).** Everything else — classification, routing, parallelism, synthesis, learning, evaluation — is handled automatically.
-
-<br>
-
----
-
-<br>
-
-## Why Teams Choose agloom
-
-<table>
-<tr>
-<td width="50%">
-
-### Without agloom
-
-```python
-# Decide pattern manually per query type
-# Build custom routing logic
-# Wire up memory yourself
-# Implement retry/timeout logic
-# Build feedback pipeline
-# Add streaming support
-# Handle concurrent workers
-# Track token costs
-# Set up circuit breakers
-# ...weeks of infrastructure work
-```
-
-</td>
-<td width="50%">
-
-### With agloom
-
-```python
-from agloom import create_agent
-
-async def main():
-    agent = await create_agent(
-        model=llm,
-        tools=[search, calculate],
-        name="analyst",
-    )
-    result = await agent.ainvoke("Your query here")
-    # That's it. Everything else is automatic.
-```
-
-</td>
-</tr>
-</table>
-
-<br>
-
-## The Real Cost of Multi-Agent Systems
-
-Building a single agent is manageable. Building a **multi-agent system** — where agents coordinate, delegate, run in parallel, share state, handle failures independently, and synthesize results — is where projects stall for weeks.
-
-Here's what a production multi-agent pipeline actually requires:
-
-```python
-# ❌ What you'd build yourself for a multi-agent research pipeline
-
-# 1. Define a supervisor agent that decomposes queries
-supervisor_prompt = """You are a research supervisor. Break the query
-into subtasks and assign each to a specialist worker..."""
-supervisor_chain = prompt | llm | JsonOutputParser()
-
-# 2. Define individual worker agents (each with their own tools, prompts, memory)
-researcher = create_react_agent(llm, [search_tool], researcher_prompt)
-analyst = create_react_agent(llm, [calc_tool], analyst_prompt)
-writer = create_react_agent(llm, [format_tool], writer_prompt)
-
-# 3. Build a state graph for orchestration
-class SupervisorState(TypedDict):
-    messages: list
-    subtasks: list
-    worker_results: dict
-    final_output: str
-
-graph = StateGraph(SupervisorState)
-graph.add_node("supervisor", supervisor_node)
-graph.add_node("researcher", researcher_node)
-graph.add_node("analyst", analyst_node)
-graph.add_node("writer", writer_node)
-graph.add_node("synthesizer", synthesizer_node)
-
-# 4. Define routing logic
-graph.add_conditional_edges("supervisor", route_to_workers)
-graph.add_edge("researcher", "synthesizer")
-graph.add_edge("analyst", "synthesizer")
-graph.add_edge("writer", "synthesizer")
-
-# 5. Handle parallel execution
-async def run_workers(state):
-    tasks = [run_worker(w, state) for w in state["subtasks"]]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    # Handle partial failures...
-    # Retry failed workers...
-    # Respect rate limits...
-    # Track token usage per worker...
-
-# 6. Add error handling, timeouts, retries per worker
-# 7. Wire up memory sharing between workers
-# 8. Add streaming from each worker
-# 9. Build synthesis logic to merge parallel results
-# 10. Track which pattern works best for which query type
-# ...easily 300+ lines before it's production-ready
-```
-
-Now here's the same thing with agloom:
-
-```python
-# ✅ With agloom — same result, zero orchestration code
-
-async def main():
-    agent = await create_agent(
-        model=llm,
-        tools=[search_tool, calc_tool, format_tool],
-        name="research-team",
-    )
-    result = await agent.ainvoke(
-        "Research renewable energy trends, analyze the economics, and write a summary"
-    )
-    # agloom auto-selects SUPERVISOR, spawns parallel workers,
-    # synthesizes results, tracks tokens, and learns the pattern.
-```
-
-**300+ lines of orchestration code → a tiny async setup.** The supervisor logic, worker management, parallel execution, failure handling, result synthesis, and pattern learning are all handled internally. You focus on what your agent should *do*. agloom figures out *how*.
-
-<br>
-
-## What You Get Out of the Box
-
-| Capability | What it means for you |
-|:-----------|:---------------------|
-| **9 Execution Patterns** | DIRECT, REACT, SUPERVISOR, PIPELINE, PLANNER_EXECUTOR, REFLECTION, SWARM, BLACKBOARD, HYBRID_DAG — auto-selected per query |
-| **Zero-Config Classification** | Your agent picks the right strategy for every query. No if-else routing. No manual pattern selection |
-| **Skill Learning** | Agents remember what worked. Next time a similar query arrives, they already know the approach |
-| **Auto-Evaluation** | Every response is scored. Quality degrades? agloom detects the trend and adjusts |
-| **Memory** | Session memory (always on) + long-term memory + passive injection. Pass `thread_id` for sessions, `store=` for persistence |
-| **Streaming** | Real-time token streaming + structured events in a single API. Build ChatGPT-style "thinking" UIs with tool call tracking |
-| **Step Tracing** | Full audit trail: classify → tool call → worker → synthesis. Every step timed and logged |
-| **Token Tracking** | Know exactly how many tokens each query costs. Across all LLM calls, aggregated |
-| **Human-in-the-Loop** | 4 levels of control: pause before patterns, tools, workers, or send runtime signals |
-| **Task Delegation** | 4 patterns: `as_tool()`, transparent hand-off, hierarchical `delegates=[]`, background `adelegate_background()`. Agents delegate to agents |
-| **Frozen Agents** | Batch mode: classify once, execute thousands. Save ~300ms per call |
-| **Production Guards** | Circuit breaker, rate limiter, configurable timeouts, retries, concurrency limits — built in |
-| **LangSmith** | Auto-detected. Set the env var, see every trace. No code changes |
-| **MCP Support** | Connect to Model Context Protocol servers for external tool discovery |
-
-<br>
-
-## Get Started in 60 Seconds
+If you already use LangChain’s agent APIs, think of **`create_agent`** as your main entrypoint — with orchestration, memory, streaming, and safety knobs in one place.
 
 ### Install
 
 ```bash
-pip install agloom          # or: uv add agloom
-pip install agloom[groq]    # with Groq provider
-pip install 'agloom[groq,nvidia]'   # Groq + NVIDIA provider packages together
-# If pip resolves NumPy 2.x and you see wheel/import issues: pip install "numpy>=1.26.4,<2" agloom
+pip install agloom
+# optional extras, e.g. Groq:
+pip install agloom[groq]
 ```
 
-### Run
+### Your first agent
 
 ```python
 import asyncio
@@ -219,187 +47,67 @@ from agloom import create_agent
 
 async def main():
     llm = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct")
-    agent = await create_agent(model=llm, name="my-first-agent")
-
+    agent = await create_agent(model=llm, name="my-agent")
     result = await agent.ainvoke("What causes auroras?")
     print(result.output)
-    print(f"Pattern: {result.pattern_used.value}")   # → DIRECT
-    print(f"Steps:   {len(result.steps)}")            # → 2
-    print(f"Tokens:  {result.token_usage}")           # → {input: 48, output: 256}
 
 asyncio.run(main())
 ```
 
-**That's 7 lines to a production-grade agent with auto-classification, step tracing, and token tracking.**
+`create_agent` is **async** (use `await`). From synchronous code, use **`create_agent_sync`**.
 
-### CLI — Interactive Shell
-
-```bash
-pip install agloom              # CLI is included (typer, rich, …)
-agloom                          # Start interactive shell
-agloom -m llama-3.3-70b-versatile "What is 2+2?"  # Single prompt mode
-agloom -c config.yaml         # Load from config file
-```
-
-```bash
-# Shell mode example
-$ agloom
-agloom shell — type 'exit' to quit
-Model: auto
-Tools: 46
-Memory: enabled
-Skills: enabled (max: 30)
-
-> What causes auroras?
-[1/1] Calling get_system_info...
-[1/1] Calling web_search...
-Auroras are caused by charged particles from the sun...
-> exit
-```
-
-```bash
-# Single prompt example
-$ agloom -m llama-3.3-70b-versatile "Explain quantum computing in 2 sentences"
-Quantum computing uses quantum mechanical phenomena...
-```
-
-```yaml
-# config.yaml example
-model: auto
-name: my-agent
-enable_memory: true
-max_skills: 30
-mcp_servers: slack,github
-```
-
-### Conversation Memory
-
-Session memory is always active. Pass `thread_id` to maintain context across calls:
-
-```python
-# Same thread_id = agent remembers previous turns
-result = await agent.ainvoke("My name is Alice", thread_id="session-1")
-result = await agent.ainvoke("What's my name?", thread_id="session-1")
-# → "Your name is Alice"
-```
+**Next steps:** [Why agloom?](https://agloom.readthedocs.io/_packages/agloom/getting-started/why-agloom/) · [Patterns explained](https://agloom.readthedocs.io/_packages/agloom/concepts/patterns/) · [All parameters](https://agloom.readthedocs.io/_packages/agloom/configuration/parameters/)
 
 <br>
 
-## Streaming — Because No One Likes Loading Spinners
+## What you get (in plain language)
 
-```python
-# Token streaming — users see the response being typed
-async for token in agent.astream("Explain quantum computing"):
-    print(token, end="", flush=True)
-```
+| You want to… | agloom helps by… |
+|:-------------|:-----------------|
+| Ship faster | Picking a strategy per query instead of hand-writing routers and graphs |
+| Keep context | Session memory by default; optional long-term memory and skills |
+| Show progress | Token streaming plus structured events for “thinking” / tool UIs |
+| Stay safe | Human-in-the-loop levels, timeouts, retries, rate limits — configurable |
+| Improve over time | Skill library and feedback hooks so behavior compounds |
 
-```python
-# Event streaming — build ChatGPT-style "thinking" UIs
-async for event in agent.astream_events("Research renewable energy"):
-    if event.type == "thinking":
-        show_spinner(f"Analyzing query...")
-    elif event.type == "token":
-        print(event.data["content"], end="", flush=True)  # real-time tokens
-    elif event.type == "tool_call":
-        show_step(f"Calling {event.data['name']} [{event.data.get('id', '')}]...")
-    elif event.type == "tool_result":
-        show_step(f"Result [{event.data.get('id', '')}]: {event.data['output']}")
-    elif event.type == "worker_end":
-        show_step(f"Worker finished: {event.data['name']}")
-    elif event.type == "done":
-        show_result(event.data["result"]["output"])
-```
+For the full feature tour, see **[What you get](https://agloom.readthedocs.io/_packages/agloom/getting-started/why-agloom/)** in the docs — the README stays short on purpose.
 
 <br>
 
-## Battle-Tested Reliability
+## agloom CLI & web workspace
 
-```python
-# Inside async code — create_agent is async
-agent = await create_agent(
-    model=llm,
-    tools=[...],
-    name="production-agent",
+- **Terminal:** the **agloom CLI** (npm `agloom-cli`, repo **`agloom_cli/`**) is the terminal client — UI built with **Ink** and **React**. From that folder: `npm install` → `npm run build` → `npm start`. It talks to **`agloom-runtime`** over AGP (stdio by default). [CLI quick start](agloom_cli/docs/index.md)
+- **Browser:** **`agloom_web/`** is the Vite workspace for sessions and observability — same idea, run commands inside that folder.
 
-    # Concurrency
-    max_concurrent=8,           # 8 parallel workers
-    rate_limit=10.0,            # max 10 LLM calls/sec
-
-    # Resilience
-    max_retries=3,              # retry failed workers
-    llm_timeout=60.0,           # 60s timeout per LLM call
-    # + built-in circuit breaker (automatic)
-
-    # Memory (session memory is auto-created; store enables long-term features)
-    store=InMemoryStore(),      # long-term memory + skills + feedback
-
-    # Quality
-    feedback_handler=LTSFeedbackHandler(),  # auto-eval + user feedback
-)
-```
-
-Every parameter has a sensible default. Start with `await create_agent(model=llm)` (or `create_agent_sync(model=llm)` from synchronous code) and add what you need.
+PyPI’s **`agloom`** package includes the library and **`agloom-runtime`**. The **`agloom`** command prints a short pointer to the **agloom CLI** (repo folder `agloom_cli/`) for backwards compatibility.
 
 <br>
 
-## Who Is This For?
+## Learn more (documentation hub)
 
-| Role | Why you'll care |
-|:-----|:---------------|
-| **Developers** | Stop writing agent infrastructure. `create_agent` gives you 9 patterns, memory, streaming, and production guards in one function call |
-| **Tech Leads** | Standardize your team's agent architecture. One API, consistent behavior, built-in observability |
-| **Product Managers** | Ship agent features faster. What took weeks of custom plumbing now takes one parameter |
-| **AI Engineers** | Focus on prompts and tools, not routing logic. agloom handles the orchestration |
-
-<br>
-
-## Documentation
-
-Everything you need at **[agloom.readthedocs.io](https://agloom.readthedocs.io)**:
-
-| Guide | What you'll learn |
-|:------|:-----------------|
-| [Why agloom?](https://agloom.readthedocs.io/getting-started/why-agloom/) | The 6 problems every agent builder faces and how we solve them |
-| [Quick Start](https://agloom.readthedocs.io/getting-started/quickstart/) | First agent in 5 lines of code |
-| [Execution Patterns](https://agloom.readthedocs.io/concepts/patterns/) | All 9 patterns with diagrams and examples |
-| [All Parameters](https://agloom.readthedocs.io/configuration/parameters/) | Every `create_agent` parameter explained |
-| [Streaming & Events](https://agloom.readthedocs.io/features/streaming/) | Build responsive UIs with streaming APIs |
-| [Middleware](https://agloom.readthedocs.io/features/middleware/) | Transform queries and results with hooks |
-| [MCP Servers](https://agloom.readthedocs.io/features/mcp/) | Connect to external tool servers |
-| [Task Delegation](https://agloom.readthedocs.io/features/delegation/) | 4 patterns for agent-to-agent delegation |
-| [Production Guide](https://agloom.readthedocs.io/guides/production/) | FastAPI, Docker, testing, multi-tenancy, structured output |
-| [Errors & Warnings](https://agloom.readthedocs.io/configuration/errors/) | Every error message, what causes it, how to fix it |
-| [LangSmith Integration](https://agloom.readthedocs.io/features/observability/) | Zero-config tracing and observability |
+| Guide | What it’s for |
+|:------|:---------------|
+| [Quick Start](https://agloom.readthedocs.io/_packages/agloom/getting-started/quickstart/) | Smallest path to a running agent |
+| [Execution patterns](https://agloom.readthedocs.io/_packages/agloom/concepts/patterns/) | How routing works (conceptual + diagrams) |
+| [Streaming & events](https://agloom.readthedocs.io/_packages/agloom/features/streaming/) | Responsive UI patterns |
+| [Production](https://agloom.readthedocs.io/_packages/agloom/guides/production/) | Deploying, testing, operating |
+| [Errors & fixes](https://agloom.readthedocs.io/_packages/agloom/configuration/errors/) | When something goes wrong |
 
 <br>
 
 ## Requirements
 
-- **Python** 3.12.x only (matches current `agsuperbrain` + NumPy 1.x for Super-Brain and `qdrant-client`)
-- **LLM API key** — Groq, OpenAI, NVIDIA, HuggingFace, or any LangChain-compatible provider
+- **Python** 3.12.x (see `pyproject.toml` on GitHub for the exact pin)
+- **Node.js** ≥ 24.15.0 — only if you hack on **`agloom_cli/`** or **`agloom_web/`**
+- An **LLM API key** (Groq, OpenAI, NVIDIA, Hugging Face, or another LangChain-compatible provider)
 
 <br>
 
-## Testing
+## Contributing & license
 
-```bash
-uv sync --all-extras --group dev
-uv run pytest tests
-```
+Contributions welcome — see **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
-The suite covers core models, agent configuration, memory helpers, and CLI config/tool loading without requiring API keys.
-
-<br>
-
-## Contributing
-
-We welcome contributions. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and guidelines.
-
-<br>
-
-## License
-
-[Apache 2.0](LICENSE) — use it freely in personal and commercial projects.
+Licensed under **[Apache 2.0](LICENSE)**.
 
 <br>
 
@@ -407,7 +115,7 @@ We welcome contributions. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and g
 
 <img src="https://raw.githubusercontent.com/HELLOMEDHIRA/medhira/main/assets/medhira-logo.png" width="80" alt="agloom">
 
-Built with care by **[MEDHIRA](https://github.com/HELLOMEDHIRA)**
+**agloom** is built by **[MEDHIRA](https://github.com/HELLOMEDHIRA)**
 
 [hello.medhira@gmail.com](mailto:hello.medhira@gmail.com) · [GitHub](https://github.com/HELLOMEDHIRA) · [PyPI](https://pypi.org/user/HELLOMEDHIRA/)
 

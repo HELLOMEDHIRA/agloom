@@ -10,7 +10,6 @@ from langchain_core.messages import HumanMessage
 
 from .. import worker as worker_module
 from ..llm_streaming import astream_llm_to_event_queue
-from ..worker import extend_invoke_config_with_event_queue
 from ..logging_utils import get_logger
 from ..models import (
     ExecutionResult,
@@ -23,13 +22,14 @@ from ..models import (
     _make_step,
     _merge_token_usage,
 )
+from ..worker import extend_invoke_config_with_event_queue
 from ._blackboard_state import BlackboardState
 from ._resolve import resolve_worker_configs
 from .worker_gates import drain_for_halt, get_signal_queue
 
 logger = get_logger(__name__)
 
-MAX_ROUNDS = 10  # safety ceiling — prevents infinite loops on unsatisfiable deps
+MAX_ROUNDS = 10  # default safety ceiling — prevents infinite loops on unsatisfiable deps
 
 BLACKBOARD_SYNTHESIS_PROMPT = """\
 You are a synthesis expert. Multiple specialist agents have contributed to
@@ -52,13 +52,18 @@ async def handle_blackboard(
     query: str,
     analysis: QueryAnalysis,
     config: dict | None = None,
+    max_rounds: int | None = None,
 ) -> ExecutionResult:
     """
     Resolve KS configs, initialise board with empty slots, then loop:
     pick eligible KS → inject board snapshot → run → write slot.
     Failed KS get a failure marker so dependents aren't permanently blocked.
     L4 HALT_ALL checked after each KS. Synthesizes from filled board.
+
+    *max_rounds* overrides the module-level ``MAX_ROUNDS`` constant for this invocation,
+    allowing callers to adjust the ceiling without monkey-patching the global.
     """
+    _max_rounds = max_rounds if max_rounds is not None else MAX_ROUNDS
     agent_name = agent.get("name", "Agent")
     llm = agent["llm"]
     ml = agent.get("max_step_output_length", 0)
@@ -90,7 +95,7 @@ async def handle_blackboard(
     worker_results: list[WorkerResult] = []
     halt_triggered = False
 
-    for round_num in range(MAX_ROUNDS):
+    for round_num in range(_max_rounds):
         board.round = round_num
 
         eligible = [
@@ -176,7 +181,7 @@ async def handle_blackboard(
 
     else:
         logger.warning(
-            f"[Blackboard] MAX_ROUNDS ({MAX_ROUNDS}) reached — "
+            f"[Blackboard] MAX_ROUNDS ({_max_rounds}) reached — "
             f"board not complete. "
             f"Filled: {list(board.filled)}, "
             f"Unfilled: {board.unfilled_slots()}"
@@ -207,7 +212,7 @@ async def handle_blackboard(
             messages=raw_messages,
         )
 
-    synthesis_prompt = BLACKBOARD_SYNTHESIS_PROMPT.format(board_snapshot=board.snapshot())
+    synthesis_prompt = BLACKBOARD_SYNTHESIS_PROMPT.replace("{board_snapshot}", board.snapshot())
     synth_input = [HumanMessage(content=synthesis_prompt)]
     try:
         _timeout = agent.get("llm_timeout", 120.0) if isinstance(agent, dict) else 120.0

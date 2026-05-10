@@ -1,0 +1,2603 @@
+{
+  "$defs": {
+    "ErrorData": {
+      "additionalProperties": true,
+      "description": "A runtime error surfaced to the frontend. ``fatal`` kills the session; ``transient`` does\nnot (e.g. a tool retry, a rate-limit backoff).",
+      "properties": {
+        "severity": {
+          "enum": [
+            "transient",
+            "fatal"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "error_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Class"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stage"
+        },
+        "retryable": {
+          "default": false,
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "severity",
+        "message"
+      ],
+      "title": "ErrorData",
+      "type": "object"
+    },
+    "ErrorFatal": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "error.fatal",
+          "default": "error.fatal",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/ErrorData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "ErrorFatal",
+      "type": "object"
+    },
+    "ErrorTransient": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "error.transient",
+          "default": "error.transient",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/ErrorData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "ErrorTransient",
+      "type": "object"
+    },
+    "HITLAllowlisted": {
+      "additionalProperties": false,
+      "description": "User accepted *and* asked to skip future prompts for this scope (tool / pattern / worker).",
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "hitl.allowlisted",
+          "default": "hitl.allowlisted",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/HITLDecisionData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "HITLAllowlisted",
+      "type": "object"
+    },
+    "HITLDecisionData": {
+      "additionalProperties": true,
+      "description": "Outcome event emitted by the runtime *after* it received and applied the response.\n\nFor ``clarification`` kind, the user's free-text answer rides in ``text``. For all other\nkinds, ``decision`` is the discrete choice. Either way, ``request_id`` correlates to the\noriginal :class:`HITLRequest`.",
+      "properties": {
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "accept",
+            "reject",
+            "allowlist",
+            "retry",
+            "stop",
+            "timeout",
+            "cancelled"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "actor": {
+          "default": "user",
+          "enum": [
+            "user",
+            "auto",
+            "timeout"
+          ],
+          "title": "Actor",
+          "type": "string"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        }
+      },
+      "required": [
+        "request_id",
+        "decision"
+      ],
+      "title": "HITLDecisionData",
+      "type": "object"
+    },
+    "HITLDenied": {
+      "additionalProperties": false,
+      "description": "User rejected; the runtime aborts the action.",
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "hitl.denied",
+          "default": "hitl.denied",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/HITLDecisionData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "HITLDenied",
+      "type": "object"
+    },
+    "HITLGranted": {
+      "additionalProperties": false,
+      "description": "User accepted the gate; the runtime proceeds with the underlying action.",
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "hitl.granted",
+          "default": "hitl.granted",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/HITLDecisionData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "HITLGranted",
+      "type": "object"
+    },
+    "HITLRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "hitl.request",
+          "default": "hitl.request",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/HITLRequestData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "HITLRequest",
+      "type": "object"
+    },
+    "HITLRequestData": {
+      "additionalProperties": true,
+      "description": "Runtime asks the user to gate something. The frontend MUST reply with\n``command.hitl.respond`` carrying the same ``request_id``; the runtime blocks the agent\nuntil the response arrives (or the optional ``timeout_ms`` elapses).",
+      "properties": {
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "tool_approval",
+            "pattern_approval",
+            "worker_approval",
+            "react_recovery",
+            "clarification"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "options": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Options",
+          "type": "array"
+        },
+        "default": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default"
+        },
+        "timeout_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout Ms"
+        },
+        "agent_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Name"
+        },
+        "tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool"
+        },
+        "tool_call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Call Id"
+        },
+        "args": {
+          "additionalProperties": true,
+          "title": "Args",
+          "type": "object"
+        },
+        "worker": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Worker"
+        },
+        "pattern": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pattern"
+        },
+        "question": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Question"
+        }
+      },
+      "required": [
+        "request_id",
+        "kind"
+      ],
+      "title": "HITLRequestData",
+      "type": "object"
+    },
+    "MessageAssistant": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "message.assistant",
+          "default": "message.assistant",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/MessageAssistantData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "MessageAssistant",
+      "type": "object"
+    },
+    "MessageAssistantData": {
+      "additionalProperties": true,
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "message_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message Id"
+        },
+        "pattern": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pattern"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "title": "MessageAssistantData",
+      "type": "object"
+    },
+    "MessageUser": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "message.user",
+          "default": "message.user",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/MessageUserData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "MessageUser",
+      "type": "object"
+    },
+    "MessageUserData": {
+      "additionalProperties": true,
+      "description": "Inbound user prompt \u2014 emitted once per ``command.invoke`` so the wire records the turn.",
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "message_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message Id"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "title": "MessageUserData",
+      "type": "object"
+    },
+    "MetricCost": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "metric.cost",
+          "default": "metric.cost",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/MetricCostData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "MetricCost",
+      "type": "object"
+    },
+    "MetricCostData": {
+      "additionalProperties": true,
+      "description": "Cost **delta** for one billable unit (LLM call, tool call, \u2026). Currency defaults to USD.",
+      "properties": {
+        "cost": {
+          "title": "Cost",
+          "type": "number"
+        },
+        "currency": {
+          "default": "USD",
+          "title": "Currency",
+          "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Phase"
+        },
+        "worker_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Worker Id"
+        }
+      },
+      "required": [
+        "cost"
+      ],
+      "title": "MetricCostData",
+      "type": "object"
+    },
+    "MetricTokens": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "metric.tokens",
+          "default": "metric.tokens",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/MetricTokensData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "MetricTokens",
+      "type": "object"
+    },
+    "MetricTokensData": {
+      "additionalProperties": true,
+      "description": "Token usage **delta** for one LLM call. Frontends sum across the session for the sidebar\nrollup. ``phase`` distinguishes classifier / react / reflection / synthesizer billing.",
+      "properties": {
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "input_tokens": {
+          "default": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "default": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "total_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total Tokens"
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Phase"
+        },
+        "worker_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Worker Id"
+        }
+      },
+      "title": "MetricTokensData",
+      "type": "object"
+    },
+    "PatternClassified": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "pattern.classified",
+          "default": "pattern.classified",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/PatternClassifiedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "PatternClassified",
+      "type": "object"
+    },
+    "PatternClassifiedData": {
+      "additionalProperties": true,
+      "properties": {
+        "pattern": {
+          "title": "Pattern",
+          "type": "string"
+        },
+        "complexity": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Complexity"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "pattern"
+      ],
+      "title": "PatternClassifiedData",
+      "type": "object"
+    },
+    "SessionClosed": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "session.closed",
+          "default": "session.closed",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/SessionClosedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "SessionClosed",
+      "type": "object"
+    },
+    "SessionClosedData": {
+      "additionalProperties": true,
+      "properties": {
+        "reason": {
+          "enum": [
+            "completed",
+            "user_aborted",
+            "error",
+            "shutdown"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "title": "SessionClosedData",
+      "type": "object"
+    },
+    "SessionOpened": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "session.opened",
+          "default": "session.opened",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/SessionOpenedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "SessionOpened",
+      "type": "object"
+    },
+    "SessionOpenedData": {
+      "additionalProperties": true,
+      "properties": {
+        "runtime_version": {
+          "title": "Runtime Version",
+          "type": "string"
+        },
+        "protocol_version": {
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Capabilities",
+          "type": "array"
+        }
+      },
+      "required": [
+        "runtime_version",
+        "protocol_version"
+      ],
+      "title": "SessionOpenedData",
+      "type": "object"
+    },
+    "ThinkingStep": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "thinking.step",
+          "default": "thinking.step",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/ThinkingStepData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "ThinkingStep",
+      "type": "object"
+    },
+    "ThinkingStepData": {
+      "additionalProperties": true,
+      "properties": {
+        "step": {
+          "title": "Step",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "elapsed_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Elapsed Ms"
+        }
+      },
+      "required": [
+        "step"
+      ],
+      "title": "ThinkingStepData",
+      "type": "object"
+    },
+    "TokenDelta": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "token.delta",
+          "default": "token.delta",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/TokenDeltaData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "TokenDelta",
+      "type": "object"
+    },
+    "TokenDeltaData": {
+      "additionalProperties": true,
+      "properties": {
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "role": {
+          "default": "assistant",
+          "enum": [
+            "assistant",
+            "tool"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "message_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message Id"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "title": "TokenDeltaData",
+      "type": "object"
+    },
+    "ToolCallError": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "tool.call.error",
+          "default": "tool.call.error",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/ToolCallErrorData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "ToolCallError",
+      "type": "object"
+    },
+    "ToolCallErrorData": {
+      "additionalProperties": true,
+      "properties": {
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "title": "Tool Call Id",
+          "type": "string"
+        },
+        "error": {
+          "title": "Error",
+          "type": "string"
+        },
+        "error_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Class"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        }
+      },
+      "required": [
+        "tool",
+        "tool_call_id",
+        "error"
+      ],
+      "title": "ToolCallErrorData",
+      "type": "object"
+    },
+    "ToolCallResult": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "tool.call.result",
+          "default": "tool.call.result",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/ToolCallResultData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "ToolCallResult",
+      "type": "object"
+    },
+    "ToolCallResultData": {
+      "additionalProperties": true,
+      "description": "Tool finished successfully. ``output_preview`` is truncated; full content lives in\n:class:`ToolCallStart` via correlation by ``tool_call_id``.",
+      "properties": {
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "title": "Tool Call Id",
+          "type": "string"
+        },
+        "output_preview": {
+          "default": "",
+          "title": "Output Preview",
+          "type": "string"
+        },
+        "output_bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Bytes"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "tool",
+        "tool_call_id"
+      ],
+      "title": "ToolCallResultData",
+      "type": "object"
+    },
+    "ToolCallStart": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "tool.call.start",
+          "default": "tool.call.start",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/ToolCallStartData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "ToolCallStart",
+      "type": "object"
+    },
+    "ToolCallStartData": {
+      "additionalProperties": true,
+      "description": "Agent decided to invoke a tool \u2014 pre-execution. Emitted whether or not HITL gates it.",
+      "properties": {
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "title": "Tool Call Id",
+          "type": "string"
+        },
+        "args": {
+          "additionalProperties": true,
+          "title": "Args",
+          "type": "object"
+        },
+        "worker": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Worker"
+        }
+      },
+      "required": [
+        "tool",
+        "tool_call_id"
+      ],
+      "title": "ToolCallStartData",
+      "type": "object"
+    },
+    "WorkerCompleted": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "worker.completed",
+          "default": "worker.completed",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/WorkerCompletedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "WorkerCompleted",
+      "type": "object"
+    },
+    "WorkerCompletedData": {
+      "additionalProperties": true,
+      "properties": {
+        "worker_id": {
+          "title": "Worker Id",
+          "type": "string"
+        },
+        "output_preview": {
+          "default": "",
+          "title": "Output Preview",
+          "type": "string"
+        },
+        "output_bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Bytes"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "worker_id"
+      ],
+      "title": "WorkerCompletedData",
+      "type": "object"
+    },
+    "WorkerFailed": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "worker.failed",
+          "default": "worker.failed",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/WorkerFailedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "WorkerFailed",
+      "type": "object"
+    },
+    "WorkerFailedData": {
+      "additionalProperties": true,
+      "properties": {
+        "worker_id": {
+          "title": "Worker Id",
+          "type": "string"
+        },
+        "error": {
+          "title": "Error",
+          "type": "string"
+        },
+        "error_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Class"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        }
+      },
+      "required": [
+        "worker_id",
+        "error"
+      ],
+      "title": "WorkerFailedData",
+      "type": "object"
+    },
+    "WorkerSpawned": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "worker.spawned",
+          "default": "worker.spawned",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/WorkerSpawnedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "WorkerSpawned",
+      "type": "object"
+    },
+    "WorkerSpawnedData": {
+      "additionalProperties": true,
+      "description": "A worker has been created \u2014 used by SUPERVISOR / SWARM / BLACKBOARD / HYBRID_DAG patterns\nto render an agent tree. ``parent_worker_id`` is set for nested supervision; root workers\nleave it ``None``.",
+      "properties": {
+        "worker_id": {
+          "title": "Worker Id",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "pattern": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pattern"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Task"
+        },
+        "parent_worker_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Worker Id"
+        }
+      },
+      "required": [
+        "worker_id"
+      ],
+      "title": "WorkerSpawnedData",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "error.fatal": "#/$defs/ErrorFatal",
+      "error.transient": "#/$defs/ErrorTransient",
+      "hitl.allowlisted": "#/$defs/HITLAllowlisted",
+      "hitl.denied": "#/$defs/HITLDenied",
+      "hitl.granted": "#/$defs/HITLGranted",
+      "hitl.request": "#/$defs/HITLRequest",
+      "message.assistant": "#/$defs/MessageAssistant",
+      "message.user": "#/$defs/MessageUser",
+      "metric.cost": "#/$defs/MetricCost",
+      "metric.tokens": "#/$defs/MetricTokens",
+      "pattern.classified": "#/$defs/PatternClassified",
+      "session.closed": "#/$defs/SessionClosed",
+      "session.opened": "#/$defs/SessionOpened",
+      "thinking.step": "#/$defs/ThinkingStep",
+      "token.delta": "#/$defs/TokenDelta",
+      "tool.call.error": "#/$defs/ToolCallError",
+      "tool.call.result": "#/$defs/ToolCallResult",
+      "tool.call.start": "#/$defs/ToolCallStart",
+      "worker.completed": "#/$defs/WorkerCompleted",
+      "worker.failed": "#/$defs/WorkerFailed",
+      "worker.spawned": "#/$defs/WorkerSpawned"
+    },
+    "propertyName": "type"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/SessionOpened"
+    },
+    {
+      "$ref": "#/$defs/PatternClassified"
+    },
+    {
+      "$ref": "#/$defs/ThinkingStep"
+    },
+    {
+      "$ref": "#/$defs/TokenDelta"
+    },
+    {
+      "$ref": "#/$defs/MessageUser"
+    },
+    {
+      "$ref": "#/$defs/MessageAssistant"
+    },
+    {
+      "$ref": "#/$defs/ToolCallStart"
+    },
+    {
+      "$ref": "#/$defs/ToolCallResult"
+    },
+    {
+      "$ref": "#/$defs/ToolCallError"
+    },
+    {
+      "$ref": "#/$defs/HITLRequest"
+    },
+    {
+      "$ref": "#/$defs/HITLGranted"
+    },
+    {
+      "$ref": "#/$defs/HITLDenied"
+    },
+    {
+      "$ref": "#/$defs/HITLAllowlisted"
+    },
+    {
+      "$ref": "#/$defs/WorkerSpawned"
+    },
+    {
+      "$ref": "#/$defs/WorkerCompleted"
+    },
+    {
+      "$ref": "#/$defs/WorkerFailed"
+    },
+    {
+      "$ref": "#/$defs/MetricTokens"
+    },
+    {
+      "$ref": "#/$defs/MetricCost"
+    },
+    {
+      "$ref": "#/$defs/ErrorTransient"
+    },
+    {
+      "$ref": "#/$defs/ErrorFatal"
+    },
+    {
+      "$ref": "#/$defs/SessionClosed"
+    }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AGP Event",
+  "description": "Agloom Protocol (AGP) v1 \u2014 discriminated union over all known event types. Parse with the 'type' field as the discriminator. Unknown 'type' values MUST be forwarded rather than rejected (forward-compat rule)."
+}

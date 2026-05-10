@@ -27,7 +27,7 @@ jobs:
         run: uv sync --all-extras --group dev
 
       - name: Type check
-        run: uv run pyrefly check agloom agloom_cli examples tests
+        run: uv run pyrefly check agloom
 
       - name: Build package
         run: uv build

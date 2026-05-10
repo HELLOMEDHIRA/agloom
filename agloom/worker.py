@@ -17,8 +17,8 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 
-from .logging_utils import get_logger
 from .llm_streaming import astream_llm_to_event_queue
+from .logging_utils import get_logger
 from .models import (
     AgentEvent,
     AgentStep,
@@ -164,7 +164,7 @@ async def _react_graph_astream_to_result(
 
     async for event in lc_agent.astream_events(
         state,
-        config=cast(RunnableConfig, graph_config),
+        config=cast("RunnableConfig", graph_config),
         version="v2",
     ):
         kind = event["event"]
@@ -187,7 +187,7 @@ async def _react_graph_astream_to_result(
                     data={
                         "id": run_id,
                         "name": tool_name,
-                        "input": str(tool_input),
+                        "args": tool_input if isinstance(tool_input, dict) else {"input": str(tool_input)},
                         "worker_id": wid,
                     },
                 )

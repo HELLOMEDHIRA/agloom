@@ -1,7 +1,7 @@
 [project]
 name = "agloom"
 version = "0.1.54"
-description = "Production agent framework on LangChain/LangGraph: 9 auto-routed execution patterns, persistent memory, skill learning, feedback evaluation, 4-level HITL, MCP — plus a project-aware coding CLI."
+description = "Production agent framework on LangChain/LangGraph: nine execution patterns, persistent memory, skills, feedback, multi-level HITL, MCP, AGP protocol, runtime bridge, and observability hooks."
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.12,<3.13"
@@ -19,18 +19,14 @@ dependencies = [
     "langchain>=1.2.17",
     "langchain-mcp-adapters>=0.2.2",
     "langgraph>=1.1.10",
-    "qdrant-client>=1.17.1",
-    "sentence-transformers>=5.4.1",
-    "typer>=0.25.1",
-    "rich>=15.0.0",
     "pyyaml>=6.0.3",
     "tomli>=2.4.1",
-    "pyfiglet>=1.0.4",
     "httpx>=0.28.1",
     "tiktoken>=0.12.0",
-    "langchain-huggingface>=1.2.2",
-    "agsuperbrain>=0.0.1",
     "langgraph-checkpoint-sqlite>=3.0.3",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "sse-starlette>=2.4.0",
 ]
 
 [project.urls]
@@ -40,7 +36,11 @@ Repository = "https://github.com/HELLOMEDHIRA/agloom"
 Issues = "https://github.com/HELLOMEDHIRA/agloom/issues"
 
 [project.scripts]
-agloom = "agloom_cli.cli:run_cli"
+# Compatibility: older installs expected ``agloom`` on PATH; the terminal CLI lives in ``agloom_cli/`` (npm: ``agloom-cli``).
+agloom = "agloom.cli_notice:main"
+# AGP runtime bridge — UI-agnostic NDJSON event stream over stdio/ws.
+# Spec: agloom/docs/protocol/agp.md. Run as ``agloom-runtime serve --transport=stdio``.
+agloom-runtime = "agloom.runtime.__main__:main"
 
 [project.optional-dependencies]
 anthropic = ["langchain-anthropic>=1.4.3"]
@@ -68,6 +68,13 @@ snowflake = ["langchain-snowflake>=0.2.3"]
 together = ["langchain-together>=0.4.0"]
 upstage = ["langchain-upstage>=0.7.7"]
 xai = ["langchain-xai>=1.2.2"]
+ws = ["websockets>=12.0"]
+memory = [
+    "qdrant-client>=1.17.1",
+    "sentence-transformers>=5.4.1",
+    "langchain-huggingface>=1.2.2",
+]
+superbrain = ["agsuperbrain>=0.0.1"]
 docs = [
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.7.6",
@@ -113,15 +120,36 @@ requires = ["hatchling>=1.29.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["agloom", "agloom_cli"]
-exclude = ["examples/", "tests/"]
+packages = ["agloom"]
+exclude = [
+    "agloom/tests/**",
+    "agloom/examples/**",
+]
+
+# Sdist scope: ship the Python package + docs only. The Node packages
+# (agloom_cli/, agloom_web/) are published separately to npm — their node_modules
+# directories alone weigh ~470 MB and have no reason to be in the Python tarball.
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "agloom_cli/**",
+    "agloom_web/**",
+    "site/**",
+    "dist/**",
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/.pytest_cache/**",
+    "**/.ruff_cache/**",
+    ".agloom/**",
+    ".agsuperbrain/**",
+    ".venv/**",
+]
 
 # ── Ruff ──────────────────────────────────────────────────────────────────────
 
 [tool.ruff]
 target-version = "py312"
 line-length = 120
-src = ["agloom", "agloom_cli", "tests"]
+src = ["agloom"]
 
 [tool.ruff.lint]
 select = [
@@ -172,17 +200,13 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S", "T20", "E402", "N817", "B006", "B011", "RUF059"]
-"examples/*.py" = ["S", "T20", "T201"]
-"agloom_cli/tools/*.py" = ["ASYNC230", "ASYNC221", "ASYNC240", "S602"]
-"agloom_cli/persistence.py" = ["ASYNC240"]              # one-time bootstrap mkdir
-"agloom_cli/project.py" = ["S607"]
+"agloom/tests/**/*.py" = ["S", "T20", "E402", "N817", "B006", "B011", "RUF059", "E741", "N814", "ASYNC221"]
+"agloom/examples/**/*.py" = ["S", "T20", "T201"]
 "agloom/unified_agent.py" = ["ASYNC240"]                # one-time skill-mirror Path().resolve()
-"agloom_cli/hitl_textual.py" = ["RUF012"]               # Textual framework convention: class BINDINGS list
-"agloom_cli/repl_tui.py" = ["RUF012"]                   # Textual framework convention: class BINDINGS list
+"agloom/runtime/__main__.py" = ["T201"]                 # ``print`` to stderr is the only diagnostic channel; stdout is AGP only
 
 [tool.ruff.lint.isort]
-known-first-party = ["agloom", "agloom_cli", "tests"]
+known-first-party = ["agloom"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -191,11 +215,11 @@ skip-magic-trailing-comma = false
 
 # ── Pyrefly ───────────────────────────────────────────────────────────────────
 # Aligns CLI/editor typechecking with requires-python and CI (library + CLI only).
-# Run: `uv run pyrefly check` (project mode) or `uv run pyrefly check agloom agloom_cli examples tests`.
+# Run: `uv run pyrefly check` (project mode).
 
 [tool.pyrefly]
 python-version = "3.12"
-project-includes = ["agloom/**/*.py", "agloom_cli/**/*.py", "examples/**/*.py", "tests/**/*.py"]
+project-includes = ["agloom/**/*.py"]
 # Optional provider / platform packages (lazy-imported or dev-only); treat as ``Any`` so checks pass without every extra.
 replace-imports-with-any = [
     "distro",
@@ -209,39 +233,40 @@ replace-imports-with-any = [
     "langchain_openai",
     "langchain_xai",
     "openai",
-    "textual",
-    "textual.app",
-    "textual.binding",
-    "textual.containers",
-    "textual.screen",
-    "textual.theme",
-    "textual.widgets",
 ]
 
 # ── Commitizen ────────────────────────────────────────────────────────────────
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "0.1.8"
+version = "0.1.54"
 version_files = [
     "pyproject.toml:version",
     "agloom/__init__.py:__version__",
 ]
 tag_format = "v$version"
-update_changelog_on_bump = true
-changelog_file = "CHANGELOG.md"
+update_changelog_on_bump = false
 bump_message = "release: v$new_version"
 
 # ── Pytest ────────────────────────────────────────────────────────────────────
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["agloom/tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
-    "ignore::DeprecationWarning",
-    "ignore::PendingDeprecationWarning",
+    # Scope deprecation suppression to specific well-understood third-party warnings.
+    # Do NOT blanket-ignore all DeprecationWarnings — that hides actionable warnings from agloom's own code.
+    "ignore::DeprecationWarning:pkg_resources",
+    "ignore::DeprecationWarning:pydantic",
+    "ignore::DeprecationWarning:google.*",
+    "ignore::DeprecationWarning:setuptools",
+    "ignore::PendingDeprecationWarning:pkg_resources",
     # langgraph 1.1+ emits a LangChainPendingDeprecationWarning during ``encrypted`` module import;
     # not actionable from agloom (we never call ``JsonPlusSerializer`` directly).
     "ignore::langchain_core._api.deprecation.LangChainPendingDeprecationWarning",
+    # sentence-transformers / huggingface_hub emit these on Python 3.12.
+    "ignore::DeprecationWarning:huggingface_hub",
+    "ignore::DeprecationWarning:transformers",
+    "ignore::DeprecationWarning:torch",
 ]

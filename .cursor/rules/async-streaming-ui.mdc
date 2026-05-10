@@ -1,0 +1,14 @@
+---
+description: Prefer async and streaming for CLI, web, and AGP runtime; avoid blocking sync on interactive paths
+globs:
+  - agloom_cli/**
+  - agloom_web/**
+  - agloom/runtime/**
+alwaysApply: false
+---
+
+# Async and streaming (CLI + web)
+
+- Treat **CLI** and **web** surfaces as **interactive**: prefer **async** APIs end-to-end and **stream** tokens, tool progress, and protocol events as they arrive.
+- **Avoid blocking synchronous work** on request/connection paths (sync HTTP calls, long CPU without yielding, blocking file/network I/O in the event loop). It hurts responsiveness, feels non-interactive, and limits concurrency/scalability.
+- When adding features, default to **incremental delivery** (chunks, SSE/WebSocket messages, async iterators) rather than buffer-then-dump patterns unless there is a strong reason.

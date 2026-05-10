@@ -24,13 +24,13 @@ jobs:
         run: uv sync --all-extras --group dev
 
       - name: Ruff lint
-        run: uv run ruff check agloom agloom_cli tests
+        run: uv run ruff check agloom
 
       - name: Ruff format check
-        run: uv run ruff format --check agloom agloom_cli tests
+        run: uv run ruff format --check agloom
 
       - name: Type check (pyrefly)
-        run: uv run pyrefly check agloom agloom_cli examples tests
+        run: uv run pyrefly check agloom
 
   test:
     needs: lint
@@ -54,4 +54,4 @@ jobs:
         run: uv sync --all-extras --group dev
 
       - name: Run tests
-        run: uv run pytest tests -q
+        run: uv run pytest -q

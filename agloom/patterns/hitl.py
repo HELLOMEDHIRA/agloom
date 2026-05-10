@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 
 from .. import worker as worker_module
-from ..worker import extend_invoke_config_with_event_queue
 from ..hitl_contract import HITLEvent, call_user_callback
 from ..logging_utils import get_logger
 from ..models import ResolvedWorkerConfig, Signal, SignalType, WorkerResult
+from ..worker import extend_invoke_config_with_event_queue
 from .worker_gates import get_signal_queue
 
 logger = get_logger(__name__)

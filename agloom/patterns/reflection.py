@@ -3,7 +3,6 @@
 import re
 
 from .. import worker as worker_module
-from ..worker import extend_invoke_config_with_event_queue
 from ..logging_utils import get_logger
 from ..models import (
     ExecutionResult,
@@ -17,6 +16,7 @@ from ..models import (
     _merge_token_usage,
     _trunc,
 )
+from ..worker import extend_invoke_config_with_event_queue
 from ._resolve import resolve_worker_configs
 from .worker_gates import drain_for_halt, get_signal_queue
 

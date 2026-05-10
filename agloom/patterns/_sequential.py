@@ -3,9 +3,9 @@
 from collections import deque
 
 from .. import worker as worker_module
-from ..worker import extend_invoke_config_with_event_queue
 from ..logging_utils import get_logger
 from ..models import ResolvedWorkerConfig, SignalType, WorkerResult
+from ..worker import extend_invoke_config_with_event_queue
 from .worker_gates import drain_for_halt, get_signal_queue
 
 logger = get_logger(__name__)

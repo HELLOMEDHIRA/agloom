@@ -70,49 +70,53 @@ markdown_extensions:
   - pymdownx.tasklist:
       custom_checkbox: true
 
+# Package docs are copied to docs/_packages/<name>/ before build; nav paths mirror that layout.
 nav:
   - Home: index.md
-  - CLI:
-      - Quick Start: getting-started/cli.md
-      - CLI Reference: guides/cli.md
-      - Smart Context: guides/smart-context.md
-  - Getting Started:
-      - Why agloom?: getting-started/why-agloom.md
-      - Installation: getting-started/installation.md
-      - Quick Start (API): getting-started/quickstart.md
-      - Requirements: getting-started/requirements.md
+  - agloom CLI:
+      - Quick Start: _packages/agloom_cli/index.md
+      - Developer reference (AGP / I/O): _packages/agloom_cli/reference.md
+      - Smart Context: _packages/agloom_cli/smart-context.md
+  - Python package:
+      - Overview: _packages/agloom/index.md
+      - Why agloom?: _packages/agloom/getting-started/why-agloom.md
+      - Installation: _packages/agloom/getting-started/installation.md
+      - Quick Start (API): _packages/agloom/getting-started/quickstart.md
+      - Requirements: _packages/agloom/getting-started/requirements.md
   - Core Concepts:
-      - How It Works: concepts/how-it-works.md
-      - Execution Patterns: concepts/patterns.md
-      - The create_agent API: concepts/create-agent.md
+      - How It Works: _packages/agloom/concepts/how-it-works.md
+      - Execution Patterns: _packages/agloom/concepts/patterns.md
+      - The create_agent API: _packages/agloom/concepts/create-agent.md
   - Features:
-      - Tool Calling: features/tools.md
-      - Memory: features/memory.md
-      - Skill Learning: features/skills.md
-      - Feedback & Evaluation: features/feedback.md
-      - Streaming & Events: features/streaming.md
-      - Human-in-the-Loop: features/hitl.md
-      - Middleware: features/middleware.md
-      - MCP Servers: features/mcp.md
-      - Frozen Agents: features/frozen-agents.md
-      - Task Delegation: features/delegation.md
-      - Long-running harness: features/harness.md
-      - Observability & LangSmith: features/observability.md
+      - Tool Calling: _packages/agloom/features/tools.md
+      - Memory: _packages/agloom/features/memory.md
+      - Skill Learning: _packages/agloom/features/skills.md
+      - Feedback & Evaluation: _packages/agloom/features/feedback.md
+      - Streaming & Events: _packages/agloom/features/streaming.md
+      - Human-in-the-Loop: _packages/agloom/features/hitl.md
+      - Middleware: _packages/agloom/features/middleware.md
+      - MCP Servers: _packages/agloom/features/mcp.md
+      - Frozen Agents: _packages/agloom/features/frozen-agents.md
+      - Task Delegation: _packages/agloom/features/delegation.md
+      - Long-running harness: _packages/agloom/features/harness.md
+      - Observability & LangSmith: _packages/agloom/features/observability.md
   - Configuration:
-      - All Parameters: configuration/parameters.md
-      - Timeouts & Retries: configuration/reliability.md
-      - Logging & Debug: configuration/logging.md
-      - Errors & Warnings: configuration/errors.md
+      - All Parameters: _packages/agloom/configuration/parameters.md
+      - Timeouts & Retries: _packages/agloom/configuration/reliability.md
+      - Logging & Debug: _packages/agloom/configuration/logging.md
+      - Errors & Warnings: _packages/agloom/configuration/errors.md
+  - Protocol (experimental):
+      - "AGP — Agloom Protocol": _packages/agloom/protocol/agp.md
   - Guides:
-      - Production Integration: guides/production.md
+      - Production Integration: _packages/agloom/guides/production.md
   - Examples:
-      - Basic Agent: examples/basic.md
-      - Tools & REACT: examples/tools.md
-      - Streaming UI: examples/streaming.md
-      - Frozen / Batch: examples/frozen.md
-      - Multi-Agent: examples/multi-agent.md
+      - Python examples (repo): _packages/agloom/examples/python-examples.md
+  - Architecture:
+      - Runtime (Python bridge): _packages/agloom/runtime/architecture.md
+      - Observability backend: _packages/agloom/observability/architecture.md
+      - Web UI overview: _packages/agloom_web/index.md
+      - Web UI architecture: _packages/agloom_web/architecture.md
   - Contributing: contributing.md
-  - Changelog: changelog.md
 
 extra:
   social:

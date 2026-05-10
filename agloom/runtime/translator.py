@@ -1,0 +1,323 @@
+"""Translate :class:`agloom.AgentEvent` events into AGP envelopes.
+
+The bridge owns the :class:`agloom.protocol.SessionEmitter`; this module is pure: given an
+incoming ``AgentEvent`` (or ``ExecutionResult``-as-final-event) plus the emitter, pick the
+right ``emit_*`` method and call it.
+
+Phase 0 maps the most user-visible events; everything else is forwarded as ``thinking.step``
+so consumers see *something* and we don't drop information silently. Future phases add
+``tool.*`` / ``hitl.*`` / ``worker.*`` / ``graph.*`` types — additive, no behaviour change to
+existing mappings.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from ..models import AgentEvent
+from ..protocol import SessionEmitter
+
+# Event-type strings emitted by ``UnifiedAgent.astream_events``. Treat as opaque names —
+# consumers should match on these rather than reading internal step types.
+#
+# When the agloom core grows new event types, add a translator branch here. Unknown types fall
+# through to the generic ``thinking.step`` forwarder so nothing is lost.
+_AGENT_EVENT_THINKING_TYPES: frozenset[str] = frozenset(
+    {
+        "thinking",
+        "classify",
+        "reflection",
+        "fallback",
+        "cache_hit",
+    }
+)
+
+
+def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
+    """Dispatch one :class:`AgentEvent` to the correct AGP emit method.
+
+    Pure, side-effect-only-via-emitter. Unknown event types are forwarded as ``thinking.step``
+    so the wire stream remains a faithful trace.
+    """
+    et = event.type
+    data = event.data or {}
+
+    if et == "classify":
+        # Classification events from analyze_query: payload includes pattern + complexity.
+        pattern = _str(data.get("pattern")) or "UNKNOWN"
+        emitter.emit_pattern_classified(
+            pattern=pattern,
+            complexity=_int(data.get("complexity")),
+            confidence=_float(data.get("confidence")),
+            reason=_str(data.get("reason")) or _str(data.get("output")),
+        )
+        # Also surface as a thinking step so UIs that only consume thinking.* still see it.
+        emitter.emit_thinking_step(
+            step="analyze_query",
+            label=f"pattern={pattern}",
+            detail=_str(data.get("output")),
+            elapsed_ms=_int(data.get("duration_ms")),
+        )
+        return
+
+    if et == "token":
+        # Use raw value (not ``_str``) — token deltas MUST preserve leading/trailing whitespace
+        # or the rendered stream loses word boundaries.
+        # Production code (unified_agent.py, worker.py, patterns/react.py) uses "content";
+        # keep "output" and "text" as legacy fallbacks.
+        raw = data.get("output")
+        if raw is None:
+            raw = data.get("text")
+        if raw is None:
+            raw = data.get("content")
+        if raw is None:
+            return
+        text = raw if isinstance(raw, str) else str(raw)
+        if not text:  # skip truly empty deltas — but keep ``" "`` etc.
+            return
+        emitter.emit_token_delta(
+            text=text,
+            role=_str(data.get("role")) or "assistant",  # type: ignore[arg-type]
+            message_id=_str(data.get("message_id")),
+        )
+        return
+
+    if et in ("done", "answer", "message_assistant"):
+        content = _str(data.get("output")) or _str(data.get("content")) or ""
+        emitter.emit_message_assistant(
+            content=content,
+            message_id=_str(data.get("message_id")),
+            run_id=_str(data.get("run_id")),
+            pattern=_str(data.get("pattern")),
+        )
+        return
+
+    if et == "tool_call":
+        # Tool dispatch — translator MUST emit ``tool.call.start`` so consumers can render a
+        # pending tool row. ``tool_call_id`` is mandatory on the AGP side; synthesize from name
+        # when the runtime didn't supply one (older backends, unit tests).
+        tool = _str(data.get("name")) or _str(data.get("tool")) or "unknown_tool"
+        tcid = _str(data.get("tool_call_id")) or _str(data.get("id")) or f"tc_{tool}_{event.timestamp}"
+        args = data.get("args")
+        if not isinstance(args, dict):
+            args = {}
+        emitter.emit_tool_call_start(
+            tool=tool,
+            tool_call_id=tcid,
+            args=args,
+            worker=_str(data.get("worker")) or _str(data.get("worker_id")),
+        )
+        return
+
+    if et == "tool_result":
+        tool = _str(data.get("name")) or _str(data.get("tool")) or "unknown_tool"
+        tcid = _str(data.get("tool_call_id")) or _str(data.get("id")) or f"tc_{tool}_{event.timestamp}"
+        # Errored tool runs sometimes arrive on this same channel — discriminate via ``error``
+        # key so the wire stays semantically clean (success vs failure events are distinct).
+        err = _str(data.get("error"))
+        if err:
+            emitter.emit_tool_call_error(
+                tool=tool,
+                tool_call_id=tcid,
+                error=err,
+                error_class=_str(data.get("error_class")),
+                duration_ms=_int(data.get("duration_ms")),
+            )
+            return
+        out = _str(data.get("output")) or _str(data.get("content")) or ""
+        emitter.emit_tool_call_result(
+            tool=tool,
+            tool_call_id=tcid,
+            output_preview=out[:1024] if out else "",
+            output_bytes=len(out) if out else 0,
+            duration_ms=_int(data.get("duration_ms")),
+            truncated=bool(out and len(out) > 1024),
+        )
+        return
+
+    if et == "graph_node_enter":
+        emitter.emit_graph_node_enter(
+            node=_str(data.get("node")) or et,
+            pattern=_str(data.get("pattern")),
+            input_preview=_str(data.get("input_preview")) or _str(data.get("input")),
+        )
+        return
+
+    if et == "graph_node_exit":
+        emitter.emit_graph_node_exit(
+            node=_str(data.get("node")) or et,
+            pattern=_str(data.get("pattern")),
+            duration_ms=_int(data.get("duration_ms")),
+            output_preview=_str(data.get("output_preview")) or _str(data.get("output")),
+            error=_str(data.get("error")),
+        )
+        return
+
+    if et == "memory_lt_recall":
+        emitter.emit_memory_lt_recall(
+            namespace=_str(data.get("namespace")),
+            query_preview=_str(data.get("query_preview")),
+            hits=_int(data.get("hits")) or 0,
+            injected_chars=_int(data.get("injected_chars")) or 0,
+        )
+        return
+
+    if et == "memory_session_write":
+        emitter.emit_memory_session_write(
+            thread=_str(data.get("thread")) or emitter._thread,
+            run_id=_str(data.get("run_id")),
+            query_preview=_str(data.get("query_preview")),
+            output_preview=_str(data.get("output_preview")),
+            turn_count=_int(data.get("turn_count")),
+        )
+        return
+
+    if et == "memory_lt_store":
+        emitter.emit_memory_lt_store(
+            namespace=_str(data.get("namespace")),
+            key=_str(data.get("key")),
+            content_preview=_str(data.get("content_preview")),
+        )
+        return
+
+    if et == "checkpoint_saved":
+        thread = _str(data.get("thread")) or emitter._thread
+        emitter.emit_checkpoint_saved(
+            thread=thread,
+            run_id=_str(data.get("run_id")),
+            label=_str(data.get("label")),
+        )
+        return
+
+    if et == "checkpoint_restored":
+        thread = _str(data.get("thread")) or emitter._thread
+        emitter.emit_checkpoint_restored(
+            thread=thread,
+            resumed_from_run_id=_str(data.get("resumed_from_run_id")),
+        )
+        return
+
+    if et == "feedback_scored":
+        run_id = _str(data.get("run_id")) or ""
+        emitter.emit_feedback_scored(
+            run_id=run_id,
+            rating=_str(data.get("rating")) or "neutral",
+            comment=_str(data.get("comment")) or "",
+            correct=_str(data.get("correct")) or "",
+            metadata=data.get("metadata") if isinstance(data.get("metadata"), dict) else None,
+        )
+        return
+
+    if et == "worker_start":
+        worker_id = _str(data.get("worker_id")) or _str(data.get("name")) or _str(data.get("id")) or "worker"
+        emitter.emit_worker_spawned(
+            worker_id=worker_id,
+            name=_str(data.get("name")),
+            pattern=_str(data.get("pattern")),
+            task=_str(data.get("task")) or _str(data.get("output")),
+            parent_worker_id=_str(data.get("parent_worker_id")) or _str(data.get("parent")),
+        )
+        return
+
+    if et == "worker_end":
+        worker_id = _str(data.get("worker_id")) or _str(data.get("name")) or _str(data.get("id")) or "worker"
+        # Errored workers ride the same channel — discriminate via ``error`` key, mirroring the
+        # ``tool_result`` → ``tool.call.error`` pattern so the wire stays semantically clean.
+        err = _str(data.get("error"))
+        if err:
+            emitter.emit_worker_failed(
+                worker_id=worker_id,
+                error=err,
+                error_class=_str(data.get("error_class")),
+                duration_ms=_int(data.get("duration_ms")),
+            )
+            return
+        out = _str(data.get("output")) or _str(data.get("content")) or ""
+        emitter.emit_worker_completed(
+            worker_id=worker_id,
+            output_preview=out[:1024] if out else "",
+            output_bytes=len(out) if out else 0,
+            duration_ms=_int(data.get("duration_ms")),
+            truncated=bool(out and len(out) > 1024),
+        )
+        return
+
+    if et == "llm_call":
+        # ``llm_call`` carries both reasoning-trace info AND token usage. Emit both: a
+        # ``thinking.step`` for the trace pane and (when usage is present) ``metric.tokens``
+        # for the sidebar rollup.
+        emitter.emit_thinking_step(
+            step="llm_call",
+            label=_str(data.get("name")) or "llm",
+            detail=_str(data.get("output")),
+            elapsed_ms=_int(data.get("duration_ms")),
+        )
+        usage = data.get("usage")
+        if isinstance(usage, dict):
+            input_t = _int(usage.get("input_tokens")) or _int(usage.get("prompt_tokens")) or 0
+            output_t = _int(usage.get("output_tokens")) or _int(usage.get("completion_tokens")) or 0
+            total_t = _int(usage.get("total_tokens"))
+            if input_t or output_t or total_t:
+                emitter.emit_metric_tokens(
+                    input_tokens=input_t,
+                    output_tokens=output_t,
+                    total_tokens=total_t,
+                    model=_str(data.get("model")) or _str(usage.get("model")),
+                    phase=_str(data.get("phase")) or _str(data.get("name")),
+                )
+        cost = _float(data.get("cost"))
+        if cost is not None:
+            emitter.emit_metric_cost(
+                cost=cost,
+                currency=_str(data.get("currency")) or "USD",
+                model=_str(data.get("model")),
+                phase=_str(data.get("phase")) or _str(data.get("name")),
+            )
+        return
+
+    if et in _AGENT_EVENT_THINKING_TYPES:
+        emitter.emit_thinking_step(
+            step=et,
+            label=_str(data.get("name")) or et,
+            detail=_str(data.get("output")),
+            elapsed_ms=_int(data.get("duration_ms")),
+        )
+        return
+
+    # Forward-compat: unknown event types still surface as a thinking step so nothing is lost.
+    # When new categories ship (tool.*, hitl.*, …) we add explicit branches above this line.
+    emitter.emit_thinking_step(
+        step=et,
+        label=_str(data.get("name")) or et,
+        detail=_str(data.get("output")),
+        elapsed_ms=_int(data.get("duration_ms")),
+    )
+
+
+def _str(v: Any) -> str | None:
+    """Best-effort string coercion that returns ``None`` for empty / missing values."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
+
+
+def _int(v: Any) -> int | None:
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float(v: Any) -> float | None:
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+__all__ = ["translate"]

@@ -44,7 +44,12 @@ def _resolve_namespace(config: RunnableConfig | None) -> tuple[str, ...]:
 
 
 def create_memory_tools(store: LongTermStore) -> list:
-    """Build ``save_memory`` and ``recall_memory`` tools bound to ``store``."""
+    """Return ``save_memory`` and ``recall_memory`` bound to *store*.
+
+    Tools are sync functions; LangChain runs them in a worker thread, so LangGraph
+    ``AsyncSqliteStore`` sync ``put``/``search`` (which marshal back to the store loop) stay valid.
+    Pure-async callers should use ``LongTermStore.asave`` / ``asearch`` instead of these tools.
+    """
 
     @tool
     def save_memory(key: str, content: str, config: Annotated[RunnableConfig, InjectedToolArg]) -> str:

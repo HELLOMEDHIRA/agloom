@@ -54,7 +54,7 @@ You want to build an AI agent. LangChain gives you the building blocks — but t
 
 **agloom solves all six.** In one function call.
 
-[Read the full story →](getting-started/why-agloom.md){ .md-button }
+[Read the full story →](_packages/agloom/getting-started/why-agloom.md){ .md-button }
 
 ---
 
@@ -79,9 +79,9 @@ asyncio.run(main())
 
 7 lines. Production-grade agent. Auto-classification. Step tracing. Token tracking.
 
-[Install & Quick Start →](getting-started/installation.md){ .md-button .md-button--primary }
-[CLI Shell →](getting-started/cli.md){ .md-button }
-[See All 9 Patterns →](concepts/patterns.md){ .md-button }
+[Install & Quick Start →](_packages/agloom/getting-started/installation.md){ .md-button .md-button--primary }
+[CLI Shell →](_packages/agloom_cli/index.md){ .md-button }
+[See All 9 Patterns →](_packages/agloom/concepts/patterns.md){ .md-button }
 
 ---
 
@@ -99,7 +99,7 @@ asyncio.run(main())
 | **LangSmith** | Auto-detected. Zero code changes |
 | **Task Delegation** | 4 patterns: `as_tool()`, hand-off, hierarchical, background. Agents delegate to agents |
 | **Frozen Agents** | Classify once, batch thousands |
-| **Harness** | `harness=True` + `store=`: task artifact, bootstrap, git helpers. **CLI:** on by default (`graph_store.sqlite`) — [Harness](features/harness.md) |
+| **Harness** | `harness=True` + `store=`: task artifact, bootstrap, git helpers. **CLI:** on by default (`graph_store.sqlite`) — [Harness](_packages/agloom/features/harness.md) |
 
 ---
 

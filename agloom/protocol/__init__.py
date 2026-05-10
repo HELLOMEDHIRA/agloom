@@ -1,0 +1,225 @@
+"""Agloom Protocol (AGP) — wire format between the Python runtime and any frontend.
+
+AGP is an event-driven, JSON-based, transport-agnostic contract. The Python runtime emits
+events; clients (agloom CLI, web workspace, IDE integrations, replay tools) consume them.
+
+**Surface**:
+
+- :class:`Envelope` — common fields every event carries (``v``, ``id``, ``ts``, ``session``,
+  ``thread``, ``seq``, ``type``, ``data``).
+- Concrete event types — see :mod:`agloom.protocol.events`.
+- :data:`Event` — the discriminated union; parse arbitrary AGP events with
+  :data:`event_adapter`.
+- :class:`SessionEmitter` — typed NDJSON writer (one event per line, flushed per emit).
+- :class:`AsyncSessionEmitter` — non-blocking async writer backed by an asyncio queue.
+- Inbound commands — see :mod:`agloom.protocol.commands`; parse with :data:`command_adapter`.
+- :mod:`agloom.protocol.store` — :class:`MemoryEventStore` and :class:`SqliteEventStore`
+  for replay/resume.
+
+See ``agloom/docs/protocol/agp.md`` for the full specification.
+"""
+
+from __future__ import annotations
+
+from .commands import (
+    Command,
+    CommandCancel,
+    CommandCancelData,
+    CommandFeedback,
+    CommandFeedbackData,
+    CommandHITLRespond,
+    CommandHITLRespondData,
+    CommandInvoke,
+    CommandInvokeData,
+    CommandRuntimeShutdown,
+    CommandRuntimeShutdownData,
+    CommandSessionResume,
+    CommandSessionResumeData,
+    CommandSnapshotRequest,
+    CommandSnapshotRequestData,
+    CommandWorkerAssign,
+    CommandWorkerAssignData,
+    command_adapter,
+)
+from .emitter import AsyncSessionEmitter, SessionEmitter, WriterLike, _SharedSeq, event_to_dict
+from .envelope import PROTOCOL_MODULE_VERSION, PROTOCOL_VERSION, Envelope, new_event_id, now_utc
+from .events import (
+    CheckpointRestored,
+    CheckpointRestoredData,
+    CheckpointSaved,
+    CheckpointSavedData,
+    ErrorData,
+    ErrorEvent,
+    ErrorFatal,
+    ErrorSeverity,
+    ErrorTransient,
+    Event,
+    FeedbackScored,
+    FeedbackScoredData,
+    GraphNodeEnter,
+    GraphNodeEnterData,
+    GraphNodeExit,
+    GraphNodeExitData,
+    HITLAllowlisted,
+    HITLDecision,
+    HITLDecisionData,
+    HITLDenied,
+    HITLGranted,
+    HITLKind,
+    HITLRequest,
+    HITLRequestData,
+    MemoryLtRecall,
+    MemoryLtRecallData,
+    MemoryLtStore,
+    MemoryLtStoreData,
+    MemorySessionWrite,
+    MemorySessionWriteData,
+    MessageAssistant,
+    MessageAssistantData,
+    MessageUser,
+    MessageUserData,
+    MetricCost,
+    MetricCostData,
+    MetricTokens,
+    MetricTokensData,
+    PatternClassified,
+    PatternClassifiedData,
+    SessionClosed,
+    SessionClosedData,
+    SessionCloseReason,
+    SessionOpened,
+    SessionOpenedData,
+    SessionResumed,
+    SessionResumedData,
+    ThinkingStep,
+    ThinkingStepData,
+    TokenDelta,
+    TokenDeltaData,
+    ToolCallError,
+    ToolCallErrorData,
+    ToolCallResult,
+    ToolCallResultData,
+    ToolCallStart,
+    ToolCallStartData,
+    WorkerCompleted,
+    WorkerCompletedData,
+    WorkerFailed,
+    WorkerFailedData,
+    WorkerSpawned,
+    WorkerSpawnedData,
+    event_adapter,
+)
+from .schema import build_schema, write_schema
+from .store import EventStore, MemoryEventStore, SqliteEventStore
+
+# Module version is decoupled from the agloom package version so the protocol can rev
+# independently. The wire-format ``v="1"`` changes only on breaking schema bumps (then a v2
+# module would coexist).
+__version__ = PROTOCOL_MODULE_VERSION
+
+__all__ = [
+    # ── envelope ──
+    "PROTOCOL_MODULE_VERSION",
+    "PROTOCOL_VERSION",
+    "Envelope",
+    "new_event_id",
+    "now_utc",
+    # ── emitter ──
+    "AsyncSessionEmitter",
+    "SessionEmitter",
+    "WriterLike",
+    "_SharedSeq",
+    "event_to_dict",
+    # ── schema ──
+    "build_schema",
+    "write_schema",
+    # ── store ──
+    "EventStore",
+    "MemoryEventStore",
+    "SqliteEventStore",
+    # ── commands ──
+    "Command",
+    "CommandCancel",
+    "CommandCancelData",
+    "CommandFeedback",
+    "CommandFeedbackData",
+    "CommandHITLRespond",
+    "CommandHITLRespondData",
+    "CommandInvoke",
+    "CommandInvokeData",
+    "CommandRuntimeShutdown",
+    "CommandRuntimeShutdownData",
+    "CommandSessionResume",
+    "CommandSessionResumeData",
+    "CommandSnapshotRequest",
+    "CommandSnapshotRequestData",
+    "CommandWorkerAssign",
+    "CommandWorkerAssignData",
+    "command_adapter",
+    # ── events ──
+    "CheckpointRestored",
+    "CheckpointRestoredData",
+    "CheckpointSaved",
+    "CheckpointSavedData",
+    "ErrorData",
+    "ErrorEvent",
+    "ErrorFatal",
+    "ErrorSeverity",
+    "ErrorTransient",
+    "Event",
+    "FeedbackScored",
+    "FeedbackScoredData",
+    "GraphNodeEnter",
+    "GraphNodeEnterData",
+    "GraphNodeExit",
+    "GraphNodeExitData",
+    "HITLAllowlisted",
+    "HITLDecision",
+    "HITLDecisionData",
+    "HITLDenied",
+    "HITLGranted",
+    "HITLKind",
+    "HITLRequest",
+    "HITLRequestData",
+    "MemoryLtRecall",
+    "MemoryLtRecallData",
+    "MemoryLtStore",
+    "MemoryLtStoreData",
+    "MemorySessionWrite",
+    "MemorySessionWriteData",
+    "MessageAssistant",
+    "MessageAssistantData",
+    "MessageUser",
+    "MessageUserData",
+    "MetricCost",
+    "MetricCostData",
+    "MetricTokens",
+    "MetricTokensData",
+    "PatternClassified",
+    "PatternClassifiedData",
+    "SessionCloseReason",
+    "SessionClosed",
+    "SessionClosedData",
+    "SessionOpened",
+    "SessionOpenedData",
+    "SessionResumed",
+    "SessionResumedData",
+    "ThinkingStep",
+    "ThinkingStepData",
+    "TokenDelta",
+    "TokenDeltaData",
+    "ToolCallError",
+    "ToolCallErrorData",
+    "ToolCallResult",
+    "ToolCallResultData",
+    "ToolCallStart",
+    "ToolCallStartData",
+    "WorkerCompleted",
+    "WorkerCompletedData",
+    "WorkerFailed",
+    "WorkerFailedData",
+    "WorkerSpawned",
+    "WorkerSpawnedData",
+    "event_adapter",
+    "__version__",
+]

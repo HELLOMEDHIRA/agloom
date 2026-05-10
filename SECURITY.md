@@ -17,7 +17,7 @@ Include: description, reproduction steps, impact, and suggested fix if you have 
 
 ## Shell and Tooling Risk
 
-The agloom **CLI** can expose tools that run **shell commands** and access the **filesystem**. Treat deployments like any privileged automation: trust boundaries, secrets handling, and operator approval matter. See the module docstring in `agloom_cli/tools/shell.py` for details on shell invocation.
+The **terminal and web frontends** drive agents that may run **shell commands** and access the **filesystem** through tools. Treat deployments like any privileged automation: trust boundaries, secrets handling, and HITL approval matter. Scope tools and HITL policies to the trust level of the environment.
 
 ## Response
 

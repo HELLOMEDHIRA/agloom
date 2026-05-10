@@ -1,37 +1,65 @@
-"""Multi-pattern agents on LangChain/LangGraph: classification, tools, memory, skills, feedback.
+"""Multi-pattern agentic AI framework built on LangChain/LangGraph.
 
-Typical use::
+Batteries-included: classification, tools, memory, skills, HITL, feedback, MCP, multi-agent.
+
+Quickstart — streaming (recommended)::
 
     from agloom import create_agent
 
-    agent = await create_agent(model=llm, tools=[...])
-    result = await agent.ainvoke("Hello")
+    agent = await create_agent(model="openai:gpt-4o", tools=[...])
+    async for event in agent.astream_events("Hello"):
+        if event.type == "token":
+            print(event.data["content"], end="", flush=True)
+        elif event.type == "done":
+            result = event.data["result"]
 
-Sync constructor: ``create_agent_sync``. Use ``async with agent:`` (or ``await agent.aclose()``)
-to release MCP clients and feedback handlers.
+AGP-native streaming (agloom CLI, web workspace, observability dashboards)::
+
+    async for envelope in agent.astream_agp_events("Hello"):
+        if envelope.type == "token.delta":
+            print(envelope.data.text, end="", flush=True)
+
+Single-turn result::
+
+    result = await agent.ainvoke("Hello")
+    print(result.output)
+
+Sync entry point::
+
+    agent = create_agent_sync(model="openai:gpt-4o", tools=[...])
+    result = agent.invoke("Hello")
+
+Use ``async with agent:`` or ``await agent.aclose()`` to release MCP clients and feedback handlers.
 """
 
+# Silence langgraph 1.1.x's *internal* pending-deprecation warning (it imports
+# ``JsonPlusSerializer`` without ``allowed_objects`` — third-party, not actionable from agloom).
+# Apply at import time so the agloom CLI, ``agloom-runtime``, and library callers all benefit without
+# duplicating this block. Remove once LangGraph drops the implicit default.
+import warnings as _warnings
 from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
 from importlib.metadata import version as _version
 
-from .delegation import (
+try:
+    from langchain_core._api.deprecation import LangChainPendingDeprecationWarning as _LCWarn
+
+    _warnings.filterwarnings("ignore", category=_LCWarn)
+    del _LCWarn
+except ImportError:
+    pass
+del _warnings
+
+from .delegation import (  # noqa: E402 — must follow the warning suppression above
     BackgroundDelegationManager,
     BackgroundTask,
     BackgroundTaskStatus,
     HandoffTarget,
 )
-from .hitl_contract import HITLEvent, call_user_callback, normalize_react_tool_use_failed_decision
-from .llm_utils import (
-    AsyncRateLimiter,
-    CircuitBreaker,
-    LLMSemaphore,
-    robust_structured_call,
-    safe_create_task,
-)
-from .logging_utils import configure_package_logging, get_logger
-from .memory.session import SessionMemory
-from .memory.store import LongTermStore
-from .models import (
+from .hitl_contract import HITLEvent  # noqa: E402
+from .logging_utils import configure_package_logging  # noqa: E402
+from .memory.session import SessionMemory  # noqa: E402
+from .memory.store import LongTermStore  # noqa: E402
+from .models import (  # noqa: E402
     AgentConfig,
     AgentEvent,
     AgentStep,
@@ -45,7 +73,7 @@ from .models import (
     WorkerPlan,
     WorkerResult,
 )
-from .unified_agent import RESERVED_TOOL_NAMES, UnifiedAgent, create_agent, create_agent_sync
+from .unified_agent import UnifiedAgent, create_agent, create_agent_sync  # noqa: E402
 
 try:
     from .harness import (
@@ -78,50 +106,46 @@ except _PackageNotFoundError:
 del _PackageNotFoundError, _version
 
 __all__ = [
-    "RESERVED_TOOL_NAMES",
+    "create_agent",
+    "create_agent_sync",
+    "UnifiedAgent",
     "AgentConfig",
     "AgentEvent",
     "AgentStep",
-    "AsyncRateLimiter",
-    "BackgroundDelegationManager",
-    "BackgroundTask",
-    "BackgroundTaskStatus",
-    "BootstrapState",
-    "CircuitBreaker",
     "ExecutionResult",
-    "GitSession",
-    "HITLEvent",
-    "HandoffTarget",
-    "LLMSemaphore",
-    "LongTermStore",
     "PatternType",
-    "ProgressArtifact",
-    "ProgressTracker",
     "QueryAnalysis",
     "ResolvedWorkerConfig",
-    "SessionMemory",
     "SignalType",
     "StepType",
     "SubTask",
-    "Task",
-    "TaskPriority",
-    "TaskStatus",
-    "TaskStep",
-    "UnifiedAgent",
     "WorkerPlan",
     "WorkerResult",
+    "SessionMemory",
+    "LongTermStore",
+    "HITLEvent",
+    "BackgroundDelegationManager",
+    "BackgroundTask",
+    "BackgroundTaskStatus",
+    "HandoffTarget",
+    "create_cache",
     "cache_get",
     "cache_set",
-    "call_user_callback",
     "configure_package_logging",
-    "create_agent",
-    "create_agent_sync",
-    "create_cache",
-    "get_logger",
-    "normalize_react_tool_use_failed_decision",
-    "robust_structured_call",
-    "safe_create_task",
 ]
+
+# Harness extra: these names join ``__all__`` when optional deps are installed.
+if _HARNESS_AVAILABLE:
+    __all__ += [
+        "BootstrapState",
+        "GitSession",
+        "ProgressArtifact",
+        "ProgressTracker",
+        "Task",
+        "TaskPriority",
+        "TaskStatus",
+        "TaskStep",
+    ]
 
 
 def __getattr__(name: str):
