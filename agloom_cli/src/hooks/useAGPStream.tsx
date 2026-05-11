@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useRef } from 'react'
-import type { AGPBridge } from '../runtime/bridge.js'
+import type { AGPBridge, BridgeExitInfo } from '../runtime/bridge.js'
 import { useSessionStore } from '../store/session.js'
 import type { AGPEvent } from '../types/agp.js'
 
@@ -25,7 +25,12 @@ export const useAGPStream = (bridge: AGPBridge): void => {
     const onDiag = (line: string) => {
       useSessionStore.getState().addDiagnostic(line)
     }
-    const onExit = () => {
+    const onExit = (info: BridgeExitInfo) => {
+      const code = info.code
+      const sig = info.signal
+      useSessionStore.getState().addDiagnostic(
+        `[runtime] agloom-runtime exited (code=${code === null ? 'null' : String(code)}, signal=${sig ?? 'none'})`,
+      )
       useSessionStore.getState().markExited()
     }
     const onError = (err: Error) => {

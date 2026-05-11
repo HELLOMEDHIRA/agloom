@@ -81,6 +81,7 @@ def test_ensure_yaml_follows_absolute_agent_store_when_cwd_elsewhere(tmp_path: P
 
 def test_session_json_roundtrip(tmp_path: Path) -> None:
     sd = tmp_path / ".agloom" / "sessions"
+    sd.mkdir(parents=True)
     p = write_session_started_json(
         sd,
         "sess_abc123",
@@ -88,6 +89,7 @@ def test_session_json_roundtrip(tmp_path: Path) -> None:
         thread="thread_x",
         record_cwd=tmp_path,
     )
+    assert p is not None
     assert p.name == "sess_abc123.json"
     data = json.loads(p.read_text(encoding="utf-8"))
     assert data["session_id"] == "sess_abc123"
@@ -98,5 +100,12 @@ def test_session_json_roundtrip(tmp_path: Path) -> None:
 
 def test_safe_filename_for_odd_session_id(tmp_path: Path) -> None:
     sd = tmp_path / ".agloom" / "sessions"
+    sd.mkdir(parents=True)
     p = write_session_started_json(sd, "weird/id", transport="stdio")
+    assert p is not None
     assert p.name == "weird_id.json"
+
+
+def test_session_marker_skips_when_sessions_dir_missing(tmp_path: Path) -> None:
+    sd = tmp_path / ".agloom" / "sessions"
+    assert write_session_started_json(sd, "sess_x", transport="stdio") is None

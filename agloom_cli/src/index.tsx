@@ -13,6 +13,7 @@ import { readStdinIfPiped } from './utils/readStdin.js'
 import { runDirect } from './direct.js'
 import { bannerEnvDisabled, formatBannerLine, readCliPackageVersion } from './banner.js'
 import { applyAgloomConfigLayers, buildResolvedConfigSnapshot } from './config.js'
+import { ensureAgloomCliWorkspace } from './workspaceBootstrap.js'
 import type { InvokeAttachment } from './types/agp.js'
 
 type CliOpts = {
@@ -22,6 +23,7 @@ type CliOpts = {
   storePath?: string
   diag: boolean
   noCliTools: boolean
+  noRequireToolApproval: boolean
   noShellTool: boolean
   noNetworkTools: boolean
   unrestricted: boolean
@@ -29,6 +31,8 @@ type CliOpts = {
   provider?: string
   apiKeyEnv?: string
   temperature?: number
+  topP?: number
+  topK?: number
   maxTokens?: number
   pattern?: string
   mcp: string[]
@@ -137,7 +141,12 @@ const program = new Command()
     'SQLite DB for AGP EventStore when --store=sqlite (default applied at runtime if omitted)',
   )
   .option('--diag', 'open diagnostic pane', false)
-  .option('--no-cli-tools', 'omit --with-cli-tools', false)
+  .option('--no-cli-tools', 'omit --with-cli-tools (default: CLI tools on)', false)
+  .option(
+    '--no-require-tool-approval',
+    'forward: allow CLI tools without per-tool HITL (matches agloom.yaml safety.require_approval: false)',
+    false,
+  )
   .option('--no-shell-tool', 'forward --cli-tools-no-shell', false)
   .option('--no-network-tools', 'forward --cli-tools-no-network', false)
   .option('--unrestricted', 'forward --cli-tools-no-sandbox', false)
@@ -145,6 +154,8 @@ const program = new Command()
   .option('--provider <name>', 'force provider when ambiguous')
   .option('--api-key-env <var>', 'read API key from this env var (with --provider or prefixed model)')
   .option('-T, --temperature <n>', 'sampling temperature', parseFloat)
+  .option('--top-p <n>', 'nucleus sampling top_p when supported', parseFloat)
+  .option('--top-k <n>', 'top-k sampling when supported', (v) => parseInt(v, 10))
   .option('--max-tokens <n>', 'max output tokens', (v) => parseInt(v, 10))
   .option('--pattern <name>', 'routing bias: react, sequential, blackboard, …')
   .option('--mcp <spec>', 'MCP server name:path.yaml (repeatable)', collectMcp, [])
@@ -158,7 +169,7 @@ const program = new Command()
   .option('--skills-dir <path>', 'skills disk mirror directory')
   .option('--summarizer-model <id>', 'summarizer model id')
   .option('--no-auto-summarize', 'disable auto summarization', false)
-  .option('--session-max-turns <n>', 'SessionMemory max turns', (v) => parseInt(v, 10), 20)
+  .option('--session-max-turns <n>', 'SessionMemory max turns', (v) => parseInt(v, 10), 50)
   .option('--prompt <text>', 'direct prompt (alternative to positional)')
   .option('-q, --quiet', 'direct: stdout only (assistant text)', false)
   .option('--json', 'direct: print each AGP event as JSON line', false)
@@ -221,6 +232,8 @@ function buildRuntimeArgs(o: CliOpts): string[] {
   if (o.provider) parts.push('--provider', o.provider)
   if (o.apiKeyEnv) parts.push('--api-key-env', o.apiKeyEnv)
   if (o.temperature !== undefined) parts.push('--temperature', String(o.temperature))
+  if (o.topP !== undefined && !Number.isNaN(o.topP)) parts.push('--top-p', String(o.topP))
+  if (o.topK !== undefined && !Number.isNaN(o.topK)) parts.push('--top-k', String(o.topK))
   if (o.maxTokens !== undefined) parts.push('--max-tokens', String(o.maxTokens))
   if (o.pattern) parts.push('--pattern', o.pattern)
   for (const m of o.mcp ?? []) {
@@ -244,6 +257,9 @@ function buildRuntimeArgs(o: CliOpts): string[] {
   }
   if (!o.noCliTools) {
     parts.push('--with-cli-tools', '--cli-tools-working-dir', cwd)
+  }
+  if (o.noRequireToolApproval) {
+    parts.push('--no-require-tool-approval')
   }
   if (o.noShellTool) parts.push('--cli-tools-no-shell')
   if (o.noNetworkTools) parts.push('--cli-tools-no-network')
@@ -296,6 +312,8 @@ bridge.once('error', (err: Error) => {
   process.stderr.write(`\n[agloom] bridge error: ${err.message}\n`)
   process.exit(1)
 })
+
+ensureAgloomCliWorkspace(cwd)
 
 bridge.start(runtimeArgs, { transport: 'stdio' })
 

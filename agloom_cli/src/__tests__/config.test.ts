@@ -71,4 +71,52 @@ mcp:
     expect(y.mcp).toEqual(['fs:./a.yaml', { name: 'x', config: './b.yaml' }])
     unlinkSync(p)
   })
+
+  it('flattens nested ai / memory / mcp.servers (Rich-era layout)', () => {
+    const p = writeYaml(`
+ai:
+  model: auto
+  system_prompt: "You are helpful."
+memory:
+  enabled: true
+  max_turns: 42
+mcp:
+  servers:
+    - fs:./mcp/fs.yaml
+`)
+    const y = parseAgloomYamlFile(p)
+    expect(y.model).toBe('auto')
+    expect(y.system_prompt).toBe('You are helpful.')
+    expect(y.memory).toBe('sqlite')
+    expect(y.session_max_turns).toBe(42)
+    expect(y.mcp).toEqual(['fs:./mcp/fs.yaml'])
+    unlinkSync(p)
+  })
+
+  it('flattens tools.cli_enabled and safety.require_approval', () => {
+    const p = writeYaml(`
+tools:
+  cli_enabled: false
+safety:
+  require_approval: false
+`)
+    const y = parseAgloomYamlFile(p)
+    expect(y.no_cli_tools).toBe(true)
+    expect(y.require_tool_approval).toBe(false)
+    unlinkSync(p)
+  })
+
+  it('flattens memory.auto_summarize and memory.summarizer_model', () => {
+    const p = writeYaml(`
+memory:
+  max_turns: 80
+  auto_summarize: false
+  summarizer_model: groq:meta-llama/llama-3.3-70b-versatile
+`)
+    const y = parseAgloomYamlFile(p)
+    expect(y.session_max_turns).toBe(80)
+    expect(y.auto_summarize).toBe(false)
+    expect(y.summarizer_model).toBe('groq:meta-llama/llama-3.3-70b-versatile')
+    unlinkSync(p)
+  })
 })

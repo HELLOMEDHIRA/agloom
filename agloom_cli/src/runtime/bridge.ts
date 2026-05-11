@@ -97,6 +97,7 @@ export const createAGPBridge = (): AGPBridge => {
       env: { ...process.env },
       shell: false,
       detached: process.platform !== 'win32',
+      windowsHide: true,
     })
 
     pid = proc.pid
@@ -133,6 +134,10 @@ export const createAGPBridge = (): AGPBridge => {
     proc.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
       status = 'exited'
       emitter.emit('exit', { code, signal })
+    })
+
+    proc.stdin?.on?.('error', (err: NodeJS.ErrnoException) => {
+      emitter.emit('diagnostic', `[stdin] ${err.message}`)
     })
 
     proc.on('error', (err: NodeJS.ErrnoException) => {

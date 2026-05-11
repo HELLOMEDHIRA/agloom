@@ -645,6 +645,7 @@ export interface CommandConfigSetCmd {
     cli_tools?: Record<string, unknown>
     pattern?: string
     temperature?: number
+    top_p?: number
     system_prompt?: string
     budget_token_limit?: number | null
     budget_cost_usd_limit?: number | null

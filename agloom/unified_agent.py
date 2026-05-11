@@ -491,12 +491,13 @@ async def _apply_response_format(
 
 
 def _memory_injection_last_n(config: dict) -> int:
-    """Cap injected session turns so prompts stay bounded."""
+    """How many recent turns to inject into prompts (bounded for safety; honors ``session_max_turns``)."""
     try:
-        n = int(config.get("session_max_turns", 20))
+        n = int(config.get("session_max_turns", 50))
     except (TypeError, ValueError):
-        n = 20
-    return max(1, min(n, 50))
+        n = 50
+    # Avoid pathological context sizes; rolling SessionMemory may still store more per YAML.
+    return max(1, min(n, 500))
 
 
 async def _record_turn(
@@ -2219,7 +2220,7 @@ async def create_agent(
     review_every_n_runs: int = 25,
     trend_every_n_runs: int = 100,
     max_skills: int = 30,
-    session_max_turns: int = 20,
+    session_max_turns: int = 50,
     max_reflection_iterations: int = 3,
     reflection_threshold: int = 7,
     mcp_servers: list[MCPServerConfig] | None = None,
@@ -2237,6 +2238,7 @@ async def create_agent(
     harness: bool = False,
     harness_project_name: str = "project",
     cli_tools: bool | dict[str, Any] | None = None,
+    require_tool_approval_for_cli_tools: bool = True,
     skills_disk_mirror: Path | str | None = None,
     react_force_tool_choice_on_user_turn: bool = True,
     react_tool_use_failed_auto_retries_hitl: int = 2,
@@ -2267,31 +2269,36 @@ async def create_agent(
 
     cli_tools_kw = normalize_cli_tools_kwargs(cli_tools)
     ibi_merged = list(interrupt_before_tools or [])
-    # Built-in CLI tools: default HITL interrupts (when not superseded by interrupt_before=["tools"])
-    # — subprocess tools when ``allow_shell``; destructive filesystem / notebook-edit tools whenever
-    # the CLI bundle is active. Read-only FS + network tools stay unprompted unless you extend this list.
+    # Built-in CLI tools + HITL: when ``require_tool_approval_for_cli_tools`` and ``user_callback``
+    # are set, use the ``"tools"`` wildcard so every bundled CLI tool pauses for approval (CLI default).
+    # Otherwise keep granular interrupts (destructive FS + shell) so library/tests without a callback
+    # still get conservative gates.
     if cli_tools_kw and "tools" not in ibi_merged:
-        if cli_tools_kw.get("allow_shell", True):
+        if require_tool_approval_for_cli_tools and user_callback:
+            ibi_merged.insert(0, "tools")
+        else:
+            # Granular list — subprocess tools when ``allow_shell``; destructive FS / notebook edits.
+            if cli_tools_kw.get("allow_shell", True):
+                for token in (
+                    "execute",
+                    "bash",
+                    "bash_background",
+                    "bash_background_status",
+                    "bash_background_stop",
+                ):
+                    if token not in ibi_merged:
+                        ibi_merged.append(token)
             for token in (
-                "execute",
-                "bash",
-                "bash_background",
-                "bash_background_status",
-                "bash_background_stop",
+                "write_file",
+                "edit_file",
+                "multi_edit",
+                "delete_file",
+                "move_file",
+                "rmdir",
+                "notebook_edit",
             ):
                 if token not in ibi_merged:
                     ibi_merged.append(token)
-        for token in (
-            "write_file",
-            "edit_file",
-            "multi_edit",
-            "delete_file",
-            "move_file",
-            "rmdir",
-            "notebook_edit",
-        ):
-            if token not in ibi_merged:
-                ibi_merged.append(token)
 
     resolved_query_cache: Any = query_cache
     if resolved_query_cache is None:

@@ -78,17 +78,6 @@ def _eprint(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
-def _cli_tools_options_from_args(args: argparse.Namespace) -> dict[str, Any] | None:
-    if not getattr(args, "with_cli_tools", False):
-        return None
-    return {
-        "working_dir": getattr(args, "cli_tools_working_dir", ".") or ".",
-        "allow_shell": not getattr(args, "cli_tools_no_shell", False),
-        "allow_network": not getattr(args, "cli_tools_no_network", False),
-        "sandbox": not getattr(args, "cli_tools_no_sandbox", False),
-    }
-
-
 def _runtime_cli_tool_metrics(agent: Any) -> tuple[bool, int]:
     from ..cli_tools import CLI_TOOL_NAMES
 
@@ -96,20 +85,6 @@ def _runtime_cli_tool_metrics(agent: Any) -> tuple[bool, int]:
     names = {getattr(t, "name", None) for t in tool_objs}
     count = sum(1 for n in names if n in CLI_TOOL_NAMES)
     return count > 0, count
-
-
-def _hitl_allowlist_runtime_setup(args: argparse.Namespace) -> tuple[set[str], Path | None]:
-    """Load persisted tool allowlist (``decision=allowlist``); optional path disabled via flags."""
-    from .hitl_allowlist import load_tool_allowlist
-
-    if getattr(args, "no_hitl_allowlist_persist", False):
-        return set(), None
-    raw = getattr(args, "hitl_allowlist_path", None)
-    path = Path.cwd() / ".agloom" / "hitl_tool_allowlist.json"
-    if isinstance(raw, str) and raw.strip():
-        path = Path(raw).expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return load_tool_allowlist(path), path
 
 
 async def _noop_langgraph_store_cleanup() -> None:
@@ -195,17 +170,57 @@ async def _open_runtime_langgraph_store(
 
 
 async def _read_stdin_lines(queue: asyncio.Queue[str | None]) -> None:
-    """Read stdin line-by-line in a thread; push each non-empty line onto *queue*. ``None``
-    sentinel signals EOF so the main loop can drain and exit cleanly."""
+    """Read stdin line-by-line; push each non-empty line onto *queue*. ``None`` signals EOF.
+
+    Prefer :meth:`asyncio.loop.connect_read_pipe` so stdin uses asyncio stream I/O. On some
+    platforms (notably Windows when driven over a pipe from Node), blocking ``readline`` in a
+    thread has been observed to hit spurious EOF and tear down the serve loop while the CLI is
+    still running. Fall back to the executor path if connect_read_pipe is unavailable.
+    """
     loop = asyncio.get_running_loop()
-    while True:
-        line = await loop.run_in_executor(None, sys.stdin.readline)
-        if not line:
-            await queue.put(None)
-            return
-        stripped = line.strip()
-        if stripped:
-            await queue.put(stripped)
+    transport: asyncio.BaseTransport | None = None
+    reader: asyncio.StreamReader | None = None
+    try:
+        reader = asyncio.StreamReader()
+        protocol = asyncio.StreamReaderProtocol(reader)
+        transport, _ = await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+    except (NotImplementedError, OSError, AttributeError, ValueError):
+        transport = None
+
+    if transport is None:
+        while True:
+            try:
+                line = await loop.run_in_executor(None, sys.stdin.readline)
+            except asyncio.CancelledError:
+                raise
+            if not line:
+                _eprint("[agloom-runtime] stdin closed (EOF); exiting serve loop")
+                await queue.put(None)
+                return
+            stripped = line.strip()
+            if stripped:
+                await queue.put(stripped)
+
+    # Past ``transport is None`` branch: pipe connected; narrow for type checkers / safe ``close``.
+    assert transport is not None
+    assert reader is not None
+    stream_transport: asyncio.BaseTransport = transport
+    try:
+        while True:
+            try:
+                line_bytes = await reader.readline()
+            except asyncio.CancelledError:
+                raise
+            if not line_bytes:
+                _eprint("[agloom-runtime] stdin closed (EOF); exiting serve loop")
+                await queue.put(None)
+                return
+            line = line_bytes.decode("utf-8", errors="replace")
+            stripped = line.strip()
+            if stripped:
+                await queue.put(stripped)
+    finally:
+        stream_transport.close()
 
 
 async def _serve_stdio(args: argparse.Namespace) -> int:
@@ -216,8 +231,10 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         from .serve_cli import (
             apply_api_key_env,
             build_create_agent_kwargs,
+            cli_tools_options_from_args,
             open_sqlite_session_memory,
             resolve_llm_for_serve,
+            session_started_snapshot_from_args,
         )
     except ImportError as exc:
         _eprint(f"[agloom-runtime] failed to import CLI helpers: {exc!r}")
@@ -239,11 +256,12 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             _eprint(f"[agloom-runtime] --otel requires optional deps: pip install 'agloom[otel]' ({exc})")
             return 2
 
-    from .workspace_bootstrap import ensure_agloom_workspace, write_session_started_json
-
-    _sessions_dir, _yaml_created = ensure_agloom_workspace(Path.cwd(), args=args)
-    if _yaml_created:
-        _eprint("[agloom-runtime] wrote agloom.yaml (starter next to .agloom/) — set model/provider or use env")
+    from .hitl_allowlist import hitl_allowlist_paths_for_runtime
+    from .workspace_bootstrap import (
+        session_marker_json_path,
+        sessions_dir_for_runtime,
+        write_session_started_json,
+    )
 
     llm = resolve_llm_for_serve(args)
     if llm is None:
@@ -274,12 +292,23 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
 
     session_id = args.session or new_session_id()
     initial_thread = f"thread_{uuid4().hex[:16]}"
+    _cwd = Path.cwd()
+    _sd = sessions_dir_for_runtime(_cwd, args=args)
+    _marker_json = session_marker_json_path(_sd, session_id) if _sd.is_dir() else None
+    _al_set, _al_leg, _al_sess = hitl_allowlist_paths_for_runtime(
+        args,
+        session_marker_json=_marker_json,
+        session_scoped=_marker_json is not None,
+        cwd=_cwd,
+    )
     write_session_started_json(
-        _sessions_dir,
+        _sd,
         session_id,
         transport="stdio",
         thread=initial_thread,
-        record_cwd=Path.cwd(),
+        record_cwd=_cwd,
+        hitl_tool_allowlist=sorted(_al_set),
+        extra=session_started_snapshot_from_args(args),
     )
 
     emitter = SessionEmitter(
@@ -289,8 +318,12 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         capabilities=[],
         store=store,
     )
-    _al_set, _al_path = _hitl_allowlist_runtime_setup(args)
-    hitl_bridge = HITLBridge(emitter, tool_allowlist=_al_set, allowlist_persist_path=_al_path)
+    hitl_bridge = HITLBridge(
+        emitter,
+        tool_allowlist=_al_set,
+        allowlist_persist_path=_al_leg,
+        allowlist_session_marker=_al_sess,
+    )
 
     lg_store, lg_store_cleanup = await _open_runtime_langgraph_store(args)
     use_harness = lg_store is not None and not getattr(args, "no_harness", False)
@@ -309,7 +342,7 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             user_callback=hitl_bridge.callback,
             store=lg_store,
             harness=use_harness,
-            cli_tools=_cli_tools_options_from_args(args),
+            cli_tools=cli_tools_options_from_args(args),
             **ca_kw,
         )
     except Exception:
@@ -459,17 +492,9 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
 
 
 async def _serve_ws(args: argparse.Namespace) -> int:
-    """WebSocket serve loop."""
+    """WebSocket serve loop — one :func:`agloom.create_agent` per accepted connection."""
     try:
-        from agloom import create_agent
-
-        from .invocation_context import runtime_hitl_user_callback
-        from .serve_cli import (
-            apply_api_key_env,
-            build_create_agent_kwargs,
-            open_sqlite_session_memory,
-            resolve_llm_for_serve,
-        )
+        from .serve_cli import apply_api_key_env
         from .ws import serve_ws
     except ImportError as exc:
         _eprint(f"[agloom-runtime] failed to import CLI helpers: {exc!r}")
@@ -491,28 +516,6 @@ async def _serve_ws(args: argparse.Namespace) -> int:
             _eprint(f"[agloom-runtime] --otel requires optional deps: pip install 'agloom[otel]' ({exc})")
             return 2
 
-    from .workspace_bootstrap import ensure_agloom_workspace
-
-    _, _yaml_ws = ensure_agloom_workspace(Path.cwd(), args=args)
-    if _yaml_ws:
-        _eprint("[agloom-runtime] wrote agloom.yaml (starter next to .agloom/) — set model/provider or use env")
-
-    llm = resolve_llm_for_serve(args)
-    if llm is None:
-        _eprint("[agloom-runtime] no provider key set, or pass --model with credentials.")
-        return 1
-
-    ca_kw = build_create_agent_kwargs(args)
-    mem_cleanup_extra: Any = None
-    try:
-        sm_mem, sm_cleanup = await open_sqlite_session_memory(args)
-        if sm_mem is not None:
-            ca_kw["memory"] = sm_mem
-            mem_cleanup_extra = sm_cleanup
-    except Exception as exc:
-        _eprint(f"[agloom-runtime] session memory init failed: {exc!r}")
-        return 1
-
     store = None
     if args.store == "sqlite":
         from ..protocol.store import SqliteEventStore
@@ -521,10 +524,8 @@ async def _serve_ws(args: argparse.Namespace) -> int:
         from ..protocol.store import MemoryEventStore
         store = MemoryEventStore()
 
-    # One shared agent; each WS connection gets its own emitter/session and LangGraph thread id.
     lg_store, lg_store_cleanup = await _open_runtime_langgraph_store(args)
     use_harness = lg_store is not None and not getattr(args, "no_harness", False)
-    shared_agent: Any | None = None
     if lg_store is not None:
         _eprint(
             f"[agloom-runtime] agent LT store={getattr(args, 'agent_store', 'sqlite')!r} "
@@ -532,26 +533,12 @@ async def _serve_ws(args: argparse.Namespace) -> int:
             f"({_agent_lt_boot_suffix(args)})"
         )
     try:
-        _ws_al_set, _ws_al_path = _hitl_allowlist_runtime_setup(args)
-        shared_agent = await create_agent(
-            model=llm,
-            name="agloom-runtime",
-            user_callback=runtime_hitl_user_callback,
-            store=lg_store,
-            harness=use_harness,
-            cli_tools=_cli_tools_options_from_args(args),
-            **ca_kw,
-        )
-        shared_agent.config["_hitl_tool_allowlist"] = _ws_al_set
-
-        async def _agent_factory() -> Any:
-            assert shared_agent is not None
-            return shared_agent
-
         sub = getattr(args, "ws_subprotocol", "") or ""
         subprotocols = [sub] if sub else None
         await serve_ws(
-            agent_factory=_agent_factory,
+            base_args=args,
+            lg_store=lg_store,
+            use_harness=use_harness,
             host=args.host,
             port=args.port,
             store=store,
@@ -560,17 +547,12 @@ async def _serve_ws(args: argparse.Namespace) -> int:
             max_queue=getattr(args, "ws_max_queue", None),
             subprotocols=subprotocols,
             heartbeat_interval=float(getattr(args, "heartbeat_interval", 0.0) or 0.0),
-            hitl_allowlist_persist_path=_ws_al_path,
             budget_tokens=getattr(args, "budget_tokens", None),
             budget_cost_usd=getattr(args, "budget_cost_usd", None),
             attachment_working_dir=Path(getattr(args, "cli_tools_working_dir", None) or ".").resolve(),
         )
     finally:
-        if shared_agent is not None:
-            await shared_agent.aclose()
         await lg_store_cleanup()
-        if mem_cleanup_extra:
-            await mem_cleanup_extra()
     return 0
 
 
@@ -894,10 +876,15 @@ async def _dispatch_command(
             data = cmd.data
             if data.model_id:
                 agent.config["llm"] = resolve_model(data.model_id)
+            bind_kw: dict[str, Any] = {}
             if data.temperature is not None:
+                bind_kw["temperature"] = data.temperature
+            if data.top_p is not None:
+                bind_kw["top_p"] = data.top_p
+            if bind_kw:
                 llm = agent.config.get("llm")
                 if llm is not None and hasattr(llm, "bind"):
-                    agent.config["llm"] = llm.bind(temperature=data.temperature)
+                    agent.config["llm"] = llm.bind(**bind_kw)
             if data.system_prompt is not None:
                 agent.config["system_prompt"] = resolve_system_prompt(data.system_prompt)
             if data.pattern is not None:
@@ -1043,6 +1030,16 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Inject built-in CLI tools (filesystem, optional shell/network, meta). Off by default.",
+    )
+    serve.add_argument(
+        "--no-require-tool-approval",
+        dest="require_tool_approval",
+        action="store_false",
+        default=True,
+        help=(
+            "Allow bundled CLI tools to run without per-tool human approval (dangerous). "
+            "Default: require approval for each tool when --with-cli-tools is set."
+        ),
     )
     serve.add_argument(
         "--cli-tools-working-dir",
@@ -1243,6 +1240,22 @@ def _add_serve_agent_flags(serve: argparse.ArgumentParser) -> None:
         help="LLM sampling temperature (passed to the provider chat model constructor).",
     )
     serve.add_argument(
+        "--top-p",
+        dest="top_p",
+        type=float,
+        default=None,
+        metavar="F",
+        help="Nucleus sampling top_p when the provider supports it.",
+    )
+    serve.add_argument(
+        "--top-k",
+        dest="top_k",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Top-k sampling when the provider supports it (e.g. Gemini, Anthropic).",
+    )
+    serve.add_argument(
         "--max-tokens",
         dest="max_tokens",
         type=int,
@@ -1325,9 +1338,9 @@ def _add_serve_agent_flags(serve: argparse.ArgumentParser) -> None:
         "--session-max-turns",
         dest="session_max_turns",
         type=int,
-        default=20,
+        default=50,
         metavar="N",
-        help="SessionMemory max_turns / rolling window size.",
+        help="SessionMemory max_turns / rolling window size (starter YAML: memory.max_turns).",
     )
 
 

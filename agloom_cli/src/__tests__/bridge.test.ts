@@ -9,7 +9,7 @@ import { EventEmitter } from 'node:events'
 // ── mock child_process ────────────────────────────────────────────────────────
 
 const mockWrite = jest.fn()
-const mockStdin = { writable: true, write: mockWrite }
+const mockStdin = { writable: true, write: mockWrite, on: jest.fn() }
 const mockStdoutEmitter = new EventEmitter() as EventEmitter & { setEncoding: jest.Mock }
 mockStdoutEmitter.setEncoding = jest.fn()
 mockStdoutEmitter.setMaxListeners(50)

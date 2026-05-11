@@ -7,6 +7,7 @@ import stripAnsi from 'strip-ansi'
 import type { AGPEvent, InvokeAttachment } from './types/agp.js'
 import type { AGPBridge } from './runtime/bridge.js'
 import { writeBannerToStderr } from './banner.js'
+import { ensureAgloomCliWorkspace } from './workspaceBootstrap.js'
 
 export interface DirectOpts {
   thread: string
@@ -150,6 +151,8 @@ export async function runDirect(options: {
     bridge,
     (e) => e.type === 'session.opened' || e.type === 'runtime.ready',
   )
+
+  ensureAgloomCliWorkspace(process.cwd())
 
   bridge.start(runtimeArgs, { transport: 'stdio' })
 

@@ -35,7 +35,7 @@ from uuid import uuid4
 
 from ..hitl_contract import HITLEvent
 from ..protocol import HITLDecision, HITLKind, SessionEmitter
-from .hitl_allowlist import save_tool_allowlist
+from .hitl_allowlist import save_allowlist_to_session_marker, save_tool_allowlist
 
 # Map agloom HITLEvent.* strings → AGP ``hitl.request.kind`` values. Keep the agloom contract
 # stable: when a new HITLEvent type appears, add a row here (and a translator branch in
@@ -101,11 +101,15 @@ class HITLBridge:
         *,
         tool_allowlist: set[str] | None = None,
         allowlist_persist_path: Path | str | None = None,
+        allowlist_session_marker: Path | str | None = None,
     ) -> None:
         self._default_emitter = emitter
         self._tool_allowlist: set[str] = tool_allowlist if tool_allowlist is not None else set()
         self._allowlist_persist_path = (
             Path(allowlist_persist_path).expanduser().resolve() if allowlist_persist_path else None
+        )
+        self._allowlist_session_marker = (
+            Path(allowlist_session_marker).expanduser().resolve() if allowlist_session_marker else None
         )
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._kinds: dict[str, HITLKind] = {}  # request_id → kind
@@ -250,7 +254,12 @@ class HITLBridge:
             tn = params.get("tool_name")
             if isinstance(tn, str) and tn.strip():
                 self._tool_allowlist.add(tn.strip())
-                if self._allowlist_persist_path is not None:
+                if self._allowlist_session_marker is not None:
+                    try:
+                        save_allowlist_to_session_marker(self._allowlist_session_marker, self._tool_allowlist)
+                    except OSError:
+                        pass
+                elif self._allowlist_persist_path is not None:
                     try:
                         save_tool_allowlist(self._allowlist_persist_path, self._tool_allowlist)
                     except OSError:

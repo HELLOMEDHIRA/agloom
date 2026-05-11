@@ -377,6 +377,7 @@ class CommandConfigSetData(_CmdBase):
     cli_tools: dict[str, Any] | None = None
     pattern: str | None = None
     temperature: float | None = None
+    top_p: float | None = None
     system_prompt: str | None = None
     budget_token_limit: int | None = None
     budget_cost_usd_limit: float | None = None
@@ -387,6 +388,7 @@ class CommandConfigSetData(_CmdBase):
             self.model_id is None
             and self.pattern is None
             and self.temperature is None
+            and self.top_p is None
             and self.system_prompt is None
             and self.cli_tools is None
             and self.budget_token_limit is None
@@ -394,7 +396,7 @@ class CommandConfigSetData(_CmdBase):
         ):
             raise ValueError(
                 "command.config.set requires at least one of "
-                "model_id, pattern, temperature, system_prompt, cli_tools, "
+                "model_id, pattern, temperature, top_p, system_prompt, cli_tools, "
                 "budget_token_limit, budget_cost_usd_limit"
             )
         return self

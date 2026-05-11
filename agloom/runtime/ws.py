@@ -16,6 +16,12 @@ TLS termination and browser CORS policies belong in a reverse proxy.
 Optional dependency: ``websockets>=12.0``.  Install via::
 
     pip install "agloom[ws]"
+
+**Per-connection agents:** each WebSocket client gets a dedicated :func:`agloom.create_agent`
+instance (model/config from server argv + optional ``?model=…&provider=…`` query on the handshake
+path). The LangGraph LT ``store`` (skills / harness) is still shared across connections unless
+``--agent-store=none``. Session-scoped HITL allowlists use ``.agloom/sessions/<id>.json`` when
+that directory exists (same as stdio).
 """
 
 from __future__ import annotations
@@ -25,9 +31,10 @@ import json
 import logging
 import sys
 import time
+from argparse import Namespace
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -36,9 +43,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _ws_request_path(ws: Any) -> str:
+    req = getattr(ws, "request", None)
+    if req is None:
+        return ""
+    return str(getattr(req, "path", "") or "")
+
+
 async def serve_ws(
     *,
-    agent_factory: Any,
+    base_args: Namespace,
+    lg_store: Any | None,
+    use_harness: bool,
     host: str = "127.0.0.1",
     port: int = 8765,
     store: EventStore | None = None,
@@ -47,15 +63,14 @@ async def serve_ws(
     max_queue: int | None = 64,
     subprotocols: Sequence[str] | None = ("agp-v1",),
     heartbeat_interval: float = 0.0,
-    hitl_allowlist_persist_path: Path | None = None,
     budget_tokens: int | None = None,
     budget_cost_usd: float | None = None,
     attachment_working_dir: Path | None = None,
 ) -> None:
     """Start the AGP WebSocket server and block until cancelled.
 
-    ``agent_factory`` is invoked once per connection. ``store`` enables replay on
-    ``command.session.resume``.
+    Each accepted connection builds a fresh agent using *base_args* (plus optional URL query
+    overrides). ``store`` enables replay on ``command.session.resume``.
     """
     try:
         import websockets  # type: ignore[import-untyped]
@@ -77,10 +92,11 @@ async def serve_ws(
     async def _handle(ws: ServerConnection) -> None:
         await _session_loop(
             ws,
-            agent_factory=agent_factory,
+            base_args=base_args,
+            lg_store=lg_store,
+            use_harness=use_harness,
             store=store,
             heartbeat_interval=heartbeat_interval,
-            hitl_allowlist_persist_path=hitl_allowlist_persist_path,
             budget_tokens=budget_tokens,
             budget_cost_usd=budget_cost_usd,
             attachment_working_dir=attachment_working_dir,
@@ -103,15 +119,17 @@ async def serve_ws(
 async def _session_loop(
     ws: Any,
     *,
-    agent_factory: Any,
+    base_args: Namespace,
+    lg_store: Any | None,
+    use_harness: bool,
     store: EventStore | None,
     heartbeat_interval: float,
-    hitl_allowlist_persist_path: Path | None = None,
     budget_tokens: int | None = None,
     budget_cost_usd: float | None = None,
     attachment_working_dir: Path | None = None,
 ) -> None:
-    """Handle one WebSocket connection as one AGP session."""
+    """Handle one WebSocket connection as one AGP session (one agent instance)."""
+    from agloom import create_agent
     from agloom.protocol import AsyncSessionEmitter, command_adapter
     from agloom.protocol.commands import (
         CommandAttachFile,
@@ -139,20 +157,64 @@ async def _session_loop(
     from agloom.multimodal import prepare_invoke_command
     from agloom.runtime.bridge import new_session_id, run_invocation
     from agloom.runtime.hitl import HITLBridge
-    from agloom.runtime.workspace_bootstrap import ensure_agloom_workspace, write_session_started_json
+    from agloom.runtime.hitl_allowlist import hitl_allowlist_paths_for_runtime
+    from agloom.runtime.serve_cli import (
+        build_create_agent_kwargs,
+        cli_tools_options_from_args,
+        merge_ws_connection_args,
+        open_sqlite_session_memory,
+        resolve_llm_for_serve,
+        session_started_snapshot_from_args,
+    )
+    from agloom.runtime.workspace_bootstrap import (
+        session_marker_json_path,
+        sessions_dir_for_runtime,
+        write_session_started_json,
+    )
+
+    async def _send_error(msg: str) -> None:
+        try:
+            await ws.send(json.dumps({"type": "error.transient", "data": {"message": msg}}) + "\n")
+        except Exception:
+            pass
 
     session_id = f"ws_{uuid4().hex[:16]}"
     initial_thread = f"t_{uuid4().hex[:12]}"
     attach_wd = attachment_working_dir or Path.cwd().resolve()
-    _sessions_dir, _ = ensure_agloom_workspace(attach_wd)
+    merged_args = merge_ws_connection_args(base_args, _ws_request_path(ws))
+
+    sd = sessions_dir_for_runtime(attach_wd, args=merged_args)
+    marker_path = session_marker_json_path(sd, session_id) if sd.is_dir() else None
+    _al_set, _al_leg, _al_sess = hitl_allowlist_paths_for_runtime(
+        merged_args,
+        session_marker_json=marker_path,
+        session_scoped=marker_path is not None,
+        cwd=attach_wd,
+    )
+
     write_session_started_json(
-        _sessions_dir,
+        sd,
         session_id,
         transport="ws",
         thread=initial_thread,
         record_cwd=attach_wd,
+        hitl_tool_allowlist=sorted(_al_set),
+        extra=session_started_snapshot_from_args(merged_args),
     )
-    agent = agent_factory()
+
+    llm = resolve_llm_for_serve(merged_args)
+    if llm is None:
+        await _send_error(
+            "no LLM resolved — set provider API keys in the environment or pass "
+            "--model / ?model=provider:id on the WebSocket URL path query string",
+        )
+        return
+
+    ca_kw = build_create_agent_kwargs(merged_args)
+    mem_cleanup: Any = None
+    sm_mem, mem_cleanup = await open_sqlite_session_memory(merged_args, ws_session_id=session_id)
+    if sm_mem is not None:
+        ca_kw["memory"] = sm_mem
 
     emitter = AsyncSessionEmitter(
         session=session_id,
@@ -162,15 +224,31 @@ async def _session_loop(
         capabilities=[],
     )
 
-    cfg = cast("dict[str, Any]", agent.config)
-    if not isinstance(cfg.get("_hitl_tool_allowlist"), set):
-        cfg["_hitl_tool_allowlist"] = set()
-    _al_set = cfg["_hitl_tool_allowlist"]
     hitl_bridge = HITLBridge(
         emitter,
         tool_allowlist=_al_set,
-        allowlist_persist_path=hitl_allowlist_persist_path,
+        allowlist_persist_path=_al_leg,
+        allowlist_session_marker=_al_sess,
     )
+
+    agent: Any | None = None
+    try:
+        agent = await create_agent(
+            model=llm,
+            name="agloom-runtime",
+            user_callback=hitl_bridge.callback,
+            store=lg_store,
+            harness=use_harness,
+            cli_tools=cli_tools_options_from_args(merged_args),
+            **ca_kw,
+        )
+    except Exception as exc:
+        await _send_error(f"agent initialization failed: {exc!s}")
+        if mem_cleanup is not None:
+            await mem_cleanup()
+        return
+
+    agent.config["_hitl_tool_allowlist"] = _al_set
 
     budget_tracker = None
     if (budget_tokens is not None and budget_tokens > 0) or (
@@ -187,12 +265,6 @@ async def _session_loop(
         emitter.budget_tracker = budget_tracker  # type: ignore[attr-defined]
 
     _tasks: dict[str, asyncio.Task[None]] = {}
-
-    async def _send_error(msg: str) -> None:
-        try:
-            await ws.send(json.dumps({"type": "error.transient", "data": {"message": msg}}) + "\n")
-        except Exception:
-            pass
 
     stop_hb = asyncio.Event()
     hb_task: asyncio.Task[None] | None = None
@@ -499,10 +571,15 @@ async def _session_loop(
                         data = cmd.data
                         if data.model_id:
                             agent.config["llm"] = resolve_model(data.model_id)
+                        bind_kw: dict[str, Any] = {}
                         if data.temperature is not None:
+                            bind_kw["temperature"] = data.temperature
+                        if data.top_p is not None:
+                            bind_kw["top_p"] = data.top_p
+                        if bind_kw:
                             llm = agent.config.get("llm")
                             if llm is not None and hasattr(llm, "bind"):
-                                agent.config["llm"] = llm.bind(temperature=data.temperature)
+                                agent.config["llm"] = llm.bind(**bind_kw)
                         if data.system_prompt is not None:
                             agent.config["system_prompt"] = resolve_system_prompt(data.system_prompt)
                         if data.pattern is not None:
@@ -578,3 +655,8 @@ async def _session_loop(
             if _tasks:
                 await asyncio.gather(*_tasks.values(), return_exceptions=True)
             emitter.close()
+
+    if agent is not None:
+        await agent.aclose()
+    if mem_cleanup is not None:
+        await mem_cleanup()

@@ -64,6 +64,22 @@ async def test_cli_tools_task_tool_disabled(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_cli_tools_require_approval_wildcard_when_callback() -> None:
+    llm = MagicMock()
+    llm.ainvoke = AsyncMock(return_value=MagicMock())
+    cb = AsyncMock(return_value="continue")
+    agent = await create_agent(
+        model=llm,
+        name="rq-full-hitl",
+        cli_tools=True,
+        user_callback=cb,
+        require_tool_approval_for_cli_tools=True,
+    )
+    ibi = agent.config["interrupt_before_tools"]
+    assert ibi and ibi[0] == "tools"
+
+
+@pytest.mark.asyncio
 async def test_cli_tools_no_shell_skips_execute_tool_and_interrupt() -> None:
     llm = MagicMock()
     llm.ainvoke = AsyncMock(return_value=MagicMock())

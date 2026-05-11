@@ -65,31 +65,137 @@ function normalizeMcpYamlInput(raw: unknown): unknown {
   return out.length > 0 ? out : undefined
 }
 
-const AgloomYamlSchema = z
-  .object({
-    model: z.string().optional(),
-    provider: z.string().optional(),
-    temperature: z.number().optional(),
-    max_tokens: z.number().int().optional(),
-    pattern: z.string().optional(),
-    system_prompt: z.string().optional(),
-    system_prompt_file: z.string().optional(),
-    store: z.enum(['none', 'memory', 'sqlite']).optional(),
-    store_path: z.string().optional(),
-    memory: z.preprocess(normalizeMemoryYamlInput, z.string().optional()),
-    memory_path: z.string().optional(),
-    no_memory: z.boolean().optional(),
-    no_skills: z.boolean().optional(),
-    skills_dir: z.string().optional(),
-    summarizer_model: z.string().optional(),
-    auto_summarize: z.boolean().optional(),
-    session_max_turns: z.number().int().optional(),
-    mcp: z.preprocess(
-      normalizeMcpYamlInput,
-      z.array(z.union([z.string(), z.object({ name: z.string(), config: z.string() })])).optional(),
-    ),
-  })
-  .passthrough()
+/**
+ * Rich-era / nested layouts use `ai.*`, object `memory`, `skills`, and `mcp.servers`.
+ * Flatten into the top-level keys the Node CLI and Zod schema already understand.
+ */
+export function flattenRichAgloomYaml(raw: unknown): unknown {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return raw
+  const o = { ...(raw as Record<string, unknown>) }
+
+  const ai = o.ai
+  if (ai && typeof ai === 'object' && !Array.isArray(ai)) {
+    const a = ai as Record<string, unknown>
+    if (o.model === undefined || o.model === null) {
+      if (a.model !== undefined && a.model !== null) o.model = a.model
+    }
+    if (o.provider === undefined || o.provider === null) {
+      if (a.provider !== undefined && a.provider !== null) o.provider = a.provider
+    }
+    if (o.system_prompt === undefined || o.system_prompt === null) {
+      if (a.system_prompt !== undefined && a.system_prompt !== null) o.system_prompt = a.system_prompt
+    }
+    if (o.system_prompt_file === undefined || o.system_prompt_file === null) {
+      if (a.system_prompt_file !== undefined && a.system_prompt_file !== null) {
+        o.system_prompt_file = a.system_prompt_file
+      }
+    }
+  }
+
+  const mem = o.memory
+  if (mem && typeof mem === 'object' && !Array.isArray(mem)) {
+    const m = mem as Record<string, unknown>
+    const maxTurns = m.max_turns
+    const enabled = m.enabled
+    if (typeof maxTurns === 'number' && (o.session_max_turns === undefined || o.session_max_turns === null)) {
+      o.session_max_turns = maxTurns
+    }
+    if (
+      typeof m.auto_summarize === 'boolean' &&
+      (o.auto_summarize === undefined || o.auto_summarize === null)
+    ) {
+      o.auto_summarize = m.auto_summarize
+    }
+    const sumModel = m.summarizer_model
+    if (
+      typeof sumModel === 'string' &&
+      sumModel.trim().length > 0 &&
+      (o.summarizer_model === undefined || o.summarizer_model === null)
+    ) {
+      o.summarizer_model = sumModel.trim()
+    }
+    if (typeof m.path === 'string' && m.path.trim().length > 0 && !o.memory_path) {
+      o.memory_path = m.path
+    }
+    delete o.memory
+    if (enabled === true) {
+      o.memory = 'sqlite'
+    } else if (enabled === false) {
+      o.no_memory = true
+    } else if (typeof m.backend === 'string' && m.backend.trim()) {
+      o.memory = m.backend
+    }
+  }
+
+  const skills = o.skills
+  if (skills && typeof skills === 'object' && !Array.isArray(skills)) {
+    const s = skills as Record<string, unknown>
+    if (s.enabled === false) o.no_skills = true
+    if (typeof s.dir === 'string' && s.dir.trim().length > 0 && !o.skills_dir) {
+      o.skills_dir = s.dir
+    }
+  }
+
+  const toolsRich = o.tools
+  if (toolsRich && typeof toolsRich === 'object' && !Array.isArray(toolsRich)) {
+    const tb = toolsRich as Record<string, unknown>
+    if (tb.cli_enabled === false) {
+      o.no_cli_tools = true
+    }
+  }
+
+  const safety = o.safety
+  if (safety && typeof safety === 'object' && !Array.isArray(safety)) {
+    const sf = safety as Record<string, unknown>
+    if (
+      typeof sf.require_approval === 'boolean' &&
+      (o.require_tool_approval === undefined || o.require_tool_approval === null)
+    ) {
+      o.require_tool_approval = sf.require_approval
+    }
+  }
+
+  const mcpBlock = o.mcp
+  if (mcpBlock && typeof mcpBlock === 'object' && !Array.isArray(mcpBlock)) {
+    const mc = mcpBlock as Record<string, unknown>
+    if (Array.isArray(mc.servers)) {
+      o.mcp = mc.servers
+    }
+  }
+
+  return o
+}
+
+const AgloomYamlSchema = z.preprocess(
+  flattenRichAgloomYaml,
+  z
+    .object({
+      model: z.string().optional(),
+      provider: z.string().optional(),
+      temperature: z.number().optional(),
+      max_tokens: z.number().int().optional(),
+      pattern: z.string().optional(),
+      system_prompt: z.string().optional(),
+      system_prompt_file: z.string().optional(),
+      store: z.enum(['none', 'memory', 'sqlite']).optional(),
+      store_path: z.string().optional(),
+      memory: z.preprocess(normalizeMemoryYamlInput, z.string().optional()),
+      memory_path: z.string().optional(),
+      no_memory: z.boolean().optional(),
+      no_skills: z.boolean().optional(),
+      skills_dir: z.string().optional(),
+      summarizer_model: z.string().optional(),
+      auto_summarize: z.boolean().optional(),
+      session_max_turns: z.number().int().optional(),
+      no_cli_tools: z.boolean().optional(),
+      require_tool_approval: z.boolean().optional(),
+      mcp: z.preprocess(
+        normalizeMcpYamlInput,
+        z.array(z.union([z.string(), z.object({ name: z.string(), config: z.string() })])).optional(),
+      ),
+    })
+    .passthrough(),
+)
 
 export type AgloomYaml = z.infer<typeof AgloomYamlSchema>
 
@@ -184,6 +290,8 @@ export type CliOptsLike = {
   noAutoSummarize: boolean
   sessionMaxTurns: number
   maxTurns?: number
+  noCliTools?: boolean
+  noRequireToolApproval?: boolean
   mcp: string[]
   attach?: string[]
 }
@@ -267,6 +375,10 @@ export function applyAgloomConfigLayers(
   if (fromDefault('sessionMaxTurns') && y.session_max_turns !== undefined)
     next.sessionMaxTurns = y.session_max_turns
 
+  if (fromDefault('noCliTools') && y.no_cli_tools === true) next.noCliTools = true
+  if (fromDefault('noRequireToolApproval') && y.require_tool_approval === false)
+    next.noRequireToolApproval = true
+
   if (y.mcp && files.length > 0) {
     const extra = mcpSpecsFromYaml(y.mcp, files[files.length - 1]!)
     next.mcp = [...next.mcp, ...extra]
@@ -298,6 +410,8 @@ export function buildResolvedConfigSnapshot(
         'store',
         'memory',
         'sessionMaxTurns',
+        'noCliTools',
+        'noRequireToolApproval',
       ].map((k) => [
         k,
         (program as unknown as { getOptionValueSource?: (key: string) => string }).getOptionValueSource?.(k) ?? null,
