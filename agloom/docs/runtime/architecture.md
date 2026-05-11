@@ -20,7 +20,7 @@ local ↔ remote workers, runtime ↔ frontend, runtime ↔ observability, runti
 ## 2. Responsibility Split
 
 | Concern | agloom-core | agloom-runtime |
-|---|---|---|
+| --- | --- | --- |
 | Orchestration semantics | ✅ LangGraph graphs | ❌ |
 | Memory / knowledge | ✅ LTM, episodic, session | ❌ |
 | Tools / MCP | ✅ tool definitions, adapters | ❌ |
@@ -112,7 +112,7 @@ class BaseWorker(ABC):
 ### Worker types (shipped)
 
 | Type | Description |
-|---|---|
+| --- | --- |
 | `LocalAIWorker` | Wraps `UnifiedAgent.astream_events`, runs in-process |
 | `ToolWorker` | Executes a single tool call in isolation |
 
@@ -323,7 +323,7 @@ class RetryPolicy:
 Rough **current** sizing assumptions for the in-process runtime:
 
 | Dimension | Typical range |
-|---|---|
+| --- | --- |
 | Workers per node | 1–8 |
 | Sessions per node | up to ~100 (workload-dependent) |
 | Nodes | 1 |
@@ -351,7 +351,7 @@ The runtime package combines the AGP bridge (**`bridge.py`**), WebSocket transpo
 ## 15. Architectural risks
 
 | Risk | Severity | Mitigation |
-|---|---|---|
+| --- | --- | --- |
 | Worker crashes leak session state | High | WorkerPool supervisor restarts workers; emit `error.transient` |
 | Scheduler queue grows unbounded | Medium | Configurable `max_queue_depth`; back-pressure signal to frontend |
 | AGP `astream_events()` is a public hook | Medium | Already behind `Translator` layer; keep Translator as the only consumer |

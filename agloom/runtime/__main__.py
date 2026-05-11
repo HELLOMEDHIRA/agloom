@@ -11,6 +11,10 @@ Usage::
 
     python -m agloom.runtime serve --transport=stdio
     python -m agloom.runtime serve --transport=ws [--host 0.0.0.0] [--port 8765]
+    python -m agloom.runtime providers list
+    python -m agloom.runtime providers resolve "groq:meta-llama/llama-3.3-70b-versatile"
+    python -m agloom.runtime providers verify
+    python -m agloom.runtime eval eval.yaml
 
 Inbound (one JSON per line)::
 
@@ -40,17 +44,21 @@ from uuid import uuid4
 
 from ..protocol import SessionEmitter
 from ..protocol.commands import (
+    CommandAttachFile,
     CommandCancel,
     CommandConfigSet,
     CommandFeedback,
     CommandHITLRespond,
     CommandInvoke,
+    CommandMemoryClear,
     CommandPing,
+    CommandProvidersList,
     CommandRuntimeShutdown,
     CommandSchemaRequest,
     CommandSessionCreate,
     CommandSessionDelete,
     CommandSessionList,
+    CommandSessionRename,
     CommandSessionResume,
     CommandSnapshotRequest,
     CommandSubscribe,
@@ -185,20 +193,52 @@ async def _read_stdin_lines(queue: asyncio.Queue[str | None]) -> None:
 async def _serve_stdio(args: argparse.Namespace) -> int:
     """Persistent stdio serve loop. Returns process exit code."""
     try:
-        from agloom.llm import try_resolve_llm_from_api_keys
+        from agloom import create_agent
+
+        from .serve_cli import (
+            apply_api_key_env,
+            build_create_agent_kwargs,
+            open_sqlite_session_memory,
+            resolve_llm_for_serve,
+        )
     except ImportError as exc:
         _eprint(f"[agloom-runtime] failed to import CLI helpers: {exc!r}")
         return 2
 
-    llm = try_resolve_llm_from_api_keys(interactive=False)
+    try:
+        apply_api_key_env(args)
+    except Exception as exc:
+        _eprint(f"[agloom-runtime] {exc}")
+        return 1
+
+    if getattr(args, "otel", False):
+        try:
+            from .otel_setup import configure_runtime_otel
+
+            configure_runtime_otel()
+            _eprint("[agloom-runtime] OpenTelemetry: tracer provider configured (--otel)")
+        except ImportError as exc:
+            _eprint(f"[agloom-runtime] --otel requires optional deps: pip install 'agloom[otel]' ({exc})")
+            return 2
+
+    llm = resolve_llm_for_serve(args)
     if llm is None:
         _eprint(
-            "[agloom-runtime] no provider key set (OPENAI_API_KEY / ANTHROPIC_API_KEY / GROQ_API_KEY / …). "
-            "Export one and re-run."
+            "[agloom-runtime] no provider key set (OPENAI_API_KEY / ANTHROPIC_API_KEY / GROQ_API_KEY / …), "
+            "or pass --model with credentials."
         )
         return 1
 
-    from agloom import create_agent
+    ca_kw = build_create_agent_kwargs(args)
+    mem_cleanup_extra: Any = None
+    try:
+        sm_mem, sm_cleanup = await open_sqlite_session_memory(args)
+        if sm_mem is not None:
+            ca_kw["memory"] = sm_mem
+            mem_cleanup_extra = sm_cleanup
+    except Exception as exc:
+        _eprint(f"[agloom-runtime] session memory init failed: {exc!r}")
+        return 1
 
     store = None
     if args.store == "sqlite":
@@ -238,9 +278,12 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             store=lg_store,
             harness=use_harness,
             cli_tools=_cli_tools_options_from_args(args),
+            **ca_kw,
         )
     except Exception:
         await lg_store_cleanup()
+        if mem_cleanup_extra:
+            await mem_cleanup_extra()
         raise
 
     agent.config["_hitl_tool_allowlist"] = _al_set
@@ -263,6 +306,18 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         cli_tools_enabled=_ct_en,
         cli_tools_count=_ct_ct,
     )
+
+    budget_tracker = None
+    bt_n = getattr(args, "budget_tokens", None)
+    bt_c = getattr(args, "budget_cost_usd", None)
+    if (bt_n is not None and int(bt_n) > 0) or (bt_c is not None and float(bt_c) > 0):
+        from ..runtime.budget_tracker import SessionBudgetTracker
+
+        budget_tracker = SessionBudgetTracker(
+            token_limit=int(bt_n) if bt_n is not None and int(bt_n) > 0 else None,
+            cost_limit_usd=float(bt_c) if bt_c is not None and float(bt_c) > 0 else None,
+        )
+        emitter.budget_tracker = budget_tracker  # type: ignore[attr-defined]
 
     obs_store = None
     obs_server_task: asyncio.Task | None = None
@@ -336,6 +391,8 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
                 shutdown=shutdown,
                 store=store,
                 session_id=session_id,
+                budget_tracker=budget_tracker,
+                invoke_working_dir=Path(getattr(args, "cli_tools_working_dir", None) or ".").resolve(),
             )
     finally:
         shutdown.set()
@@ -360,6 +417,8 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         emitter.close(reason="shutdown")
         await agent.aclose()
         await lg_store_cleanup()
+        if mem_cleanup_extra:
+            await mem_cleanup_extra()
         if obs_server_task and not obs_server_task.done():
             obs_server_task.cancel()
         if obs_store:
@@ -370,20 +429,51 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
 async def _serve_ws(args: argparse.Namespace) -> int:
     """WebSocket serve loop."""
     try:
-        from agloom.llm import try_resolve_llm_from_api_keys
+        from agloom import create_agent
+
+        from .invocation_context import runtime_hitl_user_callback
+        from .serve_cli import (
+            apply_api_key_env,
+            build_create_agent_kwargs,
+            open_sqlite_session_memory,
+            resolve_llm_for_serve,
+        )
+        from .ws import serve_ws
     except ImportError as exc:
         _eprint(f"[agloom-runtime] failed to import CLI helpers: {exc!r}")
         return 2
 
-    llm = try_resolve_llm_from_api_keys(interactive=False)
-    if llm is None:
-        _eprint("[agloom-runtime] no provider key set.")
+    try:
+        apply_api_key_env(args)
+    except Exception as exc:
+        _eprint(f"[agloom-runtime] {exc}")
         return 1
 
-    from agloom import create_agent
+    if getattr(args, "otel", False):
+        try:
+            from .otel_setup import configure_runtime_otel
 
-    from .invocation_context import runtime_hitl_user_callback
-    from .ws import serve_ws
+            configure_runtime_otel()
+            _eprint("[agloom-runtime] OpenTelemetry: tracer provider configured (--otel)")
+        except ImportError as exc:
+            _eprint(f"[agloom-runtime] --otel requires optional deps: pip install 'agloom[otel]' ({exc})")
+            return 2
+
+    llm = resolve_llm_for_serve(args)
+    if llm is None:
+        _eprint("[agloom-runtime] no provider key set, or pass --model with credentials.")
+        return 1
+
+    ca_kw = build_create_agent_kwargs(args)
+    mem_cleanup_extra: Any = None
+    try:
+        sm_mem, sm_cleanup = await open_sqlite_session_memory(args)
+        if sm_mem is not None:
+            ca_kw["memory"] = sm_mem
+            mem_cleanup_extra = sm_cleanup
+    except Exception as exc:
+        _eprint(f"[agloom-runtime] session memory init failed: {exc!r}")
+        return 1
 
     store = None
     if args.store == "sqlite":
@@ -412,6 +502,7 @@ async def _serve_ws(args: argparse.Namespace) -> int:
             store=lg_store,
             harness=use_harness,
             cli_tools=_cli_tools_options_from_args(args),
+            **ca_kw,
         )
         shared_agent.config["_hitl_tool_allowlist"] = _ws_al_set
 
@@ -432,11 +523,16 @@ async def _serve_ws(args: argparse.Namespace) -> int:
             subprotocols=subprotocols,
             heartbeat_interval=float(getattr(args, "heartbeat_interval", 0.0) or 0.0),
             hitl_allowlist_persist_path=_ws_al_path,
+            budget_tokens=getattr(args, "budget_tokens", None),
+            budget_cost_usd=getattr(args, "budget_cost_usd", None),
+            attachment_working_dir=Path(getattr(args, "cli_tools_working_dir", None) or ".").resolve(),
         )
     finally:
         if shared_agent is not None:
             await shared_agent.aclose()
         await lg_store_cleanup()
+        if mem_cleanup_extra:
+            await mem_cleanup_extra()
     return 0
 
 
@@ -451,6 +547,8 @@ async def _dispatch_command(
     shutdown: asyncio.Event,
     store: Any = None,
     session_id: str = "",
+    budget_tracker: Any | None = None,
+    invoke_working_dir: Path | None = None,
 ) -> None:
     """Route one typed command to its handler."""
 
@@ -470,15 +568,31 @@ async def _dispatch_command(
         return
 
     if isinstance(cmd, CommandInvoke):
+        if budget_tracker is not None and budget_tracker.is_invoke_blocked():
+            emitter.emit_error(
+                severity="transient",
+                message="Session budget exhausted (tokens or cost). Raise limits via command.config.set.",
+                stage="budget.blocked",
+            )
+            return
+        from ..multimodal import prepare_invoke_command
+
         thread = cmd.data.thread or f"thread_{uuid4().hex[:16]}"
+        wd = invoke_working_dir or Path.cwd().resolve()
+        try:
+            prompt, summaries = prepare_invoke_command(cmd, agent=agent, thread=thread, working_dir=wd)
+        except ValueError as exc:
+            emitter.emit_error(severity="transient", message=str(exc), stage="invoke.attachments")
+            return
         inv_emitter = emitter.fork_for_thread(thread)
         task = asyncio.create_task(
             run_invocation(
                 agent=agent,
-                prompt=cmd.data.prompt,
+                prompt=prompt,
                 thread=thread,
                 emitter=inv_emitter,
                 hitl_bridge=hitl_bridge,
+                user_attachments=summaries or None,
             ),
             name=f"agp-invocation-{thread[:8]}",
         )
@@ -625,6 +739,12 @@ async def _dispatch_command(
         emitter.emit_runtime_schema(json_schema=build_schema())
         return
 
+    if isinstance(cmd, CommandProvidersList):
+        from agloom.llm.provider_registry import provider_catalog
+
+        emitter.emit_runtime_providers(providers=provider_catalog())
+        return
+
     if isinstance(cmd, CommandToolList):
         tools = getattr(agent, "config", {}).get("tools", []) or []
         rows: list[tuple[str, str | None]] = []
@@ -672,6 +792,44 @@ async def _dispatch_command(
             await store.clear(cmd.data.session_id)
         return
 
+    if isinstance(cmd, CommandSessionRename):
+        if store is None:
+            emitter.emit_error(
+                severity="transient",
+                message="command.session.rename requires --store",
+                stage="session.rename",
+            )
+        else:
+            fr, to = cmd.data.from_session_id.strip(), cmd.data.to_session_id.strip()
+            if fr and to and fr != to:
+                await store.rename_session(fr, to)
+                emitter.emit_runtime_session_renamed(from_session_id=fr, to_session_id=to)
+                ids = await store.list_session_ids()
+                emitter.emit_runtime_sessions(sessions=ids)
+        return
+
+    if isinstance(cmd, CommandAttachFile):
+        import base64
+
+        from .upload import stage_attached_bytes
+
+        try:
+            raw = base64.b64decode(cmd.data.content_base64.strip())
+        except Exception as exc:
+            emitter.emit_error(
+                severity="transient",
+                message=f"invalid base64 attachment: {exc}",
+                stage="attach.file",
+            )
+            return
+        try:
+            rel, nbytes = stage_attached_bytes(agent, filename=cmd.data.filename, raw=raw)
+        except Exception as exc:
+            emitter.emit_error(severity="transient", message=str(exc), stage="attach.file")
+            return
+        emitter.emit_runtime_file_staged(path=rel, nbytes=nbytes, thread=cmd.data.thread)
+        return
+
     if isinstance(cmd, CommandToolInvoke):
         raw_sz = len(json.dumps(cmd.data.arguments, ensure_ascii=False))
         if raw_sz > 32_000:
@@ -691,29 +849,87 @@ async def _dispatch_command(
 
     if isinstance(cmd, CommandConfigSet):
         try:
-            from agloom.unified_agent import resolve_model
+            from agloom.unified_agent import resolve_model, resolve_system_prompt
 
-            agent.config["llm"] = resolve_model(cmd.data.model_id)
+            from .serve_cli import parse_pattern_name
+
+            data = cmd.data
+            if data.model_id:
+                agent.config["llm"] = resolve_model(data.model_id)
+            if data.temperature is not None:
+                llm = agent.config.get("llm")
+                if llm is not None and hasattr(llm, "bind"):
+                    agent.config["llm"] = llm.bind(temperature=data.temperature)
+            if data.system_prompt is not None:
+                agent.config["system_prompt"] = resolve_system_prompt(data.system_prompt)
+            if data.pattern is not None:
+                agent.config["fallback_pattern"] = parse_pattern_name(data.pattern)
         except Exception as exc:
             emitter.emit_error(severity="transient", message=str(exc), stage="config.set")
             return
+        if budget_tracker is not None:
+            fs = cmd.data.model_fields_set
+            if "budget_token_limit" in fs or "budget_cost_usd_limit" in fs:
+                from ..runtime.budget_tracker import _UNSET
+
+                tok = (
+                    cmd.data.budget_token_limit
+                    if "budget_token_limit" in fs
+                    and cmd.data.budget_token_limit is not None
+                    and cmd.data.budget_token_limit > 0
+                    else (None if "budget_token_limit" in fs else _UNSET)
+                )
+                cst = (
+                    cmd.data.budget_cost_usd_limit
+                    if "budget_cost_usd_limit" in fs
+                    and cmd.data.budget_cost_usd_limit is not None
+                    and cmd.data.budget_cost_usd_limit > 0
+                    else (None if "budget_cost_usd_limit" in fs else _UNSET)
+                )
+                budget_tracker.patch_limits(token_limit=tok, cost_usd=cst)
         _cta, _ctb = _runtime_cli_tool_metrics(agent)
+        llm_after = agent.config.get("llm")
+        mid_guess = getattr(llm_after, "model_name", None) or getattr(llm_after, "model", None)
+        if mid_guess is None and llm_after is not None:
+            mid_guess = type(llm_after).__name__
         emitter.emit_runtime_config_applied(
-            model_id=cmd.data.model_id,
+            model_id=str(mid_guess) if mid_guess else (cmd.data.model_id or None),
             cli_tools_enabled=_cta,
             cli_tools_count=_ctb,
         )
-        llm_after = agent.config.get("llm")
-        mid = getattr(llm_after, "model_name", None) or getattr(llm_after, "model", None)
-        if mid is None and llm_after is not None:
-            mid = type(llm_after).__name__
         tools_after = agent.config.get("tools", []) or []
         emitter.emit_runtime_config(
-            model_id=str(mid) if mid else cmd.data.model_id,
+            model_id=str(mid_guess) if mid_guess else (cmd.data.model_id or ""),
             tool_names=[getattr(t, "name", str(t)) for t in tools_after],
             cli_tools_enabled=_cta,
             cli_tools_count=_ctb,
         )
+        return
+
+    if isinstance(cmd, CommandMemoryClear):
+        mem = agent.config.get("memory")
+        if mem is None:
+            emitter.emit_error(
+                severity="transient",
+                message="agent has no session memory configured",
+                stage="memory.clear",
+            )
+            return
+        target = cmd.data.thread or getattr(emitter, "_thread", None)
+        if not target:
+            emitter.emit_error(
+                severity="transient",
+                message="command.memory.clear requires data.thread",
+                stage="memory.clear",
+            )
+            return
+        try:
+            await mem.aclear_thread(str(target))
+        except Exception as exc:
+            emitter.emit_error(severity="transient", message=str(exc), stage="memory.clear")
+            return
+        fork = emitter.fork_for_thread(str(target))
+        fork.emit_memory_session_cleared(thread=str(target))
         return
 
     _eprint(f"[agloom-runtime] unsupported command type: {type(cmd).__name__!r}")
@@ -853,6 +1069,26 @@ def _build_parser() -> argparse.ArgumentParser:
         help="HTTP port for the observability REST/SSE API (when --obs is set). Default: 8766",
     )
     serve.add_argument(
+        "--otel",
+        action="store_true",
+        default=False,
+        help="Enable OpenTelemetry tracing (install pip 'agloom[otel]'; uses OTEL_EXPORTER_OTLP_* or console).",
+    )
+    serve.add_argument(
+        "--budget-tokens",
+        dest="budget_tokens",
+        type=int,
+        default=None,
+        help="Optional session-wide total token budget (input+output cumulative). Blocks command.invoke at 100%%.",
+    )
+    serve.add_argument(
+        "--budget-cost-usd",
+        dest="budget_cost_usd",
+        type=float,
+        default=None,
+        help="Optional session-wide cumulative USD cost cap. Blocks command.invoke at 100%%.",
+    )
+    serve.add_argument(
         "--heartbeat-interval",
         dest="heartbeat_interval",
         type=float,
@@ -886,12 +1122,217 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Negotiated WebSocket subprotocol (empty string to disable). Default: agp-v1",
     )
 
+    _add_serve_agent_flags(serve)
+
+    prov = sub.add_parser("providers", help="Curated LLM provider discovery (registry-backed).")
+    prov_sub = prov.add_subparsers(dest="prov_cmd", required=True)
+    prov_sub.add_parser("list", help="Print slug, label, default model, env keys, pip extra.")
+    prov_resolve = prov_sub.add_parser("resolve", help="Dry-run model string resolution (no LLM call).")
+    prov_resolve.add_argument("spec", help='Model spec e.g. "groq:meta-llama/llama-3.3-70b-versatile"')
+    prov_resolve.add_argument(
+        "--provider",
+        dest="provider",
+        default=None,
+        metavar="NAME",
+        help="Same as serve --provider (optional override).",
+    )
+    prov_verify = prov_sub.add_parser(
+        "verify",
+        help="Resolve a chat model and run one minimal completion (smoke test; requires network keys).",
+    )
+    prov_verify.add_argument(
+        "spec",
+        nargs="?",
+        default=None,
+        metavar="MODEL",
+        help='Model id (e.g. "groq:meta-llama/llama-3.3-70b-versatile"). Omit to use env auto-detect.',
+    )
+    prov_verify.add_argument(
+        "--provider",
+        dest="provider",
+        default=None,
+        metavar="NAME",
+        help="Same as serve --provider (optional override).",
+    )
+
+    eval_p = sub.add_parser("eval", help="Run eval cases from a YAML file (substring checks).")
+    eval_p.add_argument(
+        "eval_file",
+        nargs="?",
+        default="eval.yaml",
+        metavar="FILE",
+        help="YAML with top-level key ``cases`` (list of {id, prompt, expect_substring?}). Default: eval.yaml",
+    )
+    _add_serve_agent_flags(eval_p)
+
     return parser
+
+
+def _add_serve_agent_flags(serve: argparse.ArgumentParser) -> None:
+    """Flags forwarded into ``create_agent`` (stdio + WebSocket serve)."""
+    serve.add_argument(
+        "--model",
+        "-m",
+        dest="model",
+        default=None,
+        metavar="ID",
+        help=(
+            "Chat model id (e.g. openai:gpt-4o, anthropic:claude-3-5-sonnet-20241022). "
+            "When omitted, keys are resolved from the environment as before."
+        ),
+    )
+    serve.add_argument(
+        "--provider",
+        dest="provider",
+        default=None,
+        metavar="NAME",
+        help="Force provider slug when the model id is ambiguous (same as create_agent/get_model).",
+    )
+    serve.add_argument(
+        "--api-key-env",
+        dest="api_key_env",
+        default=None,
+        metavar="VAR",
+        help="Read the API key from this env var and map it to the provider's standard key (use with --provider or prefixed --model).",
+    )
+    serve.add_argument(
+        "--temperature",
+        "-T",
+        dest="temperature",
+        type=float,
+        default=None,
+        metavar="F",
+        help="LLM sampling temperature (passed to the provider chat model constructor).",
+    )
+    serve.add_argument(
+        "--max-tokens",
+        dest="max_tokens",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Max output tokens when the provider supports it.",
+    )
+    serve.add_argument(
+        "--pattern",
+        dest="pattern",
+        default=None,
+        metavar="NAME",
+        help="Bias routing via fallback_pattern (react, sequential, blackboard, reflection, hitl, …).",
+    )
+    serve.add_argument(
+        "--mcp",
+        action="append",
+        default=[],
+        metavar="SPEC",
+        help="MCP server as name:path/to/config.yaml (repeatable). YAML is merged with MCPServerConfig.",
+    )
+    serve.add_argument("--system-prompt", dest="system_prompt", default=None, help="Inline system prompt text.")
+    serve.add_argument(
+        "--system-prompt-file",
+        dest="system_prompt_file",
+        default=None,
+        metavar="PATH",
+        help="Read system prompt from a UTF-8 file.",
+    )
+    serve.add_argument(
+        "--no-memory",
+        dest="no_memory",
+        action="store_true",
+        default=False,
+        help="Disable durable session memory (minimal in-memory turns).",
+    )
+    serve.add_argument(
+        "--memory",
+        dest="memory_type",
+        default=None,
+        metavar="TYPE",
+        help="Session memory backend: in-memory, none, sqlite (see --memory-path). Overrides defaults.",
+    )
+    serve.add_argument(
+        "--memory-path",
+        dest="memory_path",
+        default=None,
+        metavar="PATH",
+        help="SQLite path when --memory=sqlite.",
+    )
+    serve.add_argument(
+        "--no-skills",
+        dest="no_skills",
+        action="store_true",
+        default=False,
+        help="Disable skills disk mirror (skills_disk_mirror=None).",
+    )
+    serve.add_argument(
+        "--skills-dir",
+        dest="skills_dir",
+        default=None,
+        metavar="PATH",
+        help="Directory for skills disk mirror when enabled.",
+    )
+    serve.add_argument(
+        "--summarizer-model",
+        dest="summarizer_model",
+        default=None,
+        metavar="ID",
+        help="Model id for conversation summarization (defaults to main model).",
+    )
+    serve.add_argument(
+        "--no-auto-summarize",
+        dest="auto_summarize",
+        action="store_false",
+        default=True,
+        help="Disable automatic thread summarization.",
+    )
+    serve.add_argument(
+        "--session-max-turns",
+        dest="session_max_turns",
+        type=int,
+        default=20,
+        metavar="N",
+        help="SessionMemory max_turns / rolling window size.",
+    )
+
+
+async def _providers_verify_async(args: argparse.Namespace) -> int:
+    from langchain_core.messages import HumanMessage
+
+    from agloom.llm import get_model, try_resolve_llm_from_api_keys
+
+    spec = getattr(args, "spec", None)
+    provider = getattr(args, "provider", None)
+    llm = get_model(spec, provider=provider) if spec else try_resolve_llm_from_api_keys(interactive=False)
+    if llm is None:
+        _eprint("[agloom-runtime] providers verify: no model resolved (pass MODEL or set API keys).")
+        return 1
+    msg = await llm.ainvoke([HumanMessage(content="Reply with exactly the two letters OK and nothing else.")])
+    text = msg.content if isinstance(msg.content, str) else str(msg.content)
+    print(text.strip())
+    if "OK" in text.upper():
+        return 0
+    _eprint("[agloom-runtime] providers verify: unexpected model output (expected OK).")
+    return 1
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    if args.cmd == "providers":
+        from agloom.llm.model_resolver import describe_resolve_dry_text, print_providers_table_text
+
+        if args.prov_cmd == "list":
+            print_providers_table_text()
+            return 0
+        if args.prov_cmd == "resolve":
+            print(describe_resolve_dry_text(args.spec, provider=args.provider))
+            return 0
+        if args.prov_cmd == "verify":
+            return asyncio.run(_providers_verify_async(args))
+        parser.error(f"unknown providers subcommand {args.prov_cmd!r}")
+        return 2
+    if args.cmd == "eval":
+        from agloom.eval.runner import run_eval_cli
+
+        return run_eval_cli(args)
     if args.cmd == "serve":
         if args.transport == "ws":
             return asyncio.run(_serve_ws(args))

@@ -45,7 +45,7 @@ Timeouts, retries, rate limiting, circuit breakers, concurrent worker limits, st
 ## How agloom Compares
 
 | Capability | LangChain `create_react_agent` | agloom `create_agent` |
-|-----------|-------------------------------|-------------------------|
+| --- | --- | --- |
 | Patterns | 1 (REACT only) | 9 (auto-selected) |
 | Classification | Manual | Automatic |
 | Skill learning | No | Built-in |

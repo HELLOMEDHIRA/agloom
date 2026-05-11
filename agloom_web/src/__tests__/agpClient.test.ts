@@ -163,6 +163,17 @@ describe('createAGPClient', () => {
     })
   })
 
+  it('configSet maps to command.config.set', async () => {
+    const client = createAGPClient('ws://example.test/agp', 100)
+    client.connect()
+    await flushMicrotasks()
+    client.configSet({ budget_token_limit: 99_000 })
+    expect(JSON.parse(mockSocketInstances[0]?.sent[0] ?? '{}')).toEqual({
+      type: 'command.config.set',
+      data: { budget_token_limit: 99_000 },
+    })
+  })
+
   it('disconnect clears reconnect and closes socket', async () => {
     const client = createAGPClient('ws://example.test/agp', 100)
     client.connect()

@@ -198,19 +198,23 @@ async def _react_graph_astream_to_result(
         elif kind == "on_tool_end":
             run_id = str(event.get("run_id", ""))
             tool_name = _tool_run_ids.pop(run_id, event.get("name", "unknown"))
-            tool_output = str(event.get("data", {}).get("output", ""))
+            raw_out = event.get("data", {}).get("output")
             args_rem = _tool_arg_dicts.pop(run_id, {})
             skill_name: str | None = None
             if tool_name == "load_skill":
                 n = args_rem.get("name")
                 skill_name = n if isinstance(n, str) else None
+            if isinstance(raw_out, dict) and isinstance(raw_out.get("summary"), str):
+                out_payload: str | dict[str, object] = raw_out
+            else:
+                out_payload = str(raw_out or "")
             await event_queue.put(
                 AgentEvent(
                     type="tool_result",
                     data={
                         "id": run_id,
                         "name": tool_name,
-                        "output": tool_output,
+                        "output": out_payload,
                         "worker_id": wid,
                         "args": args_rem,
                         **({"skill_name": skill_name} if skill_name else {}),

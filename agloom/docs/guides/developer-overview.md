@@ -7,7 +7,7 @@ If you are **embedding agloom** in a custom driver (another CLI, a web server, a
 ## Door 1 — `import agloom`
 
 | Goal | Starting points |
-|------|------------------|
+| --- | --- |
 | Build an agent | [Quick start](../getting-started/quickstart.md), [`create_agent`](../concepts/create-agent.md) |
 | Stream tokens / steps | [Streaming & events](../features/streaming.md) (includes **`astream_agp_events`**) |
 | Memory, skills, harness | [Memory](../features/memory.md), [Skills](../features/skills.md), [Harness](../features/harness.md) |
@@ -15,7 +15,7 @@ If you are **embedding agloom** in a custom driver (another CLI, a web server, a
 ## Door 2 — runtime, protocol, observability, LLM
 
 | Module | Role | Guide |
-|--------|------|-------|
+| --- | --- | --- |
 | **`agloom.runtime`** | AGP bridge (`run_invocation`), local **`RuntimeNode`**, workers, scheduler, registry | [Embedding the runtime](embedding-runtime.md) |
 | **`agloom.protocol`** | Typed AGP events, emitters, command parsing, replay stores | [AGP from Python](agp-python.md) |
 | **`agloom.observability`** | SQLite-backed store + FastAPI router + SSE replay | [Observability API](observability-python.md) |

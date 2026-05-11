@@ -6,6 +6,30 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ChatInput } from '../components/chat/ChatInput'
 import { useSessionStore } from '../store/session'
+import { ThemeProvider } from '../lib/theme'
+import type { AGPClient } from '../lib/agp/client'
+
+const mockClient = {
+  status: 'closed' as const,
+  send: jest.fn(),
+  connect: jest.fn(),
+  disconnect: jest.fn(),
+  onEvent: jest.fn(() => jest.fn()),
+  onStatus: jest.fn(() => jest.fn()),
+  onDiagnostic: jest.fn(() => jest.fn()),
+  invoke: jest.fn(),
+  cancel: jest.fn(),
+  hitlRespond: jest.fn(),
+  feedback: jest.fn(),
+  snapshot: jest.fn(),
+  attachFile: jest.fn(),
+  listProviders: jest.fn(),
+  configSet: jest.fn(),
+} satisfies Partial<AGPClient>
+
+const wrap = (ui: React.ReactElement) => (
+  <ThemeProvider>{ui}</ThemeProvider>
+)
 
 describe('ChatInput', () => {
   beforeEach(() => {
@@ -16,7 +40,14 @@ describe('ChatInput', () => {
     const user = userEvent.setup()
     const onSubmit = jest.fn()
     const onCancel = jest.fn()
-    render(<ChatInput onSubmit={onSubmit} onCancel={onCancel} />)
+    render(wrap(
+      <ChatInput
+        client={mockClient as AGPClient}
+        workspaceSessionId="s_test"
+        onSubmit={onSubmit}
+        onCancel={onCancel}
+      />,
+    ))
 
     const ta = screen.getByPlaceholderText(/message agloom/i)
     await user.type(ta, 'hello world')
@@ -31,7 +62,15 @@ describe('ChatInput', () => {
     const user = userEvent.setup()
     const onSubmit = jest.fn()
     const onCancel = jest.fn()
-    render(<ChatInput onSubmit={onSubmit} onCancel={onCancel} isRunning />)
+    render(wrap(
+      <ChatInput
+        client={mockClient as AGPClient}
+        workspaceSessionId="s_test"
+        onSubmit={onSubmit}
+        onCancel={onCancel}
+        isRunning
+      />,
+    ))
 
     await user.click(screen.getByTitle(/cancel/i))
     expect(onCancel).toHaveBeenCalled()
@@ -43,7 +82,14 @@ describe('ChatInput', () => {
       totalOutputTokens: 800,
       model: 'test-model',
     })
-    render(<ChatInput onSubmit={jest.fn()} onCancel={jest.fn()} />)
+    render(wrap(
+      <ChatInput
+        client={mockClient as AGPClient}
+        workspaceSessionId="s_test"
+        onSubmit={jest.fn()}
+        onCancel={jest.fn()}
+      />,
+    ))
     expect(screen.getByText('test-model')).toBeInTheDocument()
     expect(screen.getByText(/↑.*↓/)).toBeInTheDocument()
   })

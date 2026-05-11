@@ -39,7 +39,7 @@ class _SupportsAStreamEvents(Protocol):
 
     def astream_events(
         self,
-        query: str | dict,
+        query: str | dict | list,
         *,
         thread_id: str | None = ...,
     ) -> AsyncIterable[AgentEvent]: ...
@@ -53,10 +53,11 @@ def new_session_id() -> str:
 async def run_invocation(
     *,
     agent: _SupportsAStreamEvents,
-    prompt: str | dict,
+    prompt: str | dict | list,
     thread: str,
     emitter: SessionEmitter,
     hitl_bridge: HITLBridge | None = None,
+    user_attachments: list[dict[str, Any]] | None = None,
 ) -> None:
     """Run one ``ainvoke``-equivalent over AGP.
 
@@ -73,7 +74,7 @@ async def run_invocation(
     # Record the user prompt on the wire. Replay tools and frontends that join late can
     # reconstruct the full turn from this single event + the assistant stream that follows.
     user_text = prompt if isinstance(prompt, str) else _stringify_prompt(prompt)
-    emitter.emit_message_user(content=user_text)
+    emitter.emit_message_user(content=user_text, attachments=user_attachments or None)
     _preview = user_text if len(user_text) <= 280 else f"{user_text[:277]}..."
     emitter.emit_prompt_requested(kind="user_turn", preview=_preview)
     emitter.emit_agent_busy(thread=thread)
@@ -132,13 +133,17 @@ async def run_invocation(
         reset_invocation_context(tokens)
 
 
-def _stringify_prompt(prompt: dict) -> str:
+def _stringify_prompt(prompt: dict | list) -> str:
     """Compact representation of a structured prompt for ``message.user.content``.
 
     Multi-modal / structured prompts (``{"input": "...", "images": [...]}``) are reduced to the
     primary text field when we can find one; otherwise we fall back to ``str(prompt)`` so the
     wire still carries *something* faithful.
     """
+    if isinstance(prompt, list):
+        from ..multimodal import text_from_user_turn
+
+        return text_from_user_turn(prompt)
     for key in ("content", "input", "prompt", "query", "text", "message"):
         v = prompt.get(key)
         if isinstance(v, str) and v.strip():
@@ -149,7 +154,7 @@ def _stringify_prompt(prompt: dict) -> str:
 async def run_invocation_to_writer(
     *,
     agent: _SupportsAStreamEvents,
-    prompt: str | dict,
+    prompt: str | dict | list,
     thread: str | None = None,
     session: str | None = None,
     writer: Any = None,

@@ -4,8 +4,8 @@ The **harness** is an **optional** layer in the **`agloom`** library. It helps a
 
 You can turn it on from **`create_agent`** or from the **agloom CLI** (see below). In both cases it only takes effect when a **`store`** is in use — without a store, `harness=True` is **ignored** and a warning is logged.
 
-!!! note "`from agloom import Task` and related symbols"
-    There is **no** separate PyPI extra such as `agloom[harness]` — harness code ships **inside** the main **`agloom`** wheel. Names like **`Task`**, **`GitSession`**, **`ProgressTracker`**, … are re-exported from the top-level package only when **`import agloom.harness`** succeeds during **`import agloom`**. If that fails (broken partial install, corrupted checkout), those symbols are missing and `from agloom import Task` raises **`ImportError`**. **Fix:** reinstall with `pip install --force-reinstall agloom`, or from a git checkout use your project's full dev install (e.g. `uv sync --group dev`). You can always enable behaviour with **`create_agent(..., harness=True)`** without importing harness types. Runtime **`git_*`** tools still need **`git`** on `PATH`.
+!!! note "Imports such as `Task` or `GitSession`"
+    Optional symbols (`Task`, `GitSession`, …) are available from the top-level **`agloom`** package when the harness submodule loads successfully. If they are missing after install, reinstall with `pip install --force-reinstall agloom` (or use your project’s full dev install). You can still enable behaviour with **`create_agent(..., harness=True)`** without importing those types. Runtime **`git_*`** tools require **`git`** on `PATH`.
 
 ## When to use it
 
@@ -18,7 +18,7 @@ Requirements:
 
 1. Pass **`store=`** — any LangGraph-compatible store (`InMemoryStore`, `AsyncSqliteStore`, etc.).
 2. Pass **`harness=True`**.
-3. Optionally set **`harness_project_name=`** (default `"project"`). This scopes the progress artifact key: one **ProgressTracker** singleton per `(agent_name, harness_project_name)`.
+3. Optionally set **`harness_project_name=`** (default `"project"`). This scopes progress state so separate projects do not collide.
 
 ```python
 from agloom import create_agent
@@ -52,10 +52,10 @@ Typical behaviour with a project-local `.agloom/` layout:
 When the harness is active, **11 tools** are appended to your tool list:
 
 | Tool | Role |
-|------|------|
+| --- | --- |
 | `initialize_project` | First-run decomposition: goal → structured task list + briefing (uses the agent LLM + store). |
 | `bootstrap_progress` | Session start protocol: context, task list, suggested next task. |
-| `save_progress` | Persist progress notes and artifact snapshot (LTS + disk when configured). |
+| `save_progress` | Persist progress notes and artifact snapshot (long-term store + disk when configured). |
 | `get_next_task` | Claim the next pending task for the current session. |
 | `update_task` | Update status, notes, errors, verification results. |
 | `add_task` | Add a task with optional verification steps. |
@@ -65,18 +65,16 @@ When the harness is active, **11 tools** are appended to your tool list:
 | `git_checkpoint` | Named checkpoint (tag-style) for recovery. |
 | `git_revert_hint` | Suggest recovery when the tree is broken. |
 
-Implementations live under `agloom/harness/` (`progress.py`, `git.py`, `initializer.py`).
-
 ## How the agent “sees” progress
 
-On each turn (non-frozen path), the unified agent may prepend a **cross-session progress** block built from the live artifact (`ProgressTracker.get_classifier_context()`), under a heading like `=== CROSS-SESSION PROGRESS ===`, so the **classifier** and downstream patterns stay aligned with the current task graph.
+On each turn (non-frozen path), the agent may prepend a **cross-session progress** summary — a structured block (often under a heading like `=== CROSS-SESSION PROGRESS ===`) built from the live progress artifact. That keeps **routing / classification** aligned with the current task graph.
 
-Per-session bootstrap also runs **`ProgressTracker.bootstrap(...)`** when harness is enabled so the artifact is tied to the effective **`thread_id`**.
+When the harness is enabled, the runtime also **ties progress state to the effective session thread** so new turns start with consistent bootstrap context.
 
 ## Storage and disk
 
-- **Long-term store**: Namespace `("harness", "progress")` is used for the artifact and session bootstrap metadata (see `agloom/harness/progress.py`).
-- **Disk mirror**: Tools can write **`agloom-progress.json`** (see `write_to_disk` in the tracker) for human inspection or recovery alongside LTS.
+- **Long-term store:** progress and harness metadata live in store namespaces reserved for this feature (not intended for direct editing).
+- **Disk mirror:** tools can write **`agloom-progress.json`** for human inspection or recovery alongside long-term storage.
 
 ## Related
 

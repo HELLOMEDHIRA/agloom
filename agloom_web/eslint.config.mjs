@@ -12,9 +12,13 @@ export default tseslint.config(
   // React Hooks — prevents hooks-of-hooks and exhaustive-deps violations
   reactHooksPlugin.configs.flat['recommended-latest'],
 
-  // Project-wide overrides
+  // Project-wide overrides — ES2015+ surface (modules, const/let, classes, arrow callbacks, spread)
   {
     files: ['src/**/*.{ts,tsx}'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+    },
     rules: {
       'no-var': 'error',
       'prefer-const': 'error',
@@ -22,7 +26,9 @@ export default tseslint.config(
       'prefer-template': 'error',
       'prefer-rest-params': 'error',
       'prefer-spread': 'error',
+      'prefer-object-spread': 'error',
       'prefer-exponentiation-operator': 'error',
+      'prefer-arrow-callback': ['error', { allowNamedFunctions: true, allowUnboundThis: true }],
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       '@typescript-eslint/explicit-module-boundary-types': 'off',

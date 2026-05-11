@@ -1,4 +1,6 @@
-name: Publish to PyPI
+# PyPI on tag v*; GitHub environment "pypi" for trusted publishing.
+
+name: Publish Python (PyPI)
 
 on:
   push:
@@ -29,7 +31,7 @@ jobs:
       - name: Type check
         run: uv run pyrefly check agloom
 
-      - name: Build package
+      - name: Build sdist + wheel
         run: uv build
 
       - name: Upload build artifacts

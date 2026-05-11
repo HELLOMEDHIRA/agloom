@@ -3,7 +3,7 @@
 **`streaming.py`** — two streaming modes side-by-side:
 
 | Function | Method | Output |
-|---|---|---|
+| --- | --- | --- |
 | `demo_token_stream` | `agent.astream()` | raw token strings |
 | `demo_event_stream` | `agent.astream_events()` | typed events (thinking, token, tool_call, done, …) |
 

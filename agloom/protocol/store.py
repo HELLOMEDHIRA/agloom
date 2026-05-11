@@ -78,6 +78,10 @@ class EventStore(ABC):
     async def list_session_ids(self) -> list[str]:
         """Return distinct session ids that have at least one stored event, sorted lexically."""
 
+    @abstractmethod
+    async def rename_session(self, old_session_id: str, new_session_id: str) -> None:
+        """Move all stored events from *old_session_id* to *new_session_id* (replay key migration)."""
+
 
 # ── MemoryEventStore ───────────────────────────────────────────────────────────
 
@@ -114,6 +118,15 @@ class MemoryEventStore(EventStore):
     async def list_session_ids(self) -> list[str]:
         async with self._lock:
             return sorted(self._store.keys())
+
+    async def rename_session(self, old_session_id: str, new_session_id: str) -> None:
+        async with self._lock:
+            moved = self._store.pop(old_session_id, None)
+            if not moved:
+                return
+            bucket = self._store.setdefault(new_session_id, [])
+            bucket.extend(moved)
+            bucket.sort(key=lambda e: e.get("seq", 0))
 
 
 # ── SqliteEventStore ───────────────────────────────────────────────────────────
@@ -187,6 +200,19 @@ class SqliteEventStore(EventStore):
         conn = self._connect()
         rows = conn.execute("SELECT DISTINCT session FROM agp_events ORDER BY session").fetchall()
         return [str(r[0]) for r in rows]
+
+    def _sync_rename_session(self, old_session_id: str, new_session_id: str) -> None:
+        conn = self._connect()
+        conn.execute(
+            "UPDATE agp_events SET session = ? WHERE session = ?",
+            (new_session_id, old_session_id),
+        )
+        conn.commit()
+
+    async def rename_session(self, old_session_id: str, new_session_id: str) -> None:
+        loop = asyncio.get_running_loop()
+        async with self._write_lock:
+            await loop.run_in_executor(None, self._sync_rename_session, old_session_id, new_session_id)
 
     async def append(self, session_id: str, event: dict) -> None:
         loop = asyncio.get_running_loop()

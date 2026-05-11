@@ -34,7 +34,7 @@ For agents that keep a **structured task graph**, **verification steps**, and **
 `create_agent` returns a `UnifiedAgent` with these methods:
 
 | Method | Description |
-|--------|-------------|
+| --- | --- |
 | `await agent.ainvoke(query)` | Run the full pipeline, return `ExecutionResult` |
 | `async for token in agent.astream(query)` | Stream tokens as they arrive |
 | `async for event in agent.astream_events(query)` | Stream structured events + real-time tokens |
@@ -112,7 +112,7 @@ agent.register_pattern(
 The `thread_id` and `user_id` parameters (passed at **call time**) control memory isolation:
 
 | Parameter | Effect |
-|-----------|--------|
+| --- | --- |
 | `thread_id=None` | Ephemeral UUID — no cross-call session memory |
 | `thread_id="t1"` | Stateful session — session memory active across calls with same ID |
 | `user_id="u123"` (at call time) | Stable cross-session LT namespace → `(agent_name, "u123")` |

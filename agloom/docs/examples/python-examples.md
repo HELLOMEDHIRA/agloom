@@ -3,7 +3,7 @@
 Runnable examples live under **`agloom/examples/`** in the repository (they are **not** shipped in the PyPI wheel).
 
 | Topic | Path |
-| ------|------|
+| --- | --- |
 | Minimal agent | `agloom/examples/quickstart/basic_agent.py` |
 | Tools & ReAct | `agloom/examples/tools/tools_and_react.py` |
 | Streaming | `agloom/examples/streaming/streaming.py` |

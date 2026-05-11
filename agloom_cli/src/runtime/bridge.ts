@@ -1,20 +1,9 @@
-/**
- * AGP bridge — spawns the Python `agloom-runtime serve --transport=<stdio>`
- * process and exposes a typed event surface over its NDJSON stream.
- *
- * Outbound (CLI → Python): JSON commands written to the child's stdin.
- * Inbound  (Python → CLI): NDJSON events read from the child's stdout.
- * Diagnostics: child's stderr forwarded via the 'diagnostic' event.
- *
- * Resolution order for the Python runtime binary:
- *   1. AGLOOM_RUNTIME env var (override)
- *   2. `agloom-runtime` (installed script via pip)
- */
+/** Spawns `agloom-runtime serve` (stdio NDJSON); stderr → `diagnostic`. Runtime: `AGLOOM_RUNTIME` or `agloom-runtime` on PATH. */
 
 import { execSync, spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import type { AGPEvent, AGPCommand } from '../types/agp.js'
+import type { AGPEvent, AGPCommand, InvokeAttachment } from '../types/agp.js'
 import { parseInboundAGPEventJSON } from '../types/agp.js'
 
 export type BridgeStatus = 'starting' | 'ready' | 'error' | 'exited'
@@ -39,8 +28,19 @@ export interface AGPBridge {
   start(extraArgs?: string[], options?: { transport?: 'stdio' }): void
 
   send(cmd: AGPCommand): void
-  invoke(prompt: string, thread?: string): void
+  invoke(prompt: string, thread?: string, attachments?: InvokeAttachment[]): void
   cancel(thread?: string): void
+  memoryClear(thread?: string): void
+  configSet(data: {
+    model_id?: string
+    cli_tools?: Record<string, unknown>
+    pattern?: string
+    temperature?: number
+    system_prompt?: string
+    budget_token_limit?: number | null
+    budget_cost_usd_limit?: number | null
+  }): void
+  sessionList(): void
   hitlRespond(requestId: string, decision: string, text?: string): void
   feedback(runId: string, rating: string, comment?: string): void
   snapshot(thread?: string, label?: string): void
@@ -178,9 +178,16 @@ export const createAGPBridge = (): AGPBridge => {
     },
     start,
     send,
-    invoke: (prompt: string, thread?: string) =>
-      send({ type: 'command.invoke', data: { prompt, thread } }),
+    invoke: (prompt: string, thread?: string, attachments?: InvokeAttachment[]) =>
+      send({
+        type: 'command.invoke',
+        data: attachments?.length ? { prompt, thread, attachments } : { prompt, thread },
+      }),
     cancel: (thread?: string) => send({ type: 'command.cancel', data: { thread } }),
+    memoryClear: (thread?: string) =>
+      send({ type: 'command.memory.clear', data: thread ? { thread } : {} }),
+    configSet: (data) => send({ type: 'command.config.set', data }),
+    sessionList: () => send({ type: 'command.session.list', data: {} }),
     hitlRespond: (requestId: string, decision: string, text?: string) =>
       send({ type: 'command.hitl.respond', data: { request_id: requestId, decision, text } }),
     feedback: (runId: string, rating: string, comment?: string) =>

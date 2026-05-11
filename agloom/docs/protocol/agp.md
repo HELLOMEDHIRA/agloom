@@ -28,7 +28,7 @@ One JSON object per line (NDJSON over stdio; one frame per WebSocket message whe
 ```
 
 | Field      | Type             | Required | Notes                                                                   |
-| ---------- | ---------------- | -------- | ----------------------------------------------------------------------- |
+| --- | --- | --- | --- |
 | `v`        | `"1"`            | yes      | Major protocol version. Bumped only on breaking schema changes.          |
 | `id`       | `string`         | yes      | Opaque, time-ordered-ish unique id (currently `evt_<24 hex>`).           |
 | `ts`       | ISO-8601 string  | yes      | Aware UTC timestamp.                                                    |
@@ -167,7 +167,7 @@ Emitted once per invocation immediately after `message.user`. Marks that the run
 Emitted when an invocation ends early before a normal assistant completion — immediately before the matching `session.closed` on that invocation’s emitter.
 
 | `reason`        | When |
-| --------------- | ---- |
+| --- | --- |
 | `user_aborted`  | `command.cancel` (or targeted cancellation) — user stopped the turn. `detail` is typically `invocation_cancelled`. |
 | `shutdown`      | Process/WebSocket teardown or `command.runtime.shutdown` — runtime cancelled in-flight tasks. `detail` is typically `runtime_shutdown`. |
 
@@ -269,7 +269,7 @@ Runtime asks the user to gate something. The frontend MUST reply with `command.h
 `kind` is one of:
 
 | `kind`              | Options                            | Response                       |
-| ------------------- | ---------------------------------- | ------------------------------ |
+| --- | --- | --- |
 | `tool_approval`     | `accept` / `reject` / `allowlist`  | discrete                       |
 | `pattern_approval`  | `accept` / `reject` / `allowlist`  | discrete                       |
 | `worker_approval`   | `accept` / `reject` / `allowlist`  | discrete                       |
@@ -562,7 +562,7 @@ The `EventStore` is an append-only, session-scoped event log wired into every `S
 Two concrete implementations:
 
 | Class             | Persistence | Use case                                  |
-| ----------------- | ----------- | ----------------------------------------- |
+| --- | --- | --- |
 | `MemoryEventStore`| in-process  | tests, single-process deploys             |
 | `SqliteEventStore`| SQLite file | durable tracing, multi-turn observability |
 

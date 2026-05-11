@@ -3,7 +3,7 @@
 ## Minimum Software Requirements
 
 | Requirement | Version | Notes |
-|------------|---------|-------|
+| --- | --- | --- |
 | **Python** | 3.12.x | Required by `agsuperbrain`; install resolves NumPy 1.x for Super-Brain + `qdrant-client` |
 | **pip** | 21.0+ | For installing from PyPI |
 | **uv** (optional) | 0.4+ | Recommended for faster installs and dev workflow |
@@ -13,7 +13,7 @@
 These are installed automatically with `pip install agloom` (see `[project] dependencies` in `pyproject.toml` for exact minimum versions):
 
 | Package | Purpose |
-|---------|---------|
+| --- | --- |
 | `langchain`, `langgraph` | Core agent graphs and LLM abstractions |
 | `langchain-mcp-adapters` | MCP server integration |
 | `langchain-huggingface` | HuggingFace Inference API chat models |
@@ -29,7 +29,7 @@ These are installed automatically with `pip install agloom` (see `[project] depe
 Installed via extras (e.g., `pip install agloom[groq]`):
 
 | Extra | Adds | Purpose |
-|-------|------|---------|
+| --- | --- | --- |
 | `groq` | `langchain-groq` | Groq Cloud (Llama, Mixtral, …) |
 | `nvidia` | `langchain-nvidia-ai-endpoints` | NVIDIA NIM |
 | `all` | both of the above | Convenience meta-extra |
@@ -40,7 +40,7 @@ Installed via extras (e.g., `pip install agloom[groq]`):
 For contributing to agloom:
 
 | Package | Purpose |
-|---------|---------|
+| --- | --- |
 | `ruff` | Linting and formatting |
 | `pyrefly` | Type checking |
 | `pre-commit` | Git hooks for code quality |

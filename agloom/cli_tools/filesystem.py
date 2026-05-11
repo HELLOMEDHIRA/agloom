@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import uuid
 from pathlib import Path
+from typing import Any
 
 from langchain_core.tools import tool
 
@@ -82,12 +83,9 @@ def make_filesystem_tools(ctx: SafetyContext, *, max_read_bytes: int = _DEFAULT_
     @tool
     def read_file(path: str, offset: int = 0, limit: int = 8000, line_numbers: bool = True) -> str:
         """Read a text file (UTF-8). Optional ``line_numbers=True`` adds ``cat -n``-style prefixes."""
-        try:
-            off = max(0, int(offset))
-            lim = max(1, min(int(limit), max_read_bytes))
-        except (TypeError, ValueError):
-            return "read_file: invalid offset or limit"
-        ln = bool(line_numbers)
+        off = max(0, offset)
+        lim = max(1, min(limit, max_read_bytes))
+        ln = line_numbers
         try:
             p = resolve_safe_path(path, ctx)
         except ValueError as exc:
@@ -142,8 +140,24 @@ def make_filesystem_tools(ctx: SafetyContext, *, max_read_bytes: int = _DEFAULT_
             rel = p
         return f"✓ wrote {rel}"
 
+    def _lang_hint(rel: str) -> str:
+        ext = Path(rel).suffix.lower()
+        return {
+            ".py": "python",
+            ".ts": "typescript",
+            ".tsx": "typescript",
+            ".js": "javascript",
+            ".jsx": "javascript",
+            ".md": "markdown",
+            ".json": "json",
+            ".yaml": "yaml",
+            ".yml": "yaml",
+            ".rs": "rust",
+            ".go": "go",
+        }.get(ext, "text")
+
     @tool
-    def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
+    def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = False) -> str | dict[str, Any]:
         """Replace ``old_string`` with ``new_string`` in a file (first occurrence unless replace_all)."""
         if not old_string:
             return "edit_file: old_string must be non-empty"
@@ -170,10 +184,20 @@ def make_filesystem_tools(ctx: SafetyContext, *, max_read_bytes: int = _DEFAULT_
         except OSError as exc:
             return f"edit_file: {exc}"
         ctx.recently_read_paths.add(str(p.resolve()))
-        return f"✓ edit_file: applied replacement ({n} occurrence(s))"
+        summary = f"✓ edit_file: applied replacement ({n} occurrence(s))"
+        try:
+            rel = str(p.relative_to(ctx.root.resolve()) if ctx.sandbox else p)
+        except ValueError:
+            rel = str(p)
+        return {
+            "summary": summary,
+            "before": text,
+            "after": new_text,
+            "language": _lang_hint(rel),
+        }
 
     @tool
-    def multi_edit(path: str, edits_json: str) -> str:
+    def multi_edit(path: str, edits_json: str) -> str | dict[str, Any]:
         """Apply multiple edits in order. *edits_json* is a JSON array of
         ``{"old_string","new_string","replace_all":false}`` objects."""
         try:
@@ -192,6 +216,7 @@ def make_filesystem_tools(ctx: SafetyContext, *, max_read_bytes: int = _DEFAULT_
             text = p.read_text(encoding="utf-8")
         except OSError as exc:
             return f"multi_edit: {exc}"
+        before_snapshot = text
         applied = 0
         for i, ed in enumerate(raw):
             if not isinstance(ed, dict):
@@ -217,7 +242,17 @@ def make_filesystem_tools(ctx: SafetyContext, *, max_read_bytes: int = _DEFAULT_
         except OSError as exc:
             return f"multi_edit: {exc}"
         ctx.recently_read_paths.add(str(p.resolve()))
-        return f"✓ multi_edit: {applied} replacement(s) across {len(raw)} edit(s)"
+        summary = f"✓ multi_edit: {applied} replacement(s) across {len(raw)} edit(s)"
+        try:
+            rel = str(p.relative_to(ctx.root.resolve()) if ctx.sandbox else p)
+        except ValueError:
+            rel = str(p)
+        return {
+            "summary": summary,
+            "before": before_snapshot,
+            "after": text,
+            "language": _lang_hint(rel),
+        }
 
     @tool
     def glob_files(pattern: str, path: str = ".") -> str:
@@ -358,10 +393,7 @@ def make_filesystem_tools(ctx: SafetyContext, *, max_read_bytes: int = _DEFAULT_
             rx = re.compile(pattern)
         except re.error as exc:
             return f"grep_files: invalid regex: {exc}"
-        try:
-            lim = max(1, min(int(max_matches), 200))
-        except (TypeError, ValueError):
-            lim = 50
+        lim = max(1, min(max_matches, 200))
         try:
             root = resolve_safe_path(path, ctx)
         except ValueError as exc:

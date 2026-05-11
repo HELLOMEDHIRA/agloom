@@ -49,6 +49,8 @@ from .events import (
     MemoryLtRecallData,
     MemoryLtStore,
     MemoryLtStoreData,
+    MemorySessionCleared,
+    MemorySessionClearedData,
     MemorySessionWrite,
     MemorySessionWriteData,
     MessageAssistant,
@@ -56,7 +58,12 @@ from .events import (
     MessageTool,
     MessageToolData,
     MessageUser,
+    MessageUserAttachmentSummary,
     MessageUserData,
+    MetricBudgetApproaching,
+    MetricBudgetApproachingData,
+    MetricBudgetExhausted,
+    MetricBudgetExhaustedData,
     MetricCost,
     MetricCostData,
     MetricTokens,
@@ -71,14 +78,21 @@ from .events import (
     RuntimeConfigApplied,
     RuntimeConfigAppliedData,
     RuntimeConfigData,
+    RuntimeFileStaged,
+    RuntimeFileStagedData,
     RuntimePong,
     RuntimePongData,
+    RuntimeProviderEntry,
+    RuntimeProvidersPayload,
+    RuntimeProvidersPayloadData,
     RuntimeReady,
     RuntimeReadyData,
     RuntimeSchemaPayload,
     RuntimeSchemaPayloadData,
     RuntimeSessionCreated,
     RuntimeSessionCreatedData,
+    RuntimeSessionRenamed,
+    RuntimeSessionRenamedData,
     RuntimeSessionsPayload,
     RuntimeSessionsPayloadData,
     RuntimeToolEntry,
@@ -409,14 +423,21 @@ class SessionEmitter:
         content: str,
         message_id: str | None = None,
         parent: str | None = None,
+        attachments: list[MessageUserAttachmentSummary] | list[dict[str, Any]] | None = None,
     ) -> MessageUser:
         """Emit the user's prompt as a wire event so the transcript is reproducible from AGP alone."""
+        att: list[MessageUserAttachmentSummary] | None = None
+        if attachments:
+            att = [
+                MessageUserAttachmentSummary.model_validate(a) if isinstance(a, dict) else a
+                for a in attachments
+            ]
         evt = MessageUser(
             session=self._session,
             thread=self._thread,
             seq=self._next_seq(),
             parent=parent,
-            data=MessageUserData(content=content, message_id=message_id),
+            data=MessageUserData(content=content, message_id=message_id, attachments=att),
         )
         self._write(evt)
         return evt
@@ -456,6 +477,7 @@ class SessionEmitter:
         output_bytes: int | None = None,
         duration_ms: int | None = None,
         truncated: bool = False,
+        diff: dict[str, Any] | None = None,
         parent: str | None = None,
     ) -> ToolCallResult:
         """Tool succeeded. ``parent`` SHOULD be the matching ``tool.call.start`` event id."""
@@ -471,6 +493,7 @@ class SessionEmitter:
                 output_bytes=output_bytes,
                 duration_ms=duration_ms,
                 truncated=truncated,
+                diff=diff,
             ),
         )
         self._write(evt)
@@ -915,6 +938,18 @@ class SessionEmitter:
         self._write(evt)
         return evt
 
+    def emit_memory_session_cleared(self, *, thread: str, parent: str | None = None) -> MemorySessionCleared:
+        """Emit after short-term session memory for *thread* was cleared."""
+        evt = MemorySessionCleared(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=MemorySessionClearedData(thread=thread),
+        )
+        self._write(evt)
+        return evt
+
     def emit_memory_lt_recall(
         self,
         *,
@@ -1019,6 +1054,52 @@ class SessionEmitter:
         self._write(evt)
         return evt
 
+    def emit_metric_budget_approaching(
+        self,
+        *,
+        dimension: Literal["tokens", "cost_usd"],
+        used: float,
+        limit: float,
+        ratio: float,
+        parent: str | None = None,
+    ) -> MetricBudgetApproaching:
+        evt = MetricBudgetApproaching(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=MetricBudgetApproachingData(
+                dimension=dimension,
+                used=used,
+                limit=limit,
+                ratio=ratio,
+            ),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_metric_budget_exhausted(
+        self,
+        *,
+        dimension: Literal["tokens", "cost_usd"],
+        used: float,
+        limit: float,
+        parent: str | None = None,
+    ) -> MetricBudgetExhausted:
+        evt = MetricBudgetExhausted(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=MetricBudgetExhaustedData(
+                dimension=dimension,
+                used=used,
+                limit=limit,
+            ),
+        )
+        self._write(evt)
+        return evt
+
     def emit_runtime_ready(
         self,
         *,
@@ -1107,6 +1188,31 @@ class SessionEmitter:
         self._write(evt)
         return evt
 
+    def emit_runtime_providers(
+        self,
+        *,
+        providers: list[dict[str, Any]],
+        parent: str | None = None,
+    ) -> RuntimeProvidersPayload:
+        rows = [
+            RuntimeProviderEntry(
+                slug=str(r["slug"]),
+                label=str(r["label"]),
+                default_model=str(r["default_model"]),
+                primary_env_key=r.get("primary_env_key"),
+            )
+            for r in providers
+        ]
+        evt = RuntimeProvidersPayload(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=RuntimeProvidersPayloadData(providers=rows),
+        )
+        self._write(evt)
+        return evt
+
     def emit_runtime_sessions(self, *, sessions: list[str], parent: str | None = None) -> RuntimeSessionsPayload:
         evt = RuntimeSessionsPayload(
             session=self._session,
@@ -1125,6 +1231,37 @@ class SessionEmitter:
             seq=self._next_seq(),
             parent=parent,
             data=RuntimeSessionCreatedData(session_id=session_id),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_runtime_session_renamed(
+        self, *, from_session_id: str, to_session_id: str, parent: str | None = None
+    ) -> RuntimeSessionRenamed:
+        evt = RuntimeSessionRenamed(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=RuntimeSessionRenamedData(from_session_id=from_session_id, to_session_id=to_session_id),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_runtime_file_staged(
+        self,
+        *,
+        path: str,
+        nbytes: int,
+        thread: str | None = None,
+        parent: str | None = None,
+    ) -> RuntimeFileStaged:
+        evt = RuntimeFileStaged(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=RuntimeFileStagedData(path=path, bytes=nbytes, thread=thread),
         )
         self._write(evt)
         return evt
@@ -1325,6 +1462,8 @@ class SessionEmitter:
         )
         # Mark as already open so the child doesn't re-emit session.opened.
         child._opened = True
+        if getattr(self, "budget_tracker", None) is not None:
+            child.budget_tracker = self.budget_tracker  # type: ignore[attr-defined]
         return child
 
     # ── subscription filter (command.subscribe / unsubscribe) ─────────────────
@@ -1524,6 +1663,8 @@ class AsyncSessionEmitter(SessionEmitter):
         child._queue = self._queue
         child._drain_task = self._drain_task
         child._opened = True
+        if getattr(self, "budget_tracker", None) is not None:
+            child.budget_tracker = self.budget_tracker  # type: ignore[attr-defined]
         return child
 
 

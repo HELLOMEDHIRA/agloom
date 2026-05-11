@@ -9,6 +9,7 @@
 import React from 'react'
 import { Box, Text } from 'ink'
 import type { CompletedTurn } from '../store/session.js'
+import { effectiveToolCallExpanded } from '../store/session.js'
 import { ToolCallLine } from './ToolCallLine.js'
 import { WorkerLine } from './WorkerLine.js'
 import { renderMarkdown } from '../utils/format.js'
@@ -66,7 +67,7 @@ export const CompletedTurnCard = ({ turn }: Props): React.ReactElement => {
       {turn.toolCalls.length > 0 && (
         <Box flexDirection="column">
           {turn.toolCalls.map((tc) => (
-            <ToolCallLine key={tc.id} tc={tc} showResult={false} />
+            <ToolCallLine key={tc.id} tc={tc} expanded={effectiveToolCallExpanded(tc, {})} />
           ))}
         </Box>
       )}

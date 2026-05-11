@@ -2,6 +2,8 @@
  * Shared formatting helpers for the agloom CLI terminal UI.
  */
 
+import { highlight } from 'cli-highlight'
+
 /** Truncate a string to `max` chars, appending `…` if cut. */
 export const truncate = (s: string, max: number): string => {
   if (!s) return ''
@@ -54,46 +56,60 @@ export const trimLines = (s: string): string => {
   return s.replace(/^\n+/, '').replace(/\n+$/, '')
 }
 
-/**
- * Very light markdown → plain text renderer for terminal output.
- * Handles the most common constructs without pulling in a heavy parser.
- * For richer rendering, swap this out for a proper markdown-to-terminal lib.
- */
-export const renderMarkdown = (md: string, termWidth = 80): string => {
+/** Light markdown line transforms for non-fence prose (headings, lists, inline). */
+const renderProseLines = (md: string, termWidth: number): string => {
   return md
     .split('\n')
     .map((line) => {
-      // Headings: # → bold label
       const heading = /^(#{1,6})\s+(.+)$/.exec(line)
       if (heading) return `\x1b[1m${heading[2]}\x1b[0m`
 
-      // Horizontal rule
       if (/^[-*_]{3,}$/.test(line.trim())) return '─'.repeat(Math.min(termWidth, 60))
 
-      // Unordered list
       const bullet = /^(\s*)[-*+]\s+(.+)$/.exec(line)
       if (bullet) return `${bullet[1]}• ${bullet[2]}`
 
-      // Ordered list
       const ordered = /^(\s*)\d+\.\s+(.+)$/.exec(line)
       if (ordered) return `${ordered[1]}  ${ordered[2]}`
 
-      // Blockquote
       const quote = /^>\s+(.+)$/.exec(line)
       if (quote) return `\x1b[2m│ ${quote[1]}\x1b[0m`
 
-      // Inline bold **text** or __text__
       line = line.replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_m, a, b) => `\x1b[1m${a ?? b}\x1b[0m`)
-
-      // Inline italic *text* or _text_
       line = line.replace(/\*(.+?)\*|_(.+?)_/g, (_m, a, b) => `\x1b[3m${a ?? b}\x1b[0m`)
-
-      // Inline code `text`
       line = line.replace(/`([^`]+)`/g, (_m, code) => `\x1b[7m ${code} \x1b[0m`)
 
       return line
     })
     .join('\n')
+}
+
+const FENCE_RE = /```([\w+-]*)\n?([\s\S]*?)```/g
+
+/**
+ * Markdown-ish → terminal text. Fenced ``` blocks use cli-highlight (language-aware).
+ * Inline prose uses the previous lightweight line rules.
+ */
+export const renderMarkdown = (md: string, termWidth = 80): string => {
+  let last = 0
+  let out = ''
+  let m: RegExpExecArray | null
+  const s = md
+  while ((m = FENCE_RE.exec(s)) !== null) {
+    const before = s.slice(last, m.index)
+    out += renderProseLines(before, termWidth)
+    const lang = (m[1] || '').trim() || undefined
+    const code = (m[2] ?? '').replace(/\n$/, '')
+    try {
+      out += highlight(code, { language: lang, ignoreIllegals: true })
+      if (!out.endsWith('\n')) out += '\n'
+    } catch {
+      out += `\x1b[90m${code}\x1b[0m\n`
+    }
+    last = FENCE_RE.lastIndex
+  }
+  out += renderProseLines(s.slice(last), termWidth)
+  return out
 }
 
 /** Produce a coloured status badge string (no Ink dependency). */

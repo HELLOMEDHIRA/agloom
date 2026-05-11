@@ -82,7 +82,7 @@ CREATE TABLE sessions (
 Derived on-demand from the `events` table — no separate write path needed.
 
 | Metric | Derived from | Unit |
-|--------|-------------|------|
+| --- | --- | --- |
 | `input_tokens` | `metric.tokens` events | count |
 | `output_tokens` | `metric.tokens` events | count |
 | `llm_latency_ms` | `thinking.step` with `elapsed_ms` where step='llm_call' | ms |

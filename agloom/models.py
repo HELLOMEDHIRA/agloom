@@ -423,7 +423,7 @@ class ExecutionResult(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     pattern_used: PatternType
-    query: str
+    query: Any
     output: str
     steps_taken: int = 0
     success: bool = True

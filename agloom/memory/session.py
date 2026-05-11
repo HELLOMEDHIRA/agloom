@@ -230,3 +230,24 @@ class SessionMemory:
             logger.debug(f"SessionMemory.aformat_context read failed: {exc!r}")
             return ""
         return self._format_turns(turns, last_n)
+
+    async def aclear_thread(self, thread_id: str) -> None:
+        """Remove persisted turns for *thread_id* (short-term session memory key)."""
+        ns = self._ns(thread_id)
+        key = "turns"
+        if hasattr(self.store, "adelete"):
+            await self.store.adelete(ns, key)
+            return
+        if hasattr(self.store, "aput"):
+            await self.store.aput(ns, key, {"turns": []})
+            return
+        try:
+            delete = getattr(self.store, "delete", None)
+            if callable(delete):
+                delete(ns, key)
+                return
+            put = getattr(self.store, "put", None)
+            if callable(put):
+                put(ns, key, {"turns": []})
+        except Exception as exc:
+            logger.warning(f"SessionMemory.aclear_thread fallback failed: {exc!r}")

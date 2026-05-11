@@ -12,7 +12,7 @@ Add a provider once here; derived tables update automatically.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Any, Final
 
 
 @dataclass(frozen=True)
@@ -173,6 +173,7 @@ _PROVIDER_LIST: Final[tuple[ProviderInfo, ...]] = (
         default_model="meta/llama3-70b-instruct",
         primary_env_key="NVIDIA_API_KEY",
         pip_extra="nvidia",
+        chat_module="langchain_nvidia_ai_endpoints",
         chat_class="ChatNVIDIA",
     ),
     _p(
@@ -181,6 +182,7 @@ _PROVIDER_LIST: Final[tuple[ProviderInfo, ...]] = (
         default_model="command-r-plus",
         primary_env_key="COHERE_API_KEY",
         pip_extra="cohere",
+        chat_module="langchain_cohere",
         chat_class="ChatCohere",
     ),
     _p(
@@ -189,6 +191,7 @@ _PROVIDER_LIST: Final[tuple[ProviderInfo, ...]] = (
         default_model="deepseek-chat",
         primary_env_key="DEEPSEEK_API_KEY",
         pip_extra="deepseek",
+        chat_module="langchain_deepseek",
         chat_class="ChatDeepSeek",
     ),
     _p(
@@ -197,6 +200,7 @@ _PROVIDER_LIST: Final[tuple[ProviderInfo, ...]] = (
         default_model="accounts/fireworks/models/llama-v3p1-8b-instruct",
         primary_env_key="FIREWORKS_API_KEY",
         pip_extra="fireworks",
+        chat_module="langchain_fireworks",
         chat_class="ChatFireworks",
     ),
     _p(
@@ -205,6 +209,7 @@ _PROVIDER_LIST: Final[tuple[ProviderInfo, ...]] = (
         default_model="meta-llama/Llama-3-70b-chat-hf",
         primary_env_key="TOGETHER_API_KEY",
         pip_extra="together",
+        chat_module="langchain_together",
         chat_class="ChatTogether",
     ),
     _p(
@@ -213,6 +218,7 @@ _PROVIDER_LIST: Final[tuple[ProviderInfo, ...]] = (
         default_model="sonar",
         primary_env_key="PERPLEXITY_API_KEY",
         pip_extra="perplexity",
+        chat_module="langchain_perplexity",
         chat_class="ChatPerplexity",
     ),
     _p(
@@ -221,6 +227,7 @@ _PROVIDER_LIST: Final[tuple[ProviderInfo, ...]] = (
         default_model="solar-1-mini-chat",
         primary_env_key="UPSTAGE_API_KEY",
         pip_extra="upstage",
+        chat_module="langchain_upstage",
         chat_class="ChatUpstage",
     ),
     _p(
@@ -229,6 +236,7 @@ _PROVIDER_LIST: Final[tuple[ProviderInfo, ...]] = (
         default_model="ibm/granite-3-2-8b-instruct",
         primary_env_key="WATSONX_API_KEY",
         pip_extra="ibm",
+        chat_module="langchain_ibm",
         chat_class="ChatWatsonx",
     ),
     _p(
@@ -237,6 +245,7 @@ _PROVIDER_LIST: Final[tuple[ProviderInfo, ...]] = (
         default_model="HuggingFaceH4/zephyr-7b-beta",
         primary_env_key="HUGGINGFACEHUB_API_TOKEN",
         pip_extra="huggingface",
+        chat_module="langchain_huggingface",
         chat_class="ChatHuggingFace",
     ),
     _p(
@@ -263,6 +272,7 @@ _PROVIDER_LIST: Final[tuple[ProviderInfo, ...]] = (
         primary_env_key="AZURE_AI_API_KEY",
         extra_env_keys=("AZURE_AI_ENDPOINT",),
         pip_extra="azure-ai",
+        chat_module="langchain_azure_ai",
     ),
     _p(
         slug="bedrock",
@@ -271,6 +281,7 @@ _PROVIDER_LIST: Final[tuple[ProviderInfo, ...]] = (
         wizard_aliases=("bedrock", "bedrock_converse", "anthropic_bedrock"),
         # Cloud IAM (AWS CLI / IRSA) — no env key prompt.
         pip_extra="aws",
+        chat_module="langchain_aws",
         chat_class="ChatBedrock",
     ),
     _p(
@@ -279,6 +290,7 @@ _PROVIDER_LIST: Final[tuple[ProviderInfo, ...]] = (
         default_model="gemini-2.0-flash",
         # Cloud IAM (gcloud / ADC) — no env key prompt.
         pip_extra="google-vertexai",
+        chat_module="langchain_google_vertexai",
         chat_class="ChatVertexAI",
     ),
     _p(
@@ -286,6 +298,7 @@ _PROVIDER_LIST: Final[tuple[ProviderInfo, ...]] = (
         label="Anthropic on Vertex",
         default_model="claude-3-5-sonnet@20240620",
         # Cloud IAM — no env key prompt.
+        chat_module="langchain_google_vertexai",
     ),
     _p(
         slug="sambanova",
@@ -293,6 +306,7 @@ _PROVIDER_LIST: Final[tuple[ProviderInfo, ...]] = (
         default_model="Meta-Llama-3.3-70B-Instruct",
         primary_env_key="SAMBANOVA_API_KEY",
         pip_extra="sambanova",
+        chat_module="langchain_sambanova",
         chat_class="ChatSambaNovaCloud",
     ),
     _p(
@@ -301,11 +315,26 @@ _PROVIDER_LIST: Final[tuple[ProviderInfo, ...]] = (
         default_model="snowflake-arctic",
         # Snowflake auth (account/user/password or PAT) is too varied to snapshot generically.
         pip_extra="snowflake",
+        chat_module="langchain_snowflake",
         chat_class="ChatSnowflakeCortex",
     ),
 )
 
 PROVIDERS: Final[dict[str, ProviderInfo]] = {p.slug: p for p in _PROVIDER_LIST}
+
+
+def provider_catalog() -> list[dict[str, Any]]:
+    """Ordered rows for AGP ``runtime.providers`` / UIs (slug, label, default model, env hint)."""
+
+    return [
+        {
+            "slug": p.slug,
+            "label": p.label,
+            "default_model": p.default_model,
+            "primary_env_key": p.primary_env_key,
+        }
+        for p in _PROVIDER_LIST
+    ]
 """Canonical-slug → :class:`ProviderInfo` mapping. Sole source of truth."""
 
 
@@ -404,6 +433,7 @@ def wizard_extra_rows(known_lc_slugs: set[str]) -> list[tuple[str, str, str, str
 __all__ = [
     "CLASS_TO_SLUG",
     "PROVIDERS",
+    "provider_catalog",
     "PROVIDER_ENV_KEYS",
     "ProviderInfo",
     "SLUG_TO_CHAT_MODULE",

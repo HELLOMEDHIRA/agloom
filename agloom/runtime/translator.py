@@ -126,7 +126,28 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
             )
             emitter.emit_message_tool(tool_name=tool, phase="end", detail="error", call_id=tcid)
             return
-        out = _str(data.get("output")) or _str(data.get("content")) or ""
+        raw_out = data.get("output")
+        diff_payload: dict[str, str] | None = None
+        out = ""
+        if isinstance(raw_out, dict) and isinstance(raw_out.get("summary"), str):
+            out = raw_out["summary"]
+            b, a = raw_out.get("before"), raw_out.get("after")
+            if isinstance(b, str) and isinstance(a, str):
+                lang = raw_out.get("language")
+                diff_payload = {
+                    "before": b,
+                    "after": a,
+                    "language": _str(lang) or "",
+                }
+        else:
+            out = _str(raw_out) or _str(data.get("content")) or ""
+        ex = data.get("diff")
+        if isinstance(ex, dict) and isinstance(ex.get("before"), str) and isinstance(ex.get("after"), str):
+            diff_payload = {
+                "before": ex["before"],
+                "after": ex["after"],
+                "language": _str(ex.get("language")) or "",
+            }
         emitter.emit_tool_call_result(
             tool=tool,
             tool_call_id=tcid,
@@ -134,6 +155,7 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
             output_bytes=len(out) if out else 0,
             duration_ms=_int(data.get("duration_ms")),
             truncated=bool(out and len(out) > 1024),
+            diff=diff_payload,
         )
         skill_name = _str(data.get("skill_name"))
         if not skill_name:
@@ -278,6 +300,9 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
             detail=_str(data.get("output")),
             elapsed_ms=_int(data.get("duration_ms")),
         )
+        input_t = 0
+        output_t = 0
+        total_t: int | None = None
         usage = data.get("usage")
         if isinstance(usage, dict):
             input_t = _int(usage.get("input_tokens")) or _int(usage.get("prompt_tokens")) or 0
@@ -299,6 +324,12 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
                 model=_str(data.get("model")),
                 phase=_str(data.get("phase")) or _str(data.get("name")),
             )
+        budget = getattr(emitter, "budget_tracker", None)
+        if budget is not None:
+            if input_t or output_t:
+                budget.record_tokens_delta(emitter, input_tokens=input_t, output_tokens=output_t)
+            if cost is not None and cost > 0.0:
+                budget.record_cost_delta(emitter, cost=cost)
         return
 
     if et in _AGENT_EVENT_THINKING_TYPES:

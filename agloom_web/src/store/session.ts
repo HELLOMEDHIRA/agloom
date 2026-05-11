@@ -1,15 +1,7 @@
-/**
- * AGP Zustand session store — web platform edition.
- *
- * Reducer parity with `agloom_cli/src/store/session.ts`: every inbound AGP wire event
- * (`AGPEvent` / `AGPKnownEvent`) has an explicit branch so nothing is silently dropped.
- * The web store additionally maintains executionTrace, artifacts, and graph nodes for UI panels.
- */
+/** Web session store: AGP `dispatch` reducer + trace/artifacts/graph panels. */
 
 import { create } from 'zustand'
 import type { AGPEvent } from '../lib/agp/types.js'
-
-// ── Domain types ──────────────────────────────────────────────────────────────
 
 export interface ThinkingStep {
   id: string; step: string; label?: string; detail?: string; elapsedMs?: number
@@ -20,6 +12,8 @@ export interface ToolCall {
   args: Record<string, unknown>
   status: 'pending' | 'done' | 'error'
   result?: string; error?: string; durationMs?: number
+  /** From `tool.call.result` when edit tools return structured diff. */
+  resultDiff?: { before: string; after: string; language?: string }
 }
 
 export interface Worker {
@@ -75,12 +69,12 @@ export interface MetricTokensSlice {
   output: number
 }
 
-// ── Store interface ───────────────────────────────────────────────────────────
-
 export interface SessionStore {
   completedTurns: CompletedTurn[]
   activeTurn: ActiveTurnState | null
   hitlQueue: HITLRequest[]
+  /** Relative paths from `runtime.file.staged` (prepended to next user invoke). */
+  pendingAttachmentPaths: string[]
 
   sessionId: string | null
   runtimeVersion: string | null
@@ -101,6 +95,13 @@ export interface SessionStore {
   /** Running estimate from `metric.cost` deltas. */
   totalCostUsd: number
 
+  /** Per `tool_call_id` expand/collapse overrides. */
+  toolCallExpandedById: Record<string, boolean>
+  /** From `metric.budget.*`. */
+  budgetUi: 'ok' | 'approaching' | 'exhausted'
+  /** Last `metric.budget.*` payload (modal copy). */
+  budgetLast: { dimension: string; used: number; limit: number } | null
+
   connectionStatus: 'connecting' | 'open' | 'closed' | 'error'
   executionTrace: TraceEvent[]
   artifacts: Artifact[]
@@ -113,9 +114,22 @@ export interface SessionStore {
   addArtifact: (a: Artifact) => void
   reset: () => void
   clearError: () => void
-}
+  /** Cleared by ChatPane after paths are prepended to an invocation. */
+  clearPendingAttachments: () => void
+  toggleActiveTurnToolExpandBulk: () => void
+  toggleToolCallExpand: (toolCallId: string) => void
+  setBudgetUiOk: () => void
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+  /** Curated LLM providers from `runtime.providers`. */
+  providerCatalog: Array<{
+    slug: string
+    label: string
+    default_model: string
+    primary_env_key?: string | null
+  }> | null
+  /** Last `runtime.sessions` ids (for workspace nav / search). */
+  sessionCatalogIds: string[]
+}
 
 let _seq = 0
 const uid = () => `${Date.now().toString(36)}_${(++_seq).toString(36)}`
@@ -128,6 +142,17 @@ const pushProtocolNotes = (notes: string[], line: string): string[] => {
 
 const newActiveTurn = (userMessage: string): ActiveTurnState => {
   return { id: uid(), userMessage, thinkingSteps: [], toolCalls: [], workers: [], graphNodes: [], streamedTokens: '', pattern: null }
+}
+
+/** Expanded for error/pending unless overridden in the map. */
+export function effectiveToolCallExpanded(
+  tc: ToolCall,
+  expandedById: Record<string, boolean>,
+): boolean {
+  if (Object.prototype.hasOwnProperty.call(expandedById, tc.toolCallId)) {
+    return expandedById[tc.toolCallId]!
+  }
+  return tc.status === 'error' || tc.status === 'pending'
 }
 
 const summarise = (evt: AGPEvent): string => {
@@ -165,10 +190,16 @@ const summarise = (evt: AGPEvent): string => {
     }
     case 'runtime.tools':
       return `tools (${evt.data.tools.length}): ${evt.data.tools.map((t) => t.name).join(', ') || '—'}`
+    case 'runtime.providers':
+      return `providers · ${evt.data.providers.length}`
     case 'runtime.sessions':
       return `sessions · ${evt.data.sessions.length}`
     case 'runtime.session.created':
       return `session created · ${evt.data.session_id}`
+    case 'runtime.session.renamed':
+      return `session renamed · ${evt.data.from_session_id} → ${evt.data.to_session_id}`
+    case 'runtime.file.staged':
+      return `file staged · ${evt.data.path} (${evt.data.bytes} B)`
     case 'runtime.tool.result':
       return evt.data.ok ? 'tool.invoke · OK' : `tool.invoke · ${evt.data.error ?? 'error'}`
     case 'pattern.classified':
@@ -205,6 +236,8 @@ const summarise = (evt: AGPEvent): string => {
       return `graph: exit ${evt.data.node} (${evt.data.duration_ms ?? 0}ms)`
     case 'memory.session.write':
       return `memory.session.write · ${evt.data.thread}${evt.data.turn_count != null ? ` · turns ${evt.data.turn_count}` : ''}`
+    case 'memory.session.cleared':
+      return `memory.session.cleared · ${evt.data.thread}`
     case 'memory.lt.recall':
       return `memory.lt.recall · ${evt.data.hits} hits · +${evt.data.injected_chars} chars`
     case 'memory.lt.store':
@@ -219,6 +252,10 @@ const summarise = (evt: AGPEvent): string => {
       return `tokens: ${evt.data.input_tokens}↑ ${evt.data.output_tokens}↓`
     case 'metric.cost':
       return `cost +${evt.data.cost} ${evt.data.currency ?? 'USD'}`
+    case 'metric.budget.approaching':
+      return `budget ~80% ${evt.data.dimension}`
+    case 'metric.budget.exhausted':
+      return `budget exhausted ${evt.data.dimension}`
     case 'message.assistant':
       return `response (${evt.data.pattern ?? '?'})`
     case 'skill.loaded':
@@ -272,12 +309,11 @@ const extractArtifacts = (content: string, runId?: string): Artifact[] => {
   return artifacts
 }
 
-// ── Store ─────────────────────────────────────────────────────────────────────
-
 export const useSessionStore = create<SessionStore>((set) => ({
   completedTurns: [],
   activeTurn: null,
   hitlQueue: [],
+  pendingAttachmentPaths: [],
   sessionId: null,
   runtimeVersion: null,
   sessionOpenedAtMs: null,
@@ -291,11 +327,16 @@ export const useSessionStore = create<SessionStore>((set) => ({
   turnOutputTokens: 0,
   metricsHistory: [],
   totalCostUsd: 0,
+  toolCallExpandedById: {},
+  budgetUi: 'ok',
+  budgetLast: null,
   connectionStatus: 'connecting',
   executionTrace: [],
   artifacts: [],
   status: 'idle',
   errorMessage: null,
+  providerCatalog: null,
+  sessionCatalogIds: [],
 
   dispatch: (evt) => set((s) => {
     const trace = evt.type === 'token.delta' ? s.executionTrace : [
@@ -312,6 +353,9 @@ export const useSessionStore = create<SessionStore>((set) => ({
           runtimeVersion: evt.data.runtime_version,
           sessionOpenedAtMs: Date.now(),
           status: 'idle',
+          toolCallExpandedById: {},
+          budgetUi: 'ok',
+          budgetLast: null,
         }
 
       case 'session.resumed':
@@ -323,6 +367,9 @@ export const useSessionStore = create<SessionStore>((set) => ({
           sessionOpenedAtMs: Date.now(),
           status: 'idle',
           activeTurn: null,
+          toolCallExpandedById: {},
+          budgetUi: 'ok',
+          budgetLast: null,
           protocolNotes: pushProtocolNotes(
             s.protocolNotes,
             `Session resumed${evt.data.replayed_from_seq != null ? ` · replay from seq=${evt.data.replayed_from_seq}` : ''}${evt.data.resumed_from_thread ? ` · ${evt.data.resumed_from_thread}` : ''}`,
@@ -450,9 +497,26 @@ export const useSessionStore = create<SessionStore>((set) => ({
         return {
           ...s,
           executionTrace: trace,
+          sessionCatalogIds: [...evt.data.sessions],
           protocolNotes: pushProtocolNotes(
             s.protocolNotes,
             `Sessions · ${evt.data.sessions.length}: ${evt.data.sessions.slice(0, 6).join(', ') || '—'}${evt.data.sessions.length > 6 ? ' …' : ''}`,
+          ),
+        }
+
+      case 'runtime.providers':
+        return {
+          ...s,
+          executionTrace: trace,
+          providerCatalog: evt.data.providers.map((p) => ({
+            slug: p.slug,
+            label: p.label,
+            default_model: p.default_model,
+            primary_env_key: p.primary_env_key,
+          })),
+          protocolNotes: pushProtocolNotes(
+            s.protocolNotes,
+            `Providers · ${evt.data.providers.length}`,
           ),
         }
 
@@ -461,6 +525,27 @@ export const useSessionStore = create<SessionStore>((set) => ({
           ...s,
           executionTrace: trace,
           protocolNotes: pushProtocolNotes(s.protocolNotes, `Session created · ${evt.data.session_id}`),
+        }
+
+      case 'runtime.session.renamed':
+        return {
+          ...s,
+          executionTrace: trace,
+          protocolNotes: pushProtocolNotes(
+            s.protocolNotes,
+            `Session renamed · ${evt.data.from_session_id} → ${evt.data.to_session_id}`,
+          ),
+        }
+
+      case 'runtime.file.staged':
+        return {
+          ...s,
+          executionTrace: trace,
+          pendingAttachmentPaths: [...s.pendingAttachmentPaths, evt.data.path],
+          protocolNotes: pushProtocolNotes(
+            s.protocolNotes,
+            `File staged · ${evt.data.path} (${evt.data.bytes} B)`,
+          ),
         }
 
       case 'runtime.tool.result':
@@ -483,6 +568,9 @@ export const useSessionStore = create<SessionStore>((set) => ({
           errorMessage: null,
           turnInputTokens: 0,
           turnOutputTokens: 0,
+          toolCallExpandedById: {},
+          budgetUi: 'ok',
+          budgetLast: null,
         }
 
       case 'pattern.classified':
@@ -505,9 +593,36 @@ export const useSessionStore = create<SessionStore>((set) => ({
         return { ...s, executionTrace: trace, activeTurn: { ...s.activeTurn, toolCalls: [...s.activeTurn.toolCalls, tc] } }
       }
 
-      case 'tool.call.result':
+      case 'tool.call.result': {
         if (!s.activeTurn) return { ...s, executionTrace: trace }
-        return { ...s, executionTrace: trace, activeTurn: { ...s.activeTurn, toolCalls: s.activeTurn.toolCalls.map((tc) => tc.toolCallId === evt.data.tool_call_id ? { ...tc, status: 'done' as const, result: evt.data.output_preview, durationMs: evt.data.duration_ms } : tc) } }
+        const d = evt.data.diff
+        const resultDiff =
+          d && typeof d === 'object' && typeof (d as { before?: unknown }).before === 'string' && typeof (d as { after?: unknown }).after === 'string'
+            ? {
+                before: (d as { before: string }).before,
+                after: (d as { after: string }).after,
+                language: typeof (d as { language?: unknown }).language === 'string' ? (d as { language: string }).language : undefined,
+              }
+            : undefined
+        return {
+          ...s,
+          executionTrace: trace,
+          activeTurn: {
+            ...s.activeTurn,
+            toolCalls: s.activeTurn.toolCalls.map((tc) =>
+              tc.toolCallId === evt.data.tool_call_id
+                ? {
+                    ...tc,
+                    status: 'done' as const,
+                    result: evt.data.output_preview,
+                    durationMs: evt.data.duration_ms,
+                    ...(resultDiff ? { resultDiff } : {}),
+                  }
+                : tc,
+            ),
+          },
+        }
+      }
 
       case 'tool.call.error':
         if (!s.activeTurn) return { ...s, executionTrace: trace }
@@ -637,6 +752,38 @@ export const useSessionStore = create<SessionStore>((set) => ({
           model: s.model ?? evt.data.model,
         }
 
+      case 'metric.budget.approaching':
+        return {
+          ...s,
+          executionTrace: trace,
+          budgetUi: 'approaching',
+          budgetLast: {
+            dimension: evt.data.dimension,
+            used: evt.data.used,
+            limit: evt.data.limit,
+          },
+          protocolNotes: pushProtocolNotes(
+            s.protocolNotes,
+            `Budget · ~80% ${evt.data.dimension} (${Math.round(evt.data.ratio * 100)}%)`,
+          ),
+        }
+
+      case 'metric.budget.exhausted':
+        return {
+          ...s,
+          executionTrace: trace,
+          budgetUi: 'exhausted',
+          budgetLast: {
+            dimension: evt.data.dimension,
+            used: evt.data.used,
+            limit: evt.data.limit,
+          },
+          protocolNotes: pushProtocolNotes(
+            s.protocolNotes,
+            `Budget · exhausted ${evt.data.dimension}`,
+          ),
+        }
+
       case 'feedback.scored': {
         const rid = evt.data.run_id
         const short = rid.length > 14 ? `${rid.slice(0, 12)}…` : rid
@@ -677,6 +824,16 @@ export const useSessionStore = create<SessionStore>((set) => ({
           protocolNotes: pushProtocolNotes(
             s.protocolNotes,
             `memory.session.write · ${evt.data.thread}${evt.data.turn_count != null ? ` · turns ${evt.data.turn_count}` : ''}`,
+          ),
+        }
+
+      case 'memory.session.cleared':
+        return {
+          ...s,
+          executionTrace: trace,
+          protocolNotes: pushProtocolNotes(
+            s.protocolNotes,
+            `memory.session.cleared · ${evt.data.thread}`,
           ),
         }
 
@@ -758,21 +915,22 @@ export const useSessionStore = create<SessionStore>((set) => ({
       case 'error.transient':
         return { ...s, executionTrace: trace, errorMessage: evt.data.message }
 
-      default: {
-        const _never: never = evt
-        return _never
-      }
+      default:
+        return { ...s, executionTrace: trace }
     }
   }),
 
   setConnectionStatus: (st) => set((prev) => ({ ...prev, connectionStatus: st })),
   addArtifact: (a) => set((prev) => ({ ...prev, artifacts: [...prev.artifacts, a] })),
   clearError: () => set((s) => ({ ...s, errorMessage: null, status: 'idle' })),
+  clearPendingAttachments: () => set((s) => ({ ...s, pendingAttachmentPaths: [] })),
+
   reset: () => set((s) => ({
     ...s,
     completedTurns: [],
     activeTurn: null,
     hitlQueue: [],
+    pendingAttachmentPaths: [],
     executionTrace: [],
     artifacts: [],
     sessionId: null,
@@ -790,5 +948,39 @@ export const useSessionStore = create<SessionStore>((set) => ({
     totalCostUsd: 0,
     status: 'idle',
     errorMessage: null,
+    providerCatalog: null,
+    sessionCatalogIds: [],
+    toolCallExpandedById: {},
+    budgetUi: 'ok',
+    budgetLast: null,
   })),
+
+  toggleActiveTurnToolExpandBulk: () =>
+    set((s) => {
+      const at = s.activeTurn
+      if (!at || at.toolCalls.length === 0) return s
+      const next: Record<string, boolean> = { ...s.toolCallExpandedById }
+      for (const tc of at.toolCalls) {
+        const cur = effectiveToolCallExpanded(tc, next)
+        next[tc.toolCallId] = !cur
+      }
+      return { ...s, toolCallExpandedById: next }
+    }),
+
+  toggleToolCallExpand: (toolCallId: string) =>
+    set((s) => {
+      const fromActive = s.activeTurn?.toolCalls.find((t) => t.toolCallId === toolCallId)
+      const fromCompleted = fromActive
+        ? undefined
+        : s.completedTurns.flatMap((t) => t.toolCalls).find((t) => t.toolCallId === toolCallId)
+      const tc = fromActive ?? fromCompleted
+      if (!tc) return s
+      const cur = effectiveToolCallExpanded(tc, s.toolCallExpandedById)
+      return {
+        ...s,
+        toolCallExpandedById: { ...s.toolCallExpandedById, [toolCallId]: !cur },
+      }
+    }),
+
+  setBudgetUiOk: () => set((s) => ({ ...s, budgetUi: 'ok' })),
 }))

@@ -148,11 +148,21 @@ class SessionClosed(Envelope):
 # ── message.user ──────────────────────────────────────────────────────────────
 
 
+class MessageUserAttachmentSummary(_DataBase):
+    """Small attachment record for transcript replay (no raw bytes on the wire)."""
+
+    name: str
+    mime_type: str
+    byte_length: int = 0
+    path: str | None = None
+
+
 class MessageUserData(_DataBase):
     """Inbound user prompt — emitted once per ``command.invoke`` so the wire records the turn."""
 
     content: str
     message_id: str | None = None
+    attachments: list[MessageUserAttachmentSummary] | None = None
 
 
 class MessageUser(Envelope):
@@ -180,6 +190,8 @@ class ToolCallStart(Envelope):
 class ToolCallResultData(_DataBase):
     """Tool finished successfully. ``output_preview`` is truncated; full content lives in
     :class:`ToolCallStart` via correlation by ``tool_call_id``.
+
+    Optional ``diff`` carries file before/after for edit tools (wire + UI).
     """
 
     tool: str
@@ -188,6 +200,7 @@ class ToolCallResultData(_DataBase):
     output_bytes: int | None = None
     duration_ms: int | None = None
     truncated: bool = False
+    diff: dict[str, Any] | None = None
 
 
 class ToolCallResult(Envelope):
@@ -288,6 +301,33 @@ class MetricCostData(_DataBase):
 class MetricCost(Envelope):
     type: Literal["metric.cost"] = "metric.cost"
     data: MetricCostData
+
+
+class MetricBudgetApproachingData(_DataBase):
+    """Once per dimension when cumulative usage crosses ~80% of the configured limit."""
+
+    dimension: Literal["tokens", "cost_usd"]
+    used: float
+    limit: float
+    ratio: float
+
+
+class MetricBudgetApproaching(Envelope):
+    type: Literal["metric.budget.approaching"] = "metric.budget.approaching"
+    data: MetricBudgetApproachingData
+
+
+class MetricBudgetExhaustedData(_DataBase):
+    """When cumulative usage reaches the limit; runtime may block further invokes."""
+
+    dimension: Literal["tokens", "cost_usd"]
+    used: float
+    limit: float
+
+
+class MetricBudgetExhausted(Envelope):
+    type: Literal["metric.budget.exhausted"] = "metric.budget.exhausted"
+    data: MetricBudgetExhaustedData
 
 
 # ── hitl.* ────────────────────────────────────────────────────────────────────
@@ -399,6 +439,17 @@ class MemorySessionWriteData(_DataBase):
 class MemorySessionWrite(Envelope):
     type: Literal["memory.session.write"] = "memory.session.write"
     data: MemorySessionWriteData
+
+
+class MemorySessionClearedData(_DataBase):
+    """Short-term session memory for *thread* was cleared (no turns remain)."""
+
+    thread: str
+
+
+class MemorySessionCleared(Envelope):
+    type: Literal["memory.session.cleared"] = "memory.session.cleared"
+    data: MemorySessionClearedData
 
 
 class MemoryLtRecallData(_DataBase):
@@ -709,6 +760,24 @@ class RuntimeToolsPayload(Envelope):
     data: RuntimeToolsPayloadData
 
 
+class RuntimeProviderEntry(_DataBase):
+    """One curated provider row (from :func:`agloom.llm.provider_registry.provider_catalog`)."""
+
+    slug: str
+    label: str
+    default_model: str
+    primary_env_key: str | None = None
+
+
+class RuntimeProvidersPayloadData(_DataBase):
+    providers: list[RuntimeProviderEntry] = Field(default_factory=list)
+
+
+class RuntimeProvidersPayload(Envelope):
+    type: Literal["runtime.providers"] = "runtime.providers"
+    data: RuntimeProvidersPayloadData
+
+
 class RuntimeSessionsPayloadData(_DataBase):
     sessions: list[str] = Field(default_factory=list)
 
@@ -725,6 +794,29 @@ class RuntimeSessionCreatedData(_DataBase):
 class RuntimeSessionCreated(Envelope):
     type: Literal["runtime.session.created"] = "runtime.session.created"
     data: RuntimeSessionCreatedData
+
+
+class RuntimeSessionRenamedData(_DataBase):
+    from_session_id: str
+    to_session_id: str
+
+
+class RuntimeSessionRenamed(Envelope):
+    type: Literal["runtime.session.renamed"] = "runtime.session.renamed"
+    data: RuntimeSessionRenamedData
+
+
+class RuntimeFileStagedData(_DataBase):
+    """A client attachment was written under the agent working directory."""
+
+    path: str
+    bytes: int
+    thread: str | None = None
+
+
+class RuntimeFileStaged(Envelope):
+    type: Literal["runtime.file.staged"] = "runtime.file.staged"
+    data: RuntimeFileStagedData
 
 
 class RuntimeToolInvokeResultData(_DataBase):
@@ -873,8 +965,11 @@ Event = Annotated[
     | RuntimePong
     | RuntimeSchemaPayload
     | RuntimeToolsPayload
+    | RuntimeProvidersPayload
     | RuntimeSessionsPayload
     | RuntimeSessionCreated
+    | RuntimeSessionRenamed
+    | RuntimeFileStaged
     | RuntimeToolInvokeResult
     | RuntimeConfigApplied
     | TodosUpdated
@@ -906,6 +1001,7 @@ Event = Annotated[
     | PromptRequested
     | PromptCancelled
     | MemorySessionWrite
+    | MemorySessionCleared
     | MemoryLtRecall
     | MemoryLtStore
     | CheckpointSaved
@@ -913,6 +1009,8 @@ Event = Annotated[
     | FeedbackScored
     | MetricTokens
     | MetricCost
+    | MetricBudgetApproaching
+    | MetricBudgetExhausted
     | ErrorTransient
     | ErrorFatal
     | SessionClosed,
@@ -984,10 +1082,17 @@ __all__ = [
     "MemoryLtStoreData",
     "MemorySessionWrite",
     "MemorySessionWriteData",
+    "MemorySessionCleared",
+    "MemorySessionClearedData",
     "MessageAssistant",
     "MessageAssistantData",
     "MessageUser",
+    "MessageUserAttachmentSummary",
     "MessageUserData",
+    "MetricBudgetApproaching",
+    "MetricBudgetApproachingData",
+    "MetricBudgetExhausted",
+    "MetricBudgetExhaustedData",
     "MetricCost",
     "MetricCostData",
     "MetricTokens",
@@ -996,14 +1101,21 @@ __all__ = [
     "RuntimeConfigApplied",
     "RuntimeConfigAppliedData",
     "RuntimeConfigData",
+    "RuntimeFileStaged",
+    "RuntimeFileStagedData",
     "RuntimePong",
     "RuntimePongData",
+    "RuntimeProviderEntry",
+    "RuntimeProvidersPayload",
+    "RuntimeProvidersPayloadData",
     "RuntimeReady",
     "RuntimeReadyData",
     "RuntimeSchemaPayload",
     "RuntimeSchemaPayloadData",
     "RuntimeSessionCreated",
     "RuntimeSessionCreatedData",
+    "RuntimeSessionRenamed",
+    "RuntimeSessionRenamedData",
     "RuntimeSessionsPayload",
     "RuntimeSessionsPayloadData",
     "RuntimeToolEntry",

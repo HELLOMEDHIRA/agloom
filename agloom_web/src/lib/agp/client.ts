@@ -1,15 +1,7 @@
-/**
- * Browser WebSocket client for the agloom AGP runtime.
- *
- * Same AGP contract as the agloom CLI bridge but uses native `WebSocket`
- * instead of Node.js `child_process`.
- *
- * Connection URL: ws[s]://host:port  (agloom-runtime serve --transport=ws)
- * During development: /agp-ws is proxied by vite.config.ts.
- */
+/** Browser WebSocket AGP client (same wire as CLI stdio bridge). */
 
 import { createContext, useContext } from 'react'
-import type { AGPCommand, AGPEvent, ConnectionStatus } from './types.js'
+import type { AGPCommand, AGPEvent, CommandConfigSetCmd, ConnectionStatus } from './types.js'
 import { parseInboundAGPEventJSON } from './types.js'
 
 type Listener<T> = (value: T) => void
@@ -27,6 +19,9 @@ export interface AGPClient {
   hitlRespond(requestId: string, decision: string, text?: string): void
   feedback(runId: string, rating: string, comment?: string): void
   snapshot(thread?: string, label?: string): void
+  attachFile(filename: string, contentBase64: string, thread?: string): void
+  listProviders(): void
+  configSet(data: CommandConfigSetCmd['data']): void
   onEvent(listener: Listener<AGPEvent>): () => void
   onStatus(listener: Listener<ConnectionStatus>): () => void
   onDiagnostic(listener: Listener<string>): () => void
@@ -141,6 +136,21 @@ export const createAGPClient = (
 
     snapshot(thread?: string, label?: string): void {
       api.send({ type: 'command.snapshot.request', data: { thread, label } })
+    },
+
+    attachFile(filename: string, contentBase64: string, thread?: string): void {
+      api.send({
+        type: 'command.attach.file',
+        data: { filename, content_base64: contentBase64, thread },
+      })
+    },
+
+    listProviders(): void {
+      api.send({ type: 'command.providers.list', data: {} })
+    },
+
+    configSet(data: CommandConfigSetCmd['data']): void {
+      api.send({ type: 'command.config.set', data })
     },
 
     onEvent(listener: Listener<AGPEvent>): () => void {

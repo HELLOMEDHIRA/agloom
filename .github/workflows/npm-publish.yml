@@ -1,0 +1,57 @@
+# npm on tag cli-v*; tag suffix must match agloom_cli/package.json version. Optional NPM_TOKEN.
+
+name: Publish npm (agloom-cli)
+
+on:
+  push:
+    tags:
+      - "cli-v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    defaults:
+      run:
+        working-directory: agloom_cli
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches package.json version
+        shell: bash
+        working-directory: agloom_cli
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          PKG_VER=$(node -p "require('./package.json').version")
+          TAG_VER="${TAG_NAME#cli-v}"
+          if [[ "$TAG_VER" != "$PKG_VER" ]]; then
+            echo "::error::Tag version '$TAG_VER' does not match agloom_cli/package.json version '$PKG_VER'. Bump package.json, commit, then tag cli-v$PKG_VER."
+            exit 1
+          fi
+          echo "Publishing agloom-cli@$PKG_VER from tag $TAG_NAME"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install and test
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance

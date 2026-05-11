@@ -5,7 +5,7 @@ Complete reference for every `create_agent` parameter. All parameters except `mo
 ## Core
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `model` | `BaseChatModel \| str` | **required** | LangChain LLM instance or model-id string (e.g. `"openai:gpt-4o"`). Validated at creation — bare names without a provider prefix trigger a warning |
 | `tools` | `list[BaseTool]` | `None` → `[]` | Tools the agent can call. See [Tool Calling](../features/tools.md) |
 | `system_prompt` | `str \| Callable` | auto-generated | Static string or dynamic function `(state) -> str`. See [Dynamic System Prompts](../guides/production.md#dynamic-system-prompts) |
@@ -37,7 +37,7 @@ await create_agent(model=ChatGroq(model="llama-3.3-70b-versatile"))
 ## Memory & Storage
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `store` | `BaseStore` | `None` | LangGraph store. Enables: long-term memory, skills, feedback |
 | `memory` | `SessionMemory` | auto-created | Per-thread session memory. Auto-created with ephemeral `InMemoryStore` if not provided |
 | `query_cache` | `dict` | `None` | Semantic cache dict from `create_cache()`. See [Query Cache](../features/memory.md#query-cache) |
@@ -51,7 +51,7 @@ await create_agent(model=ChatGroq(model="llama-3.3-70b-versatile"))
 ## Human-in-the-Loop
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `interrupt_before` | `list[str]` | `None` | L1: Pause before these patterns (e.g., `["SUPERVISOR"]`) |
 | `interrupt_after` | `list[str]` | `None` | L1: Pause after these patterns |
 | `interrupt_before_tools` | `list[str]` | `None` | L2: Pause before these tool calls |
@@ -62,7 +62,7 @@ await create_agent(model=ChatGroq(model="llama-3.3-70b-versatile"))
 ## Timeouts & Reliability
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `max_concurrent` | `int` | `4` | Max parallel workers (1-32) |
 | `max_retries` | `int` | `2` | Worker retry count (0-10) |
 | `retry_delay` | `float` | `1.0` | Seconds between retries |
@@ -76,7 +76,7 @@ See [Timeouts & Retries](reliability.md) for details.
 ### ReAct resilience & skills mirror
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `react_force_tool_choice_on_user_turn` | `bool` | `True` | After each user message, ReAct requests a structured tool call (`tool_choice=required`) so providers that omit tools still emit a valid tool payload. |
 | `react_tool_use_failed_auto_retries_hitl` | `int` | `2` | Automatic HITL-backed retries when the model returns malformed tool JSON. |
 | `react_tool_use_failed_user_rounds` | `int` | `3` | Max user-visible rounds for tool-use recovery before failing the turn. |
@@ -85,7 +85,7 @@ See [Timeouts & Retries](reliability.md) for details.
 ## Feedback System
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `feedback_handler` | handler | `None` | Custom feedback handler (LTS, Webhook, Composite) |
 | `low_score_threshold` | `float` | `0.40` | Score below which skills decay |
 | `review_every_n_runs` | `int` | `25` | Auto-review frequency |
@@ -94,20 +94,20 @@ See [Timeouts & Retries](reliability.md) for details.
 ## Reflection
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `max_reflection_iterations` | `int` | `3` | Max generate→critique loops |
 | `reflection_threshold` | `int` | `7` | Quality score to pass (1-10) |
 
 ## Skills
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `max_skills` | `int` | `30` | Max skills in registry |
 
 ## Frozen Agent
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `frozen` | `bool` | `False` | Classify once, reuse forever |
 | `frozen_template` | `str` | `None` | Template with `{key}` placeholders |
 | `input_key` | `str \| list[str]` | `"input"` | Placeholder name(s) |
@@ -116,7 +116,7 @@ See [Timeouts & Retries](reliability.md) for details.
 ## Delegation
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `delegates` | `list[UnifiedAgent \| HandoffTarget]` | `None` | Child agents for hierarchical delegation. See [Delegation](../features/delegation.md) |
 
 Delegation can also be configured at runtime:
@@ -127,7 +127,7 @@ Delegation can also be configured at runtime:
 ## Advanced
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `middleware` | `list` | `()` | Before/after agent middleware. See [Middleware](../features/middleware.md) |
 | `response_format` | Pydantic model | `None` | Structured output schema (extra LLM reformat pass). See [Structured Output](../guides/production.md#structured-output) |
 | `state_schema` | `type` | `None` | Stored on `AgentConfig` for LangGraph compatibility (custom compiled graphs). The default `UnifiedAgent` execution path does not require it. |
@@ -145,7 +145,7 @@ Delegation can also be configured at runtime:
 These parameters are passed at invocation time to `ainvoke()`, `astream()`, `astream_events()`, and `abatch()`:
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `query` | `str \| dict` | **required** | The input query. `dict` only valid for `frozen=True` agents |
 | `thread_id` | `str \| None` | `None` | Session ID for memory isolation. `None` = ephemeral |
 | `user_id` | `str \| None` | `None` | Stable cross-session identity for LT namespace |

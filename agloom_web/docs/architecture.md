@@ -36,7 +36,7 @@ This guarantees AGP remains the single stable runtime abstraction across all fro
 ## 2. Technology Stack
 
 | Concern                | Technology                  | Version  | Reason                                           |
-| ---------------------- | --------------------------- | -------- | ------------------------------------------------ |
+| --- | --- | --- | --- |
 | Routing                | **React Router**            | 7.15     | Vite-native SPA; user requirement (no Next.js)   |
 | Build                  | Vite                        | 8.0      | Fastest HMR; native ESM                          |
 | Language               | TypeScript                  | 6.0      | Same baseline as agloom CLI; latest strict mode   |

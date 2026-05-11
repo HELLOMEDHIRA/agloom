@@ -1,8 +1,4 @@
-/**
- * ToolCallLine — renders a single tool call + its result inline.
- * Used in both CompletedTurnCard (static) and ActiveTurn (live).
- */
-
+/** One tool call row (summary + optional expanded body). */
 import React from 'react'
 import { Box, Text } from 'ink'
 import type { ToolCall } from '../store/session.js'
@@ -22,22 +18,28 @@ const STATUS_COLOR: Record<ToolCall['status'], string> = {
 
 interface Props {
   tc: ToolCall
-  /** If true, show the result/error body below the call line */
-  showResult?: boolean
+  /** When true, render full (truncated) result / error body below the summary line. */
+  expanded: boolean
 }
 
-export const ToolCallLine = ({ tc, showResult = true }: Props): React.ReactElement => {
+export const ToolCallLine = ({ tc, expanded }: Props): React.ReactElement => {
   const icon = STATUS_ICON[tc.status]
   const color = STATUS_COLOR[tc.status]
-  const argsStr = fmtArgs(tc.args, 55)
+  const argsStr = fmtArgs(tc.args, 72)
+  const chevron = expanded ? '▼' : '▶'
+  const nChars = tc.result?.length ?? tc.error?.length ?? 0
+  const summary =
+    tc.status === 'error'
+      ? `${chevron} ${tc.tool}(${argsStr}) · error`
+      : nChars > 0
+        ? `${chevron} ${tc.tool}(${argsStr}) · ${nChars} chars`
+        : `${chevron} ${tc.tool}(${argsStr})`
 
   return (
     <Box flexDirection="column" marginLeft={2}>
-      {/* Call line */}
       <Box>
-        <Text color={color as Parameters<typeof Text>[0]['color']}>{icon} </Text>
-        <Text bold>{tc.tool}</Text>
-        <Text color="gray"> {argsStr}</Text>
+        <Text color={color as 'green' | 'yellow' | 'red'}>{icon} </Text>
+        <Text dimColor>{summary}</Text>
         {tc.durationMs !== undefined && (
           <Text color="gray" dimColor>
             {' '}
@@ -46,18 +48,17 @@ export const ToolCallLine = ({ tc, showResult = true }: Props): React.ReactEleme
         )}
       </Box>
 
-      {/* Result / error body */}
-      {showResult && tc.status === 'done' && tc.result && (
+      {expanded && tc.status === 'done' && tc.result && (
         <Box marginLeft={3}>
           <Text color="gray" dimColor>
-            {truncate(tc.result, 120)}
+            {truncate(tc.result, 200)}
           </Text>
         </Box>
       )}
-      {showResult && tc.status === 'error' && tc.error && (
+      {expanded && tc.status === 'error' && tc.error && (
         <Box marginLeft={3}>
           <Text color="red" dimColor>
-            {truncate(tc.error, 120)}
+            {truncate(tc.error, 200)}
           </Text>
         </Box>
       )}

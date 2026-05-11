@@ -88,7 +88,7 @@ for step in result.steps:
 ### Step fields
 
 | Field | Type | Description |
-|-------|------|-------------|
+| --- | --- | --- |
 | `type` | `StepType` | classify, llm_call, tool_call, tool_result, worker_start, worker_end, token, etc. |
 | `name` | `str` | Step identifier |
 | `input` | `str` | What went in |

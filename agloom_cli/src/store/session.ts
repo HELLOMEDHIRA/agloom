@@ -1,20 +1,7 @@
-/**
- * Zustand session store — single source of truth for the agloom CLI terminal UI.
- *
- * Design principles:
- *   - `completedTurns` holds finished conversation turns; rendered via
- *     Ink's <Static> so they are written once and never re-rendered.
- *   - `activeTurn` accumulates everything for the current in-progress turn
- *     (streaming tokens, thinking steps, tool calls, workers). It re-renders
- *     on every token delta but only occupies the bottom portion of the screen.
- *   - The `dispatch` action is the *only* way to mutate state from AGP events;
- *     this keeps the reducer logic co-located and testable.
- */
+/** CLI session store; `dispatch` is the reducer for inbound AGP events. */
 
 import { create } from 'zustand'
 import type { AGPEvent } from '../types/agp.js'
-
-// ── Domain types ──────────────────────────────────────────────────────────────
 
 export interface ThinkingStep {
   id: string
@@ -80,8 +67,6 @@ export interface ActiveTurnState {
   graphNodes: string[]
 }
 
-// ── Store interface ───────────────────────────────────────────────────────────
-
 /** One emitted LLM token metric slice (for phase rollup / sidebar). */
 export interface MetricTokensSlice {
   id: string
@@ -132,17 +117,21 @@ export interface SessionStore {
   // Diagnostic lines from stderr (shown in a scrollable log if /diag is open)
   diagnostics: string[]
 
-  // ── Actions ──
+  /** Per `tool_call_id`: explicit expand/collapse; omitted → default from tool status. */
+  toolCallExpandedById: Record<string, boolean>
+
+  /** From `metric.budget.*`. */
+  budgetUi: 'ok' | 'approaching' | 'exhausted'
+
   dispatch: (evt: AGPEvent) => void
   addDiagnostic: (line: string) => void
   clearError: () => void
   markExited: () => void
   reset: () => void
+  toggleActiveTurnToolExpandBulk: () => void
   /** Slash/UI helpers — append one line to the metrics sidebar wire notes. */
   appendProtocolNote: (line: string) => void
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 let _seq = 0
 const uid = (): string => {
@@ -168,7 +157,16 @@ const newActiveTurn = (userMessage: string): ActiveTurnState => {
   }
 }
 
-// ── Store ─────────────────────────────────────────────────────────────────────
+/** Expanded for error/pending tools; collapsed for successful results unless overridden in the map. */
+export function effectiveToolCallExpanded(
+  tc: ToolCall,
+  expandedById: Record<string, boolean>,
+): boolean {
+  if (Object.prototype.hasOwnProperty.call(expandedById, tc.toolCallId)) {
+    return expandedById[tc.toolCallId]!
+  }
+  return tc.status === 'error' || tc.status === 'pending'
+}
 
 export const useSessionStore = create<SessionStore>((set) => ({
   completedTurns: [],
@@ -191,12 +189,12 @@ export const useSessionStore = create<SessionStore>((set) => ({
   status: 'idle',
   errorMessage: null,
   diagnostics: [],
+  toolCallExpandedById: {},
+  budgetUi: 'ok',
 
-  // ── Event reducer ──────────────────────────────────────────────────────────
   dispatch: (evt: AGPEvent) =>
     set((s) => {
       switch (evt.type) {
-        // ── session ──
         case 'session.opened':
           return {
             ...s,
@@ -204,11 +202,11 @@ export const useSessionStore = create<SessionStore>((set) => ({
             runtimeVersion: evt.data.runtime_version,
             sessionOpenedAtMs: Date.now(),
             status: 'idle',
+            toolCallExpandedById: {},
+            budgetUi: 'ok',
           }
 
         case 'session.resumed':
-          // Runtime has resumed a prior session from a checkpoint. Update the session id and
-          // reset transient UI state so the new stream renders cleanly from this point forward.
           return {
             ...s,
             sessionId: evt.session,
@@ -216,6 +214,8 @@ export const useSessionStore = create<SessionStore>((set) => ({
             sessionOpenedAtMs: Date.now(),
             status: 'idle',
             activeTurn: null,
+            toolCallExpandedById: {},
+            budgetUi: 'ok',
           }
 
         case 'session.closed': {
@@ -385,7 +385,6 @@ export const useSessionStore = create<SessionStore>((set) => ({
             ),
           }
 
-        // ── message.user — marks the start of a new turn ──
         case 'message.user':
           return {
             ...s,
@@ -395,9 +394,10 @@ export const useSessionStore = create<SessionStore>((set) => ({
             errorMessage: null,
             turnInputTokens: 0,
             turnOutputTokens: 0,
+            toolCallExpandedById: {},
+            budgetUi: 'ok',
           }
 
-        // ── pattern ──
         case 'pattern.classified':
           if (!s.activeTurn) return s
           return {
@@ -405,7 +405,6 @@ export const useSessionStore = create<SessionStore>((set) => ({
             activeTurn: { ...s.activeTurn, pattern: evt.data.pattern },
           }
 
-        // ── thinking ──
         case 'thinking.step': {
           if (!s.activeTurn) return s
           const step: ThinkingStep = {
@@ -425,7 +424,6 @@ export const useSessionStore = create<SessionStore>((set) => ({
           }
         }
 
-        // ── token streaming ──
         case 'token.delta':
           if (!s.activeTurn) return s
           return {
@@ -437,7 +435,6 @@ export const useSessionStore = create<SessionStore>((set) => ({
             },
           }
 
-        // ── tool call ──
         case 'tool.call.start': {
           if (!s.activeTurn) return s
           const tc: ToolCall = {
@@ -486,7 +483,6 @@ export const useSessionStore = create<SessionStore>((set) => ({
           }
         }
 
-        // ── workers ──
         case 'worker.spawned': {
           if (!s.activeTurn) return s
           const w: Worker = {
@@ -531,7 +527,6 @@ export const useSessionStore = create<SessionStore>((set) => ({
             },
           }
 
-        // ── graph nodes ──
         case 'graph.node.enter':
           if (!s.activeTurn) return s
           return {
@@ -557,7 +552,6 @@ export const useSessionStore = create<SessionStore>((set) => ({
             ),
           }
 
-        // ── HITL ──
         case 'hitl.request': {
           const req: HITLRequest = {
             requestId: evt.data.request_id,
@@ -587,7 +581,6 @@ export const useSessionStore = create<SessionStore>((set) => ({
           }
         }
 
-        // ── message.assistant — finalises the active turn ──
         case 'message.assistant': {
           const active = s.activeTurn
           if (!active) return s
@@ -617,7 +610,6 @@ export const useSessionStore = create<SessionStore>((set) => ({
           }
         }
 
-        // ── metrics ──
         case 'metric.tokens': {
           const slice: MetricTokensSlice = {
             id: uid(),
@@ -646,6 +638,26 @@ export const useSessionStore = create<SessionStore>((set) => ({
             ...s,
             totalCostUsd: s.totalCostUsd + evt.data.cost,
             model: s.model ?? evt.data.model,
+          }
+
+        case 'metric.budget.approaching':
+          return {
+            ...s,
+            budgetUi: 'approaching',
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `Budget · ~80% ${evt.data.dimension} (${Math.round((evt.data.ratio ?? 0) * 100)}%)`,
+            ),
+          }
+
+        case 'metric.budget.exhausted':
+          return {
+            ...s,
+            budgetUi: 'exhausted',
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `Budget · exhausted ${evt.data.dimension}`,
+            ),
           }
 
         case 'feedback.scored': {
@@ -684,6 +696,15 @@ export const useSessionStore = create<SessionStore>((set) => ({
             protocolNotes: pushProtocolNotes(
               s.protocolNotes,
               `memory.session.write · ${evt.data.thread}${evt.data.turn_count != null ? ` · turns ${evt.data.turn_count}` : ''}`,
+            ),
+          }
+
+        case 'memory.session.cleared':
+          return {
+            ...s,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `memory.session.cleared · ${evt.data.thread}`,
             ),
           }
 
@@ -732,7 +753,6 @@ export const useSessionStore = create<SessionStore>((set) => ({
             ),
           }
 
-        // ── errors ──
         case 'error.fatal':
           return { ...s, status: 'error', errorMessage: evt.data.message }
 
@@ -760,6 +780,18 @@ export const useSessionStore = create<SessionStore>((set) => ({
       protocolNotes: pushProtocolNotes(s.protocolNotes, line),
     })),
 
+  toggleActiveTurnToolExpandBulk: () =>
+    set((s) => {
+      const at = s.activeTurn
+      if (!at || at.toolCalls.length === 0) return s
+      const next: Record<string, boolean> = { ...s.toolCallExpandedById }
+      for (const tc of at.toolCalls) {
+        const cur = effectiveToolCallExpanded(tc, next)
+        next[tc.toolCallId] = !cur
+      }
+      return { ...s, toolCallExpandedById: next }
+    }),
+
   reset: () =>
     set((s) => ({
       ...s,
@@ -778,5 +810,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
       totalCostUsd: 0,
       status: 'idle',
       errorMessage: null,
+      toolCallExpandedById: {},
+      budgetUi: 'ok',
     })),
 }))

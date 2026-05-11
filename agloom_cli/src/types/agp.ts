@@ -79,9 +79,16 @@ export interface TokenDeltaEvent extends Envelope {
 
 // ── message.* ────────────────────────────────────────────────────────────────
 
+export interface MessageUserAttachmentSummary {
+  name: string
+  mime_type: string
+  byte_length?: number
+  path?: string
+}
+
 export interface MessageUserEvent extends Envelope {
   type: 'message.user'
-  data: { content: string; message_id?: string }
+  data: { content: string; message_id?: string; attachments?: MessageUserAttachmentSummary[] }
 }
 
 export interface MessageAssistantEvent extends Envelope {
@@ -120,6 +127,7 @@ export interface ToolCallResultEvent extends Envelope {
     output_bytes?: number
     duration_ms?: number
     truncated?: boolean
+    diff?: { before: string; after: string; language?: string }
   }
 }
 
@@ -219,6 +227,11 @@ export interface MemorySessionWriteEvent extends Envelope {
   data: { thread: string; run_id?: string; query_preview?: string; output_preview?: string; turn_count?: number }
 }
 
+export interface MemorySessionClearedEvent extends Envelope {
+  type: 'memory.session.cleared'
+  data: { thread: string }
+}
+
 export interface MemoryLtStoreEvent extends Envelope {
   type: 'memory.lt.store'
   data: { namespace?: string; key?: string; content_preview?: string }
@@ -261,6 +274,16 @@ export interface MetricTokensEvent extends Envelope {
 export interface MetricCostEvent extends Envelope {
   type: 'metric.cost'
   data: { cost: number; currency?: string; model?: string; phase?: string; worker_id?: string }
+}
+
+export interface MetricBudgetApproachingEvent extends Envelope {
+  type: 'metric.budget.approaching'
+  data: { dimension: 'tokens' | 'cost_usd'; used: number; limit: number; ratio: number }
+}
+
+export interface MetricBudgetExhaustedEvent extends Envelope {
+  type: 'metric.budget.exhausted'
+  data: { dimension: 'tokens' | 'cost_usd'; used: number; limit: number }
 }
 
 // ── error.* ──────────────────────────────────────────────────────────────────
@@ -362,6 +385,18 @@ export interface RuntimeToolsEvent extends Envelope {
   data: { tools: RuntimeToolEntry[] }
 }
 
+export interface RuntimeProviderEntry {
+  slug: string
+  label: string
+  default_model: string
+  primary_env_key?: string | null
+}
+
+export interface RuntimeProvidersEvent extends Envelope {
+  type: 'runtime.providers'
+  data: { providers: RuntimeProviderEntry[] }
+}
+
 export interface RuntimeSessionsEvent extends Envelope {
   type: 'runtime.sessions'
   data: { sessions: string[] }
@@ -370,6 +405,16 @@ export interface RuntimeSessionsEvent extends Envelope {
 export interface RuntimeSessionCreatedEvent extends Envelope {
   type: 'runtime.session.created'
   data: { session_id: string }
+}
+
+export interface RuntimeSessionRenamedEvent extends Envelope {
+  type: 'runtime.session.renamed'
+  data: { from_session_id: string; to_session_id: string }
+}
+
+export interface RuntimeFileStagedEvent extends Envelope {
+  type: 'runtime.file.staged'
+  data: { path: string; bytes: number; thread?: string }
 }
 
 export interface RuntimeToolResultEvent extends Envelope {
@@ -432,8 +477,11 @@ export type AGPKnownEvent =
   | RuntimePongEvent
   | RuntimeSchemaEvent
   | RuntimeToolsEvent
+  | RuntimeProvidersEvent
   | RuntimeSessionsEvent
   | RuntimeSessionCreatedEvent
+  | RuntimeSessionRenamedEvent
+  | RuntimeFileStagedEvent
   | RuntimeToolResultEvent
   | RuntimeConfigAppliedEvent
   | TodosUpdatedEvent
@@ -456,12 +504,15 @@ export type AGPKnownEvent =
   | PromptCancelledEvent
   | MemoryLtRecallEvent
   | MemorySessionWriteEvent
+  | MemorySessionClearedEvent
   | MemoryLtStoreEvent
   | CheckpointSavedEvent
   | CheckpointRestoredEvent
   | FeedbackScoredEvent
   | MetricTokensEvent
   | MetricCostEvent
+  | MetricBudgetApproachingEvent
+  | MetricBudgetExhaustedEvent
   | ErrorTransientEvent
   | ErrorFatalEvent
 
@@ -478,9 +529,15 @@ export const parseInboundAGPEventJSON = (parsed: unknown): AGPEvent => {
 
 // ── Inbound commands (CLI / web → Python runtime) ────────────────────────────
 
+export interface InvokeAttachment {
+  name?: string
+  mime_type?: string
+  data_base64: string
+}
+
 export interface CommandInvoke {
   type: 'command.invoke'
-  data: { prompt: string; thread?: string }
+  data: { prompt: string; thread?: string; user_id?: string; context?: Record<string, unknown>; attachments?: InvokeAttachment[] }
 }
 
 export interface CommandCancel {
@@ -541,6 +598,11 @@ export interface CommandToolListCmd {
   data?: Record<string, unknown>
 }
 
+export interface CommandProvidersListCmd {
+  type: 'command.providers.list'
+  data?: Record<string, unknown>
+}
+
 export interface CommandSubscribeCmd {
   type: 'command.subscribe'
   data: { prefixes: string[] }
@@ -566,6 +628,11 @@ export interface CommandSessionDeleteCmd {
   data: { session_id: string }
 }
 
+export interface CommandSessionRenameCmd {
+  type: 'command.session.rename'
+  data: { from_session_id: string; to_session_id: string }
+}
+
 export interface CommandToolInvokeCmd {
   type: 'command.tool.invoke'
   data: { name: string; arguments?: Record<string, unknown> }
@@ -573,7 +640,25 @@ export interface CommandToolInvokeCmd {
 
 export interface CommandConfigSetCmd {
   type: 'command.config.set'
-  data: { model_id: string; cli_tools?: Record<string, unknown> }
+  data: {
+    model_id?: string
+    cli_tools?: Record<string, unknown>
+    pattern?: string
+    temperature?: number
+    system_prompt?: string
+    budget_token_limit?: number | null
+    budget_cost_usd_limit?: number | null
+  }
+}
+
+export interface CommandMemoryClearCmd {
+  type: 'command.memory.clear'
+  data?: { thread?: string }
+}
+
+export interface CommandAttachFileCmd {
+  type: 'command.attach.file'
+  data: { filename: string; content_base64: string; thread?: string }
 }
 
 export type AGPCommand =
@@ -588,13 +673,17 @@ export type AGPCommand =
   | CommandPing
   | CommandSchemaRequestCmd
   | CommandToolListCmd
+  | CommandProvidersListCmd
   | CommandSubscribeCmd
   | CommandUnsubscribeCmd
   | CommandSessionListCmd
   | CommandSessionCreateCmd
   | CommandSessionDeleteCmd
+  | CommandSessionRenameCmd
   | CommandToolInvokeCmd
   | CommandConfigSetCmd
+  | CommandMemoryClearCmd
+  | CommandAttachFileCmd
 
 // ── Utility types ──────────────────────────────────────────────────────────────
 

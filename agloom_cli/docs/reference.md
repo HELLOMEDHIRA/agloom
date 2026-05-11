@@ -1,52 +1,22 @@
-# CLI developer reference
+# AGP wire reference (CLI clients)
 
-Notes for contributors maintaining **agloom-cli** or another AGP client talking to `agloom-runtime`. End-user install and flags are on the [quick start](index.md).
+This page is for **anyone driving `agloom-runtime` over stdio** (the npm CLI, custom scripts, or another terminal UI). End-user documentation starts at [Overview](index.md).
 
 ## Legacy shell
 
-The old Python Typer/Rich REPL has been **removed**. Use **`agloom_cli/`** (this package) plus **`agloom-runtime`**.
+The old Python Typer/Rich REPL has been **removed**. Use the **`agloom-cli`** package plus **`agloom-runtime`**.
 
 ## AGP stream contract
 
-- **`stdout`** from `agloom-runtime` is **AGP NDJSON only** — one JSON object per line.
-- **Diagnostics** (warnings, banners, provider hints) go to **`stderr`** so parsers keep `stdout` clean.
+- **`stdout`** from `agloom-runtime` is **AGP NDJSON only** — one JSON object per line. Each object follows the [AGP specification](../agloom/protocol/agp.md) (`type`, envelope fields, `data`).
+- **Diagnostics** (warnings, hints, startup banners from Python) go to **`stderr`**. Parsers must **not** treat stderr as part of the protocol stream.
 
-Consumers should use **typed AGP events** (`src/types/agp.ts`), not ad hoc log scraping.
-
-## Architecture (this repo)
-
-| Area | Role |
-|------|------|
-| `src/runtime/bridge.ts` | `createAGPBridge()` — spawns `agloom-runtime`, parses NDJSON, typed `on`/`emit` via internal `EventEmitter`. |
-| `src/store/session.ts` | Single zustand reducer: **`dispatch(AGPEvent)`** updates UI state + **Wire notes**. |
-| `src/hooks/useAGPStream.tsx` | Subscribes the bridge to the store (strict-mode safe). |
-| `src/components/*` | Ink UI; slash commands are handled in `App.tsx`. |
-
-### Adding a new inbound event type
-
-1. Mirror the Python model in **`src/types/agp.ts`** (and keep **`agloom_web`** copy identical).
-2. Handle it in **`session.ts`** → `dispatch` switch (update structured state and/or **`protocolNotes`**).
-3. Add a **jest** case in **`src/__tests__/store.test.ts`** for the reducer branch.
-
-### Tests
-
-- **`npm test`** — `bridge.test.ts` (serialization, NDJSON framing) + `store.test.ts` (reducers).
-- Ink components are not rendered in CI; exercise logic via the store where possible.
-
-### Build
-
-```bash
-npm run build    # tsc → dist/
-npm run lint
-npm run typecheck
-```
-
-## TypeScript / EventEmitter
-
-The bridge is a **factory** (`createAGPBridge`) that wraps Node’s `EventEmitter` internally; the public type is `AGPBridge` (interface with typed `on` / `once` / `off` / `emit`).
+**Parsing:** Read stdout line-by-line; parse each non-empty line as JSON and dispatch on `type`. Do not scrape stderr for machine-readable AGP events.
 
 ## Related docs
 
-- [AGP specification](../agloom/protocol/agp.md)
+- [AGP specification](../agloom/protocol/agp.md) — canonical event types and shapes
 - [Runtime architecture](../agloom/runtime/architecture.md)
-- [Package README](https://github.com/HELLOMEDHIRA/agloom/blob/main/agloom_cli/README.md) — slash commands, exit codes, env vars
+- [Package README](https://github.com/HELLOMEDHIRA/agloom/blob/main/agloom_cli/README.md)
+
+**Maintainers:** workflow for the npm CLI bridge (layout, tests, adding event types) lives in [**`CONTRIBUTING.md`**](https://github.com/HELLOMEDHIRA/agloom/blob/main/CONTRIBUTING.md) at the repository root (not duplicated here).

@@ -18,20 +18,20 @@ git clone https://github.com/HELLOMEDHIRA/agloom.git
 cd agloom
 ```
 
-2. Install dependencies (library extras + development tools):
+1. Install dependencies (library extras + development tools):
 
 ```bash
 uv sync --all-extras --group dev
 ```
 
-3. Install pre-commit hooks:
+1. Install pre-commit hooks:
 
 ```bash
 uv run pre-commit install
 uv run pre-commit install --hook-type commit-msg
 ```
 
-4. Verify locally:
+1. Verify locally:
 
 ```bash
 uv run ruff check agloom
@@ -106,7 +106,7 @@ Types:
 
 Examples:
 
-```
+```text
 feat(patterns): add step tracing to REACT handler
 fix(memory): prevent session memory overflow beyond max_turns
 docs: add streaming examples to README
@@ -136,7 +136,7 @@ docs: add streaming examples to README
 
 ## Project Structure
 
-```
+```text
 agloom/
 ├── agloom/              # Core library (`agloom/tests/`, `agloom/examples/`, `agloom/docs/`)
 ├── agloom_cli/          # agloom CLI — terminal client, npm package ``agloom-cli`` (`agloom_cli/docs/`)
@@ -149,6 +149,42 @@ agloom/
 ## Security
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and tooling risk notes.
+
+## agloom-cli: AGP bridge (maintainers)
+
+The terminal client (`agloom_cli/`, npm package **`agloom-cli`**) spawns **`agloom-runtime serve --transport=stdio`** and parses AGP on stdout. Use this section when changing protocol handling or UI wiring.
+
+### Layout
+
+| Area | Role |
+| --- | --- |
+| `src/runtime/bridge.ts` | `createAGPBridge()` — spawns `agloom-runtime`, parses NDJSON, typed `on`/`emit` via internal `EventEmitter`. |
+| `src/store/session.ts` | Single zustand reducer: **`dispatch(AGPEvent)`** updates UI state + **Wire notes**. |
+| `src/hooks/useAGPStream.tsx` | Subscribes the bridge to the store (strict-mode safe). |
+| `src/components/*` | Ink UI; slash commands are handled in `App.tsx`. |
+
+### Adding a new inbound event type
+
+1. Mirror the Python model in **`src/types/agp.ts`** (and keep **`agloom_web`** copy identical).
+2. Handle it in **`session.ts`** → `dispatch` switch (update structured state and/or **`protocolNotes`**).
+3. Add a **jest** case in **`src/__tests__/store.test.ts`** for the reducer branch.
+
+### Tests (`agloom_cli/`)
+
+- **`npm test`** — `bridge.test.ts` (serialization, NDJSON framing) + `store.test.ts` (reducers).
+- Ink components are not rendered in CI; exercise logic via the store where possible.
+
+### Build (`agloom_cli/`)
+
+```bash
+npm run build    # tsc → dist/
+npm run lint
+npm run typecheck
+```
+
+The bridge is a **factory** (`createAGPBridge`) wrapping Node’s `EventEmitter`; the public type is **`AGPBridge`** (typed `on` / `once` / `off` / `emit`).
+
+User-facing AGP stdio rules (stdout vs stderr) are documented in **`agloom_cli/docs/reference.md`** (published under MkDocs).
 
 ## Questions?
 

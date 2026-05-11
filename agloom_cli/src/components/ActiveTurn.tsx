@@ -1,14 +1,7 @@
-/**
- * ActiveTurn — the currently in-flight conversation turn.
- *
- * This is the only component that re-renders on every token delta, so it must
- * be kept lean. Completed items (thinking steps, tool calls) are shown concisely;
- * the streaming partial response occupies the bottom of this box.
- */
-
+/** In-flight turn (streaming, tools, workers). */
 import React from 'react'
 import { Box, Text } from 'ink'
-import { useSessionStore } from '../store/session.js'
+import { useSessionStore, effectiveToolCallExpanded } from '../store/session.js'
 import { ToolCallLine } from './ToolCallLine.js'
 import { WorkerLine } from './WorkerLine.js'
 import { useSpinner } from '../hooks/useSpinner.js'
@@ -17,6 +10,7 @@ import { truncate } from '../utils/format.js'
 export const ActiveTurn = (): React.ReactElement | null => {
   const activeTurn = useSessionStore((s) => s.activeTurn)
   const status = useSessionStore((s) => s.status)
+  const expandedMap = useSessionStore((s) => s.toolCallExpandedById)
   const spinner = useSpinner()
 
   if (!activeTurn) return null
@@ -26,7 +20,6 @@ export const ActiveTurn = (): React.ReactElement | null => {
 
   return (
     <Box flexDirection="column" marginBottom={1}>
-      {/* ── User message (echo) ── */}
       <Box>
         <Text bold color="cyan">
           ❯{' '}
@@ -34,31 +27,30 @@ export const ActiveTurn = (): React.ReactElement | null => {
         <Text bold>{userMessage}</Text>
       </Box>
 
-      {/* ── Pattern badge ── */}
       {pattern && (
         <Box marginLeft={2}>
           <Text color="magenta">▸ {pattern}</Text>
         </Box>
       )}
 
-      {/* ── Thinking steps (live) ── */}
       {thinkingSteps.map((s) => (
         <Box key={s.id} marginLeft={2}>
           <Text color="gray">▸ {truncate(s.label ?? s.step, 60)}</Text>
         </Box>
       ))}
 
-      {/* ── Workers (live) ── */}
       {workers.map((w) => (
         <WorkerLine key={w.id} worker={w} />
       ))}
 
-      {/* ── Tool calls (live — show result inline) ── */}
       {toolCalls.map((tc) => (
-        <ToolCallLine key={tc.id} tc={tc} showResult={true} />
+        <ToolCallLine
+          key={tc.id}
+          tc={tc}
+          expanded={effectiveToolCallExpanded(tc, expandedMap)}
+        />
       ))}
 
-      {/* ── Streaming tokens ── */}
       {streamedTokens && (
         <Box marginLeft={2} flexDirection="column">
           {streamedTokens.split('\n').slice(-20).map((line, i) => (
@@ -67,7 +59,6 @@ export const ActiveTurn = (): React.ReactElement | null => {
         </Box>
       )}
 
-      {/* ── Spinner when no tokens yet ── */}
       {isStreaming && !streamedTokens && (
         <Box marginLeft={2}>
           <Text color="cyan">{spinner} </Text>

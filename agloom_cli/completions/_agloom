@@ -1,0 +1,48 @@
+#compdef agloom
+# Zsh completion — add the repo completions dir to fpath, or copy this file to a dir on fpath.
+
+_arguments -S -s \
+  '(-h --help)'{-h,--help}'[Show help]' \
+  '(-V --version)'{-V,--version}'[Show version]' \
+  '(-t --thread)'{-t,--thread}'[LangGraph thread id]:thread id:' \
+  '(-s --session)'{-s,--session}'[AGP session id]:session id:' \
+  '--store[AGP EventStore type]:type:(none memory sqlite)' \
+  '--store-path[SQLite path for EventStore]:file:_files' \
+  '--diag[Open diagnostic pane]' \
+  '--no-cli-tools[Omit CLI tools]' \
+  '--no-shell-tool[Disable shell tool]' \
+  '--no-network-tools[Disable network tools]' \
+  '--unrestricted[Disable CLI tool sandbox]' \
+  '(-m --model)'{-m,--model}'[LLM model id]:model:' \
+  '--provider[Force provider name]:provider:' \
+  '--api-key-env[Env var for API key]:env var:_parameters -g "*export*"' \
+  '(-T --temperature)'{-T,--temperature}'[Sampling temperature]:temperature:' \
+  '--max-tokens[Max output tokens]:tokens:' \
+  '--pattern[Routing pattern]:pattern:' \
+  '--mcp[MCP server spec]:spec:' \
+  '--system-prompt[System prompt text]:text:' \
+  '--system-prompt-file[System prompt file]:file:_files' \
+  '--no-memory[Minimal session memory]' \
+  '--memory[Session memory type]:type:' \
+  '--memory-path[SQLite path for memory]:file:_files' \
+  '--no-skills[Disable skills disk mirror]' \
+  '--skills-dir[Skills directory]:directory:_directories' \
+  '--summarizer-model[Summarizer model id]:model:' \
+  '--no-auto-summarize[Disable auto summarization]' \
+  '--session-max-turns[Session memory max turns]:turns:' \
+  '--max-turns[Alias for session-max-turns]:turns:' \
+  '--prompt[Direct prompt text]:prompt:' \
+  '(-q --quiet)'{-q,--quiet}'[Direct: stdout only]' \
+  '--json[Direct: JSONL AGP events]' \
+  '--no-stream[Direct: buffer until assistant message]' \
+  '--no-color[Direct: strip ANSI]' \
+  '--no-banner[Suppress banner]' \
+  '--auto-approve[Direct: auto-approve HITL]' \
+  '--auto-reject[Direct: auto-reject HITL]' \
+  '--hitl-tty[Direct: interactive HITL on TTY]' \
+  '--config[Path to agloom.yaml]:file:_files' \
+  '--print-config[Print merged config JSON and exit]' \
+  '--list-providers[Print provider table and exit]' \
+  '--resolve-model[Dry-run model resolution]:spec:' \
+  '--multiline[TUI: multiline compose]' \
+  '--history-file[Prompt history JSON path]:file:_files'

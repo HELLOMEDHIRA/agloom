@@ -1,12 +1,13 @@
+# agloom
+
+<!-- markdownlint-disable MD033 -->
 <div align="center" markdown>
 
 ![agloom](https://raw.githubusercontent.com/HELLOMEDHIRA/medhira/main/assets/medhira-logo.png){ width="120" }
 
-# agloom
+## The intelligent fabric for AI agents
 
-### The intelligent fabric for AI agents.
-
-Nine execution patterns. Auto-classified. Self-learning. One API.<br>
+Nine execution patterns. Auto-classified. Self-learning. One API.  
 Drop-in replacement for LangChain's `create_agent` — with superpowers.
 
 [![PyPI](https://img.shields.io/pypi/v/agloom)](https://pypi.org/project/agloom/)
@@ -15,10 +16,11 @@ Drop-in replacement for LangChain's `create_agent` — with superpowers.
 [![Docs](https://readthedocs.org/projects/agloom/badge/?version=latest)](https://agloom.readthedocs.io)
 
 </div>
+<!-- markdownlint-enable MD033 -->
 
 ---
 
-## You write a short async flow. agloom does the rest.
+## You write a short async flow — agloom does the rest
 
 ```python
 from agloom import create_agent
@@ -28,7 +30,7 @@ async def main():
     result = await agent.ainvoke("Analyze Q3 sales across 3 regions and recommend strategy")
 ```
 
-**What happened behind those calls:**
+### What happened behind those calls
 
 1. Query classified → SUPERVISOR pattern (multi-faceted, parallelizable)
 2. Decomposed into 3 regional subtasks
@@ -88,7 +90,7 @@ asyncio.run(main())
 ## What You Get
 
 | Capability | What it means for you |
-|:-----------|:---------------------|
+| --- | --- |
 | **9 Execution Patterns** | DIRECT → HYBRID_DAG, auto-selected per query |
 | **Skill Learning** | Agents remember what worked and reuse it |
 | **Auto-Evaluation** | Every response scored. Trends detected. Skills adjusted |
@@ -112,10 +114,6 @@ asyncio.run(main())
 
 ---
 
-<div align="center" markdown>
-
 Built with care by **[MEDHIRA](https://github.com/HELLOMEDHIRA)**
 
 [hello.medhira@gmail.com](mailto:hello.medhira@gmail.com)
-
-</div>

@@ -5,6 +5,8 @@ import json
 import time
 from typing import Any, cast
 
+from ..multimodal import text_from_user_turn
+
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
@@ -155,7 +157,7 @@ REACT_TOOL_DISCIPLINE = """
 
 async def handle_react(
     agent: dict,
-    query: str,
+    query: str | list[Any],
     analysis: QueryAnalysis,
     config: dict | None = None,
 ) -> ExecutionResult:
@@ -215,7 +217,7 @@ async def handle_react(
             _make_step(
                 StepType.LLM_CALL,
                 "react_fallback_llm",
-                input=query,
+                input=text_from_user_turn(query),
                 output=output,
                 duration_ms=dur,
                 max_length=ml,
@@ -322,7 +324,7 @@ async def handle_react(
                 _make_step(
                     StepType.LLM_CALL,
                     "react_agent",
-                    input=query,
+                    input=text_from_user_turn(query),
                     output=output,
                     duration_ms=dur,
                     max_length=ml,
@@ -423,7 +425,7 @@ async def handle_react(
 
 async def _handle_react_streaming(
     agent: dict,
-    query: str,
+    query: str | list[Any],
     analysis: QueryAnalysis,
     config: dict | None = None,
     event_queue: asyncio.Queue | None = None,
@@ -479,7 +481,7 @@ async def _handle_react_streaming(
                         await event_queue.put(AgentEvent(type="token", data={"content": content}))
 
             elif kind == "on_tool_start":
-                run_id = str(event.get("run_id", ""))
+                run_id = event.get("run_id", "")
                 tool_name = event.get("name", "unknown")
                 tool_input = event.get("data", {}).get("input", {})
                 arg_dict = _tool_input_as_dict(tool_input)
@@ -508,14 +510,18 @@ async def _handle_react_streaming(
                 )
 
             elif kind == "on_tool_end":
-                run_id = str(event.get("run_id", ""))
+                run_id = event.get("run_id", "")
                 tool_name = _tool_run_ids.pop(run_id, event.get("name", "unknown"))
-                tool_output = str(event.get("data", {}).get("output", ""))
+                raw_out = event.get("data", {}).get("output")
                 args_rem = _tool_arg_dicts.pop(run_id, {})
                 skill_name: str | None = None
                 if tool_name == "load_skill":
                     n = args_rem.get("name")
                     skill_name = n if isinstance(n, str) else None
+                if isinstance(raw_out, dict) and isinstance(raw_out.get("summary"), str):
+                    out_payload: str | dict[str, object] = raw_out
+                else:
+                    out_payload = _trunc(str(raw_out or ""), ml)
                 if event_queue:
                     await event_queue.put(
                         AgentEvent(
@@ -523,17 +529,22 @@ async def _handle_react_streaming(
                             data={
                                 "id": run_id,
                                 "name": tool_name,
-                                "output": _trunc(tool_output, ml),
+                                "output": out_payload,
                                 "args": args_rem,
                                 **({"skill_name": skill_name} if skill_name else {}),
                             },
                         )
                     )
+                step_out = (
+                    raw_out["summary"]
+                    if isinstance(raw_out, dict) and isinstance(raw_out.get("summary"), str)
+                    else str(raw_out or "")
+                )
                 steps.append(
                     _make_step(
                         StepType.TOOL_RESULT,
                         tool_name,
-                        output=tool_output,
+                        output=step_out,
                         id=run_id,
                         max_length=ml,
                     )
@@ -572,7 +583,7 @@ async def _handle_react_streaming(
             _make_step(
                 StepType.LLM_CALL,
                 "react_agent",
-                input=query,
+                input=text_from_user_turn(query),
                 output=output,
                 duration_ms=dur,
                 max_length=ml,
@@ -652,7 +663,7 @@ async def _emit_react_tool_steps_to_event_queue(agent: dict, tool_steps: list) -
 
 async def _handle_react_ainvoke_fallback(
     agent: dict,
-    query: str,
+    query: str | list[Any],
     analysis: QueryAnalysis,
     config: dict | None = None,
 ) -> ExecutionResult:
@@ -703,7 +714,7 @@ async def _handle_react_ainvoke_fallback(
             _make_step(
                 StepType.LLM_CALL,
                 "react_agent",
-                input=query,
+                input=text_from_user_turn(query),
                 output=output,
                 duration_ms=dur,
                 max_length=ml,
@@ -739,7 +750,7 @@ async def _handle_react_hitl(
     llm,
     tools: list,
     system_prompt: str,
-    query: str,
+    query: str | list[Any],
     analysis: QueryAnalysis,
     name: str,
     interrupt_before_tools: list[str],

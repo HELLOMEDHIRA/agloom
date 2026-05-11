@@ -1,27 +1,24 @@
-/**
- * CompletedTurnCard — renders a finished turn (never re-renders after mount).
- */
+/** One finished turn (`memo`; avoid hooks that force updates). */
 import React, { memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import type { CompletedTurn } from '../../store/session.js'
-import { cn, fmtDuration } from '../../lib/utils/cn.js'
-import { CheckCircle, XCircle, Clock, Wrench, Users } from 'lucide-react'
+import { cn } from '../../lib/utils/cn.js'
+import { Users } from 'lucide-react'
+import { ToolCallRow } from './ToolCallRow.js'
 
 interface Props { turn: CompletedTurn }
 
 export const CompletedTurnCard = memo(({ turn }: Props) => {
   return (
     <article className="flex flex-col gap-4">
-      {/* User message */}
       <div className="flex gap-3 justify-end">
         <div className="max-w-[80%] px-4 py-2.5 rounded-2xl rounded-br-sm bg-indigo-600 text-white text-sm leading-relaxed">
           {turn.userMessage}
         </div>
       </div>
 
-      {/* Trace summary: pattern + thinking + tools + workers */}
       {(turn.pattern || turn.thinkingSteps.length > 0 || turn.toolCalls.length > 0 || turn.workers.length > 0) && (
         <div className="flex flex-col gap-1.5 pl-3 border-l-2 border-neutral-800 ml-1">
           {turn.pattern && (
@@ -41,21 +38,13 @@ export const CompletedTurnCard = memo(({ turn }: Props) => {
             </div>
           ))}
           {turn.toolCalls.map((tc) => (
-            <div key={tc.id} className="flex items-center gap-1.5 text-xs">
-              {tc.status === 'done'    && <CheckCircle size={10} className="text-emerald-400" />}
-              {tc.status === 'error'   && <XCircle size={10} className="text-red-400" />}
-              {tc.status === 'pending' && <Clock size={10} className="text-yellow-400" />}
-              <Wrench size={10} className="text-neutral-500" />
-              <span className="text-neutral-400">{tc.tool}</span>
-              {tc.durationMs && <span className="text-neutral-600">{fmtDuration(tc.durationMs)}</span>}
-            </div>
+            <ToolCallRow key={tc.id} tc={tc} />
           ))}
         </div>
       )}
 
-      {/* Assistant response */}
       <div className="flex gap-3">
-        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 shrink-0 mt-0.5 flex items-center justify-center text-xs font-bold">A</div>
+        <div className="w-7 h-7 rounded-full bg-linear-to-br from-indigo-500 to-purple-600 shrink-0 mt-0.5 flex items-center justify-center text-xs font-bold">A</div>
         <div className="flex-1 min-w-0">
           <div className={cn(
             'prose prose-sm prose-invert max-w-none',
@@ -68,7 +57,6 @@ export const CompletedTurnCard = memo(({ turn }: Props) => {
             </ReactMarkdown>
           </div>
 
-          {/* Footer: tokens + pattern */}
           <div className="flex items-center gap-3 mt-2">
             {turn.tokens && <span className="text-xs text-neutral-600">{turn.tokens} tok</span>}
             {turn.pattern && <span className="text-xs text-neutral-600">{turn.pattern}</span>}

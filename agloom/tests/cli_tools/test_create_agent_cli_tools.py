@@ -23,6 +23,9 @@ async def test_cli_tools_adds_builtin_names() -> None:
     assert "execute" in ibi
     assert "bash" in ibi
     assert "bash_background" in ibi
+    assert "write_file" in ibi
+    assert "delete_file" in ibi
+    assert "notebook_edit" in ibi
     assert agent.config.get("_cli_tools") is not None
 
 
@@ -75,3 +78,5 @@ async def test_cli_tools_no_shell_skips_execute_tool_and_interrupt() -> None:
     ibi = agent.config["interrupt_before_tools"]
     assert "execute" not in ibi
     assert "bash_background" not in ibi
+    assert "write_file" in ibi
+    assert "edit_file" in ibi

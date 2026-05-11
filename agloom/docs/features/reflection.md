@@ -16,7 +16,7 @@ Steps show up in **`ExecutionResult.steps`** and event streams as **`reflection`
 ## Configuration
 
 | Parameter | Default | Meaning |
-|-----------|---------|---------|
+| --- | --- | --- |
 | **`max_reflection_iterations`** | `3` | Maximum generate/critique cycles |
 | **`reflection_threshold`** | `7` | Minimum critic score (1–10) to stop revising |
 

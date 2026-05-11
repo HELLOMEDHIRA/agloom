@@ -110,7 +110,7 @@ async for event in agent.astream_events("Explain gravity"):
 ### Event types
 
 | Event | When emitted | Key data fields |
-|-------|-------------|-----------------|
+| --- | --- | --- |
 | `thinking` | Query classified | `output` (pattern name) |
 | `token` | LLM token chunk arrives | `content` (the token text) |
 | `llm_call` | LLM response completed | `name`, `output`, `duration_ms` |
@@ -305,7 +305,7 @@ To get token usage, just access `result.token_usage` after any `ainvoke` call.
 ## Choosing the Right API
 
 | Need | API | Details |
-|------|-----|---------|
+| --- | --- | --- |
 | Simple chat UI | `astream()` | Token chunks only, simplest integration |
 | Rich "thinking" UI | `astream_events()` | Steps + tokens + tool tracking in one stream (`AgentEvent`) |
 | Same shapes as AGP / runtime | `astream_agp_events()` | Typed `Envelope` subclasses; bracketed `session.opened` / `session.closed` |

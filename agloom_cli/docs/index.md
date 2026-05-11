@@ -1,16 +1,16 @@
-# agloom CLI — quick start
+# agloom CLI
 
-The **agloom CLI** is the Node.js package in `agloom_cli/` (npm **`agloom-cli`**). It implements the terminal UI with **Ink** and **React**, and streams **AGP** (newline-delimited JSON) over stdio to **`agloom-runtime`**.
+The **agloom CLI** (`npm install -g agloom-cli`) is a terminal client built with **Ink** and **React**. It speaks **AGP** (newline-delimited JSON) over stdio to **`agloom-runtime`** from the PyPI **`agloom`** package.
 
 ## Prerequisites
 
-- **Python 3.12+** with **`pip install agloom`** so `agloom-runtime` exists on `PATH`.
-- **Node.js >= 24.15** to build and run this package (`engines` in `package.json`, same baseline as `agloom_web`).
+- **Python 3.12+** with `pip install agloom` so `agloom-runtime` is on your `PATH`.
+- **Node.js >= 24.15** (see `agloom_cli/package.json` engines).
 
-!!! warning "npm alone is not enough"
-    `npm install -g agloom-cli` without the Python package produces a helpful **Cannot find agloom-runtime** error. Install **`agloom`** from PyPI first.
+!!! warning "Install Python first"
+    Without `agloom` from PyPI, the CLI exits with a clear **Cannot find agloom-runtime** message. Set `AGLOOM_RUNTIME` only if you point at a custom interpreter or wrapper.
 
-## Install from npm
+## Install
 
 ```bash
 pip install agloom
@@ -18,75 +18,47 @@ npm install -g agloom-cli
 agloom
 ```
 
-## Install from source
+From a git checkout: `cd agloom_cli && npm install && npm run build && npm start`.
+
+## First run
 
 ```bash
-git clone https://github.com/HELLOMEDHIRA/agloom.git
-cd agloom
-uv sync --all-extras --group dev    # Python deps
-
-cd agloom_cli
-npm install
-npm run build
-npm start                           # or: node dist/index.js
+export GROQ_API_KEY=...   # or another provider — see [Models & providers](models.md)
+agloom -m groq:meta-llama/llama-3.3-70b-versatile
 ```
 
-By default the CLI spawns:
+- **Interactive TUI** opens when you run `agloom` with no prompt (and stdin is a TTY).
+- **Direct mode** runs when you pass a positional prompt, `-p` / `-q`, or pipe stdin.
 
-```text
-agloom-runtime serve --transport=stdio …
-```
+## Documentation map
 
-Only **stdio** is supported from this client (no embedded WebSocket driver).
+| Page | Purpose |
+| --- | --- |
+| [Quickstart](quickstart.md) | 5-minute tour |
+| [Models & providers](models.md) | `--model` prefixes, env keys, extras, catalogs |
+| [CLI flags](flags.md) | Every npm CLI option |
+| [Config & environment](config.md) | `agloom.yaml`, discovery order, env vars |
+| [Direct mode](direct-mode.md) | Scripting, `--json`, exit codes |
+| [Interactive UI](interactive.md) | TUI layout, status bar, slash commands |
+| [Tools & HITL](tools-hitl.md) | Built-in CLI tools, approvals, allowlist |
+| [MCP, memory & harness](mcp-memory-harness.md) | MCP configs, session memory, harness |
+| [Recipes](recipes.md) | Copy-paste workflows |
+| [Troubleshooting](troubleshooting.md) | Common errors |
+| [AGP wire reference](reference.md) | Stdout/stderr AGP rules for CLI clients |
 
-## CLI flags
+**Full docs site:** [agloom.readthedocs.io — CLI section](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/).
 
-Declared in `agloom_cli/src/index.tsx`:
-
-| Flag | Description |
-|------|-------------|
-| `-t, --thread <id>` | LangGraph thread id for invocations (default: generated). |
-| `-s, --session <id>` | Forwarded as **`agloom-runtime --session`** (stable AGP session id / replay key). |
-| `--store <none\|memory\|sqlite>` | Runtime EventStore backend (default `memory`). |
-| `--store-path <path>` | SQLite path when `--store=sqlite`. |
-| `--diag` | Open stderr diagnostic pane on start. |
-| `-- …` | Everything after `--` is appended to the runtime argv. |
-
-**Pass-through:** Use this to forward native `agloom-runtime serve` flags without the npm CLI declaring each one. Examples:
+## Provider discovery (Python)
 
 ```bash
-agloom -- --with-cli-tools --cli-tools-working-dir /path/to/repo
-agloom --session dev -- --obs --obs-port 8766
+agloom --list-providers
+agloom --resolve-model "bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0"
 ```
 
-See the [Runtime CLI reference](https://agloom.readthedocs.io/_packages/agloom/runtime/cli/) for the full flag list.
+Same commands as `agloom-runtime providers list` and `agloom-runtime providers resolve <spec>`.
 
-**Slash commands** inside the UI (`/help`, `/cancel`, `/diag`, …) are listed in the [package README](https://github.com/HELLOMEDHIRA/agloom/blob/main/agloom_cli/README.md) and toggled with **`/help`**.
+## See also
 
-**Environment:** `AGLOOM_RUNTIME` overrides the executable path for the Python bridge.
-
-## PyPI `agloom` console script
-
-| Command | Role |
-| --------|------|
-| `agloom-runtime` | AGP bridge — stdio or WebSocket (`serve --transport=…`). |
-| `agloom` | Compatibility notice pointing integrators at this npm CLI. |
-
-## Using agloom without this CLI
-
-You do **not** need the agloom CLI for the Python library:
-
-```python
-from agloom import create_agent
-
-agent = await create_agent(model="openai:gpt-4o", tools=[...])
-result = await agent.ainvoke("Hello")
-```
-
-Custom frontends should use `agent.astream_events(...)` or AGP-oriented APIs as needed.
-
-## Next steps
-
+- [Runtime CLI (Python)](../agloom/runtime/cli.md) — all `agloom-runtime serve` flags
 - [AGP specification](../agloom/protocol/agp.md)
-- [Runtime architecture](../agloom/runtime/architecture.md)
-- [CLI developer reference](reference.md) — stdout/stderr, store reducers, contributing
+- [LLM resolution (library)](../agloom/guides/llm-resolution.md)

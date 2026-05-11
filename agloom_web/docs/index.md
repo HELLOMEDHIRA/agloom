@@ -6,14 +6,14 @@ Vite + React Router SPA that consumes **AGP** over WebSocket — same event cont
 
 1. `cd agloom_web && npm install && npm run dev`
 2. Run **`agloom-runtime serve --transport=ws`** (default port **8765** matches the Vite proxy for `/agp-ws`).
-3. Open **http://localhost:3000**.
+3. Open [http://localhost:3000](http://localhost:3000).
 
 Production build: **`npm run build`** → static **`dist/`**. Set **`VITE_AGP_WS_URL`** at build time for your runtime WebSocket URL (see **`.env.example`**).
 
-## Routes (Phase 1)
+## Routes
 
 | Path | Screen |
-| ---- | ------ |
+| --- | --- |
 | **`/`** | Home — sessions list / navigation |
 | **`/session/:id`** | Chat + right-hand runtime panel (graph, workers, trace, artifacts) |
 | **`/observe`** | Observability dashboard (live metrics / sessions; uses proxied **`/observe`** HTTP in dev) |

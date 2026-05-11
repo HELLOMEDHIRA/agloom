@@ -24,6 +24,10 @@ DELETE /observe/sessions/:sid                   → 204 purge
 GET  /observe/live                              → SSE feed of all live events
 GET  /observe/summary                           → global dashboard summary
 POST /observe/ingest                            → internal ingest (single envelope)
+
+GET  /observe/healthz                           → liveness JSON
+GET  /observe/readyz                            → readiness (SQLite store ping)
+GET  /observe/metrics                           → minimal Prometheus text
 """
 
 from __future__ import annotations
@@ -63,6 +67,30 @@ def make_obs_router(store: SQLiteObservabilityStore) -> APIRouter:
     agg    = MetricsAggregator(store)
     replay = ReplayEngine(store)
     router = APIRouter(tags=["observability"])
+
+    @router.get("/healthz")
+    async def healthz() -> dict[str, str]:
+        """Liveness for reverse proxies and orchestrators (no auth)."""
+        return {"status": "ok", "service": "agloom-observability"}
+
+    @router.get("/readyz")
+    async def readyz() -> dict[str, str]:
+        """Readiness: observability SQLite store accepts a trivial query."""
+        try:
+            await store.list_sessions(limit=1, offset=0)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"store_unready:{exc!s}") from exc
+        return {"status": "ready", "service": "agloom-observability"}
+
+    @router.get("/metrics")
+    async def prometheus_text() -> Response:
+        """Minimal Prometheus text expose; expand with real counters when OTel is wired."""
+        body = (
+            "# HELP agloom_up Process is serving observability routes.\n"
+            "# TYPE agloom_up gauge\n"
+            "agloom_up 1\n"
+        )
+        return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
     # ── Sessions list ──────────────────────────────────────────────────────────
 

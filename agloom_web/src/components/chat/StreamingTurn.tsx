@@ -1,11 +1,9 @@
-/**
- * StreamingTurn — the live in-flight turn while the agent is running.
- * Re-renders on every token delta. Kept lightweight.
- */
+/** Live in-flight turn (re-renders on token deltas). */
 import React from 'react'
 import type { ActiveTurnState } from '../../store/session.js'
 import { cn, fmtDuration } from '../../lib/utils/cn.js'
-import { Loader2, Wrench, Users, Brain } from 'lucide-react'
+import { Loader2, Users, Brain } from 'lucide-react'
+import { ToolCallRow } from './ToolCallRow.js'
 
 interface Props { turn: ActiveTurnState }
 
@@ -14,14 +12,12 @@ export const StreamingTurn = ({ turn }: Props): React.ReactElement => {
 
   return (
     <article className="flex flex-col gap-4">
-      {/* User message echo */}
       <div className="flex gap-3 justify-end">
         <div className="max-w-[80%] px-4 py-2.5 rounded-2xl rounded-br-sm bg-indigo-600 text-white text-sm">
           {userMessage}
         </div>
       </div>
 
-      {/* Live trace */}
       {(pattern || thinkingSteps.length > 0 || workers.length > 0 || toolCalls.length > 0) && (
         <div className="flex flex-col gap-1.5 pl-3 border-l-2 border-indigo-900/60 ml-1">
           {pattern && <span className="text-xs text-indigo-400 font-medium">▸ {pattern}</span>}
@@ -43,19 +39,13 @@ export const StreamingTurn = ({ turn }: Props): React.ReactElement => {
           ))}
 
           {toolCalls.map((tc) => (
-            <div key={tc.id} className={cn('flex items-center gap-1.5 text-xs', tc.status === 'pending' ? 'text-yellow-400' : tc.status === 'done' ? 'text-neutral-400' : 'text-red-400')}>
-              {tc.status === 'pending' && <Loader2 size={9} className="animate-spin" />}
-              <Wrench size={9} />
-              {tc.tool}
-              {tc.durationMs && <span className="text-neutral-600 ml-1">{fmtDuration(tc.durationMs)}</span>}
-            </div>
+            <ToolCallRow key={tc.id} tc={tc} />
           ))}
         </div>
       )}
 
-      {/* Streaming response */}
       <div className="flex gap-3">
-        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 shrink-0 mt-0.5 flex items-center justify-center text-xs font-bold">A</div>
+        <div className="w-7 h-7 rounded-full bg-linear-to-br from-indigo-500 to-purple-600 shrink-0 mt-0.5 flex items-center justify-center text-xs font-bold">A</div>
         <div className="flex-1 min-w-0">
           {streamedTokens ? (
             <p className="text-sm text-neutral-100 leading-relaxed whitespace-pre-wrap">{streamedTokens}<span className="inline-block w-0.5 h-4 bg-indigo-400 ml-0.5 animate-pulse align-text-bottom" /></p>

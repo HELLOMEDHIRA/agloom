@@ -174,7 +174,7 @@ async def main():
 The callable receives a state dict with these keys:
 
 | Key | Type | Description |
-|-----|------|-------------|
+| --- | --- | --- |
 | `query` | `str` | The raw user query |
 | `thread_id` | `str` | Current thread ID |
 | `user_id` | `str \| None` | User ID (if passed at call time) |
@@ -362,7 +362,7 @@ async def chat(tenant_id: str, query: str, user_id: str):
 Key isolation points:
 
 | Data | Isolated by |
-|------|-------------|
+| --- | --- |
 | Session memory | `thread_id` |
 | Long-term memory | `lt_namespace` or `user_id` |
 | Skills | Agent `name` + `store` |

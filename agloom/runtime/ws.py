@@ -48,6 +48,9 @@ async def serve_ws(
     subprotocols: Sequence[str] | None = ("agp-v1",),
     heartbeat_interval: float = 0.0,
     hitl_allowlist_persist_path: Path | None = None,
+    budget_tokens: int | None = None,
+    budget_cost_usd: float | None = None,
+    attachment_working_dir: Path | None = None,
 ) -> None:
     """Start the AGP WebSocket server and block until cancelled.
 
@@ -78,6 +81,9 @@ async def serve_ws(
             store=store,
             heartbeat_interval=heartbeat_interval,
             hitl_allowlist_persist_path=hitl_allowlist_persist_path,
+            budget_tokens=budget_tokens,
+            budget_cost_usd=budget_cost_usd,
+            attachment_working_dir=attachment_working_dir,
         )
 
     proto_list: tuple[str, ...] | None = tuple(subprotocols) if subprotocols else None
@@ -101,21 +107,27 @@ async def _session_loop(
     store: EventStore | None,
     heartbeat_interval: float,
     hitl_allowlist_persist_path: Path | None = None,
+    budget_tokens: int | None = None,
+    budget_cost_usd: float | None = None,
+    attachment_working_dir: Path | None = None,
 ) -> None:
     """Handle one WebSocket connection as one AGP session."""
     from agloom.protocol import AsyncSessionEmitter, command_adapter
     from agloom.protocol.commands import (
+        CommandAttachFile,
         CommandCancel,
         CommandConfigSet,
         CommandFeedback,
         CommandHITLRespond,
         CommandInvoke,
         CommandPing,
+        CommandProvidersList,
         CommandRuntimeShutdown,
         CommandSchemaRequest,
         CommandSessionCreate,
         CommandSessionDelete,
         CommandSessionList,
+        CommandSessionRename,
         CommandSessionResume,
         CommandSnapshotRequest,
         CommandSubscribe,
@@ -124,10 +136,12 @@ async def _session_loop(
         CommandUnsubscribe,
         CommandWorkerAssign,
     )
+    from agloom.multimodal import prepare_invoke_command
     from agloom.runtime.bridge import new_session_id, run_invocation
     from agloom.runtime.hitl import HITLBridge
 
     session_id = f"ws_{uuid4().hex[:16]}"
+    attach_wd = attachment_working_dir or Path.cwd().resolve()
     agent = agent_factory()
 
     emitter = AsyncSessionEmitter(
@@ -147,6 +161,20 @@ async def _session_loop(
         tool_allowlist=_al_set,
         allowlist_persist_path=hitl_allowlist_persist_path,
     )
+
+    budget_tracker = None
+    if (budget_tokens is not None and budget_tokens > 0) or (
+        budget_cost_usd is not None and budget_cost_usd > 0
+    ):
+        from agloom.runtime.budget_tracker import SessionBudgetTracker
+
+        budget_tracker = SessionBudgetTracker(
+            token_limit=budget_tokens if budget_tokens is not None and budget_tokens > 0 else None,
+            cost_limit_usd=budget_cost_usd
+            if budget_cost_usd is not None and budget_cost_usd > 0
+            else None,
+        )
+        emitter.budget_tracker = budget_tracker  # type: ignore[attr-defined]
 
     _tasks: dict[str, asyncio.Task[None]] = {}
 
@@ -207,15 +235,34 @@ async def _session_loop(
                     continue
 
                 if isinstance(cmd, CommandInvoke):
+                    if budget_tracker is not None and budget_tracker.is_invoke_blocked():
+                        emitter.emit_error(
+                            severity="transient",
+                            message="Session budget exhausted (tokens or cost). Raise limits via command.config.set.",
+                            stage="budget.blocked",
+                        )
+                        continue
                     thread = cmd.data.thread or f"t_{uuid4().hex[:12]}"
+                    try:
+                        prompt, summaries = prepare_invoke_command(
+                            cmd, agent=agent, thread=thread, working_dir=attach_wd
+                        )
+                    except ValueError as exc:
+                        emitter.emit_error(
+                            severity="transient",
+                            message=str(exc),
+                            stage="invoke.attachments",
+                        )
+                        continue
                     inv_emitter = emitter.fork_for_thread(thread)
                     task: asyncio.Task[None] = asyncio.create_task(
                         run_invocation(
                             agent=agent,
-                            prompt=cmd.data.prompt,
+                            prompt=prompt,
                             thread=thread,
                             emitter=inv_emitter,
                             hitl_bridge=hitl_bridge,
+                            user_attachments=summaries or None,
                         ),
                         name=f"invoke-{thread}",
                     )
@@ -345,6 +392,11 @@ async def _session_loop(
                         rows.append((nm, str(desc) if desc else None))
                     emitter.emit_runtime_tools(tools=rows)
 
+                elif isinstance(cmd, CommandProvidersList):
+                    from agloom.llm.provider_registry import provider_catalog
+
+                    emitter.emit_runtime_providers(providers=provider_catalog())
+
                 elif isinstance(cmd, CommandSubscribe):
                     emitter.set_subscription_prefixes(cmd.data.prefixes if cmd.data.prefixes else None)
 
@@ -377,6 +429,42 @@ async def _session_loop(
                     else:
                         await store.clear(cmd.data.session_id)
 
+                elif isinstance(cmd, CommandSessionRename):
+                    if store is None:
+                        emitter.emit_error(
+                            severity="transient",
+                            message="command.session.rename requires EventStore",
+                            stage="session.rename",
+                        )
+                    else:
+                        fr, to = cmd.data.from_session_id.strip(), cmd.data.to_session_id.strip()
+                        if fr and to and fr != to:
+                            await store.rename_session(fr, to)
+                            emitter.emit_runtime_session_renamed(from_session_id=fr, to_session_id=to)
+                            ids = await store.list_session_ids()
+                            emitter.emit_runtime_sessions(sessions=ids)
+
+                elif isinstance(cmd, CommandAttachFile):
+                    import base64
+
+                    from agloom.runtime.upload import stage_attached_bytes
+
+                    try:
+                        raw = base64.b64decode(cmd.data.content_base64.strip())
+                    except Exception as exc:
+                        emitter.emit_error(
+                            severity="transient",
+                            message=f"invalid base64 attachment: {exc}",
+                            stage="attach.file",
+                        )
+                    else:
+                        try:
+                            rel, nbytes = stage_attached_bytes(agent, filename=cmd.data.filename, raw=raw)
+                        except Exception as exc:
+                            emitter.emit_error(severity="transient", message=str(exc), stage="attach.file")
+                        else:
+                            emitter.emit_runtime_file_staged(path=rel, nbytes=nbytes, thread=cmd.data.thread)
+
                 elif isinstance(cmd, CommandToolInvoke):
                     raw_sz = len(json.dumps(cmd.data.arguments, ensure_ascii=False))
                     if raw_sz > 32_000:
@@ -395,21 +483,64 @@ async def _session_loop(
 
                 elif isinstance(cmd, CommandConfigSet):
                     try:
-                        from agloom.unified_agent import resolve_model
+                        from agloom.runtime.serve_cli import parse_pattern_name
+                        from agloom.unified_agent import resolve_model, resolve_system_prompt
 
-                        agent.config["llm"] = resolve_model(cmd.data.model_id)
+                        data = cmd.data
+                        if data.model_id:
+                            agent.config["llm"] = resolve_model(data.model_id)
+                        if data.temperature is not None:
+                            llm = agent.config.get("llm")
+                            if llm is not None and hasattr(llm, "bind"):
+                                agent.config["llm"] = llm.bind(temperature=data.temperature)
+                        if data.system_prompt is not None:
+                            agent.config["system_prompt"] = resolve_system_prompt(data.system_prompt)
+                        if data.pattern is not None:
+                            agent.config["fallback_pattern"] = parse_pattern_name(data.pattern)
                     except Exception as exc:
                         emitter.emit_error(severity="transient", message=str(exc), stage="config.set")
                     else:
-                        emitter.emit_runtime_config_applied(model_id=cmd.data.model_id)
+                        if budget_tracker is not None:
+                            fs = cmd.data.model_fields_set
+                            from agloom.runtime.budget_tracker import _UNSET
+
+                            tok = (
+                                cmd.data.budget_token_limit
+                                if "budget_token_limit" in fs
+                                and cmd.data.budget_token_limit is not None
+                                and cmd.data.budget_token_limit > 0
+                                else (None if "budget_token_limit" in fs else _UNSET)
+                            )
+                            cst = (
+                                cmd.data.budget_cost_usd_limit
+                                if "budget_cost_usd_limit" in fs
+                                and cmd.data.budget_cost_usd_limit is not None
+                                and cmd.data.budget_cost_usd_limit > 0
+                                else (None if "budget_cost_usd_limit" in fs else _UNSET)
+                            )
+                            if tok is not _UNSET or cst is not _UNSET:
+                                budget_tracker.patch_limits(token_limit=tok, cost_usd=cst)
+                        from agloom.cli_tools import CLI_TOOL_NAMES
+
+                        tool_objs = getattr(agent, "config", {}).get("tools", []) or []
+                        _names = {getattr(t, "name", None) for t in tool_objs}
+                        _ct_ct = sum(1 for n in _names if n in CLI_TOOL_NAMES)
+                        _ct_en = _ct_ct > 0
                         llm_after = agent.config.get("llm")
-                        mid = getattr(llm_after, "model_name", None) or getattr(llm_after, "model", None)
-                        if mid is None and llm_after is not None:
-                            mid = type(llm_after).__name__
+                        mid_guess = getattr(llm_after, "model_name", None) or getattr(llm_after, "model", None)
+                        if mid_guess is None and llm_after is not None:
+                            mid_guess = type(llm_after).__name__
+                        emitter.emit_runtime_config_applied(
+                            model_id=str(mid_guess) if mid_guess else (cmd.data.model_id or None),
+                            cli_tools_enabled=_ct_en,
+                            cli_tools_count=_ct_ct,
+                        )
                         tools_after = agent.config.get("tools", []) or []
                         emitter.emit_runtime_config(
-                            model_id=str(mid) if mid else cmd.data.model_id,
+                            model_id=str(mid_guess) if mid_guess else (cmd.data.model_id or ""),
                             tool_names=[getattr(t, "name", str(t)) for t in tools_after],
+                            cli_tools_enabled=_ct_en,
+                            cli_tools_count=_ct_ct,
                         )
 
                 elif isinstance(cmd, CommandRuntimeShutdown):

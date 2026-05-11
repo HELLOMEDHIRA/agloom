@@ -49,6 +49,7 @@ from typing import Any
 from agloom.llm.llm_provider_params import normalize_provider_slug, spread_llm_options_for_provider
 from agloom.llm.provider_registry import (
     CLASS_TO_SLUG,
+    PROVIDERS,
     cli_auto_detect_rows,
 )
 from agloom.llm.provider_registry import (
@@ -93,8 +94,8 @@ def augment_patch_api_keys_from_env(patch: dict[str, Any]) -> dict[str, Any]:
     snap: dict[str, str] = {}
     for name in keys_tpl:
         v = os.environ.get(name)
-        if v and str(v).strip():
-            snap[name] = str(v).strip()
+        if v and v.strip():
+            snap[name] = v.strip()
     if not snap:
         return patch
     merged = dict(patch.get("api_keys") or {})
@@ -110,6 +111,58 @@ def augment_patch_api_keys_from_env(patch: dict[str, Any]) -> dict[str, Any]:
 _URI_SCHEME_PREFIXES: frozenset[str] = frozenset({"http", "https", "file", "urn", "data", "ftp"})
 # Provider token for ``slug:model_id`` (matches LangChain ``model_provider`` / LiteLLM-style slugs).
 _PROVIDER_TOKEN_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
+
+_CLOUD_IAM_SLUGS: frozenset[str] = frozenset(
+    {"bedrock", "google_vertexai", "google_anthropic_vertex", "snowflake"},
+)
+
+
+def _levenshtein(a: str, b: str) -> int:
+    """Classic O(len(a)*len(b)) edit distance (lowercase ASCII tokens)."""
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, start=1):
+        cur = [i]
+        for j, cb in enumerate(b, start=1):
+            ins, delete, sub = cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + (ca != cb)
+            cur.append(min(ins, delete, sub))
+        prev = cur
+    return prev[-1]
+
+
+def _curated_provider_slug_pool() -> frozenset[str]:
+    """Canonical + alias slugs used for typo detection (curated registry only)."""
+    out: set[str] = set()
+    for p in PROVIDERS.values():
+        out.add(p.slug)
+        for alias in p.aliases:
+            out.add(normalize_provider_slug(alias))
+    return frozenset(out)
+
+
+def suggest_typo_provider_slug(raw: str) -> str | None:
+    """If *raw* is likely a typo of a curated provider slug, return the correction."""
+    s = normalize_provider_slug(raw)
+    pool = _curated_provider_slug_pool()
+    if s in pool:
+        return None
+    best_d = 10**9
+    matches: list[str] = []
+    for cand in sorted(pool):
+        d = _levenshtein(s, cand)
+        if d < best_d:
+            best_d = d
+            matches = [cand]
+        elif d == best_d:
+            matches.append(cand)
+    if best_d > 2 or len(matches) != 1:
+        return None
+    return matches[0]
 
 
 def split_provider_prefix(spec: str) -> tuple[str | None, str]:
@@ -191,11 +244,20 @@ class MissingProviderDependency(ImportError):
         self.pip_hint = pip_hint
         if detail is not None:
             super().__init__(detail)
-        else:
-            super().__init__(
-                f"Missing optional LLM integration (install extra '{extra}'). "
-                f"Example: pip install {pip_hint}"
-            )
+            return
+        if extra == "langchain":
+            super().__init__(f"LangChain is not installed. Example: pip install {pip_hint}")
+            return
+        lc = _extra_to_langchain_dist(extra)
+        super().__init__(f"{lc} not installed. Run: pip install {pip_hint}")
+
+
+def _extra_to_langchain_dist(extra: str) -> str:
+    """Map ``pyproject`` optional extra name to the usual LangChain wheel on PyPI."""
+    e = extra.replace("_", "-")
+    if e.startswith("langchain"):
+        return e
+    return f"langchain-{e}"
 
 
 class MissingProviderApiKey(ValueError):
@@ -211,9 +273,8 @@ def _require_env(name: str, *, for_provider: str) -> str:
     if v:
         return v
     raise MissingProviderApiKey(
-        f"{name} is not set. Export it to use {for_provider} models "
-        f"(e.g. `set {name}=...` on Windows or `export {name}=...` in bash), "
-        f"or add it under `ai.api_keys` in agloom.yaml (local / project-level config)."
+        f"{name} not set. Set it in your shell or pass --api-key-env {name} "
+        f"(with the var pointing at your key)."
     )
 
 
@@ -282,6 +343,12 @@ def _get_by_provider(
     # Canonicalize via the same table the params filter uses — so wizard-saved patches
     # (e.g. ``google_genai:gemini-...``) hit the curated path and get the full param surface.
     s = normalize_provider_slug(slug)
+    if s not in ("lc", "init") and s not in PROVIDERS:
+        tip = suggest_typo_provider_slug(s)
+        if tip:
+            raise ValueError(
+                f"unknown provider {s!r} — did you mean {tip!r}? Run `agloom --list-providers`."
+            )
     if s == "google":
         return _get_google_genai_model(model_id, **kwargs)
     if s == "openai":
@@ -575,6 +642,98 @@ def describe_llm(llm: Any) -> tuple[str, str]:
             return fallback_slug, mid_s
 
     return cls_name.replace("Chat", "").lower() or "llm", mid_s
+
+
+def merged_provider_parts(
+    model_id: str,
+    *,
+    provider: str | None = None,
+) -> tuple[str | None, str, str | None]:
+    """Return ``(merged_slug_or_none, model_rest, split_prefix)`` — mirrors :func:`get_model` routing."""
+    prefix_slug, rest = split_provider_prefix(model_id.strip())
+    mid = rest.strip() if prefix_slug else model_id.strip()
+    merged_provider = (provider or prefix_slug or "").strip().lower() or None
+    if merged_provider:
+        merged_provider = merged_provider.replace("-", "_")
+    if merged_provider == "mistral":
+        merged_provider = "mistralai"
+    return merged_provider, mid, prefix_slug
+
+
+def print_providers_table_text(*, file: Any = None) -> None:
+    """Print all curated rows from :data:`~agloom.llm.provider_registry.PROVIDERS`."""
+    sink = file or sys.stdout
+    rows = sorted(PROVIDERS.values(), key=lambda p: p.slug)
+    sink.write(f"{'slug':<26} {'label':<24} {'default_model':<44} {'env_keys':<40} pip_extra\n")
+    for p in rows:
+        env = ", ".join(p.resolver_env_keys) if p.resolver_env_keys else "(cloud IAM / none)"
+        extra = f"agloom[{p.pip_extra}]" if p.pip_extra else "-"
+        dm = p.default_model if len(p.default_model) <= 42 else p.default_model[:41] + "…"
+        sink.write(f"{p.slug:<26} {p.label:<24} {dm:<44} {env:<40} {extra}\n")
+
+
+def describe_resolve_dry_text(spec: str, *, provider: str | None = None) -> str:
+    """Human-readable dry-run of how *spec* routes (no LLM construction)."""
+    merged, mid, pref = merged_provider_parts(spec, provider=provider)
+    lines: list[str] = [f"spec: {spec!r}"]
+    if provider:
+        lines.append(f"--provider override: {provider!r}")
+    lines.append(f"split_prefix: {pref!r}")
+    lines.append(f"model_id (after split): {mid!r}")
+    if not merged:
+        lines.append(
+            "routing: unprefixed — get_model uses heuristics (name tokens, slash ids, env keys); "
+            "use an explicit prefix or AGLOOM_PROVIDER for deterministic routing.",
+        )
+        return "\n".join(lines)
+
+    slug = normalize_provider_slug(merged)
+    lines.append(f"resolved_provider_slug: {slug}")
+
+    if slug in ("lc", "init"):
+        lines.append("routing: langchain.chat_models.init_chat_model (lc/init unified initializer)")
+        lines.append(f"nested_descriptor: {mid!r}")
+        lines.append("integration: install the matching langchain-* extra for the inner provider token.")
+        return "\n".join(lines)
+
+    info = PROVIDERS.get(slug)
+    if info:
+        lines.append(f"label: {info.label}")
+        lines.append(f"chat_module: {info.chat_module or '(resolved via init_chat_model / provider package)'}")
+        lines.append(f"chat_class: {info.chat_class or '(varies by LangChain version)'}")
+        if slug in _CLOUD_IAM_SLUGS:
+            if slug == "bedrock":
+                lines.append(
+                    "auth: Amazon Bedrock requires AWS credentials via `aws configure` or "
+                    "environment / IAM role — no API key flag needed.",
+                )
+            elif slug in ("google_vertexai", "google_anthropic_vertex"):
+                lines.append(
+                    "auth: Vertex uses Application Default Credentials "
+                    "(gcloud auth application-default login or GOOGLE_APPLICATION_CREDENTIALS).",
+                )
+            elif slug == "snowflake":
+                lines.append(
+                    "auth: Snowflake Cortex uses Snowflake session parameters / connectors — "
+                    "see langchain-snowflake docs.",
+                )
+        elif info.resolver_env_keys:
+            lines.append("env_keys (registry):")
+            for k in info.resolver_env_keys:
+                raw = os.environ.get(k)
+                ok = bool(raw and raw.strip())
+                lines.append(f"  {k}: {'set' if ok else 'unset'}")
+        else:
+            lines.append("auth: no API keys listed in registry (often local HTTP, e.g. Ollama).")
+        pip = f"agloom[{info.pip_extra}]" if info.pip_extra else "(see upstream docs)"
+        lines.append(f"pip_extra hint: {pip}")
+        return "\n".join(lines)
+
+    lines.append("routing: LangChain init_chat_model (slug not in curated PROVIDERS table)")
+    tip = suggest_typo_provider_slug(slug)
+    if tip:
+        lines.append(f"typo_hint: did you mean {tip!r}? Try `agloom --list-providers`.")
+    return "\n".join(lines)
 
 
 def _get_vllm_openai_compatible(model_id: str, *, base_url: str | None = None, **kwargs: Any) -> Any:

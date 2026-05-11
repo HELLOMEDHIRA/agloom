@@ -60,6 +60,11 @@ litellm = ["langchain-litellm>=0.6.4"]
 mistralai = ["langchain-mistralai>=1.1.4"]
 nvidia = ["langchain-nvidia-ai-endpoints>=1.2.1"]
 ollama = ["langchain-ollama>=1.1.0"]
+otel = [
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.27.0",
+]
 openai = ["langchain-openai>=1.2.1"]
 openrouter = ["langchain-openrouter>=0.2.3"]
 perplexity = ["langchain-perplexity>=1.2.0"]
@@ -89,6 +94,9 @@ docs = [
 
 [dependency-groups]
 dev = [
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.27.0",
     "commitizen>=4.15.0",
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.7.6",
@@ -103,6 +111,7 @@ dev = [
     "llama-cpp-python>=0.3.22",
     "ipykernel>=7.2.0",
     "iprogress>=0.4",
+    "types-pyyaml>=6.0.12.20260408",
 ]
 
 # Super-Brain (graspologic) requires numpy 1.x; cap so qdrant-client resolves to a compatible build.

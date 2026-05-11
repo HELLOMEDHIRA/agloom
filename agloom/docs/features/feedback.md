@@ -101,7 +101,7 @@ When no `feedback_handler` is provided and no `store` is set, feedback is silent
 agloom tracks auto-eval scores over time and detects quality trends:
 
 | Parameter | Default | What it does |
-|-----------|---------|-------------|
+| --- | --- | --- |
 | `review_every_n_runs` | `25` | Run auto-review every N runs |
 | `trend_every_n_runs` | `100` | Run trend analysis every N runs |
 | `low_score_threshold` | `0.40` | Scores below this trigger skill decay |

@@ -1,34 +1,60 @@
 /**
- * InputBar — the primary message input at the bottom of the screen.
+ * InputBar — primary message input (optional multiline compose buffer shown above).
  *
- * Features:
- *  - Disabled (greyed placeholder) while the agent is running / thinking.
- *  - Slash-command prefix: typing '/' activates a hint overlay.
- *  - Ctrl+C / Ctrl+X shortcuts advertised in the hint line.
+ * **Paste with newlines (B1):** when not in explicit multiline mode, `App` passes
+ * `onChange` through `splitPastedMultilineWhenSingleLineMode` so bracketed paste
+ * opens the same queued-line + blank-Enter send flow (no `onPaste` here — the
+ * Ink text field surfaces pastes as a single `onChange` with `\n` embedded).
  */
 
 import React from 'react'
 import { Box, Text } from 'ink'
 import TextInput from 'ink-text-input'
+import { useInput } from 'ink'
 import { useSessionStore } from '../store/session.js'
 import { SLASH_HINTS } from '../utils/slashCommands.js'
 
 interface Props {
   value: string
   onChange: (v: string) => void
+  /** Called with current single-line value when user presses Enter. */
   onSubmit: (v: string) => void
+  /** When set, rendered above the field as queued lines (multiline compose). */
+  pendingLines?: string[]
+  onRecallPrev?: () => void
+  onRecallNext?: () => void
 }
 
-export const InputBar = ({ value, onChange, onSubmit }: Props): React.ReactElement => {
+export const InputBar = ({
+  value,
+  onChange,
+  onSubmit,
+  pendingLines,
+  onRecallPrev,
+  onRecallNext,
+}: Props): React.ReactElement => {
   const status = useSessionStore((s) => s.status)
   const isDisabled = status === 'running' || status === 'thinking' || status === 'hitl'
   const errorMessage = useSessionStore((s) => s.errorMessage)
 
   const showSlashHints = value.startsWith('/') && value.length >= 1 && !value.includes(' ')
 
+  useInput((_input, key) => {
+    if (isDisabled) return
+    if (key.ctrl && _input === 'p') {
+      onRecallPrev?.()
+      return
+    }
+    if (key.ctrl && _input === 'n') {
+      onRecallNext?.()
+      return
+    }
+  })
+
+  const ml = pendingLines !== undefined
+
   return (
     <Box flexDirection="column">
-      {/* Transient error banner */}
       {errorMessage && status !== 'error' && (
         <Box marginX={1}>
           <Text color="red" dimColor>
@@ -37,7 +63,6 @@ export const InputBar = ({ value, onChange, onSubmit }: Props): React.ReactEleme
         </Box>
       )}
 
-      {/* Slash-command hints overlay */}
       {showSlashHints && (
         <Box flexDirection="column" marginX={2} marginBottom={0}>
           {Object.entries(SLASH_HINTS)
@@ -56,7 +81,17 @@ export const InputBar = ({ value, onChange, onSubmit }: Props): React.ReactEleme
         </Box>
       )}
 
-      {/* Input row */}
+      {ml && pendingLines.length > 0 && (
+        <Box flexDirection="column" marginX={2} marginBottom={0}>
+          {pendingLines.map((ln, i) => (
+            <Text key={`${i}-${ln.slice(0, 24)}`} dimColor>
+              {ln.length > 160 ? `${ln.slice(0, 157)}…` : ln}
+            </Text>
+          ))}
+          <Text dimColor>── blank line + Enter sends · Ctrl+P/N history</Text>
+        </Box>
+      )}
+
       <Box paddingX={1}>
         <Text bold color={isDisabled ? 'gray' : 'cyan'}>
           {'❯ '}
@@ -72,7 +107,11 @@ export const InputBar = ({ value, onChange, onSubmit }: Props): React.ReactEleme
             value={value}
             onChange={onChange}
             onSubmit={onSubmit}
-            placeholder="Message agloom…    /help for commands"
+            placeholder={
+              ml
+                ? 'Line… Enter adds · blank Enter sends · /help'
+                : 'Message agloom…    /help for commands'
+            }
           />
         )}
       </Box>

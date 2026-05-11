@@ -16,7 +16,7 @@ async def main():
 asyncio.run(main())
 ```
 
-**What happened?**
+### What happened
 
 1. `create_agent` wired up the full pipeline — classifier, pattern handlers, error handling
 2. `ainvoke` classified the query → selected **DIRECT** pattern (simple factual query)
@@ -181,7 +181,7 @@ See [CLI Shell](../../../_packages/agloom_cli/index.md) (Node-based interactive 
 ## What's Next?
 
 | Topic | Link |
-|-------|------|
+| --- | --- |
 | Understand the 9 patterns | [Execution Patterns](../concepts/patterns.md) |
 | CLI Shell | [CLI Shell](../../../_packages/agloom_cli/index.md) (Node / Ink) |
 | Every parameter explained | [All Parameters](../configuration/parameters.md) |

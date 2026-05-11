@@ -21,16 +21,17 @@ Loads merge into the in-memory set at startup; **`decision=allowlist`** appends 
 ## Runtime flags
 
 | Flag | Effect |
-|------|--------|
+| --- | --- |
 | `--hitl-allowlist-path /path/to/file.json` | Use a specific path (create parent dirs on save as needed). |
 | `--no-hitl-allowlist-persist` | Never read/write disk; allowlist exists only for this process. |
 
-These apply to both **stdio** and **WebSocket** transports (session loop wires `HITLBridge` with the path).
+These apply to both **stdio** and **WebSocket** transports (the runtime passes the path through to the component that bridges HITL over AGP).
 
 ## Library / AGP
 
-- **`HITLBridge`** accepts **`tool_allowlist`** and **`allowlist_persist_path`**.
-- **`HumanApprovalMiddleware`** respects **`tool_allowlist`** to skip approval when the tool is already allowed.
+When embedding **`agloom-runtime`** or building a custom AGP driver, wire **`tool_allowlist=`** (initial allowed tool names) and **`allowlist_persist_path=`** (optional JSON backing path) into the helper that bridges human approvals over AGP — same semantics as the CLI flags above.
+
+Approval middleware consults that allowlist and **skips the prompt** when the invoked tool name is already allowed (other safeguards unchanged).
 
 ## See also
 

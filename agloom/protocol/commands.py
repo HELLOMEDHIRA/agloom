@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 
 class _CmdBase(BaseModel):
@@ -34,6 +34,14 @@ class _CmdBase(BaseModel):
 # ── command.invoke ─────────────────────────────────────────────────────────────
 
 
+class InvokeAttachment(_CmdBase):
+    """Inline file payload (base64). Staged under ``.agloom/attachments/<thread>/`` by the runtime."""
+
+    name: str = "file"
+    mime_type: str = "application/octet-stream"
+    data_base64: str
+
+
 class CommandInvokeData(_CmdBase):
     """Start a new agent turn. ``thread`` is optional — the runtime mints one when absent."""
 
@@ -41,6 +49,7 @@ class CommandInvokeData(_CmdBase):
     thread: str | None = None
     user_id: str | None = None
     context: dict[str, Any] | None = None
+    attachments: list[InvokeAttachment] | None = None
 
 
 class CommandInvoke(_CmdBase):
@@ -236,6 +245,18 @@ class CommandToolList(_CmdBase):
     data: CommandToolListData = Field(default_factory=CommandToolListData)
 
 
+# ── command.providers.list ─────────────────────────────────────────────────────
+
+
+class CommandProvidersListData(_CmdBase):
+    """Request the curated provider catalog (slug, label, default model, env key)."""
+
+
+class CommandProvidersList(_CmdBase):
+    type: Literal["command.providers.list"] = "command.providers.list"
+    data: CommandProvidersListData = Field(default_factory=CommandProvidersListData)
+
+
 # ── command.subscribe / command.unsubscribe ──────────────────────────────────────
 
 
@@ -293,6 +314,39 @@ class CommandSessionDelete(_CmdBase):
     data: CommandSessionDeleteData
 
 
+class CommandSessionRenameData(_CmdBase):
+    """Rewrite stored replay rows from ``from_session_id`` to ``to_session_id``."""
+
+    from_session_id: str
+    to_session_id: str
+
+
+class CommandSessionRename(_CmdBase):
+    type: Literal["command.session.rename"] = "command.session.rename"
+    data: CommandSessionRenameData
+
+
+# ── command.attach.file ───────────────────────────────────────────────────────────
+
+
+class CommandAttachFileData(_CmdBase):
+    """Upload a file into the agent's CLI-tools working directory.
+
+    ``content_base64`` is standard base64 (padding optional). The runtime writes to
+    ``<working_dir>/.agloom_uploads/<id>_<sanitized_filename>`` and emits
+    ``runtime.file.staged`` with a path relative to ``working_dir`` (POSIX slashes).
+    """
+
+    filename: str
+    content_base64: str
+    thread: str | None = None
+
+
+class CommandAttachFile(_CmdBase):
+    type: Literal["command.attach.file"] = "command.attach.file"
+    data: CommandAttachFileData
+
+
 # ── command.tool.invoke ──────────────────────────────────────────────────────────
 
 
@@ -312,18 +366,60 @@ class CommandToolInvoke(_CmdBase):
 
 
 class CommandConfigSetData(_CmdBase):
-    """Swap the chat model by id string (``resolve_model``).
+    """Hot-reload pieces of agent configuration (model, sampling, routing bias, system prompt).
 
-    Optional ``cli_tools`` is reserved for future hot-reconfiguration of built-in tools; ignored today.
+    At least one field must be set. ``cli_tools`` is reserved for future hot-reconfiguration.
+
+    **Budget** fields (optional): set session token / USD caps (``0`` or negative clears that cap).
     """
 
-    model_id: str
+    model_id: str | None = None
     cli_tools: dict[str, Any] | None = None
+    pattern: str | None = None
+    temperature: float | None = None
+    system_prompt: str | None = None
+    budget_token_limit: int | None = None
+    budget_cost_usd_limit: float | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self) -> CommandConfigSetData:
+        if (
+            self.model_id is None
+            and self.pattern is None
+            and self.temperature is None
+            and self.system_prompt is None
+            and self.cli_tools is None
+            and self.budget_token_limit is None
+            and self.budget_cost_usd_limit is None
+        ):
+            raise ValueError(
+                "command.config.set requires at least one of "
+                "model_id, pattern, temperature, system_prompt, cli_tools, "
+                "budget_token_limit, budget_cost_usd_limit"
+            )
+        return self
 
 
 class CommandConfigSet(_CmdBase):
     type: Literal["command.config.set"] = "command.config.set"
     data: CommandConfigSetData
+
+
+# ── command.memory.clear ───────────────────────────────────────────────────────────
+
+
+class CommandMemoryClearData(_CmdBase):
+    """Clear short-term session memory for ``thread`` (LangGraph thread id).
+
+    Omit ``thread`` only when the client cannot infer it — runtimes may reject or no-op.
+    """
+
+    thread: str | None = None
+
+
+class CommandMemoryClear(_CmdBase):
+    type: Literal["command.memory.clear"] = "command.memory.clear"
+    data: CommandMemoryClearData = Field(default_factory=CommandMemoryClearData)
 
 
 # ── Discriminated union & adapter ─────────────────────────────────────────────
@@ -341,13 +437,17 @@ Command = Annotated[
     | CommandPing
     | CommandSchemaRequest
     | CommandToolList
+    | CommandProvidersList
     | CommandSubscribe
     | CommandUnsubscribe
     | CommandSessionList
     | CommandSessionCreate
     | CommandSessionDelete
+    | CommandSessionRename
+    | CommandAttachFile
     | CommandToolInvoke
-    | CommandConfigSet,
+    | CommandConfigSet
+    | CommandMemoryClear,
     Field(discriminator="type"),
 ]
 """Discriminated union over all known AGP command types.
@@ -374,8 +474,13 @@ __all__ = [
     "CommandHITLRespondData",
     "CommandInvoke",
     "CommandInvokeData",
+    "InvokeAttachment",
+    "CommandMemoryClear",
+    "CommandMemoryClearData",
     "CommandPing",
     "CommandPingData",
+    "CommandProvidersList",
+    "CommandProvidersListData",
     "CommandRuntimeShutdown",
     "CommandRuntimeShutdownData",
     "CommandSchemaRequest",
@@ -384,6 +489,10 @@ __all__ = [
     "CommandSessionCreateData",
     "CommandSessionDelete",
     "CommandSessionDeleteData",
+    "CommandSessionRename",
+    "CommandSessionRenameData",
+    "CommandAttachFile",
+    "CommandAttachFileData",
     "CommandSessionList",
     "CommandSessionListData",
     "CommandSessionResume",

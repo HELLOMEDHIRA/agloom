@@ -1,23 +1,8 @@
-/**
- * App — root Ink component.
- *
- * Layout (top → bottom):
- *   Header      — model / pattern / token metadata
- *   <Static>    — completed conversation turns (written once, never re-rendered)
- *   ActiveTurn  — current in-flight turn (re-renders on every token)
- *   HITLPrompt  — shown only when a HITL gate is pending (replaces InputBar)
- *   ErrorBanner — transient / fatal error messages
- *   InputBar    — primary user input
- *   StatusBar   — status, thread, session, keyboard hints
- *   MetricsPanel — optional right column: session id, uptime, turns, tokens, phase rollup, tools
- *
- * Design constraints:
- *   • Python runtime NEVER emits formatted terminal text — only AGP events.
- *   • All state mutations go through `useSessionStore.dispatch`.
- *   • Completed turns are Static so the terminal doesn't flicker on token deltas.
- */
+/** Root Ink layout: AGP-driven state via `useSessionStore.dispatch`; completed turns use `<Static>`. */
 
-import React, { useState } from 'react'
+import React, { useMemo, useState } from 'react'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import { Box, Text, Static, useApp, useInput, useWindowSize } from 'ink'
 import { Header } from './Header.js'
 import { CompletedTurnCard } from './CompletedTurnCard.js'
@@ -30,18 +15,28 @@ import { useAGPStream } from '../hooks/useAGPStream.js'
 import { useSessionStore } from '../store/session.js'
 import type { AGPBridge } from '../runtime/bridge.js'
 import { SLASH_HELP_LINES } from '../utils/slashCommands.js'
+import { appendHistory, defaultHistoryPath, loadHistory } from '../utils/promptHistory.js'
+import { splitPastedMultilineWhenSingleLineMode } from '../utils/pasteCompose.js'
 
 interface AppProps {
   bridge: AGPBridge
   initialThread: string
   /** Show diagnostic log pane */
   showDiag?: boolean
+  /** Multi-line compose: Enter adds line; blank Enter sends buffer. */
+  multiline?: boolean
+  /** Prompt history JSON path (default ~/.agloom/history.json). */
+  historyFile?: string
 }
 
-export const App = ({ bridge, initialThread, showDiag = false }: AppProps): React.ReactElement => {
+export const App = ({
+  bridge,
+  initialThread,
+  showDiag = false,
+  multiline = false,
+  historyFile,
+}: AppProps): React.ReactElement => {
   const { exit } = useApp()
-
-  // Wire the bridge into the store
   useAGPStream(bridge)
 
   const completedTurns = useSessionStore((s) => s.completedTurns)
@@ -58,6 +53,22 @@ export const App = ({ bridge, initialThread, showDiag = false }: AppProps): Reac
   const [diagOpen, setDiagOpen] = useState(showDiag)
   const [metricsSidebarOpen, setMetricsSidebarOpen] = useState(true)
   const [slashHelpOpen, setSlashHelpOpen] = useState(false)
+  const [pendingLines, setPendingLines] = useState<string[]>([])
+  const [pasteCompose, setPasteCompose] = useState(false)
+  const histPath = historyFile ?? defaultHistoryPath()
+  const [histRefresh, setHistRefresh] = useState(0)
+  const histLines = useMemo(() => {
+    void histRefresh
+    return loadHistory(histPath)
+  }, [histPath, histRefresh])
+  const [histIdx, setHistIdx] = useState(0)
+
+  const multilineOpt =
+    multiline ||
+    (typeof process.env['AGLOOM_MULTILINE'] === 'string' &&
+      ['1', 'true', 'yes'].includes(process.env['AGLOOM_MULTILINE'].toLowerCase()))
+  /** Multiline compose: explicit flag/env, or auto after pasting text with newlines. */
+  const ml = multilineOpt || pasteCompose
 
   const { columns } = useWindowSize()
   const termWidth = columns ?? 80
@@ -68,7 +79,6 @@ export const App = ({ bridge, initialThread, showDiag = false }: AppProps): Reac
   const showMetricsSidebar = metricsSidebarOpen && termWidth >= SPLIT_MIN_TERM_WIDTH
   const mainColumnWidth = showMetricsSidebar ? termWidth - SIDEBAR_WIDTH - 1 : termWidth
 
-  // ── Global keyboard shortcuts ──────────────────────────────────────────────
   useInput((char, key) => {
     if (slashHelpOpen) {
       if (key.escape || char === 'q') setSlashHelpOpen(false)
@@ -83,20 +93,79 @@ export const App = ({ bridge, initialThread, showDiag = false }: AppProps): Reac
       bridge.cancel(thread)
       return
     }
+    if (key.ctrl && char === 't') {
+      useSessionStore.getState().toggleActiveTurnToolExpandBulk()
+      appendProtocolNote('Tools: toggled expand/collapse for current turn (Ctrl+T)')
+      return
+    }
+    if (char === 't' && !key.ctrl && input === '' && !slashHelpOpen) {
+      useSessionStore.getState().toggleActiveTurnToolExpandBulk()
+      appendProtocolNote('Tools: toggled expand/collapse for current turn (t)')
+      return
+    }
   })
 
-  // ── Input submit handler ───────────────────────────────────────────────────
+  const recallPrev = (): void => {
+    if (histLines.length === 0) return
+    const i = (histIdx - 1 + histLines.length) % histLines.length
+    setHistIdx(i)
+    setInput(histLines[i] ?? '')
+  }
+
+  const recallNext = (): void => {
+    if (histLines.length === 0) return
+    const i = (histIdx + 1) % histLines.length
+    setHistIdx(i)
+    setInput(histLines[i] ?? '')
+  }
+
+  const handleInputChange = (v: string): void => {
+    const pasted = splitPastedMultilineWhenSingleLineMode(multilineOpt, v)
+    if (pasted) {
+      setPasteCompose(true)
+      if (pasted.headLines.length > 0) {
+        setPendingLines((p) => [...p, ...pasted.headLines])
+      }
+      setInput(pasted.inputTail)
+      return
+    }
+    setInput(v)
+  }
+
   const handleSubmit = (text: string) => {
     const trimmed = text.trim()
-    if (!trimmed) return
-
     if (trimmed.startsWith('/')) {
       handleSlashCommand(trimmed)
       setInput('')
+      setPendingLines([])
+      setPasteCompose(false)
       return
     }
 
+    if (ml) {
+      if (text === '' && pendingLines.length > 0) {
+        const body = pendingLines.join('\n')
+        bridge.invoke(body, thread)
+        appendHistory(histPath, body)
+        setHistRefresh((n) => n + 1)
+        setPendingLines([])
+        setPasteCompose(false)
+        setInput('')
+        return
+      }
+      if (text !== '') {
+        setPendingLines((p) => [...p, text])
+        setInput('')
+        return
+      }
+      return
+    }
+
+    if (!trimmed) return
     bridge.invoke(trimmed, thread)
+    appendHistory(histPath, trimmed)
+    setHistRefresh((n) => n + 1)
+    setPasteCompose(false)
     setInput('')
   }
 
@@ -120,7 +189,33 @@ export const App = ({ bridge, initialThread, showDiag = false }: AppProps): Reac
 
       case '/clear':
         reset()
+        setPendingLines([])
+        setPasteCompose(false)
         break
+
+      case '/save': {
+        const rawPath = rest.join(' ').trim()
+        if (!rawPath) {
+          appendProtocolNote('/save · usage: /save <path.md>')
+          break
+        }
+        const turns = useSessionStore.getState().completedTurns
+        const md = turns
+          .map(
+            (t) =>
+              `### User\n\n${t.userMessage}\n\n### Assistant\n\n${t.assistantMessage}\n`,
+          )
+          .join('\n---\n\n')
+        const target = resolve(rawPath)
+        try {
+          mkdirSync(dirname(target), { recursive: true })
+          writeFileSync(target, `# agloom transcript\n\n${md}`, 'utf8')
+          appendProtocolNote(`/save · wrote ${turns.length} turns → ${target}`)
+        } catch (e) {
+          appendProtocolNote(`/save · ${e instanceof Error ? e.message : String(e)}`)
+        }
+        break
+      }
 
       case '/diag':
         setDiagOpen((prev) => !prev)
@@ -129,6 +224,49 @@ export const App = ({ bridge, initialThread, showDiag = false }: AppProps): Reac
       case '/stats':
         setMetricsSidebarOpen((prev) => !prev)
         break
+
+      case '/tools': {
+        useSessionStore.getState().toggleActiveTurnToolExpandBulk()
+        appendProtocolNote('/tools · toggled expand/collapse for current turn (same as t / Ctrl+T)')
+        break
+      }
+
+      case '/budget': {
+        const sub = rest[0]?.toLowerCase()
+        if (sub !== 'raise') {
+          appendProtocolNote('/budget raise --tokens N  |  /budget raise --usd N  |  /budget raise N (tokens)')
+          break
+        }
+        let tok: number | undefined
+        let usd: number | undefined
+        const tail = rest.slice(1)
+        for (let i = 0; i < tail.length; i++) {
+          const a = tail[i]?.toLowerCase()
+          if (a === '--tokens' || a === '-t') {
+            const n = parseInt(tail[++i] ?? '', 10)
+            if (!Number.isNaN(n) && n > 0) tok = n
+          } else if (a === '--usd' || a === '-u' || a === '--cost') {
+            const n = parseFloat(tail[++i] ?? '')
+            if (!Number.isNaN(n) && n > 0) usd = n
+          } else if (tail[i] && /^\d+(\.\d+)?$/.test(tail[i]!) && tok === undefined && usd === undefined) {
+            if (tail[i]!.includes('.')) usd = parseFloat(tail[i]!)
+            else tok = parseInt(tail[i]!, 10)
+          }
+        }
+        if (tok === undefined && usd === undefined) {
+          appendProtocolNote('/budget raise · need --tokens N and/or --usd N (or one bare number = tokens)')
+          break
+        }
+        bridge.configSet({
+          ...(tok !== undefined ? { budget_token_limit: tok } : {}),
+          ...(usd !== undefined ? { budget_cost_usd_limit: usd } : {}),
+        })
+        useSessionStore.setState({ budgetUi: 'ok' })
+        appendProtocolNote(
+          `/budget raise · sent command.config.set${tok != null ? ` · tokens≤${tok}` : ''}${usd != null ? ` · usd≤${usd}` : ''}`,
+        )
+        break
+      }
 
       case '/feedback': {
         const [ratingStr, ...commentParts] = rest
@@ -151,6 +289,50 @@ export const App = ({ bridge, initialThread, showDiag = false }: AppProps): Reac
         break
       }
 
+      case '/memory': {
+        const sub = rest[0]?.toLowerCase()
+        if (sub === 'clear') bridge.memoryClear(thread)
+        break
+      }
+
+      case '/cost': {
+        const st = useSessionStore.getState()
+        const lines = st.metricsHistory.slice(-16).map((m) => {
+          const ph = m.phase ? `${m.phase}` : '—'
+          const w = m.workerId ? ` ${m.workerId}` : ''
+          return `  · ${ph}${w}: ↑${m.input} ↓${m.output}${m.model ? ` (${m.model})` : ''}`
+        })
+        appendProtocolNote(
+          `/cost · session ↑${st.totalInputTokens} ↓${st.totalOutputTokens} tok · $${st.totalCostUsd.toFixed(4)}`,
+        )
+        for (const ln of lines) appendProtocolNote(ln)
+        break
+      }
+
+      case '/pattern': {
+        const p = rest.join(' ').trim()
+        if (p) bridge.configSet({ pattern: p })
+        break
+      }
+
+      case '/temperature': {
+        const t = parseFloat(rest[0] ?? '')
+        if (!Number.isNaN(t)) bridge.configSet({ temperature: t })
+        break
+      }
+
+      case '/system': {
+        const text = rest.join(' ').trim()
+        if (text) bridge.configSet({ system_prompt: text })
+        break
+      }
+
+      case '/session': {
+        const sub = rest[0]?.toLowerCase()
+        if (sub === 'list') bridge.sessionList()
+        break
+      }
+
       default:
         break
     }
@@ -158,7 +340,6 @@ export const App = ({ bridge, initialThread, showDiag = false }: AppProps): Reac
     clearError()
   }
 
-  // ── Exited state ───────────────────────────────────────────────────────────
   if (status === 'exited') {
     return (
       <Box flexDirection="column">
@@ -170,7 +351,6 @@ export const App = ({ bridge, initialThread, showDiag = false }: AppProps): Reac
   return (
     <Box flexDirection="row" width={termWidth}>
       <Box flexDirection="column" width={mainColumnWidth}>
-        {/* Top metadata bar */}
         <Header layoutWidth={mainColumnWidth} />
 
         {slashHelpOpen && (
@@ -193,20 +373,16 @@ export const App = ({ bridge, initialThread, showDiag = false }: AppProps): Reac
           </Box>
         )}
 
-        {/* Completed turns — Static: written once, never diff'd again */}
         <Static items={completedTurns}>
           {(turn) => <CompletedTurnCard key={turn.id} turn={turn} />}
         </Static>
 
-        {/* Active streaming turn */}
         <ActiveTurn />
 
-        {/* ── HITL gate (replaces InputBar) ── */}
         {status === 'hitl' && hitlQueue[0] !== undefined && (
           <HITLPrompt request={hitlQueue[0]} bridge={bridge} />
         )}
 
-        {/* Fatal error banner */}
         {status === 'error' && errorMessage && (
           <Box
             borderStyle="round"
@@ -222,7 +398,6 @@ export const App = ({ bridge, initialThread, showDiag = false }: AppProps): Reac
           </Box>
         )}
 
-        {/* Diagnostic log (toggled with /diag) */}
         {diagOpen && diagnostics.length > 0 && (
           <Box
             flexDirection="column"
@@ -243,12 +418,17 @@ export const App = ({ bridge, initialThread, showDiag = false }: AppProps): Reac
           </Box>
         )}
 
-        {/* Normal input bar (hidden when HITL is active) */}
         {status !== 'hitl' && (
-          <InputBar value={input} onChange={setInput} onSubmit={handleSubmit} />
+          <InputBar
+            value={input}
+            onChange={handleInputChange}
+            onSubmit={handleSubmit}
+            pendingLines={ml ? pendingLines : undefined}
+            onRecallPrev={recallPrev}
+            onRecallNext={recallNext}
+          />
         )}
 
-        {/* Bottom status bar */}
         <StatusBar thread={thread} layoutWidth={mainColumnWidth} />
       </Box>
 

@@ -63,7 +63,7 @@ stateDiagram-v2
 ## Configuration
 
 | Parameter | Default | Description |
-|-----------|---------|-------------|
+| --- | --- | --- |
 | `store` | `None` | Required — enables the skill system |
 | `max_skills` | `30` | Maximum skills in the registry |
 | `low_score_threshold` | `0.40` | Scores below this trigger decay |

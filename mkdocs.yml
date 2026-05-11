@@ -56,7 +56,6 @@ markdown_extensions:
       custom_fences:
         - name: mermaid
           class: mermaid
-          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.details
@@ -74,8 +73,18 @@ markdown_extensions:
 nav:
   - Home: index.md
   - agloom CLI:
-      - Quick Start: _packages/agloom_cli/index.md
-      - Developer reference (AGP / I/O): _packages/agloom_cli/reference.md
+      - Overview: _packages/agloom_cli/index.md
+      - Quickstart: _packages/agloom_cli/quickstart.md
+      - Models & providers: _packages/agloom_cli/models.md
+      - CLI flags: _packages/agloom_cli/flags.md
+      - Config & environment: _packages/agloom_cli/config.md
+      - Direct mode: _packages/agloom_cli/direct-mode.md
+      - Interactive UI: _packages/agloom_cli/interactive.md
+      - Tools & HITL: _packages/agloom_cli/tools-hitl.md
+      - MCP, memory & harness: _packages/agloom_cli/mcp-memory-harness.md
+      - Recipes: _packages/agloom_cli/recipes.md
+      - Troubleshooting: _packages/agloom_cli/troubleshooting.md
+      - AGP wire reference: _packages/agloom_cli/reference.md
   - Python package:
       - Overview: _packages/agloom/index.md
       - Why agloom?: _packages/agloom/getting-started/why-agloom.md
@@ -117,6 +126,9 @@ nav:
       - "AGP — Agloom Protocol": _packages/agloom/protocol/agp.md
   - Guides:
       - Production Integration: _packages/agloom/guides/production.md
+      - Production deployment: _packages/agloom/guides/deployment.md
+      - LCEL / callables as tools: _packages/agloom/guides/lcel-as-tools.md
+      - Migrating from LangChain: _packages/agloom/guides/migration-from-langchain.md
   - Examples:
       - Python examples (repo): _packages/agloom/examples/python-examples.md
   - Architecture:

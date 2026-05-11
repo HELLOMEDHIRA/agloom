@@ -70,7 +70,7 @@ configure_package_logging("CRITICAL") # silent
 ## What Gets Logged
 
 | Component | INFO logs | DEBUG logs |
-|-----------|-----------|------------|
+| --- | --- | --- |
 | Classifier | Pattern selected, complexity | Full analysis JSON |
 | Unified Agent | Pattern execution, step counts | Memory injection, cache operations |
 | Worker | Worker start/end | Worker config, retry attempts |

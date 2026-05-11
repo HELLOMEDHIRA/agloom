@@ -32,6 +32,7 @@ from .delegation import (
 )
 from .hitl_contract import HITLEvent, call_user_callback
 from .logging_utils import configure_package_logging, get_logger
+from .multimodal import merge_context_into_user_turn, text_from_user_turn
 from .mcp_support import MCPServerConfig
 from .memory import (
     LongTermStore,
@@ -129,9 +130,17 @@ except ImportError:
 logger = get_logger(__name__)
 
 
+def _wire_query_snapshot(query: Any) -> str:
+    if isinstance(query, str):
+        return query
+    if isinstance(query, list):
+        return text_from_user_turn(query)
+    return str(query)
+
+
 async def _handle_direct(
     agent: dict,
-    query: str,
+    query: str | list,
     analysis: QueryAnalysis,
     config: dict | None = None,
 ) -> ExecutionResult:
@@ -182,7 +191,7 @@ async def _handle_direct(
         step = _make_step(
             StepType.LLM_CALL,
             "direct_llm",
-            input=query,
+            input=text_from_user_turn(query) if isinstance(query, list) else query,
             output=output,
             duration_ms=dur,
             max_length=ml,
@@ -824,7 +833,7 @@ def _extract_delegate_from_analysis(
 
 async def run_fresh(
     config: dict,
-    query: str | dict,
+    query: str | dict | list,
     effective_thread_id: str,
     effective_ltns: tuple,
     invoke_config: dict,
@@ -849,7 +858,12 @@ async def run_fresh(
     _steps: list[AgentStep] = []
     _total_usage: dict[str, int] = {}
 
-    raw_query_str: str = query if isinstance(query, str) else " ".join(str(v) for v in query.values())
+    if isinstance(query, str):
+        raw_query_str = query
+    elif isinstance(query, list):
+        raw_query_str = text_from_user_turn(query)
+    else:
+        raw_query_str = " ".join(str(v) for v in query.values())
 
     processed_query = await _run_before_agent(config.get("middleware", []), raw_query_str, context)
 
@@ -906,7 +920,7 @@ async def run_fresh(
 
     if is_frozen:
         sub_query, sub_system_prompt, analysis = _apply_frozen_substitution(
-            query=query,
+            query=text_from_user_turn(query) if isinstance(query, list) else query,
             frozen_template=config["frozen_template"],
             system_prompt=config["system_prompt"],
             analysis=config["frozen_analysis"],
@@ -1151,7 +1165,8 @@ async def run_fresh(
     exec_invoke_config = {**(invoke_config or {}), "_steps": _steps}
     t_exec = time.perf_counter()
     await _emit_graph_node_event(config, "graph_node_enter", node=pattern_val, pattern=pattern_val, input_preview=augmented_query[:200])
-    result: ExecutionResult = await handler(config, augmented_query, analysis, exec_invoke_config)
+    handler_user_turn = merge_context_into_user_turn(augmented_query, query)
+    result: ExecutionResult = await handler(config, handler_user_turn, analysis, exec_invoke_config)
     exec_ms = round((time.perf_counter() - t_exec) * 1000, 1)
     await _emit_graph_node_event(
         config,
@@ -1407,7 +1422,7 @@ class UnifiedAgent:
 
     async def ainvoke(
         self,
-        query: str | dict,
+        query: str | dict | list,
         *,
         thread_id: str | None = None,
         user_id: str | None = None,
@@ -1417,11 +1432,14 @@ class UnifiedAgent:
         """Run a single agent turn and return ``ExecutionResult`` (includes ``run_id`` for ``feedback``).
 
         ``query`` is normally a string. A ``dict`` is allowed only for frozen agents and
-        must contain every ``input_key`` field.
+        must contain every ``input_key`` field. A ``list`` of OpenAI-style content blocks
+        is allowed when ``frozen=False`` (multimodal user turns).
 
         Raises:
             ValueError: dict ``query`` with ``frozen=False``, or missing frozen input keys.
         """
+        if isinstance(query, list) and self.config.get("frozen"):
+            raise ValueError("list / multimodal user turns are not supported when frozen=True.")
         if isinstance(query, dict):
             if not self.config.get("frozen"):
                 raise ValueError(
@@ -1447,7 +1465,7 @@ class UnifiedAgent:
             self.config,
             effective_thread_id,
             effective_ltns,
-            query if isinstance(query, str) else str(query),
+            _wire_query_snapshot(query),
         )
 
         if self.config.get("frozen"):
@@ -1473,14 +1491,14 @@ class UnifiedAgent:
             self.config.get("checkpointer"),
             effective_thread_id,
             result,
-            query if isinstance(query, str) else str(query),
+            _wire_query_snapshot(query),
         )
 
         return result
 
     async def astream(
         self,
-        query: str | dict,
+        query: str | dict | list,
         *,
         thread_id: str | None = None,
         user_id: str | None = None,
@@ -1551,7 +1569,7 @@ class UnifiedAgent:
                 self.config,
                 effective_thread_id,
                 effective_ltns,
-                query if isinstance(query, str) else str(query),
+                _wire_query_snapshot(query),
             )
             ctx = context or {}
 
@@ -1675,7 +1693,7 @@ class UnifiedAgent:
 
     async def astream_events(
         self,
-        query: str | dict,
+        query: str | dict | list,
         *,
         thread_id: str | None = None,
         user_id: str | None = None,
@@ -1721,7 +1739,7 @@ class UnifiedAgent:
                     self.config.get("checkpointer"),
                     effective_thread_id,
                     result,
-                    query if isinstance(query, str) else str(query),
+                    _wire_query_snapshot(query),
                 )
 
                 await event_queue.put(
@@ -1755,7 +1773,7 @@ class UnifiedAgent:
 
     async def astream_agp_events(
         self,
-        query: str | dict,
+        query: str | dict | list,
         *,
         thread_id: str | None = None,
         user_id: str | None = None,
@@ -2246,8 +2264,11 @@ async def create_agent(
 
     cli_tools_kw = normalize_cli_tools_kwargs(cli_tools)
     ibi_merged = list(interrupt_before_tools or [])
-    if cli_tools_kw and cli_tools_kw.get("allow_shell", True):
-        if "tools" not in ibi_merged:
+    # Built-in CLI tools: default HITL interrupts (when not superseded by interrupt_before=["tools"])
+    # — subprocess tools when ``allow_shell``; destructive filesystem / notebook-edit tools whenever
+    # the CLI bundle is active. Read-only FS + network tools stay unprompted unless you extend this list.
+    if cli_tools_kw and "tools" not in ibi_merged:
+        if cli_tools_kw.get("allow_shell", True):
             for token in (
                 "execute",
                 "bash",
@@ -2257,6 +2278,17 @@ async def create_agent(
             ):
                 if token not in ibi_merged:
                     ibi_merged.append(token)
+        for token in (
+            "write_file",
+            "edit_file",
+            "multi_edit",
+            "delete_file",
+            "move_file",
+            "rmdir",
+            "notebook_edit",
+        ):
+            if token not in ibi_merged:
+                ibi_merged.append(token)
 
     AgentConfig(
         model=model,

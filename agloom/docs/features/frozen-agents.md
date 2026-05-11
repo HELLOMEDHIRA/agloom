@@ -51,7 +51,7 @@ sequenceDiagram
 ## Configuration
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| --- | --- | --- | --- |
 | `frozen` | `bool` | `False` | Enable frozen mode |
 | `frozen_template` | `str` | required | Template with `{key}` placeholders |
 | `input_key` | `str \| list[str]` | `"input"` | Placeholder name(s) |

@@ -20,3 +20,13 @@ export const fmtDuration = (ms: number | undefined): string => {
 export const fmtTokens = (n: number): string => {
   return n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`
 }
+
+/** Compact JSON args for tool rows (B3). */
+export const fmtArgs = (args: Record<string, unknown>, maxLen = 60): string => {
+  try {
+    const s = JSON.stringify(args)
+    return truncate(s.replace(/\s+/g, ' ').trim(), maxLen)
+  } catch {
+    return '{…}'
+  }
+}

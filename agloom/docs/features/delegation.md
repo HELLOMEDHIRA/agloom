@@ -5,7 +5,7 @@ agloom provides four composable delegation patterns that let agents hand off wor
 ## Overview
 
 | Pattern | Mechanism | Use Case |
-|---------|-----------|----------|
+| --- | --- | --- |
 | **as_tool()** | Agent wrapped as a LangChain tool | Parent calls child via tool loop |
 | **register_handoff()** | Transparent classifier-driven routing | Auto-route queries to specialists |
 | **delegates=[]** | Hierarchical delegation at creation | Pre-configured child agents |
@@ -226,7 +226,7 @@ HandoffTarget(
 ### UnifiedAgent delegation methods
 
 | Method | Returns | Description |
-|--------|---------|-------------|
+| --- | --- | --- |
 | `as_tool(name=, description=)` | `BaseTool` | Wrap agent as LangChain tool |
 | `register_handoff(target, ...)` | `None` | Register transparent hand-off target |
 | `adelegate(query, delegate_name=)` | `ExecutionResult` | Explicit async delegation |
@@ -238,7 +238,7 @@ HandoffTarget(
 ### BackgroundTaskStatus
 
 | Value | Description |
-|-------|-------------|
+| --- | --- |
 | `pending` | Task created but not yet started |
 | `running` | Task is currently executing |
 | `completed` | Task finished successfully |

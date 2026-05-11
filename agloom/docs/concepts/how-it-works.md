@@ -49,7 +49,7 @@ An LLM-powered classifier analyzes the query and determines:
 
 ### 3. Cache Check
 
-If `query_cache=` is set (via `create_cache()`), agloom checks for semantically similar previous queries using Qdrant vector search. On a cache hit, the cached result is returned immediately (saving an LLM call). See [Query Cache](../features/memory.md#query-cache) for setup.
+If `query_cache=` is set (via `create_cache()`), agloom checks for semantically similar previous queries using a **vector cache** (**Qdrant** by default; pluggable). On a cache hit, the cached result is returned immediately (saving an LLM call). See [Query Cache](../features/memory.md#query-cache) for setup.
 
 ### 4. HITL Interrupts (if configured)
 
