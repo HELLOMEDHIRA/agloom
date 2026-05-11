@@ -185,7 +185,7 @@ const program = new Command()
   .option('--budget-cost-usd <n>', 'forward to runtime: session cumulative USD cost cap', (v) => parseFloat(v))
   .allowUnknownOption(false)
 
-program.parse(argvMain, { from: 'user' })
+program.parse(argvMain, { from: 'node' })
 
 const rawOpts = program.opts<CliOpts>()
 const positionalPrompt = program.args[0] as string | undefined

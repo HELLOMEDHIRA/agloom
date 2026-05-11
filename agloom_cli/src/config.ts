@@ -12,6 +12,59 @@ import type { Command } from 'commander'
 import YAML from 'yaml'
 import { z } from 'zod'
 
+/** CLI session memory is a simple slug (``sqlite`` / ``none`` / …); ignore structured maps. */
+function normalizeMemoryYamlInput(raw: unknown): unknown {
+  return typeof raw === 'string' ? raw : undefined
+}
+
+type McpYamlEntry = string | { name: string; config: string }
+
+function _mcpEntryFromShorthandObject(obj: Record<string, unknown>): McpYamlEntry | null {
+  const keys = Object.keys(obj)
+  if (keys.length === 1) {
+    const k = keys[0]!
+    const v = obj[k]
+    if (typeof v === 'string') return `${k}:${v}`
+    return null
+  }
+  if (typeof obj.name === 'string' && typeof obj.config === 'string') {
+    return { name: obj.name, config: obj.config }
+  }
+  return null
+}
+
+/**
+ * Accept: map ``name: path`` / ``name: { config: path }``; array of strings, ``{ name, config }``,
+ * or one-key objects from YAML list items (``- fs: ./x.yaml`` → ``{ fs: './x.yaml' }``).
+ */
+function normalizeMcpYamlInput(raw: unknown): unknown {
+  if (raw == null) return undefined
+  if (Array.isArray(raw)) {
+    const out: McpYamlEntry[] = []
+    for (const elem of raw) {
+      if (typeof elem === 'string') {
+        out.push(elem)
+        continue
+      }
+      if (elem && typeof elem === 'object' && !Array.isArray(elem)) {
+        const conv = _mcpEntryFromShorthandObject(elem as Record<string, unknown>)
+        if (conv) out.push(conv)
+      }
+    }
+    return out.length > 0 ? out : undefined
+  }
+  if (typeof raw !== 'object') return undefined
+  const out: McpYamlEntry[] = []
+  for (const [name, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === 'string') {
+      out.push(`${name}:${v}`)
+    } else if (v && typeof v === 'object' && typeof (v as { config?: unknown }).config === 'string') {
+      out.push({ name, config: (v as { config: string }).config })
+    }
+  }
+  return out.length > 0 ? out : undefined
+}
+
 const AgloomYamlSchema = z
   .object({
     model: z.string().optional(),
@@ -23,7 +76,7 @@ const AgloomYamlSchema = z
     system_prompt_file: z.string().optional(),
     store: z.enum(['none', 'memory', 'sqlite']).optional(),
     store_path: z.string().optional(),
-    memory: z.string().optional(),
+    memory: z.preprocess(normalizeMemoryYamlInput, z.string().optional()),
     memory_path: z.string().optional(),
     no_memory: z.boolean().optional(),
     no_skills: z.boolean().optional(),
@@ -31,9 +84,10 @@ const AgloomYamlSchema = z
     summarizer_model: z.string().optional(),
     auto_summarize: z.boolean().optional(),
     session_max_turns: z.number().int().optional(),
-    mcp: z
-      .array(z.union([z.string(), z.object({ name: z.string(), config: z.string() })]))
-      .optional(),
+    mcp: z.preprocess(
+      normalizeMcpYamlInput,
+      z.array(z.union([z.string(), z.object({ name: z.string(), config: z.string() })])).optional(),
+    ),
   })
   .passthrough()
 

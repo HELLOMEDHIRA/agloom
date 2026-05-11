@@ -139,14 +139,24 @@ async def _session_loop(
     from agloom.multimodal import prepare_invoke_command
     from agloom.runtime.bridge import new_session_id, run_invocation
     from agloom.runtime.hitl import HITLBridge
+    from agloom.runtime.workspace_bootstrap import ensure_agloom_workspace, write_session_started_json
 
     session_id = f"ws_{uuid4().hex[:16]}"
+    initial_thread = f"t_{uuid4().hex[:12]}"
     attach_wd = attachment_working_dir or Path.cwd().resolve()
+    _sessions_dir, _ = ensure_agloom_workspace(attach_wd)
+    write_session_started_json(
+        _sessions_dir,
+        session_id,
+        transport="ws",
+        thread=initial_thread,
+        record_cwd=attach_wd,
+    )
     agent = agent_factory()
 
     emitter = AsyncSessionEmitter(
         session=session_id,
-        thread=f"t_{uuid4().hex[:12]}",
+        thread=initial_thread,
         writer=ws.send,
         store=store,
         capabilities=[],
