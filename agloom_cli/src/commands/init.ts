@@ -7,10 +7,10 @@ import { join } from 'node:path'
 import { constants as fsConstants } from 'node:fs'
 
 const TEMPLATE = `# Agloom — https://github.com/HELLOMEDHIRA/agloom
-# CLI and runtime read this file via walk-up discovery (override with \`agloom --config <path>\`).
-ai:
-  model: groq:meta-llama/llama-3.3-70b-versatile
-  # provider: groq
+# CLI merges this file (walk-up discovery; override with \`agloom --config <path>\`).
+# Keys are top-level — see agloom_cli/docs/config.md
+model: groq:meta-llama/llama-3.3-70b-versatile
+# provider: groq
 `
 
 export async function runInitCli(cwd: string): Promise<number> {

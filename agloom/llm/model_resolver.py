@@ -546,6 +546,9 @@ def try_resolve_llm_from_api_keys(*, interactive: bool | None = None, **llm_kwar
     - If several are usable but not interactive, use the first row in registry auto-detect priority order.
 
     Skips providers whose optional packages are not installed.
+
+    Auto-detect rows come from :func:`agloom.llm.provider_registry.cli_auto_detect_rows`
+    (providers with ``auto_priority`` set, e.g. OpenAI through NVIDIA NIM).
     """
     usable, missing_for_configured_keys = _usable_provider_triples()
     if not usable:
@@ -554,7 +557,18 @@ def try_resolve_llm_from_api_keys(*, interactive: bool | None = None, **llm_kwar
             for e in missing_for_configured_keys:
                 by_extra[e.extra] = e
             if len(by_extra) == 1:
-                raise next(iter(by_extra.values()))
+                e = next(iter(by_extra.values()))
+                lc = _extra_to_langchain_dist(e.extra)
+                raise MissingProviderDependency(
+                    e.extra,
+                    e.pip_hint,
+                    detail=(
+                        f"{lc} not installed. Run: pip install {e.pip_hint}. "
+                        "If you use another provider only (e.g. NVIDIA with agloom[nvidia]), "
+                        "unset unrelated API keys (such as OPENAI_API_KEY), set AGLOOM_PROVIDER, "
+                        "or pass --model <provider>:<id>."
+                    ),
+                ) from None
             parts = " ".join(
                 f"For extra '{e.extra}': pip install {e.pip_hint}." for e in by_extra.values()
             )

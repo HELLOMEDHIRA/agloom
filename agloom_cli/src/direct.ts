@@ -27,20 +27,27 @@ function waitForEvent(
   ms = 120_000,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const to = setTimeout(() => reject(new Error('timed out waiting for AGP event')), ms)
+    const onErr = (err: Error) => {
+      clearTimeout(to)
+      bridge.off('event', fn)
+      bridge.off('error', onErr)
+      reject(err)
+    }
     const fn = (evt: AGPEvent) => {
       if (pred(evt)) {
         clearTimeout(to)
+        bridge.off('error', onErr)
         bridge.off('event', fn)
         resolve()
       }
     }
-    bridge.on('event', fn)
-    bridge.once('error', (err) => {
-      clearTimeout(to)
+    const to = setTimeout(() => {
       bridge.off('event', fn)
-      reject(err)
-    })
+      bridge.off('error', onErr)
+      reject(new Error('timed out waiting for AGP event'))
+    }, ms)
+    bridge.on('event', fn)
+    bridge.on('error', onErr)
   })
 }
 
@@ -69,7 +76,10 @@ export async function runDirect(options: {
 
   let hitlChain = Promise.resolve()
   const enqueueHitl = (fn: () => Promise<void>): void => {
-    hitlChain = hitlChain.then(fn).catch(() => {})
+    hitlChain = hitlChain.then(fn).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      process.stderr.write(`[agloom] HITL interactive prompt failed: ${msg}\n`)
+    })
   }
 
   const onStream = (evt: AGPEvent) => {

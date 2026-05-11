@@ -140,6 +140,9 @@ const uid = (): string => {
 
 const PROTOCOL_NOTES_CAP = 28
 
+/** Max completed turns kept in memory (Ink ``<Static>`` transcript). Oldest dropped first. */
+const COMPLETED_TURNS_CAP = 200
+
 const pushProtocolNotes = (notes: string[], line: string): string[] => {
   return [...notes, line].slice(-PROTOCOL_NOTES_CAP)
 }
@@ -601,7 +604,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
 
           return {
             ...s,
-            completedTurns: [...s.completedTurns, completed],
+            completedTurns: [...s.completedTurns, completed].slice(-COMPLETED_TURNS_CAP),
             activeTurn: null,
             hitlQueue: [],
             status: 'idle',

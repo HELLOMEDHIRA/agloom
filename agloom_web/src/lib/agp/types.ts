@@ -5,7 +5,11 @@
  * `agloom/protocol/events.py` and `agloom/protocol/commands.py`.
  *
  * Duplicated at agloom_cli/src/types/agp.ts and agloom_web/src/lib/agp/types.ts — keep both files identical.
+ *
+ * Zod wire validation lives in ``agpWireParse.ts`` (duplicate at ``agloom_cli/src/types/agpWireParse.ts``).
  */
+
+import { parseInboundAGPEventJSONWire } from './agpWireParse.js'
 
 // ── Envelope (base fields present on every event) ────────────────────────────
 
@@ -519,13 +523,9 @@ export type AGPKnownEvent =
 /** Known AGP v1 catalogue + additive types above. Wire may carry other `type` strings — the runtime ``dispatch`` default branch must tolerate them (forward-compat). */
 export type AGPEvent = AGPKnownEvent
 
-/** Parse one NDJSON / WebSocket frame after ``JSON.parse``. Unknown ``type`` values are accepted at runtime and handled by store/UI default branches. */
-export const parseInboundAGPEventJSON = (parsed: unknown): AGPEvent => {
-  if (!parsed || typeof parsed !== 'object') {
-    throw new SyntaxError('AGP event root must be an object')
-  }
-  return parsed as AGPEvent
-}
+/** Parse and validate one NDJSON / WebSocket frame after ``JSON.parse`` (Zod; see ``agpWireParse.ts``). */
+export const parseInboundAGPEventJSON = (parsed: unknown): AGPEvent =>
+  parseInboundAGPEventJSONWire(parsed) as unknown as AGPEvent
 
 // ── Inbound commands (CLI / web → Python runtime) ────────────────────────────
 

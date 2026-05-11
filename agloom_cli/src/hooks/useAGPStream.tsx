@@ -12,10 +12,6 @@ import { useSessionStore } from '../store/session.js'
 import type { AGPEvent } from '../types/agp.js'
 
 export const useAGPStream = (bridge: AGPBridge): void => {
-  const dispatch = useSessionStore((s) => s.dispatch)
-  const addDiagnostic = useSessionStore((s) => s.addDiagnostic)
-  const markExited = useSessionStore((s) => s.markExited)
-
   // Ref-guard prevents double-subscription in React 18+ strict mode.
   const attachedRef = useRef(false)
 
@@ -23,11 +19,18 @@ export const useAGPStream = (bridge: AGPBridge): void => {
     if (attachedRef.current) return
     attachedRef.current = true
 
-    const onEvent = (evt: AGPEvent) => dispatch(evt)
-    const onDiag = (line: string) => addDiagnostic(line)
-    const onExit = () => markExited()
-    const onError = (err: Error) =>
-      addDiagnostic(`[bridge error] ${err.message}`)
+    const onEvent = (evt: AGPEvent) => {
+      useSessionStore.getState().dispatch(evt)
+    }
+    const onDiag = (line: string) => {
+      useSessionStore.getState().addDiagnostic(line)
+    }
+    const onExit = () => {
+      useSessionStore.getState().markExited()
+    }
+    const onError = (err: Error) => {
+      useSessionStore.getState().addDiagnostic(`[bridge error] ${err.message}`)
+    }
 
     bridge.on('event', onEvent)
     bridge.on('diagnostic', onDiag)
@@ -41,5 +44,5 @@ export const useAGPStream = (bridge: AGPBridge): void => {
       bridge.off('error', onError)
       attachedRef.current = false
     }
-  }, [bridge, dispatch, addDiagnostic, markExited])
+  }, [bridge])
 }

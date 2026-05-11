@@ -114,8 +114,10 @@ export const createAGPBridge = (): AGPBridge => {
           const evt = parseInboundAGPEventJSON(JSON.parse(trimmed))
           emitter.emit('event', evt)
           if (evt.type === 'session.opened') status = 'ready'
-        } catch {
-          emitter.emit('diagnostic', `[stdout] ${trimmed}`)
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          const preview = trimmed.length > 160 ? `${trimmed.slice(0, 157)}…` : trimmed
+          emitter.emit('diagnostic', `[stdout] ${msg} | ${preview}`)
         }
       }
     })

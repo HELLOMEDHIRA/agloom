@@ -197,6 +197,21 @@ describe('hitl lifecycle', () => {
 // ── message.assistant — turn completion ───────────────────────────────────────
 
 describe('message.assistant', () => {
+  it('caps completedTurns length for long sessions', () => {
+    const n = 205
+    for (let i = 0; i < n; i++) {
+      dispatch({ ...env({ seq: i * 2 + 1 }), type: 'message.user', data: { content: `u${i}` } })
+      dispatch({
+        ...env({ seq: i * 2 + 2 }),
+        type: 'message.assistant',
+        data: { content: `a${i}`, pattern: 'DIRECT' },
+      })
+    }
+    expect(state().completedTurns).toHaveLength(200)
+    expect(state().completedTurns[0]?.userMessage).toBe('u5')
+    expect(state().completedTurns[199]?.userMessage).toBe('u204')
+  })
+
   it('moves active turn to completedTurns', () => {
     dispatch({ ...env(), type: 'message.user', data: { content: 'Hello' } })
     dispatch({ ...env(), type: 'token.delta', data: { text: 'Hi' } })

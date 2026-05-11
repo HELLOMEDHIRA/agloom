@@ -90,10 +90,18 @@ function collectAttach(v: string, prev: string[]): string[] {
   return prev.concat([v])
 }
 
+/** Max bytes per ``--attach`` file (avoids loading huge blobs into memory). */
+const MAX_ATTACH_BYTES = 32 * 1024 * 1024
+
 async function pathsToAttachments(paths: string[]): Promise<InvokeAttachment[]> {
   const out: InvokeAttachment[] = []
   for (const p of paths) {
     const buf = await readFile(p)
+    if (buf.length > MAX_ATTACH_BYTES) {
+      throw new Error(
+        `--attach ${p}: file is ${buf.length} bytes (limit ${MAX_ATTACH_BYTES} / 32 MiB per file)`,
+      )
+    }
     out.push({
       name: basename(p),
       mime_type: 'application/octet-stream',
@@ -110,10 +118,12 @@ function exitWithRuntimeProviders(subArgs: string[]): never {
   process.exit(code)
 }
 
+const cliVersion = readCliPackageVersion()
+
 const program = new Command()
   .name('agloom')
   .description('agloom CLI — AGP terminal client (Ink + React) or one-shot direct mode')
-  .version('0.1.0')
+  .version(cliVersion)
   .argument('[prompt]', 'one-shot prompt (enables direct mode when stdin is TTY)')
   .option('-t, --thread <id>', 'LangGraph thread id')
   .option('-s, --session <id>', 'AGP session id')

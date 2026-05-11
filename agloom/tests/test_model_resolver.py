@@ -9,6 +9,7 @@ from agloom.llm.model_resolver import (
     provider_slug_token_valid,
     split_provider_prefix,
 )
+from agloom.llm.provider_registry import cli_auto_detect_rows
 
 
 @pytest.mark.parametrize(
@@ -51,3 +52,8 @@ def test_augment_patch_skips_when_no_env(monkeypatch: pytest.MonkeyPatch) -> Non
     patch: dict = {"model": "gpt-4o-mini", "provider": "openai"}
     out = augment_patch_api_keys_from_env(patch)
     assert "api_keys" not in out or not out.get("api_keys")
+
+
+def test_cli_auto_detect_includes_nvidia() -> None:
+    slugs = [row[0] for row in cli_auto_detect_rows()]
+    assert "nvidia" in slugs

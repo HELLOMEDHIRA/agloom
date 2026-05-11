@@ -38,6 +38,16 @@ const newBridge = () => {
   return bridge
 }
 
+/** Minimal valid AGP v1 envelope (wire validation requires ``v`` + ``id``). */
+const env = (overrides: Record<string, unknown> = {}) => ({
+  v: '1',
+  session: 's1',
+  seq: 1,
+  ts: '2026-01-01T00:00:00Z',
+  id: 'evt_test_0000000000000001',
+  ...overrides,
+})
+
 const lastWritten = (): Record<string, unknown> => {
   const calls = mockWrite.mock.calls
   const last = calls[calls.length - 1]?.[0] as string | undefined
@@ -68,7 +78,11 @@ describe('AGPBridge — NDJSON parsing', () => {
 
   it('emits typed event for a valid NDJSON line', (done) => {
     const bridge = newBridge()
-    const payload = { type: 'session.opened', session: 's1', seq: 1, ts: '2026-01-01T00:00:00Z', data: { runtime_version: '0.1.0', protocol_version: '1' } }
+    const payload = {
+      ...env(),
+      type: 'session.opened',
+      data: { runtime_version: '0.1.0', protocol_version: '1' },
+    }
 
     bridge.on('event', (evt) => {
       expect(evt.type).toBe('session.opened')
@@ -80,7 +94,11 @@ describe('AGPBridge — NDJSON parsing', () => {
 
   it('sets status to "ready" on session.opened', () => {
     const bridge = newBridge()
-    const payload = { type: 'session.opened', session: 's1', seq: 1, ts: '2026-01-01T00:00:00Z', data: { runtime_version: '0.1.0', protocol_version: '1' } }
+    const payload = {
+      ...env(),
+      type: 'session.opened',
+      data: { runtime_version: '0.1.0', protocol_version: '1' },
+    }
     mockStdoutEmitter.emit('data', `${JSON.stringify(payload)  }\n`)
     expect(bridge.status).toBe('ready')
   })
@@ -99,8 +117,8 @@ describe('AGPBridge — NDJSON parsing', () => {
     const events: unknown[] = []
     bridge.on('event', (e) => events.push(e))
 
-    const line1 = JSON.stringify({ type: 'message.user', session: 's1', seq: 1, ts: '2026-01-01T00:00:00Z', data: { content: 'hi' } })
-    const line2 = JSON.stringify({ type: 'pattern.classified', session: 's1', seq: 2, ts: '2026-01-01T00:00:00Z', data: { pattern: 'REACT' } })
+    const line1 = JSON.stringify({ ...env({ seq: 1, id: 'evt_1' }), type: 'message.user', data: { content: 'hi' } })
+    const line2 = JSON.stringify({ ...env({ seq: 2, id: 'evt_2' }), type: 'pattern.classified', data: { pattern: 'REACT' } })
 
     // Both lines arrive in a single data chunk
     mockStdoutEmitter.emit('data', `${line1  }\n${  line2  }\n`)
@@ -112,7 +130,7 @@ describe('AGPBridge — NDJSON parsing', () => {
     const events: unknown[] = []
     bridge.on('event', (e) => events.push(e))
 
-    const full = JSON.stringify({ type: 'message.user', session: 's1', seq: 1, ts: '2026-01-01T00:00:00Z', data: { content: 'hi' } })
+    const full = JSON.stringify({ ...env(), type: 'message.user', data: { content: 'hi' } })
     const half = Math.floor(full.length / 2)
 
     // First chunk ends mid-line — no event yet
@@ -150,11 +168,11 @@ describe('AGPBridge — command dispatch', () => {
 
   it('hitlRespond() sends command.hitl.respond', () => {
     const bridge = newBridge()
-    bridge.hitlRespond('req-1', 'approve', 'looks good')
+    bridge.hitlRespond('req-1', 'accept', 'looks good')
     const cmd = lastWritten()
     expect(cmd['type']).toBe('command.hitl.respond')
     expect((cmd['data'] as Record<string, unknown>)['request_id']).toBe('req-1')
-    expect((cmd['data'] as Record<string, unknown>)['decision']).toBe('approve')
+    expect((cmd['data'] as Record<string, unknown>)['decision']).toBe('accept')
   })
 
   it('feedback() sends command.feedback', () => {

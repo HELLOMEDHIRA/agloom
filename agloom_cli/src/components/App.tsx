@@ -1,7 +1,6 @@
 /** Root Ink layout: AGP-driven state via `useSessionStore.dispatch`; completed turns use `<Static>`. */
 
 import React, { useMemo, useState } from 'react'
-import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { Box, Text, Static, useApp, useInput, useWindowSize } from 'ink'
 import { Header } from './Header.js'
@@ -207,13 +206,16 @@ export const App = ({
           )
           .join('\n---\n\n')
         const target = resolve(rawPath)
-        try {
-          mkdirSync(dirname(target), { recursive: true })
-          writeFileSync(target, `# agloom transcript\n\n${md}`, 'utf8')
-          appendProtocolNote(`/save · wrote ${turns.length} turns → ${target}`)
-        } catch (e) {
-          appendProtocolNote(`/save · ${e instanceof Error ? e.message : String(e)}`)
-        }
+        void (async () => {
+          try {
+            const { mkdir, writeFile } = await import('node:fs/promises')
+            await mkdir(dirname(target), { recursive: true })
+            await writeFile(target, `# agloom transcript\n\n${md}`, 'utf8')
+            useSessionStore.getState().appendProtocolNote(`/save · wrote ${turns.length} turns → ${target}`)
+          } catch (e) {
+            useSessionStore.getState().appendProtocolNote(`/save · ${e instanceof Error ? e.message : String(e)}`)
+          }
+        })()
         break
       }
 

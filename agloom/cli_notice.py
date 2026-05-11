@@ -1,25 +1,28 @@
-"""Legacy ``agloom`` console script — compatibility shim after the CLI moved to Node.js."""
+"""Legacy ``agloom`` console script — compatibility shim after the terminal client moved to npm."""
 
 from __future__ import annotations
 
 import sys
 
 _NOTICE = """\
-The interactive terminal CLI is not installed by the Python package anymore.
+The ``agloom`` terminal program is not part of the PyPI ``agloom`` package.
+It is published separately as the **agloom-cli** npm package.
 
-Install and run the agloom CLI from ``agloom_cli/`` (Node.js ≥24.15 per ``package.json``; terminal UI uses Ink + React)::
+Install the CLI (requires a current Node.js LTS from https://nodejs.org)::
 
-    cd agloom_cli && npm install && npm run build && npm start
+    npm install -g agloom-cli
 
-Run the AGP runtime that powers every frontend::
+Then run ``agloom`` from your terminal. Docs: https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/
+
+To run only the Python AGP runtime (what the CLI and other frontends attach to)::
 
     agloom-runtime serve --transport=stdio
 
-Library usage is unchanged::
+Python library usage is unchanged::
 
     from agloom import create_agent
 
-Documentation: https://agloom.readthedocs.io
+Project home and full documentation: https://agloom.readthedocs.io
 """
 
 

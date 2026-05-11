@@ -175,6 +175,7 @@ _PROVIDER_LIST: Final[tuple[ProviderInfo, ...]] = (
         pip_extra="nvidia",
         chat_module="langchain_nvidia_ai_endpoints",
         chat_class="ChatNVIDIA",
+        auto_priority=7,
     ),
     _p(
         slug="cohere",

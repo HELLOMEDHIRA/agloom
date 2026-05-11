@@ -1,6 +1,6 @@
 [project]
 name = "agloom"
-version = "0.1.54"
+version = "0.1.56"
 description = "Production agent framework on LangChain/LangGraph: nine execution patterns, persistent memory, skills, feedback, multi-level HITL, MCP, AGP protocol, runtime bridge, and observability hooks."
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -36,7 +36,7 @@ Repository = "https://github.com/HELLOMEDHIRA/agloom"
 Issues = "https://github.com/HELLOMEDHIRA/agloom/issues"
 
 [project.scripts]
-# Compatibility: older installs expected ``agloom`` on PATH; the terminal CLI lives in ``agloom_cli/`` (npm: ``agloom-cli``).
+# Compatibility: ``agloom`` prints install guidance; the terminal client is the npm package ``agloom-cli``.
 agloom = "agloom.cli_notice:main"
 # AGP runtime bridge — UI-agnostic NDJSON event stream over stdio/ws.
 # Spec: agloom/docs/protocol/agp.md. Run as ``agloom-runtime serve --transport=stdio``.
