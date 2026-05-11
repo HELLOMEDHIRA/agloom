@@ -239,6 +239,12 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             _eprint(f"[agloom-runtime] --otel requires optional deps: pip install 'agloom[otel]' ({exc})")
             return 2
 
+    from .workspace_bootstrap import ensure_agloom_workspace, write_session_started_json
+
+    _sessions_dir, _yaml_created = ensure_agloom_workspace(Path.cwd(), args=args)
+    if _yaml_created:
+        _eprint("[agloom-runtime] wrote agloom.yaml (starter next to .agloom/) — set model/provider or use env")
+
     llm = resolve_llm_for_serve(args)
     if llm is None:
         _eprint(
@@ -246,12 +252,6 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             "or pass --model with credentials."
         )
         return 1
-
-    from .workspace_bootstrap import ensure_agloom_workspace, write_session_started_json
-
-    _sessions_dir, _yaml_created = ensure_agloom_workspace(Path.cwd())
-    if _yaml_created:
-        _eprint("[agloom-runtime] wrote agloom.yaml (starter in cwd) — set model/provider or use env")
 
     ca_kw = build_create_agent_kwargs(args)
     mem_cleanup_extra: Any = None
@@ -491,16 +491,16 @@ async def _serve_ws(args: argparse.Namespace) -> int:
             _eprint(f"[agloom-runtime] --otel requires optional deps: pip install 'agloom[otel]' ({exc})")
             return 2
 
+    from .workspace_bootstrap import ensure_agloom_workspace
+
+    _, _yaml_ws = ensure_agloom_workspace(Path.cwd(), args=args)
+    if _yaml_ws:
+        _eprint("[agloom-runtime] wrote agloom.yaml (starter next to .agloom/) — set model/provider or use env")
+
     llm = resolve_llm_for_serve(args)
     if llm is None:
         _eprint("[agloom-runtime] no provider key set, or pass --model with credentials.")
         return 1
-
-    from .workspace_bootstrap import ensure_agloom_workspace
-
-    _, _yaml_ws = ensure_agloom_workspace(Path.cwd())
-    if _yaml_ws:
-        _eprint("[agloom-runtime] wrote agloom.yaml (starter in cwd) — set model/provider or use env")
 
     ca_kw = build_create_agent_kwargs(args)
     mem_cleanup_extra: Any = None

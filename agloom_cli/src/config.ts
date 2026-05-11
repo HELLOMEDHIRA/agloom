@@ -93,12 +93,14 @@ const AgloomYamlSchema = z
 
 export type AgloomYaml = z.infer<typeof AgloomYamlSchema>
 
-/** Walk parents from `startDir` looking for `agloom.yaml`. */
+/** Walk parents from `startDir` looking for `agloom.yaml` or legacy `.agloom/agloom.yaml`. */
 export function findWalkUpAgloomYaml(startDir: string): string | null {
   let dir = resolve(startDir)
   while (true) {
-    const candidate = join(dir, 'agloom.yaml')
-    if (existsSync(candidate)) return candidate
+    const rootYaml = join(dir, 'agloom.yaml')
+    if (existsSync(rootYaml)) return rootYaml
+    const nestedYaml = join(dir, '.agloom', 'agloom.yaml')
+    if (existsSync(nestedYaml)) return nestedYaml
     const parent = dirname(dir)
     if (parent === dir) break
     dir = parent

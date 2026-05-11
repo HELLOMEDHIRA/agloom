@@ -1,14 +1,19 @@
-"""Ensure project-local ``agloom.yaml`` and ``.agloom/sessions/*.json`` session records.
+"""Ensure project-local ``agloom.yaml``, legacy ``.agloom/agloom.yaml``, and Rich-era dirs.
 
-Stdio and WebSocket runtimes call this so a fresh checkout gets a starter config and each AGP
-session leaves a small JSON marker under ``.agloom/sessions/``. If the process cwd is inside
-``…/project/.agloom`` (common when a launcher cds into the state dir), paths anchor at *project*
-so ``agloom.yaml`` and ``.agloom/sessions/`` match a normal tree next to the project root."""
+Stdio and WebSocket runtimes call this so a fresh checkout gets:
+
+- ``<project>/agloom.yaml`` — primary config (Node CLI walk-up discovery).
+- ``<project>/.agloom/agloom.yaml`` — same starter template when missing (pre-migration Rich CLI).
+- ``<project>/.agloom/{rules,skills,sessions}/`` — empty dirs for project rules, mirrored skills, session JSON.
+
+If the process cwd is inside ``…/project/.agloom``, paths anchor at *project* so layout matches
+that project root."""
 
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -41,22 +46,76 @@ def _project_and_dot_agloom(cwd: Path) -> tuple[Path, Path]:
     return start, start / ".agloom"
 
 
-def ensure_agloom_workspace(cwd: Path | None = None) -> tuple[Path, bool]:
-    """Create ``agloom.yaml`` when missing; ensure ``.agloom/sessions/`` exists.
+def path_hints_from_runtime_args(args: Any) -> tuple[str | None, ...]:
+    """Paths that often sit under ``<project>/.agloom/`` — used to find *project* when ``cwd`` mismatches."""
+    hints: list[str | None] = []
+    hints.append(getattr(args, "agent_store_path", None) or ".agloom/graph_store.sqlite")
+    if getattr(args, "store", None) == "sqlite":
+        sp = getattr(args, "store_path", None)
+        if sp:
+            hints.append(sp)
+    mp = getattr(args, "memory_path", None)
+    if mp:
+        hints.append(mp)
+    elif str(getattr(args, "memory_type", "") or "").strip().lower() == "sqlite":
+        hints.append(".agloom/session_memory.sqlite")
+    return tuple(hints)
+
+
+def _roots_from_dot_agloom_path_hints(cwd: Path, hints: Sequence[str | None]) -> tuple[Path, Path] | None:
+    """If any hint resolves under a ``…/.agloom/…`` path, return ``(project_root, that .agloom dir)``."""
+    start = cwd.resolve()
+    for raw in hints:
+        if not raw:
+            continue
+        p = Path(raw).expanduser()
+        if not p.is_absolute():
+            p = (start / p).resolve()
+        else:
+            p = p.resolve()
+        cur = p
+        while True:
+            if cur.name == ".agloom":
+                return cur.parent, cur
+            parent = cur.parent
+            if parent == cur:
+                break
+            cur = parent
+    return None
+
+
+def resolve_workspace_roots(start: Path, args: Any | None) -> tuple[Path, Path]:
+    """``(project_root, dot_agloom_dir)`` for layout files — prefers hints from *args* when cwd is wrong."""
+    root = start.resolve()
+    if args is not None:
+        hit = _roots_from_dot_agloom_path_hints(root, path_hints_from_runtime_args(args))
+        if hit is not None:
+            return hit
+    return _project_and_dot_agloom(root)
+
+
+def ensure_agloom_workspace(cwd: Path | None = None, *, args: Any | None = None) -> tuple[Path, bool]:
+    """Scaffold ``.agloom/`` dirs and starter YAML when missing.
+
+    When *args* is the runtime ``serve`` namespace, paths like ``--agent-store-path`` are used to
+    locate ``<project>/.agloom`` even if the process ``cwd`` is not the project root (so starter
+    files land next to the same tree that holds ``graph_store.sqlite``).
 
     Returns:
-        ``(sessions_dir_path, created_yaml)`` — ``created_yaml`` is True only when a new file was written.
+        ``(sessions_dir_path, created_yaml)`` — ``created_yaml`` is True if any starter YAML was written.
     """
     start = (cwd or Path.cwd()).resolve()
-    project_root, agloom_root = _project_and_dot_agloom(start)
+    project_root, agloom_root = resolve_workspace_roots(start, args)
+    agloom_root.mkdir(parents=True, exist_ok=True)
+    for sub in ("rules", "skills", "sessions"):
+        (agloom_root / sub).mkdir(parents=True, exist_ok=True)
     sessions_dir = agloom_root / "sessions"
-    sessions_dir.mkdir(parents=True, exist_ok=True)
 
-    yaml_path = project_root / "agloom.yaml"
     created = False
-    if not yaml_path.is_file():
-        yaml_path.write_text(DEFAULT_AGLOOM_YAML, encoding="utf-8")
-        created = True
+    for yaml_path in (project_root / "agloom.yaml", agloom_root / "agloom.yaml"):
+        if not yaml_path.is_file():
+            yaml_path.write_text(DEFAULT_AGLOOM_YAML, encoding="utf-8")
+            created = True
 
     return sessions_dir, created
 
