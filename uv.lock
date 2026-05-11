@@ -12,7 +12,7 @@ overrides = [
 
 [[package]]
 name = "agloom"
-version = "0.1.55"
+version = "0.1.56"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -22,6 +22,7 @@ dependencies = [
     { name = "langgraph" },
     { name = "langgraph-checkpoint-sqlite" },
     { name = "pyyaml" },
+    { name = "qdrant-client" },
     { name = "sse-starlette" },
     { name = "tiktoken" },
     { name = "tomli" },
@@ -80,7 +81,6 @@ litellm = [
 ]
 memory = [
     { name = "langchain-huggingface" },
-    { name = "qdrant-client" },
     { name = "sentence-transformers" },
 ]
 mistralai = [
@@ -197,7 +197,7 @@ requires-dist = [
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'otel'", specifier = ">=1.27.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.27.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "qdrant-client", marker = "extra == 'memory'", specifier = ">=1.17.1" },
+    { name = "qdrant-client", specifier = ">=1.17.1" },
     { name = "sentence-transformers", marker = "extra == 'memory'", specifier = ">=5.4.1" },
     { name = "sse-starlette", specifier = ">=2.4.0" },
     { name = "tiktoken", specifier = ">=0.12.0" },

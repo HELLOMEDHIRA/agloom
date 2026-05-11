@@ -2,9 +2,16 @@
 
 Use ``create_cache`` to build the dict passed as ``query_cache`` to ``create_agent``.
 ``cache_get`` / ``cache_set`` are invoked from ``run_fresh`` after classification.
+
+``create_agent`` defaults ``query_cache=None`` to :func:`default_query_cache` (in-memory Qdrant +
+:class:`HashEmbeddings`, no ML downloads). Pass ``query_cache=False`` to disable caching entirely.
 """
 
+from __future__ import annotations
+
 import asyncio
+import hashlib
+import math
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -38,6 +45,42 @@ CACHE_TTL: dict[str, int] = {
 }
 
 COLLECTION_NAME = "query_cache"
+
+
+class HashEmbeddings(Embeddings):
+    """Deterministic pseudo-embeddings (SHA-256 expansion) for the default cache.
+
+    Same UTF-8 string always maps to the same unit vector so repeated identical queries can hit
+    the semantic cache without installing ``sentence-transformers``. Near-duplicates do not match
+    unless they share the same bytes.
+    """
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._vector(t) for t in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._vector(text)
+
+    @staticmethod
+    def _vector(text: str, dim: int = 384) -> list[float]:
+        raw: list[float] = []
+        buf = hashlib.sha256(text.encode("utf-8", errors="surrogateescape")).digest()
+        i = 0
+        while len(raw) < dim:
+            buf = hashlib.sha256(buf + str(i).encode()).digest()
+            i += 1
+            for b in buf:
+                if len(raw) >= dim:
+                    break
+                raw.append((b / 127.5) - 1.0)
+        vec = raw[:dim]
+        norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+        return [x / norm for x in vec]
+
+
+def default_query_cache() -> dict:
+    """In-memory Qdrant + :class:`HashEmbeddings` (no optional ML stack)."""
+    return create_cache(HashEmbeddings(), similarity_threshold=0.999)
 
 
 def create_cache(

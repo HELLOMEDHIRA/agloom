@@ -124,6 +124,24 @@ def _prepare_agent_store_sqlite_path(raw: str) -> Path:
     return db_path
 
 
+def _agent_lt_boot_suffix(args: argparse.Namespace) -> str:
+    """Clarify LT store + harness for stderr boot lines (only used when an LT store is open)."""
+    kind = getattr(args, "agent_store", "sqlite")
+    parts = [
+        "skills + LT memory",
+        "harness optional (on by default when an LT store is enabled; use --no-harness to disable)",
+    ]
+    raw_path = getattr(args, "agent_store_path", ".agloom/graph_store.sqlite")
+    path_disp = str(Path(raw_path).expanduser())
+    if kind == "memory":
+        parts.append("LT backend=InMemoryStore")
+    elif kind == "sqlite-sync":
+        parts.append(f"LT backend=SqliteStore (blocking) at {path_disp!r}")
+    else:
+        parts.append(f"LT backend=AsyncSqliteStore (aiosqlite) at {path_disp!r}")
+    return "; ".join(parts)
+
+
 async def _open_runtime_langgraph_store(
     args: argparse.Namespace,
 ) -> tuple[Any | None, Callable[[], Awaitable[None]]]:
@@ -266,7 +284,7 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         _eprint(
             f"[agloom-runtime] agent LT store={getattr(args, 'agent_store', 'sqlite')!r} "
             f"harness={'on' if use_harness else 'off'} "
-            "(skills + LT memory tools + optional harness; sqlite=async aiosqlite)"
+            f"({_agent_lt_boot_suffix(args)})"
         )
 
     agent: Any
@@ -491,7 +509,7 @@ async def _serve_ws(args: argparse.Namespace) -> int:
         _eprint(
             f"[agloom-runtime] agent LT store={getattr(args, 'agent_store', 'sqlite')!r} "
             f"harness={'on' if use_harness else 'off'} "
-            "(skills + LT memory tools + optional harness; sqlite=async aiosqlite)"
+            f"({_agent_lt_boot_suffix(args)})"
         )
     try:
         _ws_al_set, _ws_al_path = _hitl_allowlist_runtime_setup(args)

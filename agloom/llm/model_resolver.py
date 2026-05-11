@@ -545,6 +545,10 @@ def try_resolve_llm_from_api_keys(*, interactive: bool | None = None, **llm_kwar
     - If several are usable and stdin/stdout are TTYs, prompt for a choice (override with ``AGLOOM_PROVIDER``).
     - If several are usable but not interactive, use the first row in registry auto-detect priority order.
 
+    The registry ``default_model`` may be a bare id (including ``org/model`` paths). The chosen
+    provider slug is always passed as ``provider=`` to :func:`get_model` so slash ids are not
+    mistaken for ambiguous multi-backend routes.
+
     Skips providers whose optional packages are not installed.
 
     Auto-detect rows come from :func:`agloom.llm.provider_registry.cli_auto_detect_rows`
@@ -583,17 +587,19 @@ def try_resolve_llm_from_api_keys(*, interactive: bool | None = None, **llm_kwar
             )
         return None
 
-    pref = (os.environ.get("AGLOOM_PROVIDER") or "").strip().lower()
-    if pref:
+    pref_raw = (os.environ.get("AGLOOM_PROVIDER") or "").strip()
+    if pref_raw:
+        pref_canon = normalize_provider_slug(pref_raw)
         for slug, _label, default_model in usable:
-            if slug == pref:
-                return get_model(default_model, **llm_kwargs)
+            if slug == pref_canon:
+                return get_model(default_model, provider=slug, **llm_kwargs)
 
     if interactive is None:
         interactive = sys.stdin.isatty() and sys.stdout.isatty()
 
     if len(usable) == 1:
-        return get_model(usable[0][2], **llm_kwargs)
+        slug, _label, default_model = usable[0]
+        return get_model(default_model, provider=slug, **llm_kwargs)
 
     if interactive and len(usable) > 1:
         slug_hint = ", ".join(s for s, _, __ in usable)
@@ -615,9 +621,11 @@ def try_resolve_llm_from_api_keys(*, interactive: bool | None = None, **llm_kwar
                 idx = choice - 1
                 break
             sys.stderr.write(f"Enter a number from 1 to {len(usable)}.\n")
-        return get_model(usable[idx][2], **llm_kwargs)
+        slug, _label, default_model = usable[idx]
+        return get_model(default_model, provider=slug, **llm_kwargs)
 
-    return get_model(usable[0][2], **llm_kwargs)
+    slug, _label, default_model = usable[0]
+    return get_model(default_model, provider=slug, **llm_kwargs)
 
 
 def describe_llm(llm: Any) -> tuple[str, str]:

@@ -2249,6 +2249,9 @@ async def create_agent(
     ``store``: LT memory tools, skill registry, feedback (when enabled).
     ``frozen`` and ``frozen_template``: one-time classification; dict ``query`` must match ``input_key``.
     ``harness`` with ``store``: adds progress/git tools; ignored without ``store``.
+    ``query_cache``: ``None`` (default) enables an in-memory semantic cache (see
+    :func:`agloom.cache.default_query_cache`). Pass ``False`` to disable caching entirely, or pass
+    the dict returned by :func:`agloom.cache.create_cache` for custom embeddings / Qdrant.
     ``checkpointer``: enables ``get_state``, ``get_history``, ``resume``.
     ``mcp_servers``: lazy MCP connect on first ``ainvoke``.
     ``react_force_tool_choice_on_user_turn``: when True (default), ReAct uses LangChain
@@ -2290,6 +2293,19 @@ async def create_agent(
             if token not in ibi_merged:
                 ibi_merged.append(token)
 
+    resolved_query_cache: Any = query_cache
+    if resolved_query_cache is None:
+        try:
+            from .cache import default_query_cache as _default_query_cache
+
+            resolved_query_cache = _default_query_cache()
+        except Exception as exc:
+            logger.warning(
+                f"Default semantic query cache unavailable ({exc!r}); continuing without cache. "
+                "Pass query_cache=False to disable this message, or pass create_cache(...) explicitly."
+            )
+            resolved_query_cache = None
+
     AgentConfig(
         model=model,
         name=name or "UnifiedAgent",
@@ -2303,7 +2319,7 @@ async def create_agent(
         store=store,
         memory=memory,
         enable_memory_tools=enable_memory_tools,
-        query_cache=query_cache,
+        query_cache=resolved_query_cache,
         interrupt_before=interrupt_before or [],
         interrupt_after=interrupt_after or [],
         interrupt_before_tools=ibi_merged,
@@ -2464,7 +2480,7 @@ async def create_agent(
         "user_id": user_id or "default_user",
         "memory": resolved_memory,
         "store": resolved_store,
-        "query_cache": query_cache,
+        "query_cache": resolved_query_cache,
         "registry": dict(_HANDLERS),
         "max_concurrent": max_concurrent,
         "max_retries": max_retries,
@@ -2628,7 +2644,7 @@ async def create_agent(
         f"tools={[t.name for t in resolved_tools]} "
         f"memory={'yes' if resolved_memory else 'no'} "
         f"store={'yes' if resolved_store else 'no'} "
-        f"cache={'yes' if query_cache else 'no'} "
+        f"cache={'yes' if resolved_query_cache else 'no'} "
         f"feedback={'yes' if config['_feedback'] else 'no'}"
     )
 

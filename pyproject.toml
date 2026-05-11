@@ -16,6 +16,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "qdrant-client>=1.17.1",
     "langchain>=1.2.17",
     "langchain-mcp-adapters>=0.2.2",
     "langgraph>=1.1.10",
@@ -76,7 +77,6 @@ xai = ["langchain-xai>=1.2.2"]
 ws = ["websockets>=12.0"]
 readability = ["trafilatura>=2.0.0"]
 memory = [
-    "qdrant-client>=1.17.1",
     "sentence-transformers>=5.4.1",
     "langchain-huggingface>=1.2.2",
 ]
