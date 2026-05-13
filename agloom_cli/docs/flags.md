@@ -47,11 +47,9 @@ agloom --help
 
 | Flag                      | Meaning                                    |
 | ------------------------- | ------------------------------------------ |
-| `--no-memory`             | Minimal session memory.                    |
-| `--memory <type>`         | `in-memory`, `none`, `sqlite`, …           |
+| `--memory <type>`         | `in-memory`, `none`, `sqlite`, … |
 | `--memory-path <path>`    | SQLite path for session memory.            |
-| `--no-skills`             | Disable skills disk mirror.                |
-| `--skills-dir <path>`     | Skills directory.                          |
+| `--skills-dir <path>`     | Skills directory.                           |
 | `--summarizer-model <id>` | Model id for summarization.                |
 | `--no-auto-summarize`     | Disable auto summarization.                |
 | `--session-max-turns <n>` | Rolling window size (`--max-turns` alias). |
@@ -121,7 +119,7 @@ Forward native runtime flags not wrapped by Commander:
 
 ```bash
 agloom --session dev -- --obs --obs-port 8766
-agloom -- --agent-store none --no-harness
+agloom -- --agent-store none
 ```
 
 See [Runtime CLI](../agloom/runtime/cli.md) for the Python flag reference.

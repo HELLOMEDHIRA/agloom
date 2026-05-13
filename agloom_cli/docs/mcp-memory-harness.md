@@ -31,7 +31,6 @@ Runtime flags (`serve`):
 | ---------------------- | ------------------------------------------------ |
 | `--memory <type>`      | Backend hint (`sqlite`, `in-memory`, `none`, …). |
 | `--memory-path <path>` | SQLite file when using sqlite session memory.    |
-| `--no-memory`          | Minimal in-process memory.                       |
 | `--session-max-turns`  | Rolling window size.                             |
 | `--summarizer-model`   | Separate model id for summarization.             |
 | `--no-auto-summarize`  | Disable rolling summarization.                   |
@@ -46,7 +45,6 @@ Separate from AGP EventStore:
 | --------------------------- | ------------------------------------------------------------------------------------- |
 | `--agent-store <type>`      | Long-lived agent store (skills, LT memory tools). Default sqlite async. |
 | `--agent-store-path <path>` | SQLite path (default `.agloom/graph_store.sqlite`).                                   |
-| `--no-harness`              | Disable harness tools (progress + git) while keeping store-backed features available. |
 
 ### What is the harness?
 
@@ -67,7 +65,7 @@ The harness solves the "agent forgetfulness" problem for anything longer than a 
 
 ### How it is enabled (default: ON)
 
-The harness is **enabled automatically** whenever a LangGraph store is available. The runtime opens a default SQLite store at `.agloom/graph_store.sqlite`, so harness activates automatically unless you explicitly pass `--no-harness`.
+The harness is **enabled automatically** whenever a LangGraph store is available. The runtime opens a default SQLite store at `.agloom/graph_store.sqlite`, so harness activates automatically. Harness cannot be disabled — it is required for accuracy and efficiency on long-running tasks.
 
 To confirm: when you run `agloom`, the boot logs will say:
 ```
@@ -114,17 +112,9 @@ The harness injects **11 tools** that form a structured workflow:
 - **Disk mirror:** the agent can write `agloom-progress.json` for human inspection alongside LTS
 - **Git:** checkpoints create annotated tags (not branches) so they don't interfere with normal git workflow
 
-### Disabling
+### Notes
 
-```bash
-agloom --no-harness    # disable harness tools (store-backed features still available)
-```
-
-Or in `agloom.yaml`:
-```yaml
-harness:
-  enabled: false
-```
+Harness is always enabled — it ensures accuracy across long-running, multi-turn tasks and requires no configuration.
 
 ## SQLite defaults
 
