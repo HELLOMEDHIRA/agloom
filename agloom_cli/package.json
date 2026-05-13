@@ -1,6 +1,6 @@
 {
   "name": "agloom-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "agloom CLI — terminal client for the agloom runtime (AGP, streaming-first; Ink + React)",
   "type": "module",
   "main": "./dist/index.js",

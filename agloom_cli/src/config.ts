@@ -4,7 +4,7 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import type { Command } from 'commander'
 import YAML from 'yaml'
 import { z } from 'zod'
@@ -210,6 +210,28 @@ export const findWalkUpAgloomYaml =(startDir: string): string | null => {
   return null
 }
 
+/**
+ * Project root for workspace files (``.agloom/``, ``.agsuperbrain/``) — matches Python
+ * :func:`resolve_workspace_roots` when no store-path hints apply: walk-up from *cwd* for
+ * ``agloom.yaml`` / ``.agloom/agloom.yaml``, else *cwd*. ``--config`` may point at project-root
+ * ``agloom.yaml`` or nested ``.agloom/agloom.yaml``.
+ */
+export const resolveAgloomProjectRoot = (cwd: string, explicitConfigPath?: string): string => {
+  const p = explicitConfigPath?.trim()
+  if (p) {
+    const resolved = resolve(p)
+    const parentDir = dirname(resolved)
+    if (basename(parentDir) === '.agloom' && basename(resolved) === 'agloom.yaml') {
+      return dirname(parentDir)
+    }
+    return parentDir
+  }
+  const y = findWalkUpAgloomYaml(cwd)
+  if (!y) return resolve(cwd)
+  const dir = dirname(y)
+  return basename(dir) === '.agloom' ? dirname(dir) : dir
+}
+
 export const userGlobalAgloomPath = (): string => {
   return join(homedir(), '.agloom', 'agloom.yaml')
 }
@@ -265,11 +287,22 @@ export const mcpSpecsFromYaml = (
   const out: string[] = []
   for (const entry of mcp) {
     if (typeof entry === 'string') {
-      out.push(entry)
-    } else {
-      const cfg = resolve(base, entry.config)
-      out.push(`${entry.name}:${cfg}`)
+      const colon = entry.indexOf(':')
+      if (colon <= 0) {
+        out.push(entry)
+        continue
+      }
+      const name = entry.slice(0, colon).trim()
+      const pathPart = entry.slice(colon + 1).trim()
+      if (!pathPart || isAbsolute(pathPart)) {
+        out.push(entry)
+        continue
+      }
+      out.push(`${name}:${resolve(base, pathPart)}`)
+      continue
     }
+    const cfg = resolve(base, entry.config)
+    out.push(`${entry.name}:${cfg}`)
   }
   return out
 }

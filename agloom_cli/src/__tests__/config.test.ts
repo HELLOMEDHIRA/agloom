@@ -1,8 +1,8 @@
 import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
-import { findWalkUpAgloomYaml, parseAgloomYamlFile } from '../config.js'
+import { findWalkUpAgloomYaml, mcpSpecsFromYaml, parseAgloomYamlFile, resolveAgloomProjectRoot } from '../config.js'
 
 const writeYaml=(content: string): string => {
   const dir = mkdtempSync(join(tmpdir(), 'agloom-yaml-'))
@@ -33,6 +33,48 @@ describe('findWalkUpAgloomYaml', () => {
     const root = join(dir, 'agloom.yaml')
     writeFileSync(root, 'model: root\n', 'utf8')
     expect(findWalkUpAgloomYaml(dir)).toBe(root)
+    rmSync(dir, { recursive: true })
+  })
+})
+
+describe('resolveAgloomProjectRoot', () => {
+  it('treats --config pointing at .agloom/agloom.yaml as project root parent', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agloom-cfgnested-'))
+    const nested = join(dir, '.agloom', 'agloom.yaml')
+    mkdirSync(dirname(nested), { recursive: true })
+    writeFileSync(nested, 'model: z\n', 'utf8')
+    expect(resolveAgloomProjectRoot(join(dir, 'src'), nested)).toBe(dir)
+    rmSync(dir, { recursive: true })
+  })
+
+  it('returns parent of project when cwd is a subdir and yaml is at root', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agloom-root-'))
+    writeFileSync(join(dir, 'agloom.yaml'), 'model: r\n', 'utf8')
+    const sub = join(dir, 'pkg', 'src')
+    mkdirSync(sub, { recursive: true })
+    expect(resolveAgloomProjectRoot(sub)).toBe(dir)
+    rmSync(dir, { recursive: true })
+  })
+
+  it('uses dirname(legacy nested yaml) parent as project root', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agloom-nestedroot-'))
+    const dot = join(dir, '.agloom')
+    mkdirSync(dot, { recursive: true })
+    writeFileSync(join(dot, 'agloom.yaml'), 'model: n\n', 'utf8')
+    const sub = join(dir, 'deep')
+    mkdirSync(sub, { recursive: true })
+    expect(resolveAgloomProjectRoot(sub)).toBe(dir)
+    rmSync(dir, { recursive: true })
+  })
+})
+
+describe('mcpSpecsFromYaml', () => {
+  it('resolves relative name:path against the YAML file directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agloom-mcp-'))
+    const yamlPath = join(dir, '.agloom', 'agloom.yaml')
+    mkdirSync(dirname(yamlPath), { recursive: true })
+    const want = resolve(dirname(yamlPath), 'mcp', 'agsuperbrain.yaml')
+    expect(mcpSpecsFromYaml(['agsuperbrain:mcp/agsuperbrain.yaml'], yamlPath)).toEqual([`agsuperbrain:${want}`])
     rmSync(dir, { recursive: true })
   })
 })

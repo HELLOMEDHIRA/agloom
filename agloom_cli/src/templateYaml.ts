@@ -1,4 +1,4 @@
-/** Optional ``agloom init --template`` starter bodies (root ``agloom.yaml`` only). */
+/** Optional ``agloom init --template`` starter bodies (written to ``.agloom/agloom.yaml``). */
 
 export const TEMPLATE_PYTHON_YAML = `# Agloom — Python project (from \`agloom init --template python\`)
 ai:
@@ -9,7 +9,8 @@ ai:
     Use tools to read and edit files; run tests after substantive changes.
 
 mcp:
-  servers: []
+  servers:
+    - agsuperbrain:mcp/agsuperbrain.yaml
 
 tools:
   dir: ''
@@ -49,7 +50,8 @@ ai:
     Use tools to read and edit files; run \`npm test\` or \`pnpm test\` after substantive changes.
 
 mcp:
-  servers: []
+  servers:
+    - agsuperbrain:mcp/agsuperbrain.yaml
 
 tools:
   dir: ''

@@ -1,10 +1,19 @@
-/** Canonical starter ``agloom.yaml`` for the Node CLI only.
+/** Canonical starter ``agloom.yaml`` body (written to ``.agloom/agloom.yaml`` by the CLI).
  * Runtime does not write project files — see ``workspaceBootstrap.ts``.
+ *
+ * Merge is **shallow** per layer: if you add a top-level ``ai:`` block, it replaces the entire prior
+ * ``ai`` map from earlier layers — include ``system_prompt`` there if you nest under ``ai``.
+ * Top-level ``model`` / ``system_prompt`` are safe small overrides.
  */
 
 export const DEFAULT_AGLOOM_YAML = `# Agloom — https://github.com/HELLOMEDHIRA/agloom
-# CLI merges this file (walk-up discovery; override with \`agloom --config <path>\`).
-# Nested blocks (\`ai\`, \`memory\`, …) are flattened by agloom_cli — see agloom_cli/src/config.ts.
+# CLI merges layers (see agloom_cli/docs/config.md): ~/.agloom → walk-up → --config → flags.
+#
+# Defaults you usually edit (restart reloads YAML; no code path overwrites your file):
+#   • model / ai.model          — provider:id (e.g. groq:meta-llama/llama-3.3-70b-versatile)
+#   • ai.system_prompt          — default persona (or top-level system_prompt: | …)
+#   • mcp.servers               — agsuperbrain points at .agloom/mcp/agsuperbrain.yaml (stdio MCP)
+#   • .agloom/rules/            — drop *.md / *.mdc rule files; optional rules.dir if you relocate
 
 ai:
   name: agloom
@@ -59,10 +68,7 @@ ai:
 
 mcp:
   servers:
-    - name: agsuperbrain
-      transport: stdio
-      command: agsuperbrain
-      args: ["mcp-serve"]
+    - agsuperbrain:mcp/agsuperbrain.yaml
 
 tools:
   dir: ''

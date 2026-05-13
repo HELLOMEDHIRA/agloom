@@ -18,6 +18,8 @@ export interface DirectOpts {
   autoApprove: boolean
   autoReject: boolean
   hitlTty: boolean
+  /** Walk-up / ``--config`` — passed to workspace bootstrap so ``.agsuperbrain`` matches the runtime. */
+  configPath?: string
 }
 
 const waitForEvent = (
@@ -57,6 +59,8 @@ export const runDirect = async(options: {
   runtimeArgs: string[]
 }): Promise<void> => {
   const { bridge, prompt, opts, runtimeArgs } = options
+
+  await ensureAgloomCliWorkspace(process.cwd(), { configPath: opts.configPath })
 
   await writeBannerToStderr({
     quiet: opts.quiet,
@@ -182,8 +186,6 @@ export const runDirect = async(options: {
     bridge,
     (e) => e.type === 'session.opened' || e.type === 'runtime.ready',
   )
-
-  await ensureAgloomCliWorkspace(process.cwd())
 
   bridge.start(runtimeArgs, { transport: 'stdio' })
 

@@ -58,6 +58,8 @@ type CliOpts = {
   autoApprove: boolean
   autoReject: boolean
   hitlTty: boolean
+  /** From ``--config`` (Commander); preferred over legacy ``configPath`` if both set. */
+  config?: string
   configPath?: string
   printConfig: boolean
   listProviders: boolean
@@ -292,6 +294,7 @@ const rawOpts = program.opts<CliOpts>()
 const positionalPrompt = program.args[0] as string | undefined
 
 const cwd = process.cwd()
+const explicitAgloomYamlPath = rawOpts.config ?? rawOpts.configPath
 
 if (rawOpts.listProviders) {
   exitWithRuntimeProviders(['list'])
@@ -303,14 +306,14 @@ if (rawOpts.resolveModel !== undefined && rawOpts.resolveModel !== '') {
 
 if (rawOpts.printConfig) {
   process.stdout.write(
-    `${JSON.stringify(buildResolvedConfigSnapshot(program, rawOpts, cwd, rawOpts.configPath), null, 2)}\n`,
+    `${JSON.stringify(buildResolvedConfigSnapshot(program, rawOpts, cwd, explicitAgloomYamlPath), null, 2)}\n`,
   )
   process.exit(0)
 }
 
 const opts: CliOpts = {
   ...rawOpts,
-  ...applyAgloomConfigLayers(program, rawOpts, cwd, rawOpts.configPath),
+  ...applyAgloomConfigLayers(program, rawOpts, cwd, explicitAgloomYamlPath),
 }
 
 const themeRaw = (rawOpts.theme ?? 'dark').toLowerCase()
@@ -393,6 +396,7 @@ if (directExec) {
       autoReject: opts.autoReject,
       hitlTty: opts.hitlTty,
       attachments,
+      configPath: opts.config ?? opts.configPath,
     },
     runtimeArgs,
   })
@@ -400,7 +404,7 @@ if (directExec) {
 }
 
 try {
-  await ensureAgloomCliWorkspace(cwd)
+  await ensureAgloomCliWorkspace(cwd, { configPath: explicitAgloomYamlPath })
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err)
   process.stderr.write(`[agloom] workspace bootstrap failed: ${msg}\n`)

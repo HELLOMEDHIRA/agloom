@@ -4,51 +4,43 @@
 
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
+import { resolveAgloomProjectRoot } from './config.js'
+import { AGSUPERBRAIN_MCP_CONFIG_YAML } from './agsuperbrainMcpConfig.js'
 import { DEFAULT_AGLOOM_YAML } from './defaultAgloomTemplate.js'
 import { TEMPLATE_NODE_YAML, TEMPLATE_PYTHON_YAML } from './templateYaml.js'
 
 export interface EnsureCliWorkspaceResult {
-  /** True if starter ``./agloom.yaml`` was written (never duplicates ``.agloom/agloom.yaml``). */
+  /** True if starter ``.agloom/agloom.yaml`` was written. */
   wroteYaml: boolean
 }
 
 export type InitTemplate = 'python' | 'node'
 
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+const RULES_README = `Add rule files here (*.md, *.mdc). Set rules.dir in agloom.yaml to use another folder.
+`
 
-const padToWidth = (s: string, width: number): string => {
-  if (s.length >= width) return s.slice(0, width)
-  return s + ' '.repeat(width - s.length)
-}
+const HEARTBEAT_MS = 4000
+
 
 /**
- * Run ``agsuperbrain init`` with a short explanation and a single-line stderr spinner
- * (child stdio is inherited so installer / graph output stays visible).
+ * Run ``agsuperbrain init`` with a clear explanation, periodic stderr heartbeats (Windows-safe —
+ * no ``\\r`` spinner), and inherited stdio so ``agsuperbrain`` logs stay visible.
  */
 const runAgsuperbrainInitWithLoader = (cwd: string): Promise<void> => {
   process.stderr.write(
     '[agloom] Initializing Super-Brain — running `agsuperbrain init`. First run can take 1–2 minutes (downloads / graph build).\n',
   )
-  let frame = 0
-  const spinnerLine = (): string => {
-    const ch = SPINNER_FRAMES[frame % SPINNER_FRAMES.length]!
-    frame++
-    return `[agloom] ${ch} agsuperbrain init in progress…`
-  }
-  const tick = (): void => {
-    process.stderr.write(`\r${padToWidth(spinnerLine(), 78)}`)
-  }
-  tick()
-  const interval = setInterval(tick, 160)
+  const heartbeat = setInterval(() => {
+    process.stderr.write('[agloom] … still running `agsuperbrain init` (this is normal on first run)\n')
+  }, HEARTBEAT_MS)
 
   return new Promise((resolve) => {
     let settled = false
     const finish = (after?: () => void): void => {
       if (settled) return
       settled = true
-      clearInterval(interval)
-      process.stderr.write(`\r${padToWidth('', 78)}\r`)
+      clearInterval(heartbeat)
       after?.()
       resolve()
     }
@@ -86,35 +78,53 @@ const yamlForTemplate = (template?: string): string => {
 }
 
 /**
- * Create ``.agloom/{rules,skills,sessions}`` and, when needed, a **single** starter
- * ``agloom.yaml`` at the project root.
+ * Create ``.agloom/{rules,skills,sessions}`` and, when needed, starter ``.agloom/agloom.yaml``.
+ * Root-level ``agloom.yaml`` is still supported (legacy); walk-up prefers it over nested when both exist.
  *
- * We do **not** write ``.agloom/agloom.yaml`` here: walk-up discovery prefers the root file
- * first; a second copy was redundant and confusing. Legacy nested-only configs remain supported
- * via ``config.ts`` ``findWalkUpAgloomYaml``.
+ * Writes ``.agloom/AGLOOM_CONFIG_PATH.txt`` with the path of the active YAML file.
  */
 export const ensureAgloomCliWorkspace = async(
   cwd: string,
-  opts?: { template?: string },
+  opts?: { template?: string; configPath?: string },
 ): Promise<EnsureCliWorkspaceResult> => {
-  const dot = join(cwd, '.agloom')
+  const projectRoot = resolveAgloomProjectRoot(cwd, opts?.configPath)
+  const dot = join(projectRoot, '.agloom')
   mkdirSync(join(dot, 'rules'), { recursive: true })
   mkdirSync(join(dot, 'skills'), { recursive: true })
   mkdirSync(join(dot, 'sessions'), { recursive: true })
 
-  const rootYaml = join(cwd, 'agloom.yaml')
+  const mcpDir = join(dot, 'mcp')
+  mkdirSync(mcpDir, { recursive: true })
+  const agsMcpYaml = join(mcpDir, 'agsuperbrain.yaml')
+  if (!existsSync(agsMcpYaml)) {
+    writeFileSync(agsMcpYaml, AGSUPERBRAIN_MCP_CONFIG_YAML, 'utf8')
+  }
+  const rulesReadme = join(dot, 'rules', 'README.txt')
+  if (!existsSync(rulesReadme)) {
+    writeFileSync(rulesReadme, RULES_README, 'utf8')
+  }
+
+  const rootYaml = join(projectRoot, 'agloom.yaml')
   const nestedYaml = join(dot, 'agloom.yaml')
   let wroteYaml = false
 
   if (!existsSync(rootYaml) && !existsSync(nestedYaml)) {
-    writeFileSync(rootYaml, yamlForTemplate(opts?.template), 'utf8')
+    writeFileSync(nestedYaml, yamlForTemplate(opts?.template), 'utf8')
     wroteYaml = true
   }
 
-  // Bootstrap agsuperbrain knowledge graph if not already initialized
-  const agsuperbrainDir = join(cwd, '.agsuperbrain')
+  const activeYaml = existsSync(rootYaml)
+    ? resolve(rootYaml)
+    : existsSync(nestedYaml)
+      ? resolve(nestedYaml)
+      : resolve(nestedYaml)
+  const pointerText = `Edit project settings (active YAML for this workspace):\n${activeYaml}\n`
+  writeFileSync(join(dot, 'AGLOOM_CONFIG_PATH.txt'), pointerText, 'utf8')
+
+  // Bootstrap agsuperbrain knowledge graph if not already initialized (same root Python uses).
+  const agsuperbrainDir = join(projectRoot, '.agsuperbrain')
   if (!existsSync(agsuperbrainDir)) {
-    await runAgsuperbrainInitWithLoader(cwd)
+    await runAgsuperbrainInitWithLoader(projectRoot)
   }
 
   return { wroteYaml }

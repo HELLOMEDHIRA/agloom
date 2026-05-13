@@ -285,7 +285,7 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
     _cwd = Path.cwd()
     _sd, yaml_created = ensure_agloom_workspace(_cwd, args=args)
     if yaml_created:
-        _eprint("[agloom-runtime] wrote starter ./agloom.yaml (no project config found).")
+        _eprint("[agloom-runtime] wrote starter .agloom/agloom.yaml (no project config found).")
     bootstrap_optional_agsuperbrain(_cwd, args=args)
     _marker_json = session_marker_json_path(_sd, session_id) if _sd.is_dir() else None
     _al_set, _al_leg, _al_sess = hitl_allowlist_paths_for_runtime(
@@ -663,6 +663,13 @@ async def _dispatch_command(
     if isinstance(cmd, CommandInvoke):
         resolved = await _agent_or_skip()
         if resolved is None:
+            _eprint(
+                "[agloom-runtime] command.invoke skipped — agent did not start. "
+                "Typical causes: missing provider API key (e.g. NVIDIA_API_KEY for nvidia:… models), "
+                "invalid or unresolved --model, or missing optional extras. "
+                "See stderr for earlier bootstrap errors; use an up-to-date agloom-cli so direct mode "
+                "prints AGP error.* lines on stderr."
+            )
             return
         agent = resolved
         if budget_tracker is not None and budget_tracker.is_invoke_blocked():

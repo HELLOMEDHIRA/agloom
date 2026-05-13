@@ -2,8 +2,8 @@
 
 The **npm** ``agloom`` client calls ``ensureAgloomCliWorkspace`` before spawning the runtime; when
 you start **only** ``agloom-runtime serve``, :func:`ensure_agloom_workspace` is invoked from the
-serve entry so the same starter ``agloom.yaml`` and ``.agloom/{rules,skills,sessions}`` appear when
-missing. Session markers use :func:`write_session_started_json`. ``DEFAULT_AGLOOM_YAML`` matches
+serve entry so the same starter ``.agloom/agloom.yaml`` (and optional legacy root ``agloom.yaml``) and
+``.agloom/{rules,skills,sessions}`` appear when missing. Session markers use :func:`write_session_started_json`. ``DEFAULT_AGLOOM_YAML`` matches
 the CLI default template (``agloom_cli`` ``defaultAgloomTemplate`` / ``config``) for parity.
 """
 
@@ -12,14 +12,34 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
+import threading
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+_DEFAULT_RULES_README = """Add rule files here (*.md, *.mdc). Set rules.dir in agloom.yaml to use another folder.
+"""
+
+_AGSUPERBRAIN_MCP_YAML = """name: agsuperbrain
+transport: stdio
+command: agsuperbrain
+args:
+  - mcp-serve
+timeout: 120.0
+"""
+
 DEFAULT_AGLOOM_YAML = """# Agloom — https://github.com/HELLOMEDHIRA/agloom
-# CLI merges this file (walk-up discovery; override with `agloom --config <path>`).
-# Nested blocks (`ai`, `memory`, …) are flattened by the CLI config loader.
+# CLI merges layers (see agloom_cli/docs/config.md): ~/.agloom → walk-up → --config → flags.
+#
+# Defaults you usually edit (restart reloads YAML):
+#   • model / ai.model — provider:id
+#   • ai.system_prompt or top-level system_prompt
+#   • mcp.servers — agsuperbrain → .agloom/mcp/agsuperbrain.yaml
+#   • .agloom/rules/ — drop *.md / *.mdc files
+#
+# Merge is shallow per layer: a whole top-level `ai:` block replaces prior `ai` from earlier files.
 
 ai:
   name: agloom
@@ -73,7 +93,8 @@ ai:
     Remember: You're collaborating with a human. They control the session, you assist.
 
 mcp:
-  servers: []
+  servers:
+    - agsuperbrain:mcp/agsuperbrain.yaml
 
 tools:
   dir: ''
@@ -187,9 +208,8 @@ def ensure_agloom_workspace(cwd: Path | None = None, *, args: Any | None = None)
     files land next to the same tree that holds ``graph_store.sqlite``).
 
     Returns:
-        ``(sessions_dir_path, created_yaml)`` — ``created_yaml`` is True if starter
-        ``agloom.yaml`` was written at *project_root* (only when neither root nor
-        legacy ``.agloom/agloom.yaml`` exists).
+        ``(sessions_dir_path, created_yaml)`` — *created_yaml* is True if starter
+        ``.agloom/agloom.yaml`` was written (only when neither root nor nested config exists).
     """
     start = (cwd or Path.cwd()).resolve()
     project_root, agloom_root = resolve_workspace_roots(start, args)
@@ -198,12 +218,28 @@ def ensure_agloom_workspace(cwd: Path | None = None, *, args: Any | None = None)
         (agloom_root / sub).mkdir(parents=True, exist_ok=True)
     sessions_dir = agloom_root / "sessions"
 
+    mcp_dir = agloom_root / "mcp"
+    mcp_dir.mkdir(parents=True, exist_ok=True)
+    ags_cfg = mcp_dir / "agsuperbrain.yaml"
+    if not ags_cfg.is_file():
+        ags_cfg.write_text(_AGSUPERBRAIN_MCP_YAML, encoding="utf-8")
+    rules_readme = agloom_root / "rules" / "README.txt"
+    if not rules_readme.is_file():
+        rules_readme.write_text(_DEFAULT_RULES_README, encoding="utf-8")
+
     created = False
     root_yaml = project_root / "agloom.yaml"
     nested_yaml = agloom_root / "agloom.yaml"
     if not root_yaml.is_file() and not nested_yaml.is_file():
-        root_yaml.write_text(DEFAULT_AGLOOM_YAML, encoding="utf-8")
+        nested_yaml.write_text(DEFAULT_AGLOOM_YAML, encoding="utf-8")
         created = True
+
+    active = root_yaml if root_yaml.is_file() else nested_yaml if nested_yaml.is_file() else nested_yaml
+    pointer = agloom_root / "AGLOOM_CONFIG_PATH.txt"
+    pointer.write_text(
+        f"Edit project settings (active YAML for this workspace):\n{active.resolve()}\n",
+        encoding="utf-8",
+    )
 
     return sessions_dir, created
 
@@ -218,23 +254,42 @@ def bootstrap_optional_agsuperbrain(cwd: Path | None = None, *, args: Any | None
     agsuperbrain_dir = project_root / ".agsuperbrain"
     if agsuperbrain_dir.exists():
         return
-    try:
-        r = subprocess.run(
-            ["agsuperbrain", "init"],
-            cwd=str(project_root),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-    except FileNotFoundError:
-        return
-    if r.returncode != 0 and r.stderr:
-        import sys
 
-        tail = r.stderr.strip()
-        if tail:
-            sys.stderr.write(f"[agloom-runtime] agsuperbrain init: {tail}\n")
+    def _ep(msg: str) -> None:
+        print(msg, file=sys.stderr, flush=True)
+
+    _ep(
+        "[agloom-runtime] Super-Brain not initialized — running `agsuperbrain init` "
+        "(first run may take 1–2 minutes). Progress from agsuperbrain follows below."
+    )
+    stop_hb = threading.Event()
+
+    def _heartbeat() -> None:
+        while not stop_hb.wait(4.0):
+            _ep("[agloom-runtime] … still running `agsuperbrain init` (normal on first run)")
+
+    hb = threading.Thread(target=_heartbeat, daemon=True)
+    hb.start()
+    r = None
+    try:
+        try:
+            r = subprocess.run(
+                ["agsuperbrain", "init"],
+                cwd=str(project_root),
+                check=False,
+            )
+        except FileNotFoundError:
+            return
+    finally:
+        stop_hb.set()
+        hb.join(timeout=0.3)
+
+    if r is None:
+        return
+    if r.returncode == 0:
+        _ep("[agloom-runtime] Super-Brain workspace ready (./.agsuperbrain)")
+    else:
+        _ep(f"[agloom-runtime] agsuperbrain init exited with code {r.returncode}")
 
 
 def _safe_session_filename(session_id: str) -> str:
