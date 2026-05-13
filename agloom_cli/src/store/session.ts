@@ -134,7 +134,6 @@ export interface SessionStore {
   cliToolsCount: number | null
   mcpServerNames: string[]
   autoApprovedTools: string[]
-  noApprovalTools: string[]
   filesUpdated: string[]
 
   dispatch: (evt: AGPEvent) => void
@@ -147,10 +146,10 @@ export interface SessionStore {
   appendProtocolNote: (line: string) => void
 }
 
-export function effectiveToolCallExpanded(
+export const effectiveToolCallExpanded = (
   tc: ToolCall,
   expandedById: Record<string, boolean>,
-): boolean {
+): boolean => {
   if (Object.prototype.hasOwnProperty.call(expandedById, tc.toolCallId)) {
     return expandedById[tc.toolCallId]!
   }
@@ -189,7 +188,6 @@ export const useSessionStore = create<SessionStore>((set) => ({
   cliToolsCount: null,
   mcpServerNames: [],
   autoApprovedTools: [],
-  noApprovalTools: [],
   filesUpdated: [],
 
   dispatch: (evt: AGPEvent) => set((s) => dispatchAgpEvent(s, evt)),

@@ -17,7 +17,7 @@ const envelope = z.object({
   data: z.unknown(),
 })
 
-function asDataObject(data: unknown, eventType?: string): Record<string, unknown> {
+const asDataObject = (data: unknown, eventType?: string): Record<string, unknown> => {
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
     const kind = data === null ? 'null' : Array.isArray(data) ? 'array' : typeof data
     const head = eventType
@@ -31,7 +31,7 @@ function asDataObject(data: unknown, eventType?: string): Record<string, unknown
 }
 
 /** Parse ``data`` with *schema*; merge validated keys onto the raw wire object (keep extras). */
-function mergeData<T extends z.ZodTypeAny>(raw: Record<string, unknown>, schema: T): z.infer<T> & Record<string, unknown> {
+const mergeData = <T extends z.ZodTypeAny>(raw: Record<string, unknown>, schema: T): z.infer<T> & Record<string, unknown>  => {
   const r = schema.safeParse(raw)
   if (!r.success) {
     const msg = r.error.issues.map((i) => `${i.path.join('.') || 'data'}: ${i.message}`).join('; ')
@@ -417,7 +417,7 @@ const DATA_BY_TYPE: Record<string, z.ZodTypeAny> = {
  * Validate wire JSON as an AGP v1 event. Unknown ``type`` values still require a valid envelope
  * and object-shaped ``data`` (may be empty).
  */
-export function parseInboundAGPEventJSONWire(parsed: unknown): Record<string, unknown> {
+export const parseInboundAGPEventJSONWire = (parsed: unknown): Record<string, unknown> => {
   const o = envelope.safeParse(parsed)
   if (!o.success) {
     const msg = o.error.issues.map((i) => `${i.path.join('.') || 'root'}: ${i.message}`).join('; ')

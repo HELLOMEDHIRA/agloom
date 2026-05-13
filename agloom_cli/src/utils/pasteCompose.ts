@@ -13,10 +13,10 @@ export interface PastedMultilineSplit {
  * If multiline mode is off and `newValue` contains newlines, return how to split
  * the buffer; otherwise return `null` (caller should treat `newValue` as normal input).
  */
-export function splitPastedMultilineWhenSingleLineMode(
+export const splitPastedMultilineWhenSingleLineMode = (
   multilineOpt: boolean,
   newValue: string,
-): PastedMultilineSplit | null {
+): PastedMultilineSplit | null => {
   if (multilineOpt || !newValue.includes('\n')) return null
   const parts = newValue.split('\n')
   const inputTail = parts.pop() ?? ''

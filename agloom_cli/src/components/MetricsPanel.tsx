@@ -40,7 +40,7 @@ const STATUS_DOT: Record<ToolCall['status'], string> = {
   error: '✗',
 }
 
-function fmtTime(iso: string | null): string {
+const fmtTime = (iso: string | null): string => {
   if (!iso) return '—'
   try { return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }
   catch { return iso }

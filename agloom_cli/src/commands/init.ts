@@ -3,7 +3,7 @@
 import { join } from 'node:path'
 import { ensureAgloomCliWorkspace } from '../workspaceBootstrap.js'
 
-export async function runInitCli(cwd: string, opts?: { template?: string }): Promise<number> {
+export const runInitCli = async(cwd: string, opts?: { template?: string }): Promise<number> => {
   const { wroteYaml } = ensureAgloomCliWorkspace(cwd, { template: opts?.template })
   process.stderr.write(`[agloom] ensured .agloom/rules, .agloom/skills, .agloom/sessions\n`)
   const target = join(cwd, 'agloom.yaml')

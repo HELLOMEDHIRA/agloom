@@ -1,6 +1,6 @@
 /** Wire validation for inbound AGP events (Zod). */
 
-import { parseInboundAGPEventJSONWire } from '../types/agpWireParse'
+import { parseInboundAGPEventJSONWire } from '../types/agpWireParse.js'
 
 const baseEnv = {
   v: '1' as const,

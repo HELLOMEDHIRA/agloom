@@ -6,11 +6,11 @@ import { dirname, join } from 'node:path'
 
 const MAX_ENTRIES = 500
 
-export function defaultHistoryPath(): string {
+export const defaultHistoryPath = (): string => {
   return join(homedir(), '.agloom', 'history.json')
 }
 
-export function loadHistory(path: string): string[] {
+export const loadHistory = (path: string): string[] => {
   try {
     if (!existsSync(path)) return []
     const raw = readFileSync(path, 'utf8')
@@ -22,7 +22,7 @@ export function loadHistory(path: string): string[] {
   }
 }
 
-export function appendHistory(path: string, line: string): void {
+export const appendHistory = (path: string, line: string): void => {
   const t = line.trim()
   if (!t || t.startsWith('/')) return
   try {

@@ -3,6 +3,7 @@
  */
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { DEFAULT_AGLOOM_YAML } from './defaultAgloomTemplate.js'
 import { TEMPLATE_NODE_YAML, TEMPLATE_PYTHON_YAML } from './templateYaml.js'
@@ -14,7 +15,7 @@ export interface EnsureCliWorkspaceResult {
 
 export type InitTemplate = 'python' | 'node'
 
-function yamlForTemplate(template?: string): string {
+const yamlForTemplate = (template?: string): string => {
   const t = (template || '').toLowerCase().trim()
   if (t === 'python') return TEMPLATE_PYTHON_YAML
   if (t === 'node') return TEMPLATE_NODE_YAML
@@ -29,7 +30,7 @@ function yamlForTemplate(template?: string): string {
  * first; a second copy was redundant and confusing. Legacy nested-only configs remain supported
  * via ``config.ts`` ``findWalkUpAgloomYaml``.
  */
-export function ensureAgloomCliWorkspace(cwd: string, opts?: { template?: string }): EnsureCliWorkspaceResult {
+export const ensureAgloomCliWorkspace = (cwd: string, opts?: { template?: string }): EnsureCliWorkspaceResult => {
   const dot = join(cwd, '.agloom')
   mkdirSync(join(dot, 'rules'), { recursive: true })
   mkdirSync(join(dot, 'skills'), { recursive: true })
@@ -42,6 +43,20 @@ export function ensureAgloomCliWorkspace(cwd: string, opts?: { template?: string
   if (!existsSync(rootYaml) && !existsSync(nestedYaml)) {
     writeFileSync(rootYaml, yamlForTemplate(opts?.template), 'utf8')
     wroteYaml = true
+  }
+
+  // Bootstrap agsuperbrain knowledge graph if not already initialized
+  const agsuperbrainDir = join(cwd, '.agsuperbrain')
+  if (!existsSync(agsuperbrainDir)) {
+    const r = spawnSync('agsuperbrain', ['init'], {
+      stdio: 'inherit',
+      shell: false,
+    })
+    if (r.error && (r.error as NodeJS.ErrnoException).code === 'ENOENT') {
+      process.stderr.write('[agloom] agsuperbrain not installed — MCP server unavailable\n')
+    } else if (r.status !== 0) {
+      process.stderr.write(`[agloom] agsuperbrain init exited with code ${r.status ?? 'null'}\n`)
+    }
   }
 
   return { wroteYaml }

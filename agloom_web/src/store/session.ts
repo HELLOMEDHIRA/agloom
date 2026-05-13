@@ -140,7 +140,7 @@ const pushProtocolNotes = (notes: string[], line: string): string[] => {
   return [...notes, line].slice(-PROTOCOL_NOTES_CAP)
 }
 
-function stringifyWireResultPreview(v: unknown, max = 520): string {
+const stringifyWireResultPreview = (v: unknown, max = 520): string => {
   if (v == null) return ''
   if (typeof v === 'string') return v.length > max ? `${v.slice(0, max - 1)}…` : v
   try {
@@ -156,10 +156,10 @@ const newActiveTurn = (userMessage: string): ActiveTurnState => {
 }
 
 /** Expanded for error/pending unless overridden in the map. */
-export function effectiveToolCallExpanded(
+export const effectiveToolCallExpanded = (
   tc: ToolCall,
   expandedById: Record<string, boolean>,
-): boolean {
+): boolean => {
   if (Object.prototype.hasOwnProperty.call(expandedById, tc.toolCallId)) {
     return expandedById[tc.toolCallId]!
   }

@@ -2,13 +2,13 @@
 
 import { readCliPackageVersion } from '../banner.js'
 
-async function fetchJson(url: string): Promise<unknown> {
+const fetchJson = async(url: string): Promise<unknown> => {
   const res = await fetch(url, { redirect: 'follow' })
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return (await res.json()) as unknown
 }
 
-export async function runUpgradeCli(): Promise<number> {
+export  const runUpgradeCli = async(): Promise<number> => {
   const localCli = readCliPackageVersion()
   let latestCli = '?'
   try {

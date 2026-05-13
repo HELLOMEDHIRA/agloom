@@ -4,7 +4,7 @@ import { Box, Text } from 'ink'
 import type { ToolCall } from '../store/session.js'
 import { truncate, fmtArgs, fmtDuration } from '../utils/format.js'
 
-function looksLikeUnifiedDiff(text: string): boolean {
+const looksLikeUnifiedDiff = (text: string): boolean => {
   if (text.length < 40) return false
   const head = text.slice(0, 8000)
   if (/^diff --git /m.test(head)) return true
@@ -18,7 +18,7 @@ function looksLikeUnifiedDiff(text: string): boolean {
   return plus >= 2 && minus >= 2 && plus + minus >= 6
 }
 
-function diffLineColor(line: string): 'green' | 'red' | 'magenta' | 'cyan' | 'gray' {
+const diffLineColor = (line: string): 'green' | 'red' | 'magenta' | 'cyan' | 'gray' => {
   if (line.startsWith('+') && !line.startsWith('+++')) return 'green'
   if (line.startsWith('-') && !line.startsWith('---')) return 'red'
   if (line.startsWith('@@')) return 'magenta'

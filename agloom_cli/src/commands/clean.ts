@@ -12,7 +12,7 @@ const CLEAN_TARGETS = [
   'agloom-progress.json',
 ]
 
-function findProjectRoot(start: string): string {
+const findProjectRoot = (start: string): string => {
   let dir = start
   while (true) {
     if (existsSync(join(dir, '.git')) || existsSync(join(dir, 'agloom.yaml')) || existsSync(join(dir, '.agloom'))) {
@@ -24,7 +24,7 @@ function findProjectRoot(start: string): string {
   }
 }
 
-function removeIfExists(path: string): boolean {
+const removeIfExists = (path: string): boolean => {
   if (existsSync(path)) {
     rmSync(path, { recursive: true, force: true })
     return true
@@ -32,7 +32,7 @@ function removeIfExists(path: string): boolean {
   return false
 }
 
-function cleanGitignore(root: string): { removed: boolean; lines: number } {
+const cleanGitignore = (root: string): { removed: boolean; lines: number } => {
   const gitignorePath = join(root, '.gitignore')
   if (!existsSync(gitignorePath)) return { removed: false, lines: 0 }
 
@@ -73,7 +73,7 @@ function cleanGitignore(root: string): { removed: boolean; lines: number } {
   return { removed: false, lines: 0 }
 }
 
-export async function runCleanCli(): Promise<number> {
+export const runCleanCli = async(): Promise<number> => {
   const root = findProjectRoot(process.cwd())
 
   process.stdout.write('\n')

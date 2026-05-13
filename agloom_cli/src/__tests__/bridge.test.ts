@@ -2,7 +2,7 @@
  * Process spawning is mocked — no Python runtime required.
  */
 
-import { createAGPBridge } from '../runtime/bridge'
+import { createAGPBridge } from '../runtime/bridge.js'
 import { EventEmitter } from 'node:events'
 
 // mock child_process
@@ -11,10 +11,8 @@ const mockWrite = jest.fn()
 const mockStdin = { writable: true, write: mockWrite, on: jest.fn() }
 const mockStdoutEmitter = new EventEmitter() as EventEmitter & { setEncoding: jest.Mock }
 mockStdoutEmitter.setEncoding = jest.fn()
-mockStdoutEmitter.setMaxListeners(50)
 const mockStderrEmitter = new EventEmitter() as EventEmitter & { setEncoding: jest.Mock }
 mockStderrEmitter.setEncoding = jest.fn()
-mockStderrEmitter.setMaxListeners(50)
 
 const exitListeners: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
 const errorListeners: Array<(err: Error) => void> = []

@@ -17,11 +17,11 @@ export interface BannerRuntimeHints {
   cliToolsCount?: number
 }
 
-export function formatBannerLine(opts: {
+export const formatBannerLine = (opts: {
   version: string
   hints?: BannerRuntimeHints
   harnessOn?: boolean
-}): string {
+}): string => {
   const parts: string[] = []
   if (opts.hints?.modelId) parts.push(opts.hints.modelId)
   if (opts.hints?.pattern) parts.push(`pattern ${opts.hints.pattern}`)
@@ -33,13 +33,13 @@ export function formatBannerLine(opts: {
   return `${WORDMARK}\n\n   agloom CLI v${opts.version}${meta}${h}\n   /help · Esc cancel · Ctrl+C exit\n`
 }
 
-export function bannerEnvDisabled(): boolean {
+export const bannerEnvDisabled = (): boolean =>{
   const v = process.env['AGLOOM_BANNER']
   return v === '0' || v === 'false' || v === 'no'
 }
 
 /** Resolve package version from package.json next to dist (works from package root). */
-export function readCliPackageVersion(): string {
+export const readCliPackageVersion = (): string => {
   try {
     const here = fileURLToPath(new URL('.', import.meta.url))
     const pj = JSON.parse(readFileSync(`${here}/../package.json`, 'utf8')) as { version?: string }
@@ -49,12 +49,12 @@ export function readCliPackageVersion(): string {
   }
 }
 
-export async function writeBannerToStderr(opts: {
+export const writeBannerToStderr = async(opts: {
   hints?: BannerRuntimeHints
   harnessOn?: boolean
   noBanner?: boolean
   quiet?: boolean
-}): Promise<void> {
+}): Promise<void> => {
   if (opts.quiet || opts.noBanner || bannerEnvDisabled()) return
   const ver = readCliPackageVersion()
   process.stderr.write(`${formatBannerLine({ version: ver, hints: opts.hints, harnessOn: opts.harnessOn })}\n`)

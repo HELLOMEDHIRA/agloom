@@ -1,6 +1,6 @@
 /** Lightweight history suggestions (no extra deps). */
 
-function scoreContains(query: string, candidate: string): number {
+const scoreContains = (query: string, candidate: string): number => {
   if (candidate.includes(query)) return 80 + Math.min(20, query.length)
   let n = 0
   for (const ch of query) {
@@ -9,7 +9,7 @@ function scoreContains(query: string, candidate: string): number {
   return n
 }
 
-export function suggestFromHistory(input: string, histLines: string[], limit = 3): string[] {
+export const suggestFromHistory = (input: string, histLines: string[], limit = 3): string[] => {
   const q = input.trim().toLowerCase()
   if (q.length < 2) return []
   const seen = new Set<string>()

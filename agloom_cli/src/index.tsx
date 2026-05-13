@@ -40,10 +40,8 @@ type CliOpts = {
   mcp: string[]
   systemPrompt?: string
   systemPromptFile?: string
-  noMemory: boolean
   memory?: string
   memoryPath?: string
-  noSkills: boolean
   skillsDir?: string
   summarizerModel?: string
   noAutoSummarize: boolean
@@ -80,7 +78,7 @@ const doubleDash = process.argv.indexOf('--')
 const argvMain = doubleDash === -1 ? process.argv : process.argv.slice(0, doubleDash)
 const passthroughRuntime = doubleDash === -1 ? [] : process.argv.slice(doubleDash + 1)
 
-function shouldPrintCombinedVersion(argv: string[]): boolean {
+const shouldPrintCombinedVersion = (argv: string[]): boolean => {
   const args = argv.slice(2)
   if (!args.some((a) => a === '--version' || a === '-V')) return false
   const firstSub = args.find((a) => !a.startsWith('-'))
@@ -88,7 +86,7 @@ function shouldPrintCombinedVersion(argv: string[]): boolean {
   return true
 }
 
-function readRuntimeSemverLine(): string {
+const readRuntimeSemverLine = (): string => {
   const run = process.env['AGLOOM_RUNTIME'] ?? 'agloom-runtime'
   const r = spawnSync(run, ['version'], { encoding: 'utf8', shell: false, maxBuffer: 256 })
   if (r.error || r.status !== 0) {
@@ -98,18 +96,18 @@ function readRuntimeSemverLine(): string {
   return line || '(empty)'
 }
 
-function collectMcp(v: string, prev: string[]): string[] {
+const collectMcp = (v: string, prev: string[]): string[] => {
   return prev.concat([v])
 }
 
-function collectAttach(v: string, prev: string[]): string[] {
+const collectAttach = (v: string, prev: string[]): string[] => {
   return prev.concat([v])
 }
 
 /** Max bytes per ``--attach`` file (avoids loading huge blobs into memory). */
 const MAX_ATTACH_BYTES = 32 * 1024 * 1024
 
-async function pathsToAttachments(paths: string[]): Promise<InvokeAttachment[]> {
+const pathsToAttachments = async(paths: string[]): Promise<InvokeAttachment[]> => {
   const out: InvokeAttachment[] = []
   for (const p of paths) {
     const buf = await readFile(p)
@@ -127,7 +125,7 @@ async function pathsToAttachments(paths: string[]): Promise<InvokeAttachment[]> 
   return out
 }
 
-function exitWithRuntimeProviders(subArgs: string[]): never {
+const exitWithRuntimeProviders = (subArgs: string[]): never => {
   const cmd = process.env['AGLOOM_RUNTIME'] ?? 'agloom-runtime'
   const r = spawnSync(cmd, ['providers', ...subArgs], { stdio: 'inherit', shell: false })
   const code = r.status === null ? 1 : r.status
@@ -249,10 +247,8 @@ program
   .option('--attach <path>', 'direct mode: attach file as command.invoke payload (repeatable)', collectAttach, [])
   .option('--system-prompt <text>', 'system prompt')
   .option('--system-prompt-file <path>', 'system prompt from UTF-8 file')
-  .option('--no-memory', 'minimal session memory', false)
   .option('--memory <type>', 'in-memory | none | sqlite')
   .option('--memory-path <path>', 'sqlite path for session memory')
-  .option('--no-skills', 'disable skills disk mirror', false)
   .option('--skills-dir <path>', 'skills disk mirror directory')
   .option('--summarizer-model <id>', 'summarizer model id')
   .option('--no-auto-summarize', 'disable auto summarization', false)
@@ -312,7 +308,10 @@ if (rawOpts.printConfig) {
   process.exit(0)
 }
 
-const opts = applyAgloomConfigLayers(program, rawOpts, cwd, rawOpts.configPath) as CliOpts
+const opts: CliOpts = {
+  ...rawOpts,
+  ...applyAgloomConfigLayers(program, rawOpts, cwd, rawOpts.configPath),
+}
 
 const themeRaw = (rawOpts.theme ?? 'dark').toLowerCase()
 if (themeRaw !== 'dark' && themeRaw !== 'light') {
@@ -321,7 +320,7 @@ if (themeRaw !== 'dark' && themeRaw !== 'light') {
 }
 const themeUi: AgloomTheme = themeRaw === 'light' ? 'light' : 'dark'
 
-function buildRuntimeArgs(o: CliOpts): string[] {
+const buildRuntimeArgs = (o: CliOpts): string[] => {
   const turns = o.maxTurns ?? o.sessionMaxTurns
   const parts: string[] = []
   parts.push('--store', o.store)
@@ -342,10 +341,8 @@ function buildRuntimeArgs(o: CliOpts): string[] {
   }
   if (o.systemPrompt) parts.push('--system-prompt', o.systemPrompt)
   if (o.systemPromptFile) parts.push('--system-prompt-file', o.systemPromptFile)
-  if (o.noMemory) parts.push('--no-memory')
   if (o.memory) parts.push('--memory', o.memory)
   if (o.memoryPath) parts.push('--memory-path', o.memoryPath)
-  if (o.noSkills) parts.push('--no-skills')
   if (o.skillsDir) parts.push('--skills-dir', o.skillsDir)
   if (o.summarizerModel) parts.push('--summarizer-model', o.summarizerModel)
   if (o.noAutoSummarize) parts.push('--no-auto-summarize')

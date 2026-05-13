@@ -8,7 +8,7 @@ const _utf8Relaxed = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true })
  * Trailing newline only is stripped from the concatenated buffer; inner/leading whitespace is preserved.
  * Uses a non-fatal UTF-8 decoder so binary or mixed streams do not throw (invalid bytes become U+FFFD).
  */
-export async function readStdinIfPiped(): Promise<string> {
+export const readStdinIfPiped = async(): Promise<string> => {
   if (stdin.isTTY) return ''
   return await new Promise((resolve, reject) => {
     const chunks: Buffer[] = []

@@ -17,8 +17,9 @@ On startup the CLI may print a compact **banner** to stderr (version line). Supp
 
 - **Esc** — cancel inline overlays where applicable.
 - **Ctrl+C** — shutdown sequence (runtime exit).
-- **Ctrl+X** — cancel current run (same idea as `/cancel`).
-- **Tab** — opens slash-command autocomplete overlay.
+- **Ctrl+X** — cancel current run (same idea as `/cancel`). The input field ignores this chord so **x** is not inserted.
+- **Ctrl+T** — expand/collapse tool rows for the active turn (same as `/tools`).
+- **Slash hints** — when your message starts with `/`, matching commands are listed under the input as you type (no separate Tab overlay).
 
 Navigation follows common terminal conventions (focusable regions, overlays, and readline-style input where applicable).
 
@@ -35,8 +36,9 @@ Typed at the input bar. The list below matches what **`/help`** shows in the UI.
 | `/retry`             | Re-run the last completed turn                         |
 | `/checkpoint [name]` | Create a named git checkpoint (requires harness)       |
 | `/diff [path]`       | Show git diff for working tree (requires harness)      |
-| `/hint`              | Suggest git revert hint (requires harness)              |
+| `/hint`              | Suggest git revert hint (requires harness)               |
 | `/git status`        | Show working tree status (requires harness)             |
+| `/git checkpoints`   | List named checkpoints (requires harness)               |
 | `/plan <goal>`       | Preview how the agent would decompose a goal           |
 | `/model`             | Show active model from runtime/metrics                 |
 | `/memory clear`      | Clear session memory for current thread                |

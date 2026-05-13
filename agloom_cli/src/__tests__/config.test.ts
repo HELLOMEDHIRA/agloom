@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { findWalkUpAgloomYaml, parseAgloomYamlFile } from '../config.js'
 
-function writeYaml(content: string): string {
+const writeYaml=(content: string): string => {
   const dir = mkdtempSync(join(tmpdir(), 'agloom-yaml-'))
   const p = join(dir, 'agloom.yaml')
   writeFileSync(p, content, 'utf8')

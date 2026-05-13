@@ -27,15 +27,12 @@
     "test:ink": "node --no-warnings --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.ink.config.mjs"
   },
   "dependencies": {
-    "chalk": "5.6.2",
     "cli-highlight": "^2.1.11",
     "commander": "14.0.3",
-    "figures": "6.1.0",
     "ink": "7.0.2",
     "ink-text-input": "6.0.0",
     "react": "19.2.6",
     "strip-ansi": "7.2.0",
-    "wrap-ansi": "10.0.0",
     "yaml": "^2.9.0",
     "zod": "^4.4.3",
     "zustand": "5.0.13"

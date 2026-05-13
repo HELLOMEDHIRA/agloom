@@ -421,6 +421,7 @@ export const App = ({
       }
 
       default:
+        appendProtocolNote(`Unknown command: ${command}. Try /help.`)
         break
     }
 

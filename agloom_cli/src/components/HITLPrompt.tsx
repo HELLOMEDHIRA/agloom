@@ -54,7 +54,7 @@ const hitlDefaultDecision = (kind: string, wireDefault?: string): string => {
   return wireDefault ?? 'reject'
 }
 
-function buildOptionButtons(options: string[]): ButtonDef[] {
+const buildOptionButtons = (options: string[]): ButtonDef[] => {
   const colors: BtnColor[] = ['cyan', 'green', 'yellow', 'magenta', 'blue']
   return options.map((opt, i) => ({
     key: String(i + 1),
@@ -64,7 +64,7 @@ function buildOptionButtons(options: string[]): ButtonDef[] {
   }))
 }
 
-function buildButtons(kind: string, options: string[]): { buttons: ButtonDef[] } {
+const buildButtons = (kind: string, options: string[]): { buttons: ButtonDef[] } => {
   const predefined = BUTTONS_BY_KIND[kind]
   if (predefined) return { buttons: predefined }
   if (options.length > 0) return { buttons: buildOptionButtons(options) }

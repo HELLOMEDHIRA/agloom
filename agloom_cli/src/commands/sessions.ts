@@ -16,7 +16,7 @@ interface SessionInfo {
   transport: string
 }
 
-function findSessionsDirs(): string[] {
+const findSessionsDirs = (): string[] => {
   const candidates: string[] = []
   const cwd = process.cwd()
   const dot = join(cwd, '.agloom', 'sessions')
@@ -26,7 +26,7 @@ function findSessionsDirs(): string[] {
   return candidates
 }
 
-function loadSessions(): SessionInfo[] {
+const loadSessions = (): SessionInfo[] => {
   const sessions: SessionInfo[] = []
   for (const dir of findSessionsDirs()) {
     let entries: string[]
@@ -55,7 +55,7 @@ function loadSessions(): SessionInfo[] {
   return sessions
 }
 
-function fmtDate(iso: string): string {
+const fmtDate = (iso: string): string => {
   if (!iso || iso === '—') return '—'
   try {
     const d = new Date(iso)
@@ -68,11 +68,11 @@ function fmtDate(iso: string): string {
   }
 }
 
-function trunc(s: string, n: number): string {
+const trunc = (s: string, n: number): string => {
   return s.length <= n ? s : s.slice(0, n - 1) + '…'
 }
 
-export async function runSessionsCli(): Promise<number> {
+export const runSessionsCli = async(): Promise<number> => {
   const sessions = loadSessions()
 
   if (sessions.length === 0) {

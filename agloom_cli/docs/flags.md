@@ -111,7 +111,7 @@ Shows resolved model, store, MCP specs, and which YAML files contributed.
 | --- | --- |
 | `agloom init` | Scaffold `.agloom/` directory and starter YAML. |
 | `agloom sessions` | List past sessions with model/date/turns table and pick one to resume. |
-| `agloom clean` | Remove `.agloom/`, `.agsuperbrain/`, `agloom.yaml`, and clean `.gitignore`. |
+| `agloom clean` | Remove `.agloom/`, `.agsuperbrain/`, `agloom-progress.json`, and prune related lines from `.gitignore` (does **not** delete `agloom.yaml`). |
 | `agloom upgrade` | Compare installed versions against npm/PyPI latest. |
 | `agloom eval` | Forward to `agloom-runtime eval` for evaluation runs. |
 

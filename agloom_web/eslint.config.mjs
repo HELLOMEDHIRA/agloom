@@ -12,11 +12,11 @@ export default tseslint.config(
   // React Hooks — prevents hooks-of-hooks and exhaustive-deps violations
   reactHooksPlugin.configs.flat['recommended-latest'],
 
-  // Project-wide overrides — ES2015+ surface (modules, const/let, classes, arrow callbacks, spread)
+  // Project-wide overrides — ES2022+ surface (modules, const/let, classes, arrow callbacks, spread)
   {
     files: ['src/**/*.{ts,tsx}'],
     languageOptions: {
-      ecmaVersion: 'latest',
+      ecmaVersion: 2022,
       sourceType: 'module',
     },
     rules: {

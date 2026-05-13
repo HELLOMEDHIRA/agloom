@@ -10,13 +10,13 @@ import YAML from 'yaml'
 import { z } from 'zod'
 
 /** CLI session memory is a simple slug (``sqlite`` / ``none`` / …); ignore structured maps. */
-function normalizeMemoryYamlInput(raw: unknown): unknown {
+export const normalizeMemoryYamlInput = (raw: unknown): unknown => {
   return typeof raw === 'string' ? raw : undefined
 }
 
 type McpYamlEntry = string | { name: string; config: string }
 
-function _mcpEntryFromShorthandObject(obj: Record<string, unknown>): McpYamlEntry | null {
+export const _mcpEntryFromShorthandObject = (obj: Record<string, unknown>): McpYamlEntry | null => {
   const keys = Object.keys(obj)
   if (keys.length === 1) {
     const k = keys[0]!
@@ -34,7 +34,7 @@ function _mcpEntryFromShorthandObject(obj: Record<string, unknown>): McpYamlEntr
  * Accept: map ``name: path`` / ``name: { config: path }``; array of strings, ``{ name, config }``,
  * or one-key objects from YAML list items (``- fs: ./x.yaml`` → ``{ fs: './x.yaml' }``).
  */
-function normalizeMcpYamlInput(raw: unknown): unknown {
+export const normalizeMcpYamlInput = (raw: unknown): unknown  =>{
   if (raw == null) return undefined
   if (Array.isArray(raw)) {
     const out: McpYamlEntry[] = []
@@ -66,7 +66,7 @@ function normalizeMcpYamlInput(raw: unknown): unknown {
  * Rich-era / nested layouts use `ai.*`, object `memory`, `skills`, and `mcp.servers`.
  * Flatten into the top-level keys the Node CLI and Zod schema already understand.
  */
-export function flattenRichAgloomYaml(raw: unknown): unknown {
+export const flattenRichAgloomYaml = (raw: unknown): unknown =>{
   if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) return raw
   const o = { ...(raw as Record<string, unknown>) }
 
@@ -178,7 +178,6 @@ const AgloomYamlSchema = z.preprocess(
       store_path: z.string().optional(),
       memory: z.preprocess(normalizeMemoryYamlInput, z.string().optional()),
       memory_path: z.string().optional(),
-      no_memory: z.boolean().optional(),
       no_skills: z.boolean().optional(),
       skills_dir: z.string().optional(),
       summarizer_model: z.string().optional(),
@@ -197,7 +196,7 @@ const AgloomYamlSchema = z.preprocess(
 export type AgloomYaml = z.infer<typeof AgloomYamlSchema>
 
 /** Walk parents from `startDir` looking for `agloom.yaml` or legacy `.agloom/agloom.yaml`. */
-export function findWalkUpAgloomYaml(startDir: string): string | null {
+export const findWalkUpAgloomYaml =(startDir: string): string | null => {
   let dir = resolve(startDir)
   while (true) {
     const rootYaml = join(dir, 'agloom.yaml')
@@ -211,11 +210,11 @@ export function findWalkUpAgloomYaml(startDir: string): string | null {
   return null
 }
 
-export function userGlobalAgloomPath(): string {
+export const userGlobalAgloomPath = (): string => {
   return join(homedir(), '.agloom', 'agloom.yaml')
 }
 
-export function parseAgloomYamlFile(path: string): AgloomYaml {
+export const parseAgloomYamlFile = (path: string): AgloomYaml => {
   const raw = readFileSync(path, 'utf8')
   const doc = YAML.parse(raw)
   return AgloomYamlSchema.parse(doc ?? {})
@@ -229,7 +228,7 @@ export function parseAgloomYamlFile(path: string): AgloomYaml {
  * subject to shallow replacement if two layers define the same top-level key. Extend merge
  * logic if we start preserving deep rich blocks without flattening.
  */
-export function loadLayeredYaml(cwd: string, explicitPath?: string): { merged: AgloomYaml; files: string[] } {
+export const loadLayeredYaml = (cwd: string, explicitPath?: string): { merged: AgloomYaml; files: string[] } => {
   const files: string[] = []
   const layers: AgloomYaml[] = []
 
@@ -257,10 +256,10 @@ export function loadLayeredYaml(cwd: string, explicitPath?: string): { merged: A
 }
 
 /** Expand MCP entries from YAML into `--mcp name:path` argv fragments (paths resolved vs YAML file dir). */
-export function mcpSpecsFromYaml(
+export const mcpSpecsFromYaml = (
   mcp: AgloomYaml['mcp'],
   resolveRelativeTo: string,
-): string[] {
+): string[] => {
   if (!mcp || !Array.isArray(mcp)) return []
   const base = dirname(resolveRelativeTo)
   const out: string[] = []
@@ -285,10 +284,8 @@ export type CliOptsLike = {
   systemPromptFile?: string
   store: string
   storePath?: string
-  noMemory: boolean
   memory?: string
   memoryPath?: string
-  noSkills: boolean
   skillsDir?: string
   summarizerModel?: string
   noAutoSummarize: boolean
@@ -301,7 +298,7 @@ export type CliOptsLike = {
   capture?: string
 }
 
-function envOverrides(): Partial<CliOptsLike> {
+const envOverrides = (): Partial<CliOptsLike> => {
   const g = (k: string) => process.env[k]?.trim() || undefined
   const out: Partial<CliOptsLike> = {}
   const model = g('AGLOOM_MODEL')
@@ -322,12 +319,12 @@ function envOverrides(): Partial<CliOptsLike> {
  * Apply YAML + env to CLI opts without clobbering flags the user set on the command line.
  * Uses `commander` option value source when available (v9+).
  */
-export function applyAgloomConfigLayers(
+export const applyAgloomConfigLayers = (
   program: Command,
   base: CliOptsLike,
   cwd: string,
   configPath?: string,
-): CliOptsLike {
+): CliOptsLike =>{
   const { merged, files } = loadLayeredYaml(cwd, configPath)
   const yamlBaseDir = files.length > 0 ? dirname(files[files.length - 1]!) : cwd
   const y = merged
@@ -370,11 +367,7 @@ export function applyAgloomConfigLayers(
 
   if (fromDefault('memory') && y.memory) next.memory = y.memory
   if (fromDefault('memoryPath') && y.memory_path) next.memoryPath = resolve(yamlBaseDir, y.memory_path)
-
-  if (fromDefault('noMemory') && y.no_memory === true) next.noMemory = true
-  if (fromDefault('noSkills') && y.no_skills === true) next.noSkills = true
   if (fromDefault('skillsDir') && y.skills_dir) next.skillsDir = resolve(yamlBaseDir, y.skills_dir)
-
   if (fromDefault('summarizerModel') && y.summarizer_model) next.summarizerModel = y.summarizer_model
   if (fromDefault('noAutoSummarize') && y.auto_summarize === false) next.noAutoSummarize = true
   if (fromDefault('sessionMaxTurns') && y.session_max_turns !== undefined)
@@ -399,12 +392,12 @@ export function applyAgloomConfigLayers(
 }
 
 /** Resolved config for `--print-config` (includes merge provenance). */
-export function buildResolvedConfigSnapshot(
+export const buildResolvedConfigSnapshot =(
   program: Command,
   opts: CliOptsLike,
   cwd: string,
   configPath?: string,
-): Record<string, unknown> {
+): Record<string, unknown> => {
   const { merged, files } = loadLayeredYaml(cwd, configPath)
   const applied = applyAgloomConfigLayers(program, opts, cwd, configPath)
   return {

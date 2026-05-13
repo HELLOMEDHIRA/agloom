@@ -20,11 +20,11 @@ export interface DirectOpts {
   hitlTty: boolean
 }
 
-function waitForEvent(
+const waitForEvent = (
   bridge: AGPBridge,
   pred: (e: AGPEvent) => boolean,
   ms = 120_000,
-): Promise<void> {
+): Promise<void> =>{
   return new Promise((resolve, reject) => {
     const onErr = (err: Error) => {
       clearTimeout(to)
@@ -50,12 +50,12 @@ function waitForEvent(
   })
 }
 
-export async function runDirect(options: {
+export const runDirect = async(options: {
   bridge: AGPBridge
   prompt: string
   opts: DirectOpts
   runtimeArgs: string[]
-}): Promise<void> {
+}): Promise<void> => {
   const { bridge, prompt, opts, runtimeArgs } = options
 
   await writeBannerToStderr({

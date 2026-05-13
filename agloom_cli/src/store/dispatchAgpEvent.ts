@@ -23,7 +23,7 @@ export const pushProtocolNotes = (notes: string[], line: string): string[] => {
   return [...notes.slice(notes.length - (PROTOCOL_NOTES_CAP - 1)), line]
 }
 
-function stringifyWireResultPreview(v: unknown, max = 520): string {
+const stringifyWireResultPreview = (v: unknown, max = 520): string => {
   if (v == null) return ''
   if (typeof v === 'string') return v.length > max ? `${v.slice(0, max - 1)}…` : v
   try {
@@ -46,7 +46,7 @@ const newActiveTurn = (userMessage: string): ActiveTurnState => ({
 })
 
 /** Apply one inbound AGP event to the current store snapshot. */
-export function dispatchAgpEvent(s: SessionStore, evt: AGPEvent): SessionStore {
+export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore => {
   switch (evt.type) {
     case 'session.opened': {
       const now = new Date().toISOString()
