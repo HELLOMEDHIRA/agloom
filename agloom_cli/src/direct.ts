@@ -183,7 +183,7 @@ export const runDirect = async(options: {
     (e) => e.type === 'session.opened' || e.type === 'runtime.ready',
   )
 
-  ensureAgloomCliWorkspace(process.cwd())
+  await ensureAgloomCliWorkspace(process.cwd())
 
   bridge.start(runtimeArgs, { transport: 'stdio' })
 

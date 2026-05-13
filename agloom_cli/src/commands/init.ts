@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { ensureAgloomCliWorkspace } from '../workspaceBootstrap.js'
 
 export const runInitCli = async(cwd: string, opts?: { template?: string }): Promise<number> => {
-  const { wroteYaml } = ensureAgloomCliWorkspace(cwd, { template: opts?.template })
+  const { wroteYaml } = await ensureAgloomCliWorkspace(cwd, { template: opts?.template })
   process.stderr.write(`[agloom] ensured .agloom/rules, .agloom/skills, .agloom/sessions\n`)
   const target = join(cwd, 'agloom.yaml')
   const legacyNested = join(cwd, '.agloom', 'agloom.yaml')

@@ -400,7 +400,7 @@ if (directExec) {
 }
 
 try {
-  ensureAgloomCliWorkspace(cwd)
+  await ensureAgloomCliWorkspace(cwd)
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err)
   process.stderr.write(`[agloom] workspace bootstrap failed: ${msg}\n`)
