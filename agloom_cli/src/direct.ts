@@ -168,8 +168,19 @@ export const runDirect = async(options: {
           process.stderr.write(`[agloom] session error: ${evt.data.error}\n`)
         }
         if (evt.data.reason === 'completed' && !gotModelOutput && !sawFatalOnWire) {
+          let extra = ''
+          const mi = runtimeArgs.indexOf('--model')
+          const mid =
+            mi >= 0 && runtimeArgs[mi + 1] && typeof runtimeArgs[mi + 1] === 'string'
+              ? runtimeArgs[mi + 1]
+              : ''
+          if (mid.startsWith('nvidia:')) {
+            extra =
+              '[agloom] nvidia:… models need `NVIDIA_API_KEY` and the `agloom[nvidia]` extra; use `--json` to see `error.fatal` / `worker.failed` on stdout.\n'
+          }
           process.stderr.write(
-            '[agloom] no assistant output was produced. Check stderr for `[agloom-runtime]` lines, provider API keys, and model id; use `--json` to dump every AGP event.\n',
+            '[agloom] no assistant output was produced. Check stderr for `[agloom-runtime]` lines, provider API keys, and model id; use `--json` to dump every AGP event.\n' +
+              extra,
           )
         }
       }

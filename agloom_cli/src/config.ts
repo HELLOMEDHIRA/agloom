@@ -1,5 +1,5 @@
 /** Project + user `agloom.yaml` layers, env fallbacks, and merge with Commander CLI state.
- * Precedence (low → high): defaults < user `~/.agloom/agloom.yaml` < walk-up `./agloom.yaml` < `AGLOOM_*` env < explicit `--config` file < CLI flags.
+ * Precedence (low → high): defaults < user `~/.agloom/agloom.yaml` < walk-up `.agloom/agloom.yaml` then `./agloom.yaml` < `AGLOOM_*` env < explicit `--config` file < CLI flags.
  */
 
 import { existsSync, readFileSync } from 'node:fs'
@@ -195,14 +195,14 @@ const AgloomYamlSchema = z.preprocess(
 
 export type AgloomYaml = z.infer<typeof AgloomYamlSchema>
 
-/** Walk parents from `startDir` looking for `agloom.yaml` or legacy `.agloom/agloom.yaml`. */
+/** Walk parents from `startDir` looking for ``.agloom/agloom.yaml`` first, then legacy root ``agloom.yaml``. */
 export const findWalkUpAgloomYaml =(startDir: string): string | null => {
   let dir = resolve(startDir)
   while (true) {
-    const rootYaml = join(dir, 'agloom.yaml')
-    if (existsSync(rootYaml)) return rootYaml
     const nestedYaml = join(dir, '.agloom', 'agloom.yaml')
     if (existsSync(nestedYaml)) return nestedYaml
+    const rootYaml = join(dir, 'agloom.yaml')
+    if (existsSync(rootYaml)) return rootYaml
     const parent = dirname(dir)
     if (parent === dir) break
     dir = parent
@@ -213,8 +213,7 @@ export const findWalkUpAgloomYaml =(startDir: string): string | null => {
 /**
  * Project root for workspace files (``.agloom/``, ``.agsuperbrain/``) — matches Python
  * :func:`resolve_workspace_roots` when no store-path hints apply: walk-up from *cwd* for
- * ``agloom.yaml`` / ``.agloom/agloom.yaml``, else *cwd*. ``--config`` may point at project-root
- * ``agloom.yaml`` or nested ``.agloom/agloom.yaml``.
+ * ``.agloom/agloom.yaml`` first, then legacy root ``agloom.yaml``, else *cwd*.
  */
 export const resolveAgloomProjectRoot = (cwd: string, explicitConfigPath?: string): string => {
   const p = explicitConfigPath?.trim()

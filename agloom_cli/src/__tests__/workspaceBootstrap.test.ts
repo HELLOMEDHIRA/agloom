@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { ensureAgloomCliWorkspace } from '../workspaceBootstrap.js'
 
@@ -33,6 +33,21 @@ describe('ensureAgloomCliWorkspace', () => {
     expect(wroteYaml).toBe(false)
     expect(readFileSync(y, 'utf8')).toContain('preserve-root')
     expect(readFileSync(ny, 'utf8')).toContain('preserve-nested')
+    rmSync(dir, { recursive: true })
+  })
+
+  it('copies root agloom.yaml into .agloom when nested is missing', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agloom-ws-migrate-'))
+    mkdirSync(join(dir, '.agsuperbrain'), { recursive: true })
+    const rootY = join(dir, 'agloom.yaml')
+    writeFileSync(rootY, 'model: from-root-only\n', 'utf8')
+    const nestedCfg = join(dir, '.agloom', 'agloom.yaml')
+    const { wroteYaml } = await ensureAgloomCliWorkspace(dir, { configPath: rootY })
+    expect(wroteYaml).toBe(true)
+    expect(readFileSync(nestedCfg, 'utf8')).toContain('from-root-only')
+    expect(readFileSync(rootY, 'utf8')).toContain('from-root-only')
+    const ptr = readFileSync(join(dir, '.agloom', 'AGLOOM_CONFIG_PATH.txt'), 'utf8')
+    expect(ptr).toContain(resolve(nestedCfg))
     rmSync(dir, { recursive: true })
   })
 

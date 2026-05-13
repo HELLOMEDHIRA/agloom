@@ -208,8 +208,8 @@ def ensure_agloom_workspace(cwd: Path | None = None, *, args: Any | None = None)
     files land next to the same tree that holds ``graph_store.sqlite``).
 
     Returns:
-        ``(sessions_dir_path, created_yaml)`` — *created_yaml* is True if starter
-        ``.agloom/agloom.yaml`` was written (only when neither root nor nested config exists).
+        ``(sessions_dir_path, created_yaml)`` — *created_yaml* is True if
+        ``.agloom/agloom.yaml`` was written this call (new starter, or migrated from root-only).
     """
     start = (cwd or Path.cwd()).resolve()
     project_root, agloom_root = resolve_workspace_roots(start, args)
@@ -230,11 +230,25 @@ def ensure_agloom_workspace(cwd: Path | None = None, *, args: Any | None = None)
     created = False
     root_yaml = project_root / "agloom.yaml"
     nested_yaml = agloom_root / "agloom.yaml"
-    if not root_yaml.is_file() and not nested_yaml.is_file():
-        nested_yaml.write_text(DEFAULT_AGLOOM_YAML, encoding="utf-8")
-        created = True
+    if not nested_yaml.is_file():
+        if root_yaml.is_file():
+            nested_yaml.write_text(root_yaml.read_text(encoding="utf-8"), encoding="utf-8")
+            created = True
+            print(
+                "[agloom-runtime] migrated root agloom.yaml → .agloom/agloom.yaml (canonical); "
+                "remove the root copy if unused — nested wins when both exist",
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            nested_yaml.write_text(DEFAULT_AGLOOM_YAML, encoding="utf-8")
+            created = True
 
-    active = root_yaml if root_yaml.is_file() else nested_yaml if nested_yaml.is_file() else nested_yaml
+    active = (
+        nested_yaml
+        if nested_yaml.is_file()
+        else root_yaml if root_yaml.is_file() else nested_yaml
+    )
     pointer = agloom_root / "AGLOOM_CONFIG_PATH.txt"
     pointer.write_text(
         f"Edit project settings (active YAML for this workspace):\n{active.resolve()}\n",

@@ -3,7 +3,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { resolveAgloomProjectRoot } from './config.js'
 import { AGSUPERBRAIN_MCP_CONFIG_YAML } from './agsuperbrainMcpConfig.js'
@@ -11,7 +11,7 @@ import { DEFAULT_AGLOOM_YAML } from './defaultAgloomTemplate.js'
 import { TEMPLATE_NODE_YAML, TEMPLATE_PYTHON_YAML } from './templateYaml.js'
 
 export interface EnsureCliWorkspaceResult {
-  /** True if starter ``.agloom/agloom.yaml`` was written. */
+  /** True if ``.agloom/agloom.yaml`` was written this run (starter or migration from root). */
   wroteYaml: boolean
 }
 
@@ -78,8 +78,8 @@ const yamlForTemplate = (template?: string): string => {
 }
 
 /**
- * Create ``.agloom/{rules,skills,sessions}`` and, when needed, starter ``.agloom/agloom.yaml``.
- * Root-level ``agloom.yaml`` is still supported (legacy); walk-up prefers it over nested when both exist.
+ * Create ``.agloom/{rules,skills,sessions}`` and, when needed, ``.agloom/agloom.yaml`` (starter or copy
+ * from legacy root ``agloom.yaml``). Walk-up discovery prefers nested YAML over root when both exist.
  *
  * Writes ``.agloom/AGLOOM_CONFIG_PATH.txt`` with the path of the active YAML file.
  */
@@ -108,15 +108,23 @@ export const ensureAgloomCliWorkspace = async(
   const nestedYaml = join(dot, 'agloom.yaml')
   let wroteYaml = false
 
-  if (!existsSync(rootYaml) && !existsSync(nestedYaml)) {
-    writeFileSync(nestedYaml, yamlForTemplate(opts?.template), 'utf8')
-    wroteYaml = true
+  if (!existsSync(nestedYaml)) {
+    if (existsSync(rootYaml)) {
+      writeFileSync(nestedYaml, readFileSync(rootYaml, 'utf8'), 'utf8')
+      wroteYaml = true
+      process.stderr.write(
+        '[agloom] Migrated root `agloom.yaml` → `.agloom/agloom.yaml` (canonical). Remove the root file if you only want one copy — nested wins when both exist.\n',
+      )
+    } else {
+      writeFileSync(nestedYaml, yamlForTemplate(opts?.template), 'utf8')
+      wroteYaml = true
+    }
   }
 
-  const activeYaml = existsSync(rootYaml)
-    ? resolve(rootYaml)
-    : existsSync(nestedYaml)
-      ? resolve(nestedYaml)
+  const activeYaml = existsSync(nestedYaml)
+    ? resolve(nestedYaml)
+    : existsSync(rootYaml)
+      ? resolve(rootYaml)
       : resolve(nestedYaml)
   const pointerText = `Edit project settings (active YAML for this workspace):\n${activeYaml}\n`
   writeFileSync(join(dot, 'AGLOOM_CONFIG_PATH.txt'), pointerText, 'utf8')

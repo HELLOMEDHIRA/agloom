@@ -34,6 +34,21 @@ def test_ensure_creates_yaml_and_sessions_dir(tmp_path: Path) -> None:
     assert sessions_dir2 == sessions_dir
 
 
+def test_migrate_root_only_yaml_into_dot_agloom(tmp_path: Path) -> None:
+    root_y = tmp_path / "agloom.yaml"
+    root_y.write_text("model: root-only\nai:\n  name: x\n", encoding="utf-8")
+    sessions_dir, created = ensure_agloom_workspace(tmp_path)
+    assert created is True
+    nested = tmp_path / ".agloom" / "agloom.yaml"
+    assert nested.is_file()
+    assert "root-only" in nested.read_text(encoding="utf-8")
+    ptr = (tmp_path / ".agloom" / "AGLOOM_CONFIG_PATH.txt").read_text(encoding="utf-8")
+    assert str(nested.resolve()) in ptr
+    assert sessions_dir == tmp_path / ".agloom" / "sessions"
+    _, created2 = ensure_agloom_workspace(tmp_path)
+    assert created2 is False
+
+
 def test_ensure_when_cwd_is_dot_agloom_dir(tmp_path: Path) -> None:
     """Runtime cwd inside ``project/.agloom`` → starter yaml at ``project/.agloom/agloom.yaml``."""
     dot = tmp_path / ".agloom"

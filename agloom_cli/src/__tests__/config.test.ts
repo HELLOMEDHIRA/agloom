@@ -25,14 +25,15 @@ describe('findWalkUpAgloomYaml', () => {
     rmSync(dir, { recursive: true })
   })
 
-  it('prefers project-root agloom.yaml over .agloom/agloom.yaml', () => {
+  it('prefers .agloom/agloom.yaml over legacy root agloom.yaml when both exist', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agloom-walk2-'))
     const dot = join(dir, '.agloom')
     mkdirSync(dot, { recursive: true })
-    writeFileSync(join(dot, 'agloom.yaml'), 'model: inner\n', 'utf8')
+    const nested = join(dot, 'agloom.yaml')
+    writeFileSync(nested, 'model: inner\n', 'utf8')
     const root = join(dir, 'agloom.yaml')
     writeFileSync(root, 'model: root\n', 'utf8')
-    expect(findWalkUpAgloomYaml(dir)).toBe(root)
+    expect(findWalkUpAgloomYaml(dir)).toBe(nested)
     rmSync(dir, { recursive: true })
   })
 })
