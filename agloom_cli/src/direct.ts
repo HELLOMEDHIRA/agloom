@@ -24,7 +24,7 @@ const waitForEvent = (
   bridge: AGPBridge,
   pred: (e: AGPEvent) => boolean,
   ms = 120_000,
-): Promise<void> =>{
+): Promise<void> => {
   return new Promise((resolve, reject) => {
     const onErr = (err: Error) => {
       clearTimeout(to)
@@ -67,6 +67,8 @@ export const runDirect = async(options: {
   let outputTok = 0
   let costUsd: number = 0
   const t0 = Date.now()
+  let gotModelOutput = false
+  let sawFatalOnWire = false
 
   const writeOut = (s: string) => {
     const t = opts.noColor ? stripAnsi(s) : s
@@ -83,9 +85,25 @@ export const runDirect = async(options: {
     })
   }
 
+  const onDiag = (line: string) => {
+    const t = opts.noColor ? stripAnsi(line) : line
+    process.stderr.write(t.endsWith('\n') ? t : `${t}\n`)
+  }
+
   const onStream = (evt: AGPEvent) => {
+    if (evt.type === 'error.fatal') {
+      sawFatalOnWire = true
+    }
     if (opts.json) {
       process.stdout.write(`${JSON.stringify(evt)}\n`)
+      return
+    }
+    if (evt.type === 'error.transient' || evt.type === 'error.fatal') {
+      process.stderr.write(`[agloom] ${evt.data.severity}: ${evt.data.message}\n`)
+      return
+    }
+    if (evt.type === 'worker.failed') {
+      process.stderr.write(`[agloom] worker failed: ${evt.data.error}\n`)
       return
     }
     if (evt.type === 'metric.tokens') {
@@ -96,9 +114,11 @@ export const runDirect = async(options: {
       costUsd += evt.data.cost ?? 0
     }
     if (evt.type === 'token.delta' && !opts.noStream) {
+      if (evt.data.text) gotModelOutput = true
       writeOut(evt.data.text)
     }
     if (evt.type === 'message.assistant' && opts.noStream) {
+      if (evt.data.content) gotModelOutput = true
       writeOut(evt.data.content)
       if (!evt.data.content.endsWith('\n')) writeOut('\n')
     }
@@ -138,8 +158,16 @@ export const runDirect = async(options: {
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
       if (!opts.quiet && !opts.json) {
         process.stderr.write(
-          `\n[agloom] done in ${elapsed}s · ${inputTok}↑ + ${outputTok}↓ tokens · $${costUsd.toFixed(4)}\n`,
+          `\n[agloom] done in ${elapsed}s · ${inputTok}↑ + ${outputTok}↓ tokens · $${costUsd.toFixed(4)} · session=${evt.data.reason}\n`,
         )
+        if (evt.data.error) {
+          process.stderr.write(`[agloom] session error: ${evt.data.error}\n`)
+        }
+        if (evt.data.reason === 'completed' && !gotModelOutput && !sawFatalOnWire) {
+          process.stderr.write(
+            '[agloom] no assistant output was produced. Check stderr for `[agloom-runtime]` lines, provider API keys, and model id; use `--json` to dump every AGP event.\n',
+          )
+        }
       }
       const reason = evt.data.reason
       process.exitCode =
@@ -148,6 +176,7 @@ export const runDirect = async(options: {
   }
 
   bridge.on('event', onStream)
+  bridge.on('diagnostic', onDiag)
 
   const readyPromise = waitForEvent(
     bridge,
@@ -162,6 +191,7 @@ export const runDirect = async(options: {
     await readyPromise
   } catch (e) {
     bridge.off('event', onStream)
+    bridge.off('diagnostic', onDiag)
     throw e
   }
 
@@ -182,6 +212,7 @@ export const runDirect = async(options: {
   })
 
   bridge.off('event', onStream)
+  bridge.off('diagnostic', onDiag)
   await hitlChain
   bridge.shutdown()
   await new Promise<void>((resolve) => {

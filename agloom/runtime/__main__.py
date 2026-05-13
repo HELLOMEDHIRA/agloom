@@ -266,8 +266,9 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
 
     from .hitl_allowlist import hitl_allowlist_paths_for_runtime
     from .workspace_bootstrap import (
+        bootstrap_optional_agsuperbrain,
+        ensure_agloom_workspace,
         session_marker_json_path,
-        sessions_dir_for_runtime,
         write_session_started_json,
     )
 
@@ -282,7 +283,10 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
     session_id = args.session or new_session_id()
     initial_thread = f"thread_{uuid4().hex[:16]}"
     _cwd = Path.cwd()
-    _sd = sessions_dir_for_runtime(_cwd, args=args)
+    _sd, yaml_created = ensure_agloom_workspace(_cwd, args=args)
+    if yaml_created:
+        _eprint("[agloom-runtime] wrote starter ./agloom.yaml (no project config found).")
+    bootstrap_optional_agsuperbrain(_cwd, args=args)
     _marker_json = session_marker_json_path(_sd, session_id) if _sd.is_dir() else None
     _al_set, _al_leg, _al_sess = hitl_allowlist_paths_for_runtime(
         args,

@@ -1,16 +1,17 @@
 """Workspace path resolution and optional session JSON markers.
 
-The npm CLI creates ``agloom.yaml`` / ``.agloom/`` scaffolding before spawning ``agloom-runtime``;
-this package only resolves paths and writes session markers. :func:`ensure_agloom_workspace` exists
-for tests and offline helpers; serve loops use :func:`sessions_dir_for_runtime` and
-:func:`write_session_started_json`. ``DEFAULT_AGLOOM_YAML`` matches the CLI default template
-(see ``agloom_cli`` ``defaultAgloomTemplate`` / ``config``) for pytest parity.
+The **npm** ``agloom`` client calls ``ensureAgloomCliWorkspace`` before spawning the runtime; when
+you start **only** ``agloom-runtime serve``, :func:`ensure_agloom_workspace` is invoked from the
+serve entry so the same starter ``agloom.yaml`` and ``.agloom/{rules,skills,sessions}`` appear when
+missing. Session markers use :func:`write_session_started_json`. ``DEFAULT_AGLOOM_YAML`` matches
+the CLI default template (``agloom_cli`` ``defaultAgloomTemplate`` / ``config``) for parity.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import subprocess
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -205,6 +206,35 @@ def ensure_agloom_workspace(cwd: Path | None = None, *, args: Any | None = None)
         created = True
 
     return sessions_dir, created
+
+
+def bootstrap_optional_agsuperbrain(cwd: Path | None = None, *, args: Any | None = None) -> None:
+    """Run ``agsuperbrain init`` once when ``.agsuperbrain`` is missing (mirrors npm CLI bootstrap).
+
+    Failure is non-fatal: binary may be absent or init may return non-zero.
+    """
+    start = (cwd or Path.cwd()).resolve()
+    project_root, _ = resolve_workspace_roots(start, args)
+    agsuperbrain_dir = project_root / ".agsuperbrain"
+    if agsuperbrain_dir.exists():
+        return
+    try:
+        r = subprocess.run(
+            ["agsuperbrain", "init"],
+            cwd=str(project_root),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return
+    if r.returncode != 0 and r.stderr:
+        import sys
+
+        tail = r.stderr.strip()
+        if tail:
+            sys.stderr.write(f"[agloom-runtime] agsuperbrain init: {tail}\n")
 
 
 def _safe_session_filename(session_id: str) -> str:

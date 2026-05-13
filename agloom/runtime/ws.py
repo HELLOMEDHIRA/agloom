@@ -167,8 +167,9 @@ async def _session_loop(
         session_started_snapshot_from_args,
     )
     from agloom.runtime.workspace_bootstrap import (
+        bootstrap_optional_agsuperbrain,
+        ensure_agloom_workspace,
         session_marker_json_path,
-        sessions_dir_for_runtime,
         write_session_started_json,
     )
 
@@ -183,7 +184,8 @@ async def _session_loop(
     attach_wd = attachment_working_dir or Path.cwd().resolve()
     merged_args = merge_ws_connection_args(base_args, _ws_request_path(ws))
 
-    sd = sessions_dir_for_runtime(attach_wd, args=merged_args)
+    sd, _ = ensure_agloom_workspace(attach_wd, args=merged_args)
+    bootstrap_optional_agsuperbrain(attach_wd, args=merged_args)
     marker_path = session_marker_json_path(sd, session_id) if sd.is_dir() else None
     _al_set, _al_leg, _al_sess = hitl_allowlist_paths_for_runtime(
         merged_args,
