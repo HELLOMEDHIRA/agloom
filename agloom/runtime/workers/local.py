@@ -1,18 +1,18 @@
 """LocalAIWorker — in-process worker that wraps a UnifiedAgent.
 
-This is the standard single-node worker for Phase 1.  It receives an
+This is the standard single-node worker. It receives an
 ``agent.invoke`` :class:`WorkerTask`, calls the agent's ``astream_events()``
 generator, and pipes every :class:`AgentEvent` through the
 :class:`~agloom.runtime.translator.Translator` onto the AGP wire.
 
-For distributed / GPU workers see ``docs/runtime/architecture.md``.
+For scaling and topology notes see ``docs/runtime/architecture.md``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 from ...protocol.emitter import AsyncSessionEmitter
 from ..translator import translate
@@ -48,7 +48,7 @@ class LocalAIWorker(BaseWorker):
 
     async def execute(self, task: WorkerTask, emitter: AsyncSessionEmitter) -> None:  # type: ignore[override]
         task.status = TaskStatus.RUNNING
-        task.started_at = datetime.utcnow()
+        task.started_at = datetime.now(UTC)
         task.attempt += 1
         self._mark_busy()
 
@@ -73,7 +73,7 @@ class LocalAIWorker(BaseWorker):
                     pass
 
             task.status = TaskStatus.COMPLETED
-            task.finished_at = datetime.utcnow()
+            task.finished_at = datetime.now(UTC)
             self._total_completed += 1
 
             emitter.emit_worker_completed(
@@ -84,13 +84,13 @@ class LocalAIWorker(BaseWorker):
 
         except asyncio.CancelledError:
             task.status = TaskStatus.CANCELLED
-            task.finished_at = datetime.utcnow()
+            task.finished_at = datetime.now(UTC)
             self._last_error = "cancelled"
             raise
 
         except Exception as exc:
             task.status = TaskStatus.FAILED
-            task.finished_at = datetime.utcnow()
+            task.finished_at = datetime.now(UTC)
             self._total_failed += 1
             self._last_error = str(exc)
 

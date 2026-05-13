@@ -174,7 +174,7 @@ export const ChatInput = ({
           }
           className={cn(
             'flex-1 resize-none bg-transparent text-sm text-neutral-900 placeholder-neutral-400 focus:outline-none leading-relaxed',
-            'dark:text-white dark:placeholder-neutral-600 max-h-[180px] overflow-y-auto',
+            'dark:text-white dark:placeholder-neutral-600 max-h-45 overflow-y-auto',
           )}
         />
 

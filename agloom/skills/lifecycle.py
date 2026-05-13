@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -96,6 +97,7 @@ class SkillLifecycleManager:
         self._registry = registry
         self._agent = agent_name
         self._run_count = 0
+        self._run_count_lock = threading.Lock()
         self._agent_ns = ("skills", agent_name)
         self._model_fingerprint = _compute_model_fingerprint(llm)
         self._timeout = llm_timeout
@@ -298,7 +300,9 @@ class SkillLifecycleManager:
         applied_skill: str | None = None,
     ) -> None:
         """Update usage stats and fire periodic review. Never blocks."""
-        self._run_count += 1
+        with self._run_count_lock:
+            self._run_count += 1
+            rc = self._run_count
 
         if applied_skill:
             from ..llm_utils import safe_create_task
@@ -308,7 +312,7 @@ class SkillLifecycleManager:
                 name=f"skill-usage-{self._agent}",
             )
 
-        if self._run_count % self._review_every == 0:
+        if rc % self._review_every == 0:
             from ..llm_utils import safe_create_task
 
             safe_create_task(

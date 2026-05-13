@@ -205,9 +205,19 @@ Query: "{self.example_query}"
 
 
 def skill_dir_slug(name: str) -> str:
-    """Filesystem-safe directory name for a skill (under a skills root)."""
-    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", name.strip())
+    """Filesystem-safe directory name for a skill (under a skills root).
+
+    Rejects path traversal (``..``), reserved relative segments, and characters
+    invalid on common filesystems so ``skills_root / slug`` stays under the root.
+    """
+    raw = (name or "").strip()
+    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "-", raw)
     s = re.sub(r"-+", "-", s).strip("-")
+    if not s or s in (".", "..") or ".." in s:
+        return "skill"
+    s = s.strip(".")
+    if not s or ".." in s or s in (".", ".."):
+        return "skill"
     return s or "skill"
 
 
@@ -284,7 +294,12 @@ def write_skill_md(
 ) -> Path:
     """Write ``<skills_root>/<slug>/SKILL.md`` and return the file path."""
     slug = skill_dir_slug(manifest.name)
-    dir_path = skills_root / slug
+    root = skills_root.expanduser().resolve()
+    dir_path = (root / slug).resolve()
+    try:
+        dir_path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"skill path escapes skills root: {dir_path}") from exc
     dir_path.mkdir(parents=True, exist_ok=True)
     path = dir_path / "SKILL.md"
     front: dict[str, Any] = {
@@ -309,7 +324,12 @@ def write_skill_md(
 def erase_skill_md_tree(skills_root: Path, skill_name: str) -> bool:
     """Remove ``<skills_root>/<slug>/`` if it exists. Returns True if a directory was removed."""
     slug = skill_dir_slug(skill_name)
-    target = skills_root / slug
+    root = skills_root.expanduser().resolve()
+    target = (root / slug).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
+        return False
     if target.is_dir():
         shutil.rmtree(target)
         return True

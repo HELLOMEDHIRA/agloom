@@ -4,17 +4,17 @@ When the runtime is started with **`agloom-runtime serve --obs`**, a small FastA
 
 ## Probes
 
-| Route | Role |
-| --- | --- |
-| **`GET /observe/healthz`** | **Liveness** — process is up and serving HTTP. |
-| **`GET /observe/readyz`** | **Readiness** — observability SQLite store answers a trivial query (returns **503** if the DB is broken or locked). |
+| Route                      | Role                                                                                                                |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **`GET /observe/healthz`** | **Liveness** — process is up and serving HTTP.                                                                      |
+| **`GET /observe/readyz`**  | **Readiness** — observability SQLite store answers a trivial query (returns **503** if the DB is broken or locked). |
 
 Use **`healthz`** for “is the sidecar listening?” and **`readyz`** for “can we query stored sessions?” before routing dashboard traffic.
 
 ## Prometheus
 
-| Route | Role |
-| --- | --- |
+| Route                      | Role                                                                                                                                              |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`GET /observe/metrics`** | Minimal **Prometheus** exposition (`text/plain; version=0.0.4`). Currently exports **`agloom_up`** as a gauge set to **1** when the handler runs. |
 
 Scrape interval: align with your platform defaults (often 15–60s). Expand this endpoint with counters and histograms as you wire more telemetry.

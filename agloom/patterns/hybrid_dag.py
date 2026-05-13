@@ -5,7 +5,7 @@ import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..llm_streaming import astream_llm_to_event_queue
+from ..llm_streaming import stream_or_invoke_llm
 from ..logging_utils import get_logger
 from ..models import (
     ExecutionResult,
@@ -189,31 +189,14 @@ async def handle_hybrid_dag(
     ]
     synthesis_error: str | None = None
     try:
-        event_queue = agent.get("_event_queue")
-        if event_queue is not None:
-            synthesis, last_chunk = await astream_llm_to_event_queue(
-                llm, synth_input, event_queue, timeout=_timeout
-            )
-            raw_messages.extend(synth_input)
-            if last_chunk is not None:
-                raw_messages.append(last_chunk)
-            synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
-            synth_usage = _extract_token_usage(last_chunk) if last_chunk else {}
-            if synth_usage:
-                usage = _merge_token_usage(usage, synth_usage)
-            synthesis = synthesis.strip()
-        else:
-            synthesis_resp = await asyncio.wait_for(
-                llm.ainvoke(synth_input),
-                timeout=_timeout,
-            )
-            raw_messages.extend(synth_input)
-            raw_messages.append(synthesis_resp)
-            synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
-            synth_usage = _extract_token_usage(synthesis_resp)
-            if synth_usage:
-                usage = _merge_token_usage(usage, synth_usage)
-            synthesis = synthesis_resp.content.strip()
+        synthesis, tail, last_chunk = await stream_or_invoke_llm(
+            llm, synth_input, agent, timeout=_timeout
+        )
+        raw_messages.extend(tail)
+        synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
+        synth_usage = _extract_token_usage(last_chunk) if last_chunk else {}
+        if synth_usage:
+            usage = _merge_token_usage(usage, synth_usage)
     except TimeoutError:
         synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
         synthesis_error = "SynthesisTimeout"
@@ -257,5 +240,5 @@ def _format_all_outputs(results: list[WorkerResult]) -> str:
     sections = []
     for r in results:
         status = "✓" if r.signal == SignalType.SUCCESS else "✗"
-        sections.append(f"{status} [{r.worker_id}] — {r.task[:60]}\n{r.output}")
+        sections.append(f"{status} [{r.worker_id}] — {r.task}\n{r.output}")
     return "\n\n".join(sections)

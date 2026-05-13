@@ -1,12 +1,11 @@
-/**
- * Unit tests for AGPBridge command serialization and initial state.
+/** Unit tests for AGPBridge command serialization and initial state.
  * Process spawning is mocked — no Python runtime required.
  */
 
 import { createAGPBridge } from '../runtime/bridge'
 import { EventEmitter } from 'node:events'
 
-// ── mock child_process ────────────────────────────────────────────────────────
+// mock child_process
 
 const mockWrite = jest.fn()
 const mockStdin = { writable: true, write: mockWrite, on: jest.fn() }
@@ -17,7 +16,19 @@ const mockStderrEmitter = new EventEmitter() as EventEmitter & { setEncoding: je
 mockStderrEmitter.setEncoding = jest.fn()
 mockStderrEmitter.setMaxListeners(50)
 
-const mockProc = {
+const exitListeners: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = []
+const errorListeners: Array<(err: Error) => void> = []
+
+type MockChild = {
+  pid: number
+  stdin: typeof mockStdin
+  stdout: typeof mockStdoutEmitter
+  stderr: typeof mockStderrEmitter
+  on: jest.Mock
+  kill: jest.Mock
+}
+
+const mockProc: MockChild = {
   pid: 12345,
   stdin: mockStdin,
   stdout: mockStdoutEmitter,
@@ -26,11 +37,26 @@ const mockProc = {
   kill: jest.fn(),
 }
 
+mockProc.on.mockImplementation((event: string, fn: (...args: unknown[]) => void) => {
+  if (event === 'exit') exitListeners.push(fn as (code: number | null, signal: NodeJS.Signals | null) => void)
+  if (event === 'error') errorListeners.push(fn as (err: Error) => void)
+  return mockProc
+})
+
 jest.mock('node:child_process', () => ({
   spawn: jest.fn(() => mockProc),
+  execSync: jest.fn(),
 }))
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+afterEach(() => {
+  for (const fn of exitListeners.splice(0)) {
+    fn(0, null)
+  }
+  errorListeners.length = 0
+  mockProc.on.mockClear()
+})
+
+// helpers
 
 const newBridge = () => {
   const bridge = createAGPBridge()
@@ -55,7 +81,7 @@ const lastWritten = (): Record<string, unknown> => {
   return JSON.parse(last.trim())
 }
 
-// ── lifecycle ─────────────────────────────────────────────────────────────────
+// lifecycle
 
 describe('AGPBridge — initial state', () => {
   it('starts with status "starting"', () => {
@@ -69,7 +95,7 @@ describe('AGPBridge — initial state', () => {
   })
 })
 
-// ── NDJSON stdout parsing ─────────────────────────────────────────────────────
+// NDJSON stdout parsing
 
 describe('AGPBridge — NDJSON parsing', () => {
   beforeEach(() => {
@@ -143,7 +169,7 @@ describe('AGPBridge — NDJSON parsing', () => {
   })
 })
 
-// ── command methods ────────────────────────────────────────────────────────────
+// command methods
 
 describe('AGPBridge — command dispatch', () => {
   beforeEach(() => {
@@ -164,6 +190,14 @@ describe('AGPBridge — command dispatch', () => {
     bridge.cancel('thread-1')
     const cmd = lastWritten()
     expect(cmd['type']).toBe('command.cancel')
+  })
+
+  it('memoryPopLastTurn() sends command.memory.pop_last_turn', () => {
+    const bridge = newBridge()
+    bridge.memoryPopLastTurn('thread-9')
+    const cmd = lastWritten()
+    expect(cmd['type']).toBe('command.memory.pop_last_turn')
+    expect((cmd['data'] as Record<string, unknown>)['thread']).toBe('thread-9')
   })
 
   it('hitlRespond() sends command.hitl.respond', () => {
@@ -189,6 +223,25 @@ describe('AGPBridge — command dispatch', () => {
     bridge.shutdown()
     const cmd = lastWritten()
     expect(cmd['type']).toBe('command.runtime.shutdown')
+  })
+
+  it('harnessGit() sends command.harness.git', () => {
+    const bridge = newBridge()
+    bridge.harnessGit('diff', { path: 'src/a.ts', cached: true })
+    const cmd = lastWritten()
+    expect(cmd['type']).toBe('command.harness.git')
+    const d = cmd['data'] as Record<string, unknown>
+    expect(d['op']).toBe('diff')
+    expect(d['path']).toBe('src/a.ts')
+    expect(d['cached']).toBe(true)
+  })
+
+  it('planPreview() sends command.plan.preview', () => {
+    const bridge = newBridge()
+    bridge.planPreview('ship the feature')
+    const cmd = lastWritten()
+    expect(cmd['type']).toBe('command.plan.preview')
+    expect((cmd['data'] as Record<string, unknown>)['prompt']).toBe('ship the feature')
   })
 
   it('send() is a no-op when stdin is not writable', () => {

@@ -1,6 +1,4 @@
-/**
- * StatusBar — bottom bar with session status, thread id, and Ctrl shortcuts.
- */
+/** StatusBar — bottom bar with session status, thread id, and Ctrl shortcuts. */
 
 import React, { useEffect, useState } from 'react'
 import { Box, Text, useWindowSize } from 'ink'
@@ -25,17 +23,23 @@ const STATUS_TAG: Record<string, string> = {
   exited: 'EXIT',
 }
 
-const STATUS_COLOR: Record<string, string> = {
+const STATUS_COLORS = {
   idle: 'green',
   running: 'yellow',
   thinking: 'magenta',
   hitl: 'yellow',
   error: 'red',
   exited: 'gray',
-}
+} as const
+
+type StatusInkColor = (typeof STATUS_COLORS)[keyof typeof STATUS_COLORS]
 
 interface Props {
   thread: string
+  /**
+   * Same contract as ``Header``: when the layout is split, pass the **main column** width so the
+   * bar matches the chat column instead of the full terminal width.
+   */
   layoutWidth?: number
 }
 
@@ -44,11 +48,13 @@ export const StatusBar = ({ thread, layoutWidth }: Props): React.ReactElement =>
   const budgetUi = useSessionStore((s) => s.budgetUi)
   const sessionId = useSessionStore((s) => s.sessionId)
   const { columns } = useWindowSize()
+  /** ``layoutWidth`` overrides ``useWindowSize().columns`` when the UI is split (see props JSDoc). */
   const termWidth = layoutWidth ?? columns ?? 80
 
   const icon = STATUS_LABEL[status] ?? '●'
   const tag = STATUS_TAG[status] ?? status.toUpperCase()
-  let color = STATUS_COLOR[status] ?? 'white'
+  let color: StatusInkColor | 'white' =
+    status in STATUS_COLORS ? STATUS_COLORS[status as keyof typeof STATUS_COLORS] : 'white'
   if (budgetUi === 'exhausted') color = 'red'
   else if (budgetUi === 'approaching') color = 'yellow'
 
@@ -86,7 +92,7 @@ export const StatusBar = ({ thread, layoutWidth }: Props): React.ReactElement =>
       borderRight={false}
     >
       {/* Status: icon + color + uppercase tag (E2 color-blind aid) */}
-      <Text color={color as 'green' | 'yellow' | 'magenta' | 'red' | 'gray' | 'white'} bold>
+      <Text color={color} bold>
         {icon}{' '}
         {tag}
       </Text>

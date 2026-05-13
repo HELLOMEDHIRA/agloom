@@ -5,6 +5,7 @@ Uses ``langchain-mcp-adapters``; ``connect_mcp_servers`` is invoked lazily from 
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -329,3 +330,31 @@ async def connect_mcp_servers(
         f"[{agent_name}] MCP ready: +{len(new_tools)} tools | prompts: {mcp_prompts} | resources: {resource_counts}"
     )
     return client
+
+
+async def aclose_mcp_client(client: Any, *, log_name: str = "agent") -> None:
+    """Best-effort shutdown for ``MultiServerMCPClient`` and similar (no reliable ``__aexit__``)."""
+    if client is None:
+        return
+    try:
+        if hasattr(client, "__aexit__"):
+            try:
+                await client.__aexit__(None, None, None)
+                return
+            except NotImplementedError:
+                logger.debug(
+                    f"[{log_name}] MCP client __aexit__ not implemented "
+                    f"(expected for MultiServerMCPClient)"
+                )
+        for meth_name in ("aclose", "close"):
+            m = getattr(client, meth_name, None)
+            if callable(m):
+                try:
+                    res = m()
+                    if inspect.isawaitable(res):
+                        await res
+                except Exception as exc:
+                    logger.debug(f"[{log_name}] MCP client {meth_name}: {exc!r}")
+                return
+    except Exception as exc:
+        logger.debug(f"[{log_name}] MCP client cleanup: {exc!r}")

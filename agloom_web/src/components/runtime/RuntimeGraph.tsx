@@ -1,9 +1,5 @@
-/**
- * RuntimeGraph — live LangGraph node visualization using React Flow (@xyflow/react).
- *
- * Consumes graph.node.enter / graph.node.exit AGP events from the store.
- * Nodes are laid out left-to-right in execution order.
- * Active nodes pulse; completed nodes are solid green; failed nodes are red.
+/** RuntimeGraph — live LangGraph node visualization using React Flow (@xyflow/react).
+ * Consumes graph.node.enter / graph.node.exit AGP events from the store. Nodes are laid out left-to-right in execution order. Active nodes pulse; completed nodes are solid green; failed nodes are red.
  */
 import React, { useMemo } from 'react'
 import {

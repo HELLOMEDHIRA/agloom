@@ -1,6 +1,4 @@
-/**
- * React context contract for AGPClient.
- */
+/** React context contract for AGPClient. */
 import React from 'react'
 import { render, screen } from '@testing-library/react'
 import { AGPClientContext, createAGPClient, useAGPClient } from '../lib/agp/client'

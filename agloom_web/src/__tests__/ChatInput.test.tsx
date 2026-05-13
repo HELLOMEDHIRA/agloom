@@ -1,6 +1,4 @@
-/**
- * Component test — ChatInput integrates Zustand; verifies submit wiring.
- */
+/** Component test — ChatInput integrates Zustand; verifies submit wiring. */
 import React from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'

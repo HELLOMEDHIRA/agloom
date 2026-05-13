@@ -51,19 +51,19 @@ Typical behaviour with a project-local `.agloom/` layout:
 
 When the harness is active, **11 tools** are appended to your tool list:
 
-| Tool | Role |
-| --- | --- |
+| Tool                 | Role                                                                                          |
+| -------------------- | --------------------------------------------------------------------------------------------- |
 | `initialize_project` | First-run decomposition: goal → structured task list + briefing (uses the agent LLM + store). |
-| `bootstrap_progress` | Session start protocol: context, task list, suggested next task. |
-| `save_progress` | Persist progress notes and artifact snapshot (long-term store + disk when configured). |
-| `get_next_task` | Claim the next pending task for the current session. |
-| `update_task` | Update status, notes, errors, verification results. |
-| `add_task` | Add a task with optional verification steps. |
-| `git_status` | Working tree summary. |
-| `git_log` | Recent commits. |
-| `git_commit` | Stage all and commit with a message. |
-| `git_checkpoint` | Named checkpoint (tag-style) for recovery. |
-| `git_revert_hint` | Suggest recovery when the tree is broken. |
+| `bootstrap_progress` | Session start protocol: context, task list, suggested next task.                              |
+| `save_progress`      | Persist progress notes and artifact snapshot (long-term store + disk when configured).        |
+| `get_next_task`      | Claim the next pending task for the current session.                                          |
+| `update_task`        | Update status, notes, errors, verification results.                                           |
+| `add_task`           | Add a task with optional verification steps.                                                  |
+| `git_status`         | Working tree summary.                                                                         |
+| `git_log`            | Recent commits.                                                                               |
+| `git_commit`         | Stage all and commit with a message.                                                          |
+| `git_checkpoint`     | Named checkpoint (tag-style) for recovery.                                                    |
+| `git_revert_hint`    | Suggest recovery when the tree is broken.                                                     |
 
 ## How the agent “sees” progress
 

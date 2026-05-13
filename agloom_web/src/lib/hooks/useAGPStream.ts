@@ -1,6 +1,4 @@
-/**
- * useAGPStream — subscribes to an AGPClient and pipes events into the store.
- */
+/** useAGPStream — subscribes to an AGPClient and pipes events into the store. */
 import { useEffect, useRef } from 'react'
 import type { AGPClient } from '../agp/client.js'
 import { useSessionStore } from '../../store/session.js'

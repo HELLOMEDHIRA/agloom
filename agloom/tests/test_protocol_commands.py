@@ -12,9 +12,12 @@ from agloom.protocol.commands import (
     CommandCancel,
     CommandConfigSet,
     CommandHITLRespond,
+    CommandHarnessGit,
     CommandInvoke,
     CommandMemoryClear,
+    CommandMemoryPopLastTurn,
     CommandPing,
+    CommandPlanPreview,
     CommandProvidersList,
     CommandRuntimeShutdown,
     CommandSessionResume,
@@ -29,7 +32,7 @@ def _parse(raw: dict) -> Command:
     return command_adapter.validate_python(raw)
 
 
-# ── CommandInvoke ──────────────────────────────────────────────────────────────
+# CommandInvoke
 
 
 def test_invoke_minimal():
@@ -74,7 +77,7 @@ def test_invoke_with_attachments():
     assert cmd.data.attachments[0].data_base64 == b64
 
 
-# ── CommandCancel ──────────────────────────────────────────────────────────────
+# CommandCancel
 
 
 def test_cancel_no_data():
@@ -94,7 +97,7 @@ def test_cancel_empty_data_dict():
     assert isinstance(cmd, CommandCancel)
 
 
-# ── CommandHITLRespond ─────────────────────────────────────────────────────────
+# CommandHITLRespond
 
 
 def test_hitl_respond_accept():
@@ -116,7 +119,7 @@ def test_hitl_respond_with_text():
     assert cmd.data.text == "yes please"  # narrowed by isinstance above
 
 
-# ── CommandWorkerAssign ────────────────────────────────────────────────────────
+# CommandWorkerAssign
 
 
 def test_worker_assign_minimal():
@@ -145,7 +148,7 @@ def test_worker_assign_full():
     assert "read_file" in cmd.data.tools
 
 
-# ── CommandSessionResume ───────────────────────────────────────────────────────
+# CommandSessionResume
 
 
 def test_session_resume():
@@ -161,7 +164,7 @@ def test_session_resume_no_from_seq():
     assert cmd.data.from_seq is None
 
 
-# ── CommandRuntimeShutdown ─────────────────────────────────────────────────────
+# CommandRuntimeShutdown
 
 
 def test_runtime_shutdown():
@@ -174,7 +177,7 @@ def test_runtime_shutdown_with_data():
     assert isinstance(cmd, CommandRuntimeShutdown)
 
 
-# ── command.ping / subscribe / tool.invoke ────────────────────────────────────
+# command.ping / subscribe / tool.invoke
 
 
 def test_ping_optional_id():
@@ -196,7 +199,7 @@ def test_tool_invoke():
     assert cmd.data.arguments == {"x": 1}
 
 
-# ── Unknown type raises ────────────────────────────────────────────────────────
+# Unknown type raises
 
 
 def test_unknown_type_raises():
@@ -204,7 +207,7 @@ def test_unknown_type_raises():
         _parse({"type": "command.unknown.xyz", "data": {}})
 
 
-# ── JSON round-trip ────────────────────────────────────────────────────────────
+# JSON round-trip
 
 
 def test_json_round_trip_invoke():
@@ -215,7 +218,7 @@ def test_json_round_trip_invoke():
     assert dumped["data"]["prompt"] == "hello"
 
 
-# ── command.config.set ─────────────────────────────────────────────────────────
+# command.config.set
 
 
 def test_config_set_model_only():
@@ -235,7 +238,7 @@ def test_config_set_empty_raises():
         _parse({"type": "command.config.set", "data": {}})
 
 
-# ── command.memory.clear ─────────────────────────────────────────────────────
+# command.memory.clear
 
 
 def test_memory_clear_minimal():
@@ -250,7 +253,37 @@ def test_memory_clear_with_thread():
     assert cmd.data.thread == "t_abc"
 
 
-# ── command.attach.file ─────────────────────────────────────────────────────────
+# command.memory.pop_last_turn
+
+
+def test_memory_pop_last_turn_minimal():
+    cmd = _parse({"type": "command.memory.pop_last_turn"})
+    assert isinstance(cmd, CommandMemoryPopLastTurn)
+    assert cmd.data.thread is None
+
+
+def test_memory_pop_last_turn_with_thread():
+    cmd = _parse({"type": "command.memory.pop_last_turn", "data": {"thread": "t_abc"}})
+    assert isinstance(cmd, CommandMemoryPopLastTurn)
+    assert cmd.data.thread == "t_abc"
+
+
+# command.harness.git / command.plan.preview
+
+
+def test_harness_git_defaults():
+    cmd = _parse({"type": "command.harness.git"})
+    assert isinstance(cmd, CommandHarnessGit)
+    assert cmd.data.op == "diff"
+
+
+def test_plan_preview_prompt():
+    cmd = _parse({"type": "command.plan.preview", "data": {"prompt": "ship feature X"}})
+    assert isinstance(cmd, CommandPlanPreview)
+    assert cmd.data.prompt == "ship feature X"
+
+
+# command.attach.file
 
 
 def test_attach_file_minimal():

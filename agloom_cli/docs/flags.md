@@ -1,6 +1,6 @@
 # CLI flags
 
-Flags are parsed by **`agloom`** (`agloom_cli/src/index.tsx`). Most forward to **`agloom-runtime serve`**; anything after a lone **`--`** is appended verbatim to the Python argv.
+Flags are parsed by the **`agloom`** CLI entrypoint. Most forward to **`agloom-runtime serve`**; anything after a lone **`--`** is appended verbatim to the Python argv.
 
 Get the live list:
 
@@ -10,84 +10,84 @@ agloom --help
 
 ## Session / AGP store
 
-| Flag | Example | Meaning |
-| --- | --- | --- |
-| `-t, --thread <id>` | `-t t_dev` | LangGraph thread id for invocations (default: generated). |
-| `-s, --session <id>` | `-s replay1` | AGP session id (`agloom-runtime --session`). |
-| `--store <none\|memory\|sqlite>` | `--store sqlite` | Event store for replay/resume (CLI default: sqlite). |
-| `--store-path <path>` | | SQLite path when `--store=sqlite`. |
+| Flag                  | Example      | Meaning                                                   |                  |                                                      |
+| --------------------- | ------------ | --------------------------------------------------------- | ---------------- | ---------------------------------------------------- |
+| `-t, --thread <id>`   | `-t t_dev`   | LangGraph thread id for invocations (default: generated). |                  |                                                      |
+| `-s, --session <id>`  | `-s replay1` | AGP session id (`agloom-runtime --session`).              |                  |                                                      |
+| `--store <none\       | memory\      | sqlite>`                                                  | `--store sqlite` | Event store for replay/resume (CLI default: sqlite). |
+| `--store-path <path>` |              | SQLite path when `--store=sqlite`.                        |                  |                                                      |
 
 ## Model / agent
 
-| Flag | Example | Meaning |
-| --- | --- | --- |
-| `-m, --model <id>` | `-m openai:gpt-4o` | Prefixed model id (see [Models](models.md)). |
-| `--provider <slug>` | `--provider huggingface` | Force provider when the id is ambiguous. |
-| `--api-key-env <VAR>` | `--api-key-env MYKEY` | Map secret from `VAR` to the provider’s standard env key. |
-| `-T, --temperature <n>` | `-T 0.2` | Sampling temperature. |
-| `--max-tokens <n>` | | Max output tokens when supported. |
-| `--pattern <name>` | `--pattern react` | Routing bias (`react`, `sequential`, …). |
-| `--system-prompt <text>` | | Inline system prompt. |
-| `--system-prompt-file <path>` | | System prompt from UTF-8 file. |
+| Flag                          | Example                  | Meaning                                                   |
+| ----------------------------- | ------------------------ | --------------------------------------------------------- |
+| `-m, --model <id>`            | `-m openai:gpt-4o`       | Prefixed model id (see [Models](models.md)).              |
+| `--provider <slug>`           | `--provider huggingface` | Force provider when the id is ambiguous.                  |
+| `--api-key-env <VAR>`         | `--api-key-env MYKEY`    | Map secret from `VAR` to the provider’s standard env key. |
+| `-T, --temperature <n>`       | `-T 0.2`                 | Sampling temperature.                                     |
+| `--max-tokens <n>`            |                          | Max output tokens when supported.                         |
+| `--pattern <name>`            | `--pattern react`        | Routing bias (`react`, `sequential`, …).                  |
+| `--system-prompt <text>`      |                          | Inline system prompt.                                     |
+| `--system-prompt-file <path>` |                          | System prompt from UTF-8 file.                            |
 
 ## Provider discovery
 
-| Flag | Meaning |
-| --- | --- |
-| `--list-providers` | Print curated registry table and exit (calls Python `providers list`). |
-| `--resolve-model <spec>` | Dry-run routing / env snapshot and exit (`providers resolve`). |
+| Flag                     | Meaning                                                                |
+| ------------------------ | ---------------------------------------------------------------------- |
+| `--list-providers`       | Print curated registry table and exit (calls Python `providers list`). |
+| `--resolve-model <spec>` | Dry-run routing / env snapshot and exit (`providers resolve`).         |
 
 ## MCP
 
-| Flag | Example |
-| --- | --- |
+| Flag                | Example                                         |
+| ------------------- | ----------------------------------------------- |
 | `--mcp <name:path>` | Repeatable; YAML merged into MCP server config. |
 
 ## Memory / skills / summarization
 
-| Flag | Meaning |
-| --- | --- |
-| `--no-memory` | Minimal session memory. |
-| `--memory <type>` | `in-memory`, `none`, `sqlite`, … |
-| `--memory-path <path>` | SQLite path for session memory. |
-| `--no-skills` | Disable skills disk mirror. |
-| `--skills-dir <path>` | Skills directory. |
-| `--summarizer-model <id>` | Model id for summarization. |
-| `--no-auto-summarize` | Disable auto summarization. |
+| Flag                      | Meaning                                    |
+| ------------------------- | ------------------------------------------ |
+| `--no-memory`             | Minimal session memory.                    |
+| `--memory <type>`         | `in-memory`, `none`, `sqlite`, …           |
+| `--memory-path <path>`    | SQLite path for session memory.            |
+| `--no-skills`             | Disable skills disk mirror.                |
+| `--skills-dir <path>`     | Skills directory.                          |
+| `--summarizer-model <id>` | Model id for summarization.                |
+| `--no-auto-summarize`     | Disable auto summarization.                |
 | `--session-max-turns <n>` | Rolling window size (`--max-turns` alias). |
 
 ## CLI tools (sandbox)
 
 Default npm behavior enables **`--with-cli-tools`** with working dir = cwd unless opted out.
 
-| Flag | Forwards to runtime |
-| --- | --- |
-| `--no-cli-tools` | Omit `--with-cli-tools`. |
-| `--no-shell-tool` | `--cli-tools-no-shell` |
+| Flag                 | Forwards to runtime      |
+| -------------------- | ------------------------ |
+| `--no-cli-tools`     | Omit `--with-cli-tools`. |
+| `--no-shell-tool`    | `--cli-tools-no-shell`   |
 | `--no-network-tools` | `--cli-tools-no-network` |
-| `--unrestricted` | `--cli-tools-no-sandbox` |
+| `--unrestricted`     | `--cli-tools-no-sandbox` |
 
 ## Direct mode
 
-| Flag | Meaning |
-| --- | --- |
-| `[prompt]` | Positional one-shot prompt. |
-| `-p, --prompt <text>` | Alternative prompt source. |
-| `-q, --quiet` | Assistant text only (no protocol framing). |
-| `--json` | NDJSON AGP events on stdout. |
-| `--no-stream` | Buffer until assistant message completes. |
-| `--no-color` | Strip ANSI in direct output. |
-| `--no-banner` | Suppress ASCII banner. |
-| `--auto-approve` | Auto-approve HITL (**dangerous**). |
-| `--auto-reject` | Auto-reject HITL prompts. |
-| `--hitl-tty` | Interactive HITL on a TTY in direct mode. |
+| Flag                  | Meaning                                    |
+| --------------------- | ------------------------------------------ |
+| `[prompt]`            | Positional one-shot prompt.                |
+| `-p, --prompt <text>` | Alternative prompt source.                 |
+| `-q, --quiet`         | Assistant text only (no protocol framing). |
+| `--json`              | NDJSON AGP events on stdout.               |
+| `--no-stream`         | Buffer until assistant message completes.  |
+| `--no-color`          | Strip ANSI in direct output.               |
+| `--no-banner`         | Suppress ASCII banner.                     |
+| `--auto-approve`      | Auto-approve HITL (**dangerous**).         |
+| `--auto-reject`       | Auto-reject HITL prompts.                  |
+| `--hitl-tty`          | Interactive HITL on a TTY in direct mode.  |
 
 ## Config introspection
 
-| Flag | Meaning |
-| --- | --- |
-| `--config <path>` | Explicit `agloom.yaml` (overrides walk-up discovery). |
-| `--print-config` | Print merged YAML + CLI + env snapshot as JSON and exit. |
+| Flag              | Meaning                                                  |
+| ----------------- | -------------------------------------------------------- |
+| `--config <path>` | Explicit `agloom.yaml` (overrides walk-up discovery).    |
+| `--print-config`  | Print merged YAML + CLI + env snapshot as JSON and exit. |
 
 Example:
 
@@ -99,8 +99,8 @@ Shows resolved model, store, MCP specs, and which YAML files contributed.
 
 ## UI-only
 
-| Flag | Meaning |
-| --- | --- |
+| Flag     | Meaning                                 |
+| -------- | --------------------------------------- |
 | `--diag` | Open stderr diagnostic pane on startup. |
 
 ## Pass-through (`--`)

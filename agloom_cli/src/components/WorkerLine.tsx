@@ -1,6 +1,4 @@
-/**
- * WorkerLine — renders a single worker node with status badge.
- */
+/** WorkerLine — renders a single worker node with status badge. */
 
 import React from 'react'
 import { Box, Text } from 'ink'

@@ -28,7 +28,7 @@ env = event_adapter.validate_python(json.loads(line))
 - **`MemoryEventStore`** — in-process ring buffer for tests.
 - **`SqliteEventStore`** — durable store for **`command.session.resume`** style replay (used by the runtime when configured).
 
-Schema export for external code generators: **`build_schema`**, **`write_schema`** in **`agloom.protocol.schema`** (see repo **`scripts/`** and **`agloom/docs/protocol/agp-schema.json`**).
+Schema export for external code generators: **`build_schema`**, **`write_schema`** in **`agloom.protocol.schema`**; the checked-in artifact is **`agloom/docs/protocol/agp-schema.json`**.
 
 ## In-process parity with the wire
 

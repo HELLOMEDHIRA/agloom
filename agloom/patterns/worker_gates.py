@@ -63,9 +63,14 @@ async def drain_for_halt(
 
     while True:
         try:
-            signal: Signal = signal_queue.get_nowait()
+            raw = signal_queue.get_nowait()
         except asyncio.QueueEmpty:
             break
+
+        if not isinstance(raw, Signal):
+            logger.warning(f"[{caller_name}] Ignoring non-Signal queue item: {type(raw).__name__!r}")
+            continue
+        signal = raw
 
         if signal.signal_type == SignalType.HALT_ALL:
             logger.warning(f"[{caller_name}] L4 HALT_ALL — worker={signal.worker_id!r} — stopping execution.")

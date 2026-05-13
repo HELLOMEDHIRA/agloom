@@ -162,7 +162,7 @@ class SkillLearner:
             worker_summary = ""
             if result.worker_results:
                 worker_summary = "\n".join(
-                    f"  {r.worker_id}: task='{r.task[:80]}' status={r.signal.value}" for r in result.worker_results
+                    f"  {r.worker_id}: task={r.task!r} status={r.signal.value}" for r in result.worker_results
                 )
 
             prompt = f"""
@@ -171,7 +171,7 @@ Query         : {query}
 Pattern       : {result.pattern_used.value if result.pattern_used else "unknown"}
 Steps taken   : {result.steps_taken}
 Success       : {result.success}
-Output preview: {result.output[:300]}
+Output preview: {result.output}
 
 Worker execution:
 {worker_summary or "  (single worker, no breakdown)"}

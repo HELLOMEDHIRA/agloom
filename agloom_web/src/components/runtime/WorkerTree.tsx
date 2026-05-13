@@ -1,6 +1,4 @@
-/**
- * WorkerTree — hierarchical view of all spawned workers + tool calls in the active turn.
- */
+/** WorkerTree — hierarchical view of all spawned workers + tool calls in the active turn. */
 import React from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Users, Wrench, CheckCircle, XCircle, Loader2 } from 'lucide-react'

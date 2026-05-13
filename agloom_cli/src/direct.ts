@@ -1,6 +1,4 @@
-/**
- * One-shot / piped execution mode — plain stdout (no Ink).
- */
+/** One-shot / piped execution mode — plain stdout (no Ink). */
 
 import { createInterface } from 'node:readline/promises'
 import stripAnsi from 'strip-ansi'
@@ -67,7 +65,7 @@ export async function runDirect(options: {
 
   let inputTok = 0
   let outputTok = 0
-  let costUsd = 0
+  let costUsd: number = 0
   const t0 = Date.now()
 
   const writeOut = (s: string) => {
@@ -76,6 +74,8 @@ export async function runDirect(options: {
   }
 
   let hitlChain = Promise.resolve()
+  /** Set when ``session.closed`` is seen — queued HITL TTY work must not call ``hitlRespond`` after teardown. */
+  let sessionEnded = false
   const enqueueHitl = (fn: () => Promise<void>): void => {
     hitlChain = hitlChain.then(fn).catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err)
@@ -107,11 +107,11 @@ export async function runDirect(options: {
       const id = evt.data.request_id
       const tty = process.stdin.isTTY && process.stderr.isTTY
       if (opts.autoApprove) {
-        bridge.hitlRespond(id, 'accept')
+        if (!sessionEnded) bridge.hitlRespond(id, 'accept')
         return
       }
       if (opts.autoReject) {
-        bridge.hitlRespond(id, 'reject')
+        if (!sessionEnded) bridge.hitlRespond(id, 'reject')
         return
       }
       if (opts.hitlTty && tty) {
@@ -121,6 +121,7 @@ export async function runDirect(options: {
             const kind = evt.data.kind ?? 'gate'
             const tool = evt.data.tool ? ` (${evt.data.tool})` : ''
             const line = await rl.question(`[agloom] HITL ${kind}${tool} — approve? [y/N] `)
+            if (sessionEnded) return
             const ok = line.trim().toLowerCase().startsWith('y')
             bridge.hitlRespond(id, ok ? 'accept' : 'reject')
           } finally {
@@ -129,10 +130,11 @@ export async function runDirect(options: {
         })
         return
       }
-      bridge.hitlRespond(id, 'reject')
+      if (!sessionEnded) bridge.hitlRespond(id, 'reject')
     }
 
     if (evt.type === 'session.closed') {
+      sessionEnded = true
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
       if (!opts.quiet && !opts.json) {
         process.stderr.write(
@@ -182,4 +184,15 @@ export async function runDirect(options: {
   bridge.off('event', onStream)
   await hitlChain
   bridge.shutdown()
+  await new Promise<void>((resolve) => {
+    if (bridge.status === 'exited') {
+      resolve()
+      return
+    }
+    const t = setTimeout(resolve, 10_000)
+    bridge.once('exit', () => {
+      clearTimeout(t)
+      resolve()
+    })
+  })
 }

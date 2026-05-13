@@ -32,12 +32,12 @@ When tools are provided and the query needs them, agloom automatically selects t
 
 agloom accepts tools in multiple formats:
 
-| Format | Example |
-| --- | --- |
-| `@tool` decorated function | `@tool def my_fn(x: str) -> str:` |
-| `BaseTool` subclass | `class MyTool(BaseTool):` |
-| Callable function | `def my_fn(x: str) -> str:` (auto-wrapped) |
-| Dict with function | `{"name": "my_tool", "func": my_fn}` |
+| Format                     | Example                                    |
+| -------------------------- | ------------------------------------------ |
+| `@tool` decorated function | `@tool def my_fn(x: str) -> str:`          |
+| `BaseTool` subclass        | `class MyTool(BaseTool):`                  |
+| Callable function          | `def my_fn(x: str) -> str:` (auto-wrapped) |
+| Dict with function         | `{"name": "my_tool", "func": my_fn}`       |
 
 ```python
 async def main():
@@ -57,11 +57,11 @@ async def main():
 
 agloom uses internal tools for memory and skills. The following names are **reserved** and cannot be used for your tools:
 
-| Reserved Name | Used For |
-| --- | --- |
-| `save_memory` | Saving to long-term memory |
+| Reserved Name   | Used For                         |
+| --------------- | -------------------------------- |
+| `save_memory`   | Saving to long-term memory       |
 | `recall_memory` | Retrieving from long-term memory |
-| `load_skill` | Loading a learned skill |
+| `load_skill`    | Loading a learned skill          |
 
 If you try to use a reserved name, `create_agent` raises a `ValueError` immediately:
 

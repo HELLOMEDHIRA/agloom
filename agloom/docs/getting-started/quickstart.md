@@ -1,14 +1,28 @@
 # Quick Start
 
+Install the Python package and a Groq chat model adapter (examples use Groq; swap in any LangChain chat model you prefer):
+
+```bash
+pip install agloom langchain-groq
+export GROQ_API_KEY=gsk_...
+# Optional: export GROQ_MODEL=llama-3.3-70b-versatile
+```
+
 ## Your First Agent (5 Lines)
 
 ```python
 import asyncio
+import os
+
 from langchain_groq import ChatGroq
 from agloom import create_agent
 
 async def main():
-    llm = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct")
+    key = os.environ.get("GROQ_API_KEY", "").strip()
+    if not key:
+        raise SystemExit("Set GROQ_API_KEY to run this snippet.")
+    model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+    llm = ChatGroq(model=model, api_key=key)
     agent = await create_agent(model=llm, name="my-first-agent")
     result = await agent.ainvoke("What is the capital of Japan?")
     print(result.output)
@@ -19,8 +33,8 @@ asyncio.run(main())
 ### What happened
 
 1. `create_agent` wired up the full pipeline — classifier, pattern handlers, error handling
-2. `ainvoke` classified the query → selected **DIRECT** pattern (simple factual query)
-3. Made one LLM call and returned the result
+2. `ainvoke` classified the query and routed it to a pattern (often **DIRECT** for short factual questions — the exact pattern depends on the model and tools)
+3. The handler ran and returned the result
 
 ## Inspecting the Result
 
@@ -30,7 +44,7 @@ asyncio.run(main())
 result = await agent.ainvoke("Explain photosynthesis briefly")
 
 print(result.output)                  # The LLM's response text
-print(result.pattern_used)            # PatternType.DIRECT
+print(result.pattern_used)            # Pattern the classifier chose (e.g. DIRECT, REACT, …)
 print(result.run_id)                  # Unique ID for this run
 print(result.steps)                   # Step-by-step trace
 print(result.token_usage)             # {'input_tokens': ..., 'output_tokens': ...}
@@ -40,80 +54,65 @@ print(result.metadata)                # Additional metadata
 
 ## Adding Tools
 
-Give your agent capabilities and it will automatically switch to the **REACT** pattern:
+Give your agent capabilities and it will typically route tool-heavy turns through the **REACT** pattern:
 
 ```python
-import ast
 import asyncio
-import operator
+import os
+import re
+
 from langchain_core.tools import tool
+from langchain_groq import ChatGroq
 from agloom import create_agent
 
-def _safe_calc(expression: str) -> float:
-    """Arithmetic only (+ − × ÷ // % ** and parentheses). Rejects names and calls."""
-    tree = ast.parse(expression.strip(), mode="eval")
-
-    def _eval(node: ast.AST) -> float:
-        if isinstance(node, ast.Expression):
-            return _eval(node.body)
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-            return float(node.value)
-        if isinstance(node, ast.UnaryOp):
-            match node.op:
-                case ast.UAdd():
-                    return operator.pos(_eval(node.operand))
-                case ast.USub():
-                    return operator.neg(_eval(node.operand))
-                case _:
-                    raise ValueError("only plain numeric arithmetic is allowed")
-        if isinstance(node, ast.BinOp):
-            match node.op:
-                case ast.Add():
-                    return operator.add(_eval(node.left), _eval(node.right))
-                case ast.Sub():
-                    return operator.sub(_eval(node.left), _eval(node.right))
-                case ast.Mult():
-                    return operator.mul(_eval(node.left), _eval(node.right))
-                case ast.Div():
-                    return operator.truediv(_eval(node.left), _eval(node.right))
-                case ast.FloorDiv():
-                    return operator.floordiv(_eval(node.left), _eval(node.right))
-                case ast.Mod():
-                    return operator.mod(_eval(node.left), _eval(node.right))
-                case ast.Pow():
-                    return operator.pow(_eval(node.left), _eval(node.right))
-                case _:
-                    raise ValueError("only plain numeric arithmetic is allowed")
-        raise ValueError("only plain numeric arithmetic is allowed")
-
-    return _eval(tree)
+_SAFE = re.compile(r"^[\d\s+\-*/.%()]+$")
 
 
 @tool
 def calculate(expression: str) -> str:
-    """Evaluate a mathematical expression (safe arithmetic subset)."""
-    return str(_safe_calc(expression))
+    """Evaluate a numeric expression (digits, spaces, + - * / % ** and parentheses)."""
+    expr = expression.strip()
+    if not expr or not _SAFE.match(expr):
+        return "error: only digits, spaces, and + - * / % ** ( ) . are allowed"
+    try:
+        return str(eval(expr, {"__builtins__": {}}, {}))
+    except Exception as exc:
+        return f"error: {exc}"
+
 
 async def main():
+    key = os.environ.get("GROQ_API_KEY", "").strip()
+    if not key:
+        raise SystemExit("Set GROQ_API_KEY to run this snippet.")
+    model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+    llm = ChatGroq(model=model, api_key=key)
+
     agent = await create_agent(
         model=llm,
         tools=[calculate],
         name="math-agent",
     )
     result = await agent.ainvoke("What is (25 * 4) + 17?")
-    print(result.pattern_used)  # → PatternType.REACT
+    print(result.pattern_used)  # often REACT when tools are used
 
 asyncio.run(main())
 ```
 
+The `calculate` helper above is intentionally tiny for docs — use a stricter evaluator in production.
+
 ## Streaming Responses
 
-Don't make your users stare at a loading spinner:
+Don't make your users stare at a loading spinner.
+
+- **`astream()`** yields **text chunks**. For a plain string query it may stream real model tokens when the run stays on the **DIRECT** fast path; other patterns usually buffer the final answer and then yield it in chunks (same iterator shape — see `UnifiedAgent.astream`).
+- **`astream_events()`** yields in-process **`AgentEvent`** objects (`thinking`, `tool_call`, `token`, `done`, …) for dashboards and custom UIs.
+- **`astream_agp_events()`** yields the **typed AGP wire events** (e.g. `token.delta`, `session.opened`) — the same shapes `agloom-runtime` would serialize to NDJSON.
 
 ```python
-# Token-by-token streaming
-async for token in agent.astream("Tell me about Mars"):
-    print(token, end="", flush=True)
+# AGP-shaped stream (recommended when learning the wire protocol)
+async for evt in agent.astream_agp_events("Tell me about Mars", thread_id="demo"):
+    if evt.type == "token.delta":
+        print(evt.data.text, end="", flush=True)
 ```
 
 ## Conversation Memory
@@ -162,29 +161,30 @@ async with await create_agent(model=llm, name="safe-agent") as agent:
 # Everything cleaned up here
 ```
 
-## CLI Shell (Alternative)
+## Interactive CLI (Alternative)
 
-Prefer CLI over Python? Use the built-in shell:
+The end-user CLI ships as the **Node** package **`agloom-cli`** (Ink TUI + direct mode). The `agloom` PyPI distribution exposes **`agloom-runtime`** and library APIs; it does **not** embed the Ink shell.
 
 ```bash
-pip install agloom
-agloom  # Start interactive shell
+npm install -g agloom-cli
+# or, without a global install:
+npx agloom-cli --help
 ```
 
 ```bash
+agloom -m groq:llama-3.3-70b-versatile
 agloom "Explain quantum computing in 2 sentences"
-agloom -m llama-3.3-70b-versatile  # Use Groq model
 ```
 
-See [CLI Shell](../../../_packages/agloom_cli/index.md) (Node-based interactive shell in `agloom_cli/`). Link is relative to the MkDocs `docs/` root after `make docs-prepare`.
+See the [CLI overview](../../../_packages/agloom_cli/index.md) (paths resolve after `make docs-prepare` copies package docs into `docs/_packages/`).
 
 ## What's Next?
 
-| Topic | Link |
-| --- | --- |
-| Understand the 9 patterns | [Execution Patterns](../concepts/patterns.md) |
-| CLI Shell | [CLI Shell](../../../_packages/agloom_cli/index.md) (Node / Ink) |
-| Every parameter explained | [All Parameters](../configuration/parameters.md) |
-| Add memory to your agent | [Memory](../features/memory.md) |
-| Build streaming UIs | [Streaming & Events](../features/streaming.md) |
-| Enable LangSmith tracing | [Observability](../features/observability.md) |
+| Topic                     | Link                                                   |
+| ------------------------- | ------------------------------------------------------ |
+| Understand the 9 patterns | [Execution Patterns](../concepts/patterns.md)          |
+| CLI (Node / Ink)          | [CLI overview](../../../_packages/agloom_cli/index.md) |
+| Every parameter explained | [All Parameters](../configuration/parameters.md)       |
+| Add memory to your agent  | [Memory](../features/memory.md)                        |
+| Build streaming UIs       | [Streaming & Events](../features/streaming.md)         |
+| Enable LangSmith tracing  | [Observability](../features/observability.md)          |

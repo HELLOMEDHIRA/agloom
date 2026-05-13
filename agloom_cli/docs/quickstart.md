@@ -45,7 +45,7 @@ agloom -m groq:meta-llama/llama-3.3-70b-versatile
 agloom -m groq:meta-llama/llama-3.3-70b-versatile -q "list all .py files under agloom" --json | head -5
 ```
 
-Quiet mode (`-q`) prints assistant text only when not using `--json`.
+Without `--json`, quiet mode (`-q`) keeps stdout focused on assistant text and trims extra stderr. With `--json`, stdout is **only** NDJSON AGP events (no plain-text assistant stream); use `--json` alone when piping to `jq` or log processors — combining `-q` and `--json` is for silencing stderr, not for switching `--json` back to plain text.
 
 ## Next steps
 

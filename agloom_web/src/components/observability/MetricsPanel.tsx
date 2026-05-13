@@ -1,6 +1,4 @@
-/**
- * MetricsPanel — recharts-based charts for token usage, tool latency, node timings.
- */
+/** MetricsPanel — recharts-based charts for token usage, tool latency, node timings. */
 import React from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,

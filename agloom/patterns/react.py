@@ -337,7 +337,7 @@ async def handle_react(
                 pattern_used=PatternType.REACT,
                 query=query,
                 output=output,
-                steps_taken=2,
+                steps_taken=len(steps),
                 success=True,
                 analysis=analysis,
                 steps=steps,
@@ -991,12 +991,88 @@ def _collect_tool_steps(response: dict | None, steps: list, *, max_length: int =
             )
 
 
+def _ai_message_content_to_text(content: Any) -> str:
+    """Normalize ``AIMessage.content`` (str, None, or LC multimodal blocks) to plain text."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                btype = block.get("type")
+                if btype in ("image", "image_url", "input_audio", "video", "file"):
+                    continue
+                if btype == "text" and "text" in block:
+                    parts.append(str(block.get("text", "")))
+                elif isinstance(block.get("text"), str):
+                    parts.append(block["text"])
+        return "".join(parts).strip()
+    return str(content).strip()
+
+
+def _message_tool_like_calls(msg: Any) -> tuple[list | None, list | None]:
+    """Return (tool_calls, invalid_tool_calls) for AIMessage instances or LC dict wire shapes."""
+    if isinstance(msg, AIMessage):
+        tc = getattr(msg, "tool_calls", None)
+        inv = getattr(msg, "invalid_tool_calls", None)
+        return (list(tc) if tc else None, list(inv) if inv else None)
+    if isinstance(msg, dict):
+        inner = msg.get("data") if isinstance(msg.get("data"), dict) else msg
+        if not isinstance(inner, dict):
+            return (None, None)
+        tc = inner.get("tool_calls")
+        if tc is None:
+            tc = msg.get("tool_calls")
+        inv = inner.get("invalid_tool_calls")
+        if inv is None:
+            inv = msg.get("invalid_tool_calls")
+        return (
+            list(tc) if isinstance(tc, list) and tc else None,
+            list(inv) if isinstance(inv, list) and inv else None,
+        )
+    return (None, None)
+
+
 def _extract_last_ai_message(response: dict | None) -> str:
-    """Walk messages in reverse — return first AIMessage with content and no pending tool_calls."""
+    """Walk messages in reverse — last AIMessage with user-visible text.
+
+    Skips **tool-only** assistant turns (``tool_calls`` present and no extractable text).
+    When the model sends **prose and tool_calls in the same** ``AIMessage`` (e.g. a short
+    preamble before calling tools), the preamble is treated as valid output.
+
+    Handles multimodal ``content`` lists and LangChain ``type: "ai"`` dict messages.
+    """
     if not isinstance(response, dict):
         return ""
     for msg in reversed(response.get("messages", [])):
-        if isinstance(msg, AIMessage) and msg.content and not getattr(msg, "tool_calls", None):
+        content: Any = None
+        if isinstance(msg, AIMessage):
             content = msg.content
-            return content if isinstance(content, str) else str(content)
+        elif isinstance(msg, dict):
+            mtype = msg.get("type")
+            role = msg.get("role")
+            if mtype not in ("ai", "assistant", "AIMessage") and role != "assistant":
+                continue
+            inner = msg.get("data") if isinstance(msg.get("data"), dict) else msg
+            if isinstance(inner, dict):
+                content = inner.get("content")
+                if content is None:
+                    content = msg.get("content")
+            else:
+                content = msg.get("content")
+        else:
+            continue
+
+        tool_calls, invalid_tool_calls = _message_tool_like_calls(msg)
+        if invalid_tool_calls:
+            continue
+        text = _ai_message_content_to_text(content)
+        if tool_calls and not text:
+            continue
+        if text:
+            return text
     return ""

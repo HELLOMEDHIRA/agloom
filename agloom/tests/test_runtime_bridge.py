@@ -36,7 +36,7 @@ from agloom.runtime.bridge import run_invocation
 from agloom.runtime.hitl import HITLBridge
 from agloom.runtime.translator import translate
 
-# ── translator unit tests ────────────────────────────────────────────────────
+# translator unit tests
 
 
 class _CaptureEmitter:
@@ -168,7 +168,7 @@ def test_translate_token_with_empty_text_skipped() -> None:
     assert em.calls == []
 
 
-# ── bridge end-to-end tests ──────────────────────────────────────────────────
+# bridge end-to-end tests
 
 
 class _FakeAgent:
@@ -288,7 +288,7 @@ async def test_bridge_seq_strictly_monotonic() -> None:
     assert len(seqs) == len(set(seqs))  # no duplicates
 
 
-# ── Phase 0.5: tool.* / message.user / error.* coverage ──────────────────────
+# tool.* / message.user / error.* coverage
 
 
 @pytest.mark.asyncio
@@ -384,7 +384,7 @@ async def test_bridge_translates_tool_result_with_error_to_tool_call_error() -> 
     assert errors[0].data.error_class == "PermissionError"
 
 
-# ── Phase 0.7: worker.* / metric.* / cancel coverage ─────────────────────────
+# worker.* / metric.* / cancel coverage
 
 
 @pytest.mark.asyncio

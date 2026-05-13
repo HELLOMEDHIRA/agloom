@@ -1,12 +1,11 @@
 """Workspace path resolution and optional session JSON markers.
 
-**Scaffolding** (``agloom.yaml``, ``.agloom/{rules,skills,sessions}``) is owned by the **npm CLI**
-(``agloom_cli``) before it spawns ``agloom-runtime``. The Python runtime does **not** create those
-files — it stays a transport-agnostic AGP driver.
-
-This module still provides :func:`ensure_agloom_workspace` for unit tests and offline tooling; serve
-loops only use :func:`sessions_dir_for_runtime` and :func:`write_session_started_json`.
-YAML body ``DEFAULT_AGLOOM_YAML`` mirrors ``agloom_cli/src/defaultAgloomTemplate.ts`` for pytest."""
+The npm CLI creates ``agloom.yaml`` / ``.agloom/`` scaffolding before spawning ``agloom-runtime``;
+this package only resolves paths and writes session markers. :func:`ensure_agloom_workspace` exists
+for tests and offline helpers; serve loops use :func:`sessions_dir_for_runtime` and
+:func:`write_session_started_json`. ``DEFAULT_AGLOOM_YAML`` matches the CLI default template
+(see ``agloom_cli`` ``defaultAgloomTemplate`` / ``config``) for pytest parity.
+"""
 
 from __future__ import annotations
 
@@ -17,10 +16,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-# Mirrored for pytest — canonical CLI text is ``agloom_cli/src/defaultAgloomTemplate.ts``.
 DEFAULT_AGLOOM_YAML = """# Agloom — https://github.com/HELLOMEDHIRA/agloom
 # CLI merges this file (walk-up discovery; override with `agloom --config <path>`).
-# Nested blocks (`ai`, `memory`, …) are flattened by agloom_cli — see ``agloom_cli/src/config.ts``.
+# Nested blocks (`ai`, `memory`, …) are flattened by the CLI config loader.
 
 ai:
   name: agloom
@@ -188,7 +186,9 @@ def ensure_agloom_workspace(cwd: Path | None = None, *, args: Any | None = None)
     files land next to the same tree that holds ``graph_store.sqlite``).
 
     Returns:
-        ``(sessions_dir_path, created_yaml)`` — ``created_yaml`` is True if any starter YAML was written.
+        ``(sessions_dir_path, created_yaml)`` — ``created_yaml`` is True if starter
+        ``agloom.yaml`` was written at *project_root* (only when neither root nor
+        legacy ``.agloom/agloom.yaml`` exists).
     """
     start = (cwd or Path.cwd()).resolve()
     project_root, agloom_root = resolve_workspace_roots(start, args)
@@ -198,10 +198,11 @@ def ensure_agloom_workspace(cwd: Path | None = None, *, args: Any | None = None)
     sessions_dir = agloom_root / "sessions"
 
     created = False
-    for yaml_path in (project_root / "agloom.yaml", agloom_root / "agloom.yaml"):
-        if not yaml_path.is_file():
-            yaml_path.write_text(DEFAULT_AGLOOM_YAML, encoding="utf-8")
-            created = True
+    root_yaml = project_root / "agloom.yaml"
+    nested_yaml = agloom_root / "agloom.yaml"
+    if not root_yaml.is_file() and not nested_yaml.is_file():
+        root_yaml.write_text(DEFAULT_AGLOOM_YAML, encoding="utf-8")
+        created = True
 
     return sessions_dir, created
 

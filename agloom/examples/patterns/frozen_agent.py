@@ -3,6 +3,8 @@
 Ideal for batch/template workloads where system_prompt and structure are fixed
 and only the input data changes. Saves ~200-500ms per call by skipping
 re-classification.
+
+Requires ``langchain-groq`` (``pip install langchain-groq``) and ``GROQ_API_KEY``.
 """
 
 import asyncio
@@ -13,16 +15,22 @@ from langchain_groq import ChatGroq
 
 from agloom import create_agent
 
-llm = ChatGroq(
-    model="meta-llama/llama-4-scout-17b-16e-instruct",
-    api_key=os.environ["GROQ_API_KEY"],
-    temperature=0,
-)
+
+def _require_env(name: str) -> str:
+    v = os.environ.get(name, "").strip()
+    if not v:
+        raise SystemExit(f"Set {name} (e.g. export {name}=...) to run this example.")
+    return v
+
+
+def _groq_llm() -> ChatGroq:
+    model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+    return ChatGroq(model=model, api_key=_require_env("GROQ_API_KEY"), temperature=0)
 
 
 async def main():
     agent = await create_agent(
-        model=llm,
+        model=_groq_llm(),
         frozen=True,
         frozen_template="Translate the following text to French: {text}",
         input_key="text",
@@ -37,7 +45,8 @@ async def main():
 
     t0 = time.perf_counter()
     for text in inputs:
-        result = await agent.ainvoke({"text": text})
+        # Frozen agents accept a string when there is a single ``input_key`` — same as ``ainvoke`` elsewhere.
+        result = await agent.ainvoke(text)
         print(f"  EN: {text}")
         print(f"  FR: {result.output}")
         print(f"  Pattern: {result.pattern_used.value}")

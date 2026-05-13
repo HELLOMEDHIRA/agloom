@@ -15,6 +15,7 @@ import { useSessionStore } from '../store/session.js'
 import type { AGPBridge } from '../runtime/bridge.js'
 import { SLASH_HELP_LINES } from '../utils/slashCommands.js'
 import { appendHistory, defaultHistoryPath, loadHistory } from '../utils/promptHistory.js'
+import { suggestFromHistory } from '../utils/fuzzySuggest.js'
 import { splitPastedMultilineWhenSingleLineMode } from '../utils/pasteCompose.js'
 
 interface AppProps {
@@ -62,6 +63,11 @@ export const App = ({
   }, [histPath, histRefresh])
   const [histIdx, setHistIdx] = useState(0)
 
+  const fuzzySuggestions = useMemo(
+    () => (!input.startsWith('/') ? suggestFromHistory(input, histLines, 4) : []),
+    [input, histLines],
+  )
+
   const multilineOpt =
     multiline ||
     (typeof process.env['AGLOOM_MULTILINE'] === 'string' &&
@@ -81,6 +87,12 @@ export const App = ({
   useInput((char, key) => {
     if (slashHelpOpen) {
       if (key.escape || char === 'q') setSlashHelpOpen(false)
+      return
+    }
+    if (key.escape && (input !== '' || pendingLines.length > 0)) {
+      setInput('')
+      setPendingLines([])
+      setPasteCompose(false)
       return
     }
     if (key.ctrl && char === 'c') {
@@ -192,6 +204,68 @@ export const App = ({
         setPasteCompose(false)
         break
 
+      case '/undo':
+        bridge.memoryPopLastTurn(thread)
+        break
+
+      case '/retry': {
+        const st = useSessionStore.getState()
+        if (st.status === 'running' || st.status === 'thinking' || st.status === 'hitl') {
+          appendProtocolNote('/retry · wait for the current turn to finish (or /cancel)')
+          break
+        }
+        const turns = st.completedTurns
+        const last = turns[turns.length - 1]
+        if (!last?.userMessage?.trim()) {
+          appendProtocolNote('/retry · no completed turn to re-run')
+          break
+        }
+        bridge.invoke(last.userMessage, thread)
+        appendHistory(histPath, last.userMessage)
+        setHistRefresh((n) => n + 1)
+        break
+      }
+
+      case '/checkpoint': {
+        const name = (rest[0] ?? 'cli').trim() || 'cli'
+        const description = rest.slice(1).join(' ').trim() || 'CLI /checkpoint'
+        bridge.harnessGit('checkpoint', { name, description })
+        break
+      }
+
+      case '/diff': {
+        let cached = false
+        const pathParts: string[] = []
+        for (const p of rest) {
+          if (p === '--staged' || p === '--cached') cached = true
+          else if (!p.startsWith('-')) pathParts.push(p)
+        }
+        bridge.harnessGit('diff', { path: pathParts.join(' ').trim(), cached })
+        break
+      }
+
+      case '/hint':
+        bridge.harnessGit('revert_hint', {})
+        break
+
+      case '/plan': {
+        const goal = rest.join(' ').trim()
+        if (!goal) {
+          appendProtocolNote('/plan · usage: /plan <goal>')
+          break
+        }
+        bridge.planPreview(goal)
+        break
+      }
+
+      case '/git': {
+        const sub = (rest[0] ?? 'status').toLowerCase()
+        if (sub === 'status') bridge.harnessGit('status', {})
+        else if (sub === 'checkpoints' || sub === 'list') bridge.harnessGit('checkpoints', {})
+        else appendProtocolNote('/git · usage: /git status  |  /git checkpoints')
+        break
+      }
+
       case '/save': {
         const rawPath = rest.join(' ').trim()
         if (!rawPath) {
@@ -215,7 +289,9 @@ export const App = ({
           } catch (e) {
             useSessionStore.getState().appendProtocolNote(`/save · ${e instanceof Error ? e.message : String(e)}`)
           }
-        })()
+        })().catch((e) => {
+          appendProtocolNote(`/save · unexpected: ${e instanceof Error ? e.message : String(e)}`)
+        })
         break
       }
 
@@ -223,9 +299,16 @@ export const App = ({
         setDiagOpen((prev) => !prev)
         break
 
-      case '/stats':
-        setMetricsSidebarOpen((prev) => !prev)
+      case '/stats': {
+        const next = !metricsSidebarOpen
+        setMetricsSidebarOpen(next)
+        if (next && termWidth < SPLIT_MIN_TERM_WIDTH) {
+          appendProtocolNote(
+            `/stats · metrics sidebar needs terminal width ≥ ${SPLIT_MIN_TERM_WIDTH} cols (currently ${termWidth}); widen terminal or shrink font.`,
+          )
+        }
         break
+      }
 
       case '/tools': {
         useSessionStore.getState().toggleActiveTurnToolExpandBulk()
@@ -428,6 +511,7 @@ export const App = ({
             pendingLines={ml ? pendingLines : undefined}
             onRecallPrev={recallPrev}
             onRecallNext={recallNext}
+            suggestions={fuzzySuggestions}
           />
         )}
 

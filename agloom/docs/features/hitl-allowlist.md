@@ -20,10 +20,10 @@ Loads merge into the in-memory set at startup; **`decision=allowlist`** appends 
 
 ## Runtime flags
 
-| Flag | Effect |
-| --- | --- |
-| `--hitl-allowlist-path /path/to/file.json` | Use a specific path (create parent dirs on save as needed). |
-| `--no-hitl-allowlist-persist` | Never read/write disk; allowlist exists only for this process. |
+| Flag                                       | Effect                                                         |
+| ------------------------------------------ | -------------------------------------------------------------- |
+| `--hitl-allowlist-path /path/to/file.json` | Use a specific path (create parent dirs on save as needed).    |
+| `--no-hitl-allowlist-persist`              | Never read/write disk; allowlist exists only for this process. |
 
 These apply to both **stdio** and **WebSocket** transports (the runtime passes the path through to the component that bridges HITL over AGP).
 

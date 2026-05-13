@@ -1,65 +1,46 @@
-"""Agent with custom tools — demonstrates REACT pattern with tool calling."""
+"""Agent with custom tools — demonstrates REACT pattern with tool calling.
 
-import ast
+Requires ``langchain-groq`` (``pip install langchain-groq``) and ``GROQ_API_KEY``.
+The sample ``calculate`` tool uses a tiny guarded ``eval`` — fine for a demo, not for production.
+"""
+
+from __future__ import annotations
+
 import asyncio
-import operator
 import os
+import re
 
 from langchain_core.tools import tool
 from langchain_groq import ChatGroq
 
 from agloom import create_agent
 
-llm = ChatGroq(
-    model="meta-llama/llama-4-scout-17b-16e-instruct",
-    api_key=os.environ["GROQ_API_KEY"],
-    temperature=0,
-)
 
-def _safe_calc(expression: str) -> float:
-    """Arithmetic only (+ − × ÷ // % ** and parentheses). No eval()."""
-    tree = ast.parse(expression.strip(), mode="eval")
+def _require_env(name: str) -> str:
+    v = os.environ.get(name, "").strip()
+    if not v:
+        raise SystemExit(f"Set {name} (e.g. export {name}=...) to run this example.")
+    return v
 
-    def _eval(node: ast.AST) -> float:
-        if isinstance(node, ast.Expression):
-            return _eval(node.body)
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-            return float(node.value)
-        if isinstance(node, ast.UnaryOp):
-            match node.op:
-                case ast.UAdd():
-                    return operator.pos(_eval(node.operand))
-                case ast.USub():
-                    return operator.neg(_eval(node.operand))
-                case _:
-                    raise ValueError("only plain numeric arithmetic is allowed")
-        if isinstance(node, ast.BinOp):
-            match node.op:
-                case ast.Add():
-                    return operator.add(_eval(node.left), _eval(node.right))
-                case ast.Sub():
-                    return operator.sub(_eval(node.left), _eval(node.right))
-                case ast.Mult():
-                    return operator.mul(_eval(node.left), _eval(node.right))
-                case ast.Div():
-                    return operator.truediv(_eval(node.left), _eval(node.right))
-                case ast.FloorDiv():
-                    return operator.floordiv(_eval(node.left), _eval(node.right))
-                case ast.Mod():
-                    return operator.mod(_eval(node.left), _eval(node.right))
-                case ast.Pow():
-                    return operator.pow(_eval(node.left), _eval(node.right))
-                case _:
-                    raise ValueError("only plain numeric arithmetic is allowed")
-        raise ValueError("only plain numeric arithmetic is allowed")
 
-    return _eval(tree)
+def _groq_llm() -> ChatGroq:
+    model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+    return ChatGroq(model=model, api_key=_require_env("GROQ_API_KEY"), temperature=0)
+
+
+_SAFE_ARITH = re.compile(r"^[\d\s+\-*/.%()]+$")
 
 
 @tool
 def calculate(expression: str) -> str:
-    """Evaluate a mathematical expression and return the result."""
-    return str(_safe_calc(expression))
+    """Evaluate a numeric expression (digits, whitespace, + - * / % ** and parentheses)."""
+    expr = expression.strip()
+    if not expr or not _SAFE_ARITH.match(expr):
+        return "error: only digits, spaces, and + - * / % ** ( ) . are allowed"
+    try:
+        return str(eval(expr, {"__builtins__": {}}, {}))
+    except Exception as exc:
+        return f"error: {exc}"
 
 
 @tool
@@ -70,7 +51,8 @@ def extract_keywords(text: str) -> str:
     return ", ".join(sorted({w for w in words if w not in stop}))
 
 
-async def main():
+async def main() -> None:
+    llm = _groq_llm()
     agent = await create_agent(
         model=llm,
         tools=[calculate, extract_keywords],

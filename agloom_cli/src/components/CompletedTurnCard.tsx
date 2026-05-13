@@ -1,9 +1,5 @@
-/**
- * CompletedTurnCard — renders a finished conversation turn.
- *
- * This component is always used inside Ink's <Static> wrapper, meaning it is
- * written to the terminal once and never re-rendered. Keep it pure / side-effect
- * free. Do NOT use hooks that cause re-renders (timers, subscriptions, etc.).
+/** CompletedTurnCard — renders a finished conversation turn.
+ * This component is always used inside Ink's <Static> wrapper, meaning it is written to the terminal once and never re-rendered. Keep it pure / side-effect free. Do NOT use hooks that cause re-renders (timers, subscriptions, etc.).
  */
 
 import React from 'react'

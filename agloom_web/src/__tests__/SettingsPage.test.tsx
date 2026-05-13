@@ -1,6 +1,4 @@
-/**
- * Settings route — wrapped with AGP client + theme providers.
- */
+/** Settings route — wrapped with AGP client + theme providers. */
 import React from 'react'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'

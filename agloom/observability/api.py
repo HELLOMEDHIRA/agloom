@@ -84,12 +84,28 @@ def make_obs_router(store: SQLiteObservabilityStore) -> APIRouter:
 
     @router.get("/metrics")
     async def prometheus_text() -> Response:
-        """Minimal Prometheus text expose; expand with real counters when OTel is wired."""
-        body = (
-            "# HELP agloom_up Process is serving observability routes.\n"
-            "# TYPE agloom_up gauge\n"
-            "agloom_up 1\n"
-        )
+        """Prometheus text expose (liveness + cheap store / in-process gauges)."""
+        sessions_n = 0
+        try:
+            sessions_n = await store.session_count()
+        except Exception:
+            pass
+        live_n = len(_live_subscribers)
+        lines = [
+            "# HELP agloom_up Process is serving observability routes.",
+            "# TYPE agloom_up gauge",
+            "agloom_up 1",
+            "",
+            "# HELP agloom_obs_store_sessions Rows in the observability sessions summary table.",
+            "# TYPE agloom_obs_store_sessions gauge",
+            f"agloom_obs_store_sessions {sessions_n}",
+            "",
+            "# HELP agloom_obs_live_subscribers Active SSE clients on /observe/live.",
+            "# TYPE agloom_obs_live_subscribers gauge",
+            f"agloom_obs_live_subscribers {live_n}",
+            "",
+        ]
+        body = "\n".join(lines)
         return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
     # ── Sessions list ──────────────────────────────────────────────────────────

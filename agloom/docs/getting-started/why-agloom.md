@@ -44,22 +44,22 @@ Timeouts, retries, rate limiting, circuit breakers, concurrent worker limits, st
 
 ## How agloom Compares
 
-| Capability | LangChain `create_react_agent` | agloom `create_agent` |
-| --- | --- | --- |
-| Patterns | 1 (REACT only) | 9 (auto-selected) |
-| Classification | Manual | Automatic |
-| Skill learning | No | Built-in |
-| Feedback | No | Auto-eval + user + trends |
-| Memory | DIY wiring | Always on + `thread_id` + `store=` |
-| Streaming | Basic | Combined tokens + events in one stream, real-time for all patterns |
-| Token tracking | No | Built-in |
-| HITL | Basic | 4 levels (pattern/tool/worker/signal) |
-| Timeouts/retries | DIY | Configurable parameters |
-| Circuit breaker | No | Built-in |
-| Rate limiting | No | Built-in |
-| Frozen/batch | No | `frozen=True` |
-| LangSmith | Manual setup | Auto-detected |
-| Structured logging | No | JSON/text, debug toggle |
+| Capability         | LangChain `create_react_agent` | agloom `create_agent`                                              |
+| ------------------ | ------------------------------ | ------------------------------------------------------------------ |
+| Patterns           | 1 (REACT only)                 | 9 (auto-selected)                                                  |
+| Classification     | Manual                         | Automatic                                                          |
+| Skill learning     | No                             | Built-in                                                           |
+| Feedback           | No                             | Auto-eval + user + trends                                          |
+| Memory             | DIY wiring                     | Always on + `thread_id` + `store=`                                 |
+| Streaming          | Basic                          | Combined tokens + events in one stream, real-time for all patterns |
+| Token tracking     | No                             | Built-in                                                           |
+| HITL               | Basic                          | 4 levels (pattern/tool/worker/signal)                              |
+| Timeouts/retries   | DIY                            | Configurable parameters                                            |
+| Circuit breaker    | No                             | Built-in                                                           |
+| Rate limiting      | No                             | Built-in                                                           |
+| Frozen/batch       | No                             | `frozen=True`                                                      |
+| LangSmith          | Manual setup                   | Auto-detected                                                      |
+| Structured logging | No                             | JSON/text, debug toggle                                            |
 
 ## Built on LangChain, Not Against It
 

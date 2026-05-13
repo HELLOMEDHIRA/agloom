@@ -1,7 +1,4 @@
-/**
- * ObservabilityDashboard — /observe
- * Global overview: session list, summary stats, live event feed.
- */
+/** ObservabilityDashboard — /observe Global overview: session list, summary stats, live event feed. */
 import React from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'

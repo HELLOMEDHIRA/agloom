@@ -5,7 +5,7 @@ import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..llm_streaming import astream_llm_to_event_queue
+from ..llm_streaming import stream_or_invoke_llm
 from ..logging_utils import get_logger
 from ..models import ExecutionResult, PatternType, QueryAnalysis, StepType, WorkerPlan, _make_step, _merge_token_usage
 from ._resolve import resolve_worker_configs
@@ -145,7 +145,7 @@ async def _synthesize(
     """Manager LLM synthesizes all execution steps into a final answer."""
     steps_text = "\n\n".join(
         [
-            f"Step {i + 1} — {r.worker_id} | Status: {r.signal.value}\nTask  : {r.task[:120]}\nResult: {r.output}"
+            f"Step {i + 1} — {r.worker_id} | Status: {r.signal.value}\nTask  : {r.task}\nResult: {r.output}"
             for i, r in enumerate(worker_results)
         ]
     )
@@ -164,22 +164,11 @@ async def _synthesize(
 
     try:
         _timeout = agent.get("llm_timeout", 120.0)
-        event_queue = agent.get("_event_queue")
-        if event_queue is not None:
-            text, last_chunk = await astream_llm_to_event_queue(
-                agent["llm"], synth_input, event_queue, timeout=_timeout
-            )
-            if last_chunk is not None:
-                llm_messages.append(last_chunk)
-            logger.event(f"[PLANNER_EXECUTOR] Synthesis done — {len(text)} chars.")
-            return text, llm_messages
-        resp = await asyncio.wait_for(
-            agent["llm"].ainvoke(synth_input),
-            timeout=_timeout,
+        text, llm_messages, _ = await stream_or_invoke_llm(
+            agent["llm"], synth_input, agent, timeout=_timeout
         )
-        llm_messages.append(resp)
-        logger.event(f"[PLANNER_EXECUTOR] Synthesis done — {len(resp.content)} chars.")
-        return resp.content, llm_messages
+        logger.event(f"[PLANNER_EXECUTOR] Synthesis done — {len(text)} chars.")
+        return text, llm_messages
     except Exception as e:
         logger.error(f"[PLANNER_EXECUTOR] Synthesis failed: {e}")
         successful_workers = [r for r in worker_results if r.signal.value == "SUCCESS"]

@@ -1,13 +1,5 @@
-/**
- * HITLPrompt — replaces the normal input bar when a HITL gate is pending.
- *
- * Kind-aware shortcuts (AGP `command.hitl.respond` decisions):
- * - tool_approval / pattern_approval / worker_approval: y/yes→accept, n/no→reject, a→allowlist
- * - react_recovery: r/retry→retry, s/stop→stop
- * - clarification: free text → decision `accept` + `text` payload (wire contract)
- *
- * Escape or empty submit sends `request.default` when present, else kind-safe fallback
- * (`reject` for gates, `cancelled` for clarification).
+/** HITLPrompt — replaces the normal input bar when a HITL gate is pending.
+ * Kind-aware shortcuts (AGP `command.hitl.respond` decisions): - tool_approval / pattern_approval / worker_approval: y/yes→accept, n/no→reject, a→allowlist - react_recovery: r/retry→retry, s/stop→stop - clarification: free text → decision `accept` + `text` payload (wire contract) Escape or empty submit sends `request.default` when present, else kind-safe fallback (`reject` for gates, `cancelled` for clarification).
  */
 
 import React, { useState } from 'react'

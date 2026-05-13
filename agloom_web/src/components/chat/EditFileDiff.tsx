@@ -1,6 +1,4 @@
-/**
- * Diff for edit_file / multi_edit: prefer wire `resultDiff`, else arg old/new; uses react-diff-viewer-continued.
- */
+/** Diff for edit_file / multi_edit: prefer wire `resultDiff`, else arg old/new; uses react-diff-viewer-continued. */
 import React, { memo, useState } from 'react'
 import ReactDiffViewer from 'react-diff-viewer-continued'
 import { diffLines } from 'diff'

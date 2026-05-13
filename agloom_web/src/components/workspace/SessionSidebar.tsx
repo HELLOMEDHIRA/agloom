@@ -1,9 +1,5 @@
-/**
- * SessionSidebar — left panel showing past turns in the current session.
- *
- * Displays a scrollable list of completed turns so the user can see the
- * conversation history at a glance. Each entry shows the first line of the
- * user message and the pattern that was used, plus a timestamp.
+/** SessionSidebar — left panel showing past turns in the current session.
+ * Displays a scrollable list of completed turns so the user can see the conversation history at a glance. Each entry shows the first line of the user message and the pattern that was used, plus a timestamp.
  */
 import React from 'react'
 import { useSessionStore } from '../../store/session.js'

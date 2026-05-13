@@ -6216,7 +6216,7 @@
     },
     "CommandWorkerAssignData": {
       "additionalProperties": true,
-      "description": "Assign a task to a worker.\n\nIn Phase 1 (single-process) the runtime spawns an in-process agent and maps\nresults back onto the session via ``worker.*`` events. In Phase 2 (distributed)\nthis command routes to a remote worker node identified by ``worker_id``; the\nnode emits results back through the same AGP session.\n\n``parent_thread`` is the supervisor's thread id \u2014 used to correlate worker\nevents to the originating invocation when multiple invocations run concurrently.",
+      "description": "Assign a task to a worker.\n\nThe runtime assigns work to a worker identified by ``worker_id`` and maps results\nback onto the session via ``worker.*`` events. In the current single-process\nruntime this is typically an in-process worker; the same command shape applies if\nworkers are remote peers that emit AGP back into the session.\n\n``parent_thread`` is the supervisor's thread id \u2014 used to correlate worker\nevents to the originating invocation when multiple invocations run concurrently.",
       "properties": {
         "worker_id": {
           "title": "Worker Id",

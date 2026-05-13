@@ -10,7 +10,7 @@ The web platform is an **AGP consumer**, exactly like the **agloom CLI**.
 Python never emits formatted HTML or UI hints — only structured AGP events over WebSocket.  
 This guarantees AGP remains the single stable runtime abstraction across all frontend surfaces.
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │                             agloom ecosystem                                      │
 │                                                                                   │
@@ -35,26 +35,26 @@ This guarantees AGP remains the single stable runtime abstraction across all fro
 
 ## 2. Technology Stack
 
-| Concern                | Technology                  | Version  | Reason                                           |
-| --- | --- | --- | --- |
-| Routing                | **React Router**            | 7.15     | Vite-native SPA; user requirement (no Next.js)   |
-| Build                  | Vite                        | 8.0      | Fastest HMR; native ESM                          |
-| Language               | TypeScript                  | 6.0      | Same baseline as agloom CLI; latest strict mode   |
-| Styling                | TailwindCSS 4               | 4.3      | Vite plugin; zero-config                         |
-| State                  | Zustand                     | 5.0      | Same store shape as agloom CLI; no boilerplate    |
-| Data fetching          | @tanstack/react-query       | 5.100    | REST calls (observability HTTP API, etc.)        |
-| Graph viz              | @xyflow/react               | 12.10    | LangGraph node visualization                     |
-| Code editor            | @monaco-editor/react        | 4.7      | Artifact viewer; full IDE editing future         |
-| Charts                 | recharts                    | 3.8      | Token/metric dashboards                          |
-| Animation              | framer-motion               | 12.38    | Turn enter/exit, streaming transitions           |
-| Markdown               | react-markdown + remark-gfm | 10 / 4   | Assistant response rendering                     |
-| Icons                  | lucide-react                | 1.14     | Consistent iconography                           |
+| Concern       | Technology                  | Version | Reason                                          |
+| ------------- | --------------------------- | ------- | ----------------------------------------------- |
+| Routing       | **React Router**            | 7.15    | Vite-native SPA; user requirement (no Next.js)  |
+| Build         | Vite                        | 8.0     | Fastest HMR; native ESM                         |
+| Language      | TypeScript                  | 6.0     | Same baseline as agloom CLI; latest strict mode |
+| Styling       | TailwindCSS 4               | 4.3     | Vite plugin; zero-config                        |
+| State         | Zustand                     | 5.0     | Same store shape as agloom CLI; no boilerplate  |
+| Data fetching | @tanstack/react-query       | 5.100   | REST calls (observability HTTP API, etc.)       |
+| Graph viz     | @xyflow/react               | 12.10   | LangGraph node visualization                    |
+| Code editor   | @monaco-editor/react        | 4.7     | Artifact viewer; full IDE editing future        |
+| Charts        | recharts                    | 3.8     | Token/metric dashboards                         |
+| Animation     | framer-motion               | 12.38   | Turn enter/exit, streaming transitions          |
+| Markdown      | react-markdown + remark-gfm | 10 / 4  | Assistant response rendering                    |
+| Icons         | lucide-react                | 1.14    | Consistent iconography                          |
 
 ---
 
 ## 3. Directory Structure
 
-```
+```text
 agloom_web/
 ├── index.html                        # Vite entry
 ├── vite.config.ts                    # Vite + Tailwind + dev-proxy for AGP WS
@@ -111,7 +111,7 @@ In production set `VITE_AGP_WS_URL=wss://your-runtime.example.com`.
 
 ### Connection lifecycle
 
-```
+```text
 App.tsx creates one client via createAGPClient() on mount → calls client.connect()
 │
 ├─ WebSocket opens to runtime
@@ -141,7 +141,7 @@ client.hitlRespond(requestId, 'accept')
 The `useSessionStore` (Zustand) is the single source of truth.  
 Its `dispatch(evt: AGPEvent)` function is a pure reducer — same architecture as the agloom CLI.
 
-```
+```text
 AGP event received
       │
       ▼
@@ -170,7 +170,7 @@ Only `StreamingTurn` re-renders on every `token.delta`, keeping React reconcilia
 
 ### Three-panel layout
 
-```
+```text
 ┌──────── header bar (11px) ─────────────────────────────┐
 │  agloom  ·  ● open  ·  [running]              ⚙  ⊞    │
 ├──────────────────────────────┬─────────────────────────┤
@@ -200,8 +200,6 @@ npm run dev           # → http://localhost:3000
 ```
 
 **Tests:** `npm run test` runs Jest with **jsdom** — Zustand reducer coverage in `store.test.ts`, **`createAGPClient`** WebSocket behaviour (mock transport), **`useAGPClient`** context contract, and smoke tests for **`SettingsPage`** (environment copy) + **`ChatInput`**. Expand component coverage incrementally as panels stabilize.
-
-Informal product directions live in the repo **[ROADMAP.md](https://github.com/HELLOMEDHIRA/agloom/blob/main/docs/ROADMAP.md)** (not part of the MkDocs nav).
 
 ---
 

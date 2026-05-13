@@ -6,10 +6,10 @@ agloom includes production-grade reliability features that would normally take w
 
 ## Timeouts
 
-| Parameter | Default | Controls |
-| --- | --- | --- |
-| `llm_timeout` | `120.0s` | Max time for a single LLM call |
-| `classifier_timeout` | `30.0s` | Max time for query classification |
+| Parameter            | Default  | Controls                          |
+| -------------------- | -------- | --------------------------------- |
+| `llm_timeout`        | `120.0s` | Max time for a single LLM call    |
+| `classifier_timeout` | `30.0s`  | Max time for query classification |
 
 ```python
 async def main():
@@ -24,11 +24,11 @@ If a timeout is exceeded, the call fails with a `TimeoutError` — no hanging fo
 
 ## Retries
 
-| Parameter | Default | Controls |
-| --- | --- | --- |
-| `max_retries` | `2` | Worker retry count (0-10) |
-| `retry_delay` | `1.0s` | Delay between retries |
-| `structured_max_retries` | `2` | Structured output retries |
+| Parameter                | Default | Controls                  |
+| ------------------------ | ------- | ------------------------- |
+| `max_retries`            | `2`     | Worker retry count (0-10) |
+| `retry_delay`            | `1.0s`  | Delay between retries     |
+| `structured_max_retries` | `2`     | Structured output retries |
 
 ```python
 async def main():
@@ -42,10 +42,10 @@ async def main():
 
 ## Concurrency Control
 
-| Parameter | Default | Controls |
-| --- | --- | --- |
-| `max_concurrent` | `4` | Max parallel workers (1-32) |
-| `rate_limit` | `None` | Max LLM calls per second |
+| Parameter        | Default | Controls                    |
+| ---------------- | ------- | --------------------------- |
+| `max_concurrent` | `4`     | Max parallel workers (1-32) |
+| `rate_limit`     | `None`  | Max LLM calls per second    |
 
 ```python
 async def main():

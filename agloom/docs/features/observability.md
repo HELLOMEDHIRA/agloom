@@ -46,7 +46,7 @@ async def main():
 
 With `debug=True`, you see detailed logs for every pipeline step:
 
-```
+```text
 21:04:29 INFO  classifier — [Classifier] Pattern=DIRECT | Complexity=0/10
 21:04:29 INFO  unified_agent — [my-agent] DIRECT short-circuit — 1 LLM call total.
 21:04:29 DEBUG unified_agent — [my-agent] Analysis: {pattern: DIRECT, complexity: 0, ...}
@@ -87,16 +87,16 @@ for step in result.steps:
 
 ### Step fields
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `type` | `StepType` | classify, llm_call, tool_call, tool_result, worker_start, worker_end, token, etc. |
-| `name` | `str` | Step identifier |
-| `input` | `str` | What went in |
-| `output` | `str` | What came out |
-| `id` | `str` | Tool call correlation ID (for `tool_call`/`tool_result` steps) |
-| `duration_ms` | `float` | How long it took |
-| `timestamp` | `str` | ISO 8601 timestamp |
-| `metadata` | `dict` | Additional context |
+| Field         | Type       | Description                                                                       |
+| ------------- | ---------- | --------------------------------------------------------------------------------- |
+| `type`        | `StepType` | classify, llm_call, tool_call, tool_result, worker_start, worker_end, token, etc. |
+| `name`        | `str`      | Step identifier                                                                   |
+| `input`       | `str`      | What went in                                                                      |
+| `output`      | `str`      | What came out                                                                     |
+| `id`          | `str`      | Tool call correlation ID (for `tool_call`/`tool_result` steps)                    |
+| `duration_ms` | `float`    | How long it took                                                                  |
+| `timestamp`   | `str`      | ISO 8601 timestamp                                                                |
+| `metadata`    | `dict`     | Additional context                                                                |
 
 ## Raw Messages
 

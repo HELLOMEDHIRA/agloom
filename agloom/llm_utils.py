@@ -373,6 +373,7 @@ class CircuitBreaker:
 
     @property
     def state(self) -> str:
+        """Approximate breaker state for observability (HALF is *eligible*, not necessarily active)."""
         if self._state == self.OPEN:
             if time.monotonic() - self._last_failure >= self._recovery:
                 return self.HALF
@@ -380,15 +381,17 @@ class CircuitBreaker:
 
     async def __aenter__(self):
         async with self._lock:
-            current = self.state
-            if current == self.OPEN:
-                raise RuntimeError(
-                    f"CircuitBreaker OPEN — fast-failing after "
-                    f"{self._threshold} consecutive failures. "
-                    f"Retry after {self._recovery}s cooldown."
-                )
-            if current == self.HALF:
+            now = time.monotonic()
+            if self._state == self.OPEN:
+                if now - self._last_failure < self._recovery:
+                    raise RuntimeError(
+                        f"CircuitBreaker OPEN — fast-failing after "
+                        f"{self._threshold} consecutive failures. "
+                        f"Retry after {self._recovery}s cooldown."
+                    )
                 self._state = self.HALF
+            elif self._state == self.HALF:
+                raise RuntimeError("CircuitBreaker HALF-OPEN — a probe request is already in flight")
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -397,11 +400,15 @@ class CircuitBreaker:
                 self._failures = 0
                 self._state = self.CLOSED
             else:
+                was_half = self._state == self.HALF
                 self._failures += 1
                 self._last_failure = time.monotonic()
-                if self._failures >= self._threshold:
+                if was_half or self._failures >= self._threshold:
                     self._state = self.OPEN
-                    logger.warning(f"CircuitBreaker tripped OPEN after {self._failures} consecutive failures")
+                    if self._failures >= self._threshold:
+                        logger.warning(
+                            f"CircuitBreaker tripped OPEN after {self._failures} consecutive failures"
+                        )
         return False
 
 

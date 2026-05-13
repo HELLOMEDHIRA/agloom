@@ -12,6 +12,7 @@ transports replace the writer with their own queue.
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 import threading
 from collections.abc import Callable
@@ -51,6 +52,8 @@ from .events import (
     MemoryLtStoreData,
     MemorySessionCleared,
     MemorySessionClearedData,
+    MemorySessionTurnPopped,
+    MemorySessionTurnPoppedData,
     MemorySessionWrite,
     MemorySessionWriteData,
     MessageAssistant,
@@ -70,6 +73,8 @@ from .events import (
     MetricTokensData,
     PatternClassified,
     PatternClassifiedData,
+    PlanPreview,
+    PlanPreviewData,
     PromptCancelled,
     PromptCancelledData,
     PromptRequested,
@@ -136,6 +141,17 @@ from .events import (
     WorkerSpawned,
     WorkerSpawnedData,
 )
+
+logger_emitter = logging.getLogger(__name__)
+
+
+def _store_append_done(t: asyncio.Task) -> None:
+    if t.cancelled():
+        return
+    exc = t.exception()
+    if exc is not None:
+        logger_emitter.warning("EventStore append task failed: %r", exc)
+
 
 WriterLike = IO[str]
 """Anything with ``.write(str)`` and ``.flush()`` — typically ``sys.stdout``."""
@@ -342,6 +358,31 @@ class SessionEmitter:
                 complexity=complexity,
                 confidence=confidence,
                 reason=reason,
+            ),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_plan_preview(
+        self,
+        *,
+        pattern: str,
+        complexity: int = 0,
+        reasoning: str = "",
+        steps: list[str] | None = None,
+        parent: str | None = None,
+    ) -> PlanPreview:
+        """Emit classifier-only plan (``command.plan.preview``)."""
+        evt = PlanPreview(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=PlanPreviewData(
+                pattern=pattern,
+                complexity=complexity,
+                reasoning=reasoning,
+                steps=list(steps or []),
             ),
         )
         self._write(evt)
@@ -950,6 +991,24 @@ class SessionEmitter:
         self._write(evt)
         return evt
 
+    def emit_memory_session_turn_popped(
+        self,
+        *,
+        thread: str,
+        remaining_turns: int,
+        parent: str | None = None,
+    ) -> MemorySessionTurnPopped:
+        """Emit after the last short-term session-memory turn was removed (undo)."""
+        evt = MemorySessionTurnPopped(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=MemorySessionTurnPoppedData(thread=thread, remaining_turns=remaining_turns),
+        )
+        self._write(evt)
+        return evt
+
     def emit_memory_lt_recall(
         self,
         *,
@@ -1514,7 +1573,8 @@ class SessionEmitter:
                 d = event_to_dict(evt)
                 try:
                     loop = asyncio.get_running_loop()
-                    loop.create_task(self._store.append(self._session, d))  # noqa: RUF006
+                    t = loop.create_task(self._store.append(self._session, d))
+                    t.add_done_callback(_store_append_done)
                 except RuntimeError:
                     # No running event loop (e.g. synchronous test context). Skip store persistence
                     # rather than raising — the synchronous emitter is not async-safe.
@@ -1621,7 +1681,8 @@ class AsyncSessionEmitter(SessionEmitter):
         if self._store is not None:
             try:
                 d = event_to_dict(evt)
-                asyncio.get_running_loop().create_task(self._store.append(self._session, d))
+                t = asyncio.get_running_loop().create_task(self._store.append(self._session, d))
+                t.add_done_callback(_store_append_done)
             except Exception:
                 pass
 

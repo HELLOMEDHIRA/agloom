@@ -39,13 +39,18 @@ def resolve_worker_configs(
             f"tools={[t.name for t in resolved_tools] if resolved_tools else '[] (LLM-only)'}"
         )
 
+        instr = (subtask.system_instruction or "").strip()
+        # ``agent["system_prompt"]`` may be missing, None, or whitespace-only; never pass that through as the worker default.
+        raw_sp = agent.get("system_prompt")
+        if isinstance(raw_sp, str) and raw_sp.strip():
+            default_sp = raw_sp.strip()
+        else:
+            default_sp = "You are a helpful AI assistant."
         configs.append(
             ResolvedWorkerConfig(
                 worker_id=subtask.worker_id,
                 task=subtask.task,
-                system_prompt=subtask.system_instruction.strip()
-                if subtask.system_instruction
-                else agent.get("system_prompt", "You are a helpful AI assistant."),
+                system_prompt=instr if instr else default_sp,
                 tools=resolved_tools,
                 depends_on=subtask.depends_on or [],
                 context=dict(subtask.context) if subtask.context else {},

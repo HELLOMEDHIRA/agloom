@@ -1,6 +1,5 @@
-/**
- * ArtifactViewer — side panel showing all artifacts (code, markdown, JSON) generated
- * in the current session. Renders code with Monaco, markdown inline.
+/** ArtifactViewer — side panel showing all artifacts (code, markdown, JSON) generated in the current session.
+ * Renders code with Monaco, markdown inline.
  */
 import React, { useState } from 'react'
 import Editor from '@monaco-editor/react'

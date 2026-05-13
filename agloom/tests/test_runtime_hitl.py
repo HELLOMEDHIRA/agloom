@@ -33,7 +33,7 @@ def _make_bridge() -> tuple[HITLBridge, io.StringIO]:
     return HITLBridge(em), buf
 
 
-# ── per-event-type kind mapping ──────────────────────────────────────────────
+# per-event-type kind mapping
 
 
 @pytest.mark.asyncio
@@ -148,7 +148,7 @@ async def test_pattern_interrupt_emits_pattern_approval() -> None:
     assert await task == "continue"
 
 
-# ── lifecycle / robustness ───────────────────────────────────────────────────
+# lifecycle / robustness
 
 
 def test_respond_returns_false_for_unknown_request_id() -> None:

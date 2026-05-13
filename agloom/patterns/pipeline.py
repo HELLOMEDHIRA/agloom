@@ -68,8 +68,10 @@ async def handle_pipeline(
     enhanced_configs = []
     for i, wcfg in enumerate(worker_configs):
         prompt = wcfg.system_prompt
+        _asp = agent.get("system_prompt")
+        agent_default_sp = _asp.strip() if isinstance(_asp, str) else ""
         if not prompt or prompt in (
-            agent.get("system_prompt", ""),
+            agent_default_sp,
             "You are a helpful AI assistant.",
         ):
             prompt = PIPELINE_FIRST_WORKER_PROMPT if i == 0 else PIPELINE_SYSTEM_PROMPT

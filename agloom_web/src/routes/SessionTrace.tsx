@@ -1,7 +1,4 @@
-/**
- * SessionTrace — /observe/session/:sessionId
- * Full session trace: timeline, graph replay, metrics, worker traces.
- */
+/** SessionTrace — /observe/session/:sessionId Full session trace: timeline, graph replay, metrics, worker traces. */
 import React, { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'

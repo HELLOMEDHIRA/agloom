@@ -19,8 +19,8 @@ Two concrete implementations are provided:
     mode is enabled by default so reads (replay) do not block concurrent writes.
 
 Both implementations are safe for concurrent async tasks (one writer + many
-readers) within a single process.  Cross-process concurrency requires an
-external broker (Phase 2).
+readers) within a single process.  Sharing one store across OS processes is not supported
+by these backends; use a single runtime process per store file or an external store.
 
 Usage::
 
@@ -41,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -160,14 +161,16 @@ class SqliteEventStore(EventStore):
         self._db_path = str(db_path)
         self._conn: sqlite3.Connection | None = None
         self._write_lock: asyncio.Lock = asyncio.Lock()
+        self._conn_lock = threading.Lock()
 
     def _connect(self) -> sqlite3.Connection:
-        if self._conn is None:
-            conn = sqlite3.connect(self._db_path, check_same_thread=False)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.executescript(_SCHEMA)
-            conn.commit()
-            self._conn = conn
+        with self._conn_lock:
+            if self._conn is None:
+                conn = sqlite3.connect(self._db_path, check_same_thread=False)
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.executescript(_SCHEMA)
+                conn.commit()
+                self._conn = conn
         return self._conn
 
     def _sync_append(self, session_id: str, event: dict) -> None:

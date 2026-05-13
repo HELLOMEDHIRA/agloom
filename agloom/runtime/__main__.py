@@ -48,10 +48,13 @@ from ..protocol.commands import (
     CommandCancel,
     CommandConfigSet,
     CommandFeedback,
+    CommandHarnessGit,
     CommandHITLRespond,
     CommandInvoke,
     CommandMemoryClear,
+    CommandMemoryPopLastTurn,
     CommandPing,
+    CommandPlanPreview,
     CommandProvidersList,
     CommandRuntimeShutdown,
     CommandSchemaRequest,
@@ -172,20 +175,25 @@ async def _open_runtime_langgraph_store(
 async def _read_stdin_lines(queue: asyncio.Queue[str | None]) -> None:
     """Read stdin line-by-line; push each non-empty line onto *queue*. ``None`` signals EOF.
 
-    Prefer :meth:`asyncio.loop.connect_read_pipe` so stdin uses asyncio stream I/O. On some
-    platforms (notably Windows when driven over a pipe from Node), blocking ``readline`` in a
-    thread has been observed to hit spurious EOF and tear down the serve loop while the CLI is
-    still running. Fall back to the executor path if connect_read_pipe is unavailable.
+    Prefer :meth:`asyncio.loop.connect_read_pipe` so stdin uses asyncio stream I/O (Unix / fewer
+    threads). On **Windows**, ``connect_read_pipe(sys.stdin)`` with the default Proactor loop
+    often fails asynchronously with ``WinError 6`` (invalid handle) inside
+    ``_ProactorReadPipeTransport`` — so we **always** use blocking ``readline`` in a thread there.
+
+    On some platforms when driven over a pipe from Node, blocking ``readline`` has been observed
+    to hit spurious EOF; fall back / primary paths balance that tradeoff per OS.
     """
     loop = asyncio.get_running_loop()
     transport: asyncio.BaseTransport | None = None
     reader: asyncio.StreamReader | None = None
-    try:
-        reader = asyncio.StreamReader()
-        protocol = asyncio.StreamReaderProtocol(reader)
-        transport, _ = await loop.connect_read_pipe(lambda: protocol, sys.stdin)
-    except (NotImplementedError, OSError, AttributeError, ValueError):
-        transport = None
+    # Skip connect_read_pipe on Windows — stdin is not a reliable IOCP pipe handle (WinError 6).
+    if sys.platform != "win32":
+        try:
+            reader = asyncio.StreamReader()
+            protocol = asyncio.StreamReaderProtocol(reader)
+            transport, _ = await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+        except (NotImplementedError, OSError, AttributeError, ValueError):
+            transport = None
 
     if transport is None:
         while True:
@@ -957,6 +965,124 @@ async def _dispatch_command(
         fork.emit_memory_session_cleared(thread=str(target))
         return
 
+    if isinstance(cmd, CommandMemoryPopLastTurn):
+        mem = agent.config.get("memory")
+        if mem is None:
+            emitter.emit_error(
+                severity="transient",
+                message="agent has no session memory configured",
+                stage="memory.pop_last_turn",
+            )
+            return
+        target = cmd.data.thread or getattr(emitter, "_thread", None)
+        if not target:
+            emitter.emit_error(
+                severity="transient",
+                message="command.memory.pop_last_turn requires data.thread",
+                stage="memory.pop_last_turn",
+            )
+            return
+        try:
+            remaining = await mem.apop_last_turn(str(target))
+        except Exception as exc:
+            emitter.emit_error(severity="transient", message=str(exc), stage="memory.pop_last_turn")
+            return
+        if remaining is None:
+            emitter.emit_error(
+                severity="transient",
+                message="nothing to undo (no session turns for this thread)",
+                stage="memory.pop_last_turn",
+            )
+            return
+        fork = emitter.fork_for_thread(str(target))
+        fork.emit_memory_session_turn_popped(thread=str(target), remaining_turns=remaining)
+        return
+
+    if isinstance(cmd, CommandHarnessGit):
+        gs = agent.config.get("_git_session")
+        if gs is None:
+            emitter.emit_runtime_tool_result(
+                ok=False,
+                error="harness/git unavailable (requires agent store + harness — omit --no-harness)",
+            )
+            return
+        op = cmd.data.op
+        try:
+            if op == "checkpoint":
+                sid = str(getattr(emitter, "_session", "") or "")
+                tag_name = await gs.checkpoint(cmd.data.name or "cli", cmd.data.description or "", sid)
+                text = f"Checkpoint tag: {tag_name}" if tag_name else "Checkpoint failed"
+                emitter.emit_runtime_tool_result(ok=bool(tag_name), result=text)
+            elif op == "diff":
+                diff_text = await gs.diff_unified(path=cmd.data.path or "", cached=cmd.data.cached)
+                emitter.emit_runtime_tool_result(ok=True, result=diff_text)
+            elif op == "status":
+                st = await gs.status()
+                if not st.is_repo:
+                    emitter.emit_runtime_tool_result(ok=True, result="Not a git repository.")
+                else:
+                    parts = [
+                        f"branch={st.branch}",
+                        f"clean={st.clean}",
+                        f"staged={len(st.staged)}",
+                        f"unstaged={len(st.unstaged)}",
+                        f"untracked={len(st.untracked)}",
+                    ]
+                    emitter.emit_runtime_tool_result(ok=True, result="\n".join(parts))
+            elif op == "checkpoints":
+                cps = await gs.list_checkpoints()
+                lines = [f"{c.name} @ {c.commit_hash[:7]} — {c.description[:120]}" for c in cps[:30]]
+                emitter.emit_runtime_tool_result(ok=True, result="\n".join(lines) if lines else "(no checkpoints)")
+            elif op == "revert_hint":
+                hint = await gs.get_revert_hint()
+                emitter.emit_runtime_tool_result(ok=True, result=hint or "(no hint)")
+            else:
+                emitter.emit_runtime_tool_result(ok=False, error=f"unknown harness git op: {op!r}")
+        except Exception as exc:
+            emitter.emit_runtime_tool_result(ok=False, error=str(exc))
+        return
+
+    if isinstance(cmd, CommandPlanPreview):
+        prompt = (cmd.data.prompt or "").strip()
+        if not prompt:
+            emitter.emit_error(
+                severity="transient",
+                message="command.plan.preview requires a non-empty prompt",
+                stage="plan.preview",
+            )
+            return
+        cfg = agent.config
+        llm = cfg.get("llm")
+        if llm is None:
+            emitter.emit_error(severity="transient", message="no LLM configured", stage="plan.preview")
+            return
+        from agloom.classifier import analyze_query
+
+        try:
+            analysis = await analyze_query(
+                llm,
+                prompt,
+                cfg.get("tools") or [],
+                skill_context="",
+                classifier_timeout=float(cfg.get("classifier_timeout", 60.0)),
+                structured_max_retries=int(cfg.get("structured_max_retries", 2)),
+                fallback_pattern=cfg.get("fallback_pattern"),
+            )
+            steps: list[str] = []
+            for i, st in enumerate(analysis.subtasks):
+                steps.append(f"{i + 1}. [{st.worker_id}] {st.task}")
+            if not steps:
+                steps.append(f"1. Run as {analysis.pattern.value} (no worker subtasks returned).")
+            emitter.emit_plan_preview(
+                pattern=analysis.pattern.value,
+                complexity=analysis.complexity,
+                reasoning=(analysis.reasoning or ""),
+                steps=steps,
+            )
+        except Exception as exc:
+            emitter.emit_error(severity="transient", message=str(exc), stage="plan.preview")
+        return
+
     _eprint(f"[agloom-runtime] unsupported command type: {type(cmd).__name__!r}")
 
 
@@ -1200,6 +1326,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_serve_agent_flags(eval_p)
 
+    sub.add_parser("version", help="Print the installed agloom package version and exit.")
+
     return parser
 
 
@@ -1380,6 +1508,13 @@ def main(argv: list[str] | None = None) -> int:
             return asyncio.run(_providers_verify_async(args))
         parser.error(f"unknown providers subcommand {args.prov_cmd!r}")
         return 2
+    if args.cmd == "version":
+        try:
+            from agloom import __version__ as agloom_ver
+        except ImportError:
+            agloom_ver = "unknown"
+        print(agloom_ver)
+        return 0
     if args.cmd == "eval":
         from agloom.eval.runner import run_eval_cli
 

@@ -22,8 +22,7 @@ def test_ensure_creates_yaml_and_sessions_dir(tmp_path: Path) -> None:
     yml = tmp_path / "agloom.yaml"
     assert yml.is_file()
     dot_yml = tmp_path / ".agloom" / "agloom.yaml"
-    assert dot_yml.is_file()
-    assert yml.read_text(encoding="utf-8") == dot_yml.read_text(encoding="utf-8")
+    assert not dot_yml.exists()
     assert "model:" in yml.read_text(encoding="utf-8")
 
     sessions_dir2, created2 = ensure_agloom_workspace(tmp_path)
@@ -39,7 +38,7 @@ def test_ensure_when_cwd_is_dot_agloom_dir(tmp_path: Path) -> None:
     assert created is True
     assert sessions_dir == tmp_path / ".agloom" / "sessions"
     assert (tmp_path / "agloom.yaml").is_file()
-    assert (dot / "agloom.yaml").is_file()
+    assert not (dot / "agloom.yaml").exists()
     assert (dot / "rules").is_dir()
     assert (dot / "skills").is_dir()
     assert not (dot / ".agloom").exists()
@@ -52,7 +51,7 @@ def test_ensure_when_cwd_nested_under_dot_agloom(tmp_path: Path) -> None:
     assert created is True
     assert sessions_dir == tmp_path / ".agloom" / "sessions"
     assert (tmp_path / "agloom.yaml").is_file()
-    assert (tmp_path / ".agloom" / "agloom.yaml").is_file()
+    assert not (tmp_path / ".agloom" / "agloom.yaml").exists()
     assert (tmp_path / ".agloom" / "skills").is_dir()
 
 
@@ -73,7 +72,7 @@ def test_ensure_yaml_follows_absolute_agent_store_when_cwd_elsewhere(tmp_path: P
     sessions_dir, created = ensure_agloom_workspace(wrong_cwd, args=args)
     assert created is True
     assert (tmp_path / "agloom.yaml").is_file()
-    assert (tmp_path / ".agloom" / "agloom.yaml").is_file()
+    assert not (tmp_path / ".agloom" / "agloom.yaml").exists()
     assert (tmp_path / ".agloom" / "rules").is_dir()
     assert sessions_dir == tmp_path / ".agloom" / "sessions"
     assert not (wrong_cwd / "agloom.yaml").exists()

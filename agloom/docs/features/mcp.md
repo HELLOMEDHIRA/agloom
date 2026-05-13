@@ -48,12 +48,12 @@ async def main():
 
 ## Transport Types
 
-| Transport | Use case | Required fields |
-| --- | --- | --- |
-| `stdio` | Local process (npx, python, etc.) | `command`, `args` (optional), `env` (optional) |
-| `sse` | Remote HTTP with Server-Sent Events | `url` |
-| `streamable_http` | Remote HTTP with streaming | `url`, `headers` (optional) |
-| `http` | Simple HTTP endpoint | `url`, `headers` (optional) |
+| Transport         | Use case                            | Required fields                                |
+| ----------------- | ----------------------------------- | ---------------------------------------------- |
+| `stdio`           | Local process (npx, python, etc.)   | `command`, `args` (optional), `env` (optional) |
+| `sse`             | Remote HTTP with Server-Sent Events | `url`                                          |
+| `streamable_http` | Remote HTTP with streaming          | `url`, `headers` (optional)                    |
+| `http`            | Simple HTTP endpoint                | `url`, `headers` (optional)                    |
 
 ## MCPServerConfig Fields
 

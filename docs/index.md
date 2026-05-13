@@ -89,19 +89,19 @@ asyncio.run(main())
 
 ## What You Get
 
-| Capability | What it means for you |
-| --- | --- |
-| **9 Execution Patterns** | DIRECT → HYBRID_DAG, auto-selected per query |
-| **Skill Learning** | Agents remember what worked and reuse it |
-| **Auto-Evaluation** | Every response scored. Trends detected. Skills adjusted |
-| **Memory** | Session (always on) + long-term + passive injection. Pass `thread_id` for sessions |
-| **Streaming** | Real-time tokens + structured events in one stream. Build ChatGPT-style UIs |
-| **Human-in-the-Loop** | 4 interrupt levels: pattern, tool, worker, signal |
-| **Production Guards** | Circuit breaker, rate limiter, timeouts, retries |
-| **LangSmith** | Auto-detected. Zero code changes |
-| **Task Delegation** | 4 patterns: `as_tool()`, hand-off, hierarchical, background. Agents delegate to agents |
-| **Frozen Agents** | Classify once, batch thousands |
-| **Harness** | `harness=True` + `store=`: task artifact, bootstrap, git helpers. **CLI:** on by default (`graph_store.sqlite`) — [Harness](_packages/agloom/features/harness.md) |
+| Capability               | What it means for you                                                                                                                                             |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **9 Execution Patterns** | DIRECT → HYBRID_DAG, auto-selected per query                                                                                                                      |
+| **Skill Learning**       | Agents remember what worked and reuse it                                                                                                                          |
+| **Auto-Evaluation**      | Every response scored. Trends detected. Skills adjusted                                                                                                           |
+| **Memory**               | Session (always on) + long-term + passive injection. Pass `thread_id` for sessions                                                                                |
+| **Streaming**            | Real-time tokens + structured events in one stream. Build ChatGPT-style UIs                                                                                       |
+| **Human-in-the-Loop**    | 4 interrupt levels: pattern, tool, worker, signal                                                                                                                 |
+| **Production Guards**    | Circuit breaker, rate limiter, timeouts, retries                                                                                                                  |
+| **LangSmith**            | Auto-detected. Zero code changes                                                                                                                                  |
+| **Task Delegation**      | 4 patterns: `as_tool()`, hand-off, hierarchical, background. Agents delegate to agents                                                                            |
+| **Frozen Agents**        | Classify once, batch thousands                                                                                                                                    |
+| **Harness**              | `harness=True` + `store=`: task artifact, bootstrap, git helpers. **CLI:** on by default (`graph_store.sqlite`) — [Harness](_packages/agloom/features/harness.md) |
 
 ---
 

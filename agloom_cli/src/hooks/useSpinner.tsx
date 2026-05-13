@@ -1,5 +1,4 @@
-/**
- * useSpinner — returns a single rotating spinner character.
+/** useSpinner — returns a single rotating spinner character.
  * Used in place of ink-spinner when we need a simple inline indicator.
  */
 

@@ -1,9 +1,5 @@
-/**
- * Factory for creating one or more {@link AGPBridge} instances (stdio child per bridge).
- *
- * Use {@link defaultAGPBridgeFactory} from application code that needs a single bridge, or when
- * you want {@link AGPBridgeFactory.disposeAll} to tear down every bridge the factory minted
- * (tests, multi-session prototypes).
+/** Factory for creating one or more {@link AGPBridge} instances (stdio child per bridge).
+ * Use {@link defaultAGPBridgeFactory} from application code that needs a single bridge, or when you want {@link AGPBridgeFactory.disposeAll} to tear down every bridge the factory minted (tests, multi-session prototypes).
  */
 
 import type { AGPBridge } from './bridge.js'

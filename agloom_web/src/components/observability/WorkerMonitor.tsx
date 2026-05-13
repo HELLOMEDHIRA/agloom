@@ -1,6 +1,4 @@
-/**
- * WorkerMonitor — worker + tool-call traces with status, duration, output preview.
- */
+/** WorkerMonitor — worker + tool-call traces with status, duration, output preview. */
 import React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { obsApi, type EventRow } from '../../lib/agp/obsApi.js'

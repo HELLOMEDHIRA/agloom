@@ -28,7 +28,7 @@ def inject_planner_context(
     if not history:
         return config
     history_block = "\n\n".join(
-        f"[{r.worker_id}]  Task: {r.task[:100]}\nStatus: {r.signal.value}\nResult: {r.output}" for r in history
+        f"[{r.worker_id}]  Task: {r.task}\nStatus: {r.signal.value}\nResult: {r.output}" for r in history
     )
     injected_task = f"{config.task}\n\nEXECUTION HISTORY:\n{history_block}"
     return config.model_copy(update={"task": injected_task})

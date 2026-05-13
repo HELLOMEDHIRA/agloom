@@ -16,7 +16,7 @@ from agloom.protocol.emitter import SessionEmitter
 from agloom.protocol.events import event_adapter
 from agloom.protocol.store import MemoryEventStore, SqliteEventStore
 
-# ── GraphNodeEnter / GraphNodeExit round-trip ──────────────────────────────────
+# GraphNodeEnter / GraphNodeExit round-trip
 
 
 def _emitter_with_buf() -> tuple[SessionEmitter, io.StringIO]:
@@ -85,7 +85,7 @@ def test_graph_event_round_trip_via_adapter():
         assert parsed.type in ("session.opened", "graph.node.enter")
 
 
-# ── session.resumed ────────────────────────────────────────────────────────────
+# session.resumed
 
 
 def test_resume_emits_session_resumed():
@@ -128,7 +128,7 @@ def test_resumed_event_round_trip():
     assert parsed.data.replayed_from_seq == 3
 
 
-# ── MemoryEventStore ───────────────────────────────────────────────────────────
+# MemoryEventStore
 
 
 @pytest.mark.asyncio
@@ -189,7 +189,7 @@ async def test_memory_store_list_session_ids():
     assert await store.list_session_ids() == ["a_sess", "z_sess"]
 
 
-# ── SqliteEventStore ───────────────────────────────────────────────────────────
+# SqliteEventStore
 
 
 @pytest.mark.asyncio

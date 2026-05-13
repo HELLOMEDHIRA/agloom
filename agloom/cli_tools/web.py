@@ -32,7 +32,7 @@ def _looks_like_html(body: bytes) -> bool:
     return head.startswith(b"<")
 
 
-def _http_get_text(
+async def _http_get_text_async(
     *,
     url: str,
     max_bytes: int,
@@ -45,17 +45,14 @@ def _http_get_text(
     raw = (url or "").strip()
     if not raw:
         return "fetch_url: empty url"
-    try:
-        cap = max(1024, min(int(max_bytes), 2_000_000))
-    except (TypeError, ValueError):
-        cap = 512_000
+    cap = max(1024, min(max_bytes, 2_000_000))
     try:
         import httpx
     except ImportError as exc:
         return f"fetch_url: httpx not installed ({exc})"
     try:
-        with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-            resp = client.get(raw)
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            resp = await client.get(raw)
             resp.raise_for_status()
             body = resp.content[:cap]
             status = resp.status_code
@@ -76,9 +73,9 @@ def _http_get_text(
 
 def make_web_tools(*, allow_network: bool) -> list:
     @tool
-    def fetch_url(url: str, max_bytes: int = 512_000, extract_readable_text: bool = True) -> str:
+    async def fetch_url(url: str, max_bytes: int = 512_000, extract_readable_text: bool = True) -> str:
         """HTTP GET *url*. When ``extract_readable_text=True`` (default), HTML bodies are stripped to plain text."""
-        return _http_get_text(
+        return await _http_get_text_async(
             url=url,
             max_bytes=max_bytes,
             allow_network=allow_network,
@@ -86,13 +83,13 @@ def make_web_tools(*, allow_network: bool) -> list:
         )
 
     @tool
-    def read_url_markdown(url: str, max_bytes: int = 512_000) -> str:
+    async def read_url_markdown(url: str, max_bytes: int = 512_000) -> str:
         """Fetch a URL and return readability-style plain text.
 
         Uses ``trafilatura`` when installed (``pip install 'agloom[readability]'``); otherwise the
         built-in HTML stripper.
         """
-        return _http_get_text(
+        return await _http_get_text_async(
             url=url,
             max_bytes=max_bytes,
             allow_network=allow_network,
@@ -101,7 +98,7 @@ def make_web_tools(*, allow_network: bool) -> list:
         )
 
     @tool
-    def web_search(query: str, max_results: int = 5) -> str:
+    async def web_search(query: str, max_results: int = 5) -> str:
         """Search the web when ``AGLOOM_SEARCH_PROVIDER`` is set (``searxng``, ``tavily``, ``brave``)."""
         if not allow_network:
             return "web_search: network tools disabled by runtime configuration"
@@ -114,22 +111,20 @@ def make_web_tools(*, allow_network: bool) -> list:
                 "web_search: set AGLOOM_SEARCH_PROVIDER "
                 "(searxng | tavily | brave — see docs)."
             )
+        n = max(1, min(max_results, 10))
+
         try:
-            n = max(1, min(int(max_results), 10))
-        except (TypeError, ValueError):
-            n = 5
+            import httpx
+        except ImportError as exc:
+            return f"web_search: httpx not installed ({exc})"
 
         if provider == "searxng":
             base = (os.environ.get("AGLOOM_SEARXNG_URL") or "").strip().rstrip("/")
             if not base:
                 return "web_search (searxng): set AGLOOM_SEARXNG_URL to your instance base (e.g. https://search.example)"
             try:
-                import httpx
-            except ImportError as exc:
-                return f"web_search: httpx not installed ({exc})"
-            try:
-                with httpx.Client(timeout=30.0) as client:
-                    r = client.get(f"{base}/search", params={"q": q, "format": "json"})
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    r = await client.get(f"{base}/search", params={"q": q, "format": "json"})
                     r.raise_for_status()
                     data: Any = r.json()
             except Exception as exc:
@@ -152,12 +147,8 @@ def make_web_tools(*, allow_network: bool) -> list:
             if not key:
                 return "web_search: TAVILY_API_KEY is not set"
             try:
-                import httpx
-            except ImportError as exc:
-                return f"web_search: httpx not installed ({exc})"
-            try:
-                with httpx.Client(timeout=30.0) as client:
-                    r = client.post(
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    r = await client.post(
                         "https://api.tavily.com/search",
                         json={"api_key": key, "query": q, "max_results": n},
                     )
@@ -183,12 +174,8 @@ def make_web_tools(*, allow_network: bool) -> list:
             if not key:
                 return "web_search: BRAVE_API_KEY is not set"
             try:
-                import httpx
-            except ImportError as exc:
-                return f"web_search: httpx not installed ({exc})"
-            try:
-                with httpx.Client(timeout=30.0) as client:
-                    r = client.get(
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    r = await client.get(
                         "https://api.search.brave.com/res/v1/web/search",
                         params={"q": q, "count": n},
                         headers={"X-Subscription-Token": key},

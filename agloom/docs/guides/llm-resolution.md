@@ -4,12 +4,12 @@
 
 ## Primary entry points
 
-| Symbol | Use |
-| --- | --- |
-| **`get_model`** | Resolve a provider/model string (and optional patch dict) to a chat model instance |
+| Symbol                              | Use                                                                                                  |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| **`get_model`**                     | Resolve a provider/model string (and optional patch dict) to a chat model instance                   |
 | **`try_resolve_llm_from_api_keys`** | Pick a default model from environment keys (TTY vs non-interactive behavior differs — see docstring) |
-| **`describe_llm`** | Human-readable description of a bound model |
-| **`split_provider_prefix`** | Split `"provider:rest"` tokens |
+| **`describe_llm`**                  | Human-readable description of a bound model                                                          |
+| **`split_provider_prefix`**         | Split `"provider:rest"` tokens                                                                       |
 
 Errors: **`MissingProviderApiKey`**, **`MissingProviderDependency`** — raised when keys or optional extras are absent.
 

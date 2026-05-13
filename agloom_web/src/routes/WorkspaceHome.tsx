@@ -1,6 +1,4 @@
-/**
- * WorkspaceHome — landing page: recent sessions + new session + manage store-backed ids.
- */
+/** WorkspaceHome — landing page: recent sessions + new session + manage store-backed ids. */
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PlusCircle, Zap, Activity, GitBranch, Pencil, Trash2 } from 'lucide-react'

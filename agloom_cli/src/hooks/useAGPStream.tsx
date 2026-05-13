@@ -1,9 +1,5 @@
-/**
- * useAGPStream — subscribes to an AGPBridge and pipes every event through
- * the zustand `dispatch` action.
- *
- * Also wires the 'diagnostic' and 'exit' events so the store reflects them.
- * Safe to call in strict-mode (idempotent registration via ref guard).
+/** useAGPStream — subscribes to an AGPBridge and pipes every event through the zustand `dispatch` action.
+ * Also wires the 'diagnostic' and 'exit' events so the store reflects them. Safe to call in strict-mode (idempotent registration via ref guard).
  */
 
 import { useEffect, useRef } from 'react'

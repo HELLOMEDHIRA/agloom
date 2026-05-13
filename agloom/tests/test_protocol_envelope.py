@@ -54,7 +54,7 @@ from agloom.protocol import (
     event_to_dict,
 )
 
-# ── envelope-level ───────────────────────────────────────────────────────────
+# envelope-level
 
 
 def test_envelope_protocol_version_pinned() -> None:
@@ -102,7 +102,7 @@ def test_envelope_negative_seq_rejected() -> None:
         )
 
 
-# ── per-event-type round-trip ────────────────────────────────────────────────
+# per-event-type round-trip
 
 
 def _round_trip(evt) -> dict:
@@ -201,7 +201,7 @@ def test_session_closed_invalid_reason_rejected() -> None:
         )
 
 
-# ── message.user ─────────────────────────────────────────────────────────────
+# message.user
 
 
 def test_message_user_round_trip() -> None:
@@ -217,7 +217,7 @@ def test_message_user_round_trip() -> None:
     assert d["data"]["message_id"] == "u1"
 
 
-# ── tool.* ───────────────────────────────────────────────────────────────────
+# tool.*
 
 
 def test_tool_call_start_round_trip() -> None:
@@ -281,7 +281,7 @@ def test_tool_call_error_round_trip() -> None:
     assert d["data"]["error_class"] == "PermissionError"
 
 
-# ── error.* ──────────────────────────────────────────────────────────────────
+# error.*
 
 
 def test_error_fatal_round_trip() -> None:
@@ -343,7 +343,7 @@ def test_event_adapter_dispatches_tool_call_start() -> None:
     assert parsed.data.tool == "x"
 
 
-# ── hitl.* ───────────────────────────────────────────────────────────────────
+# hitl.*
 
 
 def test_hitl_request_round_trip_tool_approval() -> None:
@@ -446,7 +446,7 @@ def test_event_adapter_dispatches_hitl_request() -> None:
     assert parsed.data.kind == "tool_approval"
 
 
-# ── worker.* ─────────────────────────────────────────────────────────────────
+# worker.*
 
 
 def test_worker_spawned_round_trip() -> None:
@@ -518,7 +518,7 @@ def test_worker_failed_round_trip_carries_error_class() -> None:
     assert d["data"]["error_class"] == "RateLimitError"
 
 
-# ── metric.* ─────────────────────────────────────────────────────────────────
+# metric.*
 
 
 def test_metric_tokens_round_trip() -> None:
@@ -578,7 +578,7 @@ def test_event_adapter_dispatches_worker_and_metric() -> None:
     assert isinstance(parsed, MetricTokens)
 
 
-# ── discriminated union & TypeAdapter ────────────────────────────────────────
+# discriminated union & TypeAdapter
 
 
 def test_event_adapter_dispatches_on_type() -> None:
@@ -607,7 +607,7 @@ def test_event_adapter_rejects_unknown_type() -> None:
         "session": "s",
         "thread": "t",
         "seq": 1,
-        "type": "tool.call.start",  # not in Phase 0 union
+        "type": "tool.call.start",  # outside the minimal v1 union exercised above
         "data": {},
     }
     with pytest.raises(ValidationError):

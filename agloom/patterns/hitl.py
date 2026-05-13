@@ -103,7 +103,14 @@ async def _run_parallel_workers(
     Spawn every config as an asyncio.Task (not gather) for individual
     cancellability. Semaphore throttles concurrency.
     """
-    semaphore = asyncio.Semaphore(agent.get("max_concurrent", 4))
+    max_concurrent = agent.get("max_concurrent", 4)
+    try:
+        mc = int(max_concurrent)
+    except (TypeError, ValueError):
+        mc = 4
+    if mc < 1:
+        mc = 4
+    semaphore = asyncio.Semaphore(mc)
     llm = agent["llm"]
 
     async def _run_one(cfg: ResolvedWorkerConfig) -> WorkerResult:
@@ -165,11 +172,19 @@ async def _listen_for_halt(
 
     while not all(t.done() for t in tasks):
         try:
-            signal: Signal = await asyncio.wait_for(signal_queue.get(), timeout=0.2)
+            raw = await asyncio.wait_for(signal_queue.get(), timeout=0.2)
         except TimeoutError:
             continue
         except asyncio.CancelledError:
             return
+
+        if not isinstance(raw, Signal):
+            logger.warning(
+                f"[HITL] Ignoring non-Signal queue item: {type(raw).__name__!r} — "
+                f"agent={agent_name!r}"
+            )
+            continue
+        signal = raw
 
         if signal.signal_type == SignalType.HALT_ALL:
             logger.warning(

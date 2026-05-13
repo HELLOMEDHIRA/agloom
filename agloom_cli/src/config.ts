@@ -1,8 +1,5 @@
-/**
- * Project + user `agloom.yaml` layers, env fallbacks, and merge with Commander CLI state.
- *
- * Precedence (low → high): defaults < user `~/.agloom/agloom.yaml` < walk-up `./agloom.yaml` <
- * `AGLOOM_*` env < explicit `--config` file < CLI flags.
+/** Project + user `agloom.yaml` layers, env fallbacks, and merge with Commander CLI state.
+ * Precedence (low → high): defaults < user `~/.agloom/agloom.yaml` < walk-up `./agloom.yaml` < `AGLOOM_*` env < explicit `--config` file < CLI flags.
  */
 
 import { existsSync, readFileSync } from 'node:fs'
@@ -224,7 +221,14 @@ export function parseAgloomYamlFile(path: string): AgloomYaml {
   return AgloomYamlSchema.parse(doc ?? {})
 }
 
-/** Merge YAML layers: user global → walk-up project → explicit override path (each wins over prior). */
+/**
+ * Merge YAML layers: user global → walk-up project → explicit override path (each wins over prior).
+ *
+ * **Shallow merge:** each layer replaces top-level keys from the previous layer. Nested blocks are
+ * flattened by ``flattenRichAgloomYaml`` before Zod parse; unknown nested objects are still
+ * subject to shallow replacement if two layers define the same top-level key. Extend merge
+ * logic if we start preserving deep rich blocks without flattening.
+ */
 export function loadLayeredYaml(cwd: string, explicitPath?: string): { merged: AgloomYaml; files: string[] } {
   const files: string[] = []
   const layers: AgloomYaml[] = []
@@ -294,6 +298,7 @@ export type CliOptsLike = {
   noRequireToolApproval?: boolean
   mcp: string[]
   attach?: string[]
+  capture?: string
 }
 
 function envOverrides(): Partial<CliOptsLike> {
@@ -381,7 +386,13 @@ export function applyAgloomConfigLayers(
 
   if (y.mcp && files.length > 0) {
     const extra = mcpSpecsFromYaml(y.mcp, files[files.length - 1]!)
-    next.mcp = [...next.mcp, ...extra]
+    const nameFromSpec = (spec: string) => {
+      const i = spec.indexOf(':')
+      return i === -1 ? spec.trim() : spec.slice(0, i).trim()
+    }
+    const cliNames = new Set(next.mcp.map(nameFromSpec))
+    const deduped = extra.filter((e) => !cliNames.has(nameFromSpec(e)))
+    next.mcp = [...next.mcp, ...deduped]
   }
 
   return next

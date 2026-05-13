@@ -1,11 +1,5 @@
-/**
- * App — root React Router application.
- *
- * Routes:
- *   /                   → WorkspaceHome (session list / new session)
- *   /session/:sessionId → SessionWorkspace (main chat + runtime viz)
- *   /sessions           → SessionList
- *   /settings           → Settings (runtime URL, model, etc.)
+/** App — root React Router application.
+ * Routes: / → WorkspaceHome (session list / new session) /session/:sessionId → SessionWorkspace (main chat + runtime viz) /sessions → SessionList /settings → Settings (runtime URL, model, etc.)
  */
 
 import React, { useMemo, useEffect } from 'react'

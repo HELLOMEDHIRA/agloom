@@ -1,6 +1,4 @@
-/**
- * Multi-bridge factory helpers.
- */
+/** Multi-bridge factory helpers. */
 
 import { defaultAGPBridgeFactory, createBridges } from '../runtime/bridgeFactory'
 import { createAGPBridge } from '../runtime/bridge'

@@ -50,12 +50,12 @@ sequenceDiagram
 
 ## Configuration
 
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| `frozen` | `bool` | `False` | Enable frozen mode |
-| `frozen_template` | `str` | required | Template with `{key}` placeholders |
-| `input_key` | `str \| list[str]` | `"input"` | Placeholder name(s) |
-| `frozen_analysis_ttl` | `float` | `0` | Cache TTL in seconds (0 = never) |
+| Parameter             | Type    | Default    | Description                        |                     |
+| --------------------- | ------- | ---------- | ---------------------------------- | ------------------- |
+| `frozen`              | `bool`  | `False`    | Enable frozen mode                 |                     |
+| `frozen_template`     | `str`   | required   | Template with `{key}` placeholders |                     |
+| `input_key`           | `str \  | list[str]` | `"input"`                          | Placeholder name(s) |
+| `frozen_analysis_ttl` | `float` | `0`        | Cache TTL in seconds (0 = never)   |                     |
 
 ## Multiple Placeholders
 

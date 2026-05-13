@@ -1,6 +1,6 @@
-"""Agloom runtime — distributed AI-native execution platform.
+"""Agloom runtime — asyncio execution platform for agents (local-first).
 
-Phase 1 ships a fully functional local runtime with:
+Ships a fully functional in-process runtime with:
 - ``RuntimeNode`` — top-level assembly (scheduler + pool + registry)
 - ``WorkerPool``  — manages worker lifecycle + health monitoring
 - ``LocalAIWorker`` — wraps UnifiedAgent for in-process execution
@@ -59,21 +59,21 @@ __all__ = [
     "run_invocation",
     "run_invocation_to_writer",
     "translate",
-    # Phase 1 — Runtime Node
+    # Runtime node
     "RuntimeNode",
-    # Phase 1 — Worker Pool
+    # Worker pool
     "WorkerPool",
-    # Phase 1 — Workers
+    # Workers
     "BaseWorker",
     "LocalAIWorker",
-    # Phase 1 — Scheduler
+    # Scheduler
     "Scheduler",
     "InProcessScheduler",
     "SchedulerFullError",
-    # Phase 1 — Registry
+    # Registry
     "WorkerRegistry",
     "InMemoryRegistry",
-    # Phase 1 — Data models
+    # Data models
     "WorkerTask",
     "WorkerHealth",
     "WorkerStatus",

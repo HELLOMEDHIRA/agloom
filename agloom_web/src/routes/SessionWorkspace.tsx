@@ -1,11 +1,5 @@
-/**
- * SessionWorkspace — the main orchestration workspace.
- *
- * Three-panel layout (responsive):
- *   Left sidebar  — navigation + session list + settings
- *   Center (main) — chat + active turn streaming
- *   Right panel   — runtime visualization tab group:
- *                     Runtime Graph | Worker Tree | Execution Trace | Artifacts
+/** SessionWorkspace — the main orchestration workspace.
+ * Three-panel layout (responsive): Left sidebar — navigation + session list + settings Center (main) — chat + active turn streaming Right panel — runtime visualization tab group: Runtime Graph | Worker Tree | Execution Trace | Artifacts
  */
 import React, { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'

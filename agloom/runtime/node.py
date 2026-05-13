@@ -5,17 +5,16 @@ A ``RuntimeNode`` is a self-contained execution unit:
     Scheduler ──► WorkerPool ──► Worker(s) ──► AGP events ──► transport
 
 It is the single object that ``agloom-runtime serve`` creates and manages.
-Application code (e.g. ``__main__.py``) only needs to interact with
-:meth:`RuntimeNode.start`, :meth:`RuntimeNode.submit_invoke`, and
+Callers typically only need :meth:`RuntimeNode.start`, :meth:`RuntimeNode.submit_invoke`, and
 :meth:`RuntimeNode.stop`.
 
-Phase 1 ships with:
+Ships with:
   - One ``InProcessScheduler``
   - One ``WorkerPool`` with one or more ``LocalAIWorker`` instances
   - One ``InMemoryRegistry``
 
-Phase 2 will add pluggable scheduler + registry backends; the RuntimeNode API
-remains unchanged.
+Scheduler and registry implementations are swappable behind these same constructor hooks
+without changing the public :class:`RuntimeNode` API.
 """
 
 from __future__ import annotations
@@ -81,7 +80,7 @@ class RuntimeNode:
         max_queue_depth: int = 0,
         health_interval_s: float = 30.0,
     ) -> RuntimeNode:
-        """Convenience factory for single-node local execution (Phase 1 default).
+        """Convenience factory for single-node local execution (default setup).
 
         Creates one ``LocalAIWorker``, one ``InMemoryRegistry``, one
         ``InProcessScheduler``, and one ``WorkerPool``, all wired together.

@@ -1,7 +1,5 @@
-/**
- * TraceTimeline — horizontal swimlane timeline of all AGP events.
- * Renders each event as a chip on a time axis, grouped by event category.
- * Colour-coded by event type; duration shown as width (where available).
+/** TraceTimeline — horizontal swimlane timeline of all AGP events.
+ * Renders each event as a chip on a time axis, grouped by event category. Colour-coded by event type; duration shown as width (where available).
  */
 import React, { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'

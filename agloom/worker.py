@@ -73,7 +73,7 @@ async def run_worker(
     logger.info(
         f"[{config.worker_id}] starting | "
         f"tools={[t.name for t in config.tools] if config.tools else 'LLM-only'} | "
-        f"task={config.task[:60]!r}"
+        f"task={config.task!r}"
     )
 
     if config.tools:
@@ -129,7 +129,7 @@ def _build_graph_config(
         cleaned = {k: v for k, v in base["configurable"].items() if k != "memory_namespace"}
         base["configurable"] = cleaned
 
-    task_preview = config.task[:40].replace("\n", " ")
+    task_preview = config.task.replace("\n", " ")
     attempt_label = f" (attempt {attempt})" if attempt > 1 else ""
     run_name = f"{config.worker_id} | {task_preview} | {mode}{attempt_label}"
 
@@ -137,7 +137,7 @@ def _build_graph_config(
     base["metadata"] = {
         **(base.get("metadata") or {}),
         "worker_id": config.worker_id,
-        "task": config.task[:120],
+        "task": config.task,
         "mode": mode,
         "attempt": attempt,
         "tools": sorted(tool_names),
@@ -382,12 +382,12 @@ async def _run_llm_only(
                 task_content = f"Context:\n{ctx_str}\n\n{config.task}"
 
             # with_config() does not mutate the shared llm instance (safe under concurrency).
-            task_preview = config.task[:40].replace("\n", " ")
+            task_preview = config.task.replace("\n", " ")
             named_llm = llm.with_config(
                 run_name=f"{config.worker_id} | {task_preview} | LLM-only",
                 metadata={
                     "worker_id": config.worker_id,
-                    "task": config.task[:120],
+                    "task": config.task,
                     "mode": "LLM-only",
                     "attempt": attempt,
                 },

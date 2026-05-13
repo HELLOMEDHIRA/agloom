@@ -1,6 +1,4 @@
-/**
- * Shared formatting helpers for the agloom CLI terminal UI.
- */
+/** Shared formatting helpers for the agloom CLI terminal UI. */
 
 import { highlight } from 'cli-highlight'
 
@@ -89,6 +87,7 @@ const FENCE_RE = /```([\w+-]*)\n?([\s\S]*?)```/g
 /**
  * Markdown-ish → terminal text. Fenced ``` blocks use cli-highlight (language-aware).
  * Inline prose uses the previous lightweight line rules.
+ * Unmatched ``` fences fall through as normal prose (no fatal loop).
  */
 export const renderMarkdown = (md: string, termWidth = 80): string => {
   let last = 0

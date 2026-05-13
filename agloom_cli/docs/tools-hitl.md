@@ -4,7 +4,7 @@ When CLI tools are enabled (npm default → **`agloom-runtime --with-cli-tools`*
 
 ## What gets injected
 
-There are **25** canonical tools (`CLI_TOOL_NAMES` in `agloom.cli_tools`). Categories:
+There are **25** canonical built-in tools. Categories:
 
 - **Filesystem & search** — `read_file`, `write_file`, `edit_file`, `glob_files`, `grep_files`, `list_dir`, …
 - **Notebooks** — `notebook_read`, `notebook_edit`
@@ -16,12 +16,12 @@ Full tables: [Built-in CLI tools](../agloom/features/cli-tools.md).
 
 ## npm / runtime flags
 
-| npm flag | Runtime flag |
-| --- | --- |
-| `--no-cli-tools` | Omit `--with-cli-tools` |
-| `--no-shell-tool` | `--cli-tools-no-shell` |
+| npm flag             | Runtime flag             |
+| -------------------- | ------------------------ |
+| `--no-cli-tools`     | Omit `--with-cli-tools`  |
+| `--no-shell-tool`    | `--cli-tools-no-shell`   |
 | `--no-network-tools` | `--cli-tools-no-network` |
-| `--unrestricted` | `--cli-tools-no-sandbox` |
+| `--unrestricted`     | `--cli-tools-no-sandbox` |
 
 Working directory root defaults to the directory where you launched **`agloom`**.
 

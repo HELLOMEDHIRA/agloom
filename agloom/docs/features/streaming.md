@@ -109,21 +109,21 @@ async for event in agent.astream_events("Explain gravity"):
 
 ### Event types
 
-| Event | When emitted | Key data fields |
-| --- | --- | --- |
-| `thinking` | Query classified | `output` (pattern name) |
-| `token` | LLM token chunk arrives | `content` (the token text) |
-| `llm_call` | LLM response completed | `name`, `output`, `duration_ms` |
-| `tool_call` | Tool invoked | `id`, `name`, `input` |
-| `tool_result` | Tool returned | `id`, `name`, `output` |
-| `worker_start` | Worker began executing | `name` |
-| `worker_end` | Worker completed | `name`, `output`, `duration_ms` |
-| `cache_hit` | Cached result found | `output` |
-| `reflection` | Reflection iteration ran | `output` |
-| `fallback` | Pattern fallback triggered | `output` |
-| `interrupt` | HITL interrupt fired | `name` |
-| `done` | Execution complete | `result` (full ExecutionResult as dict) |
-| `error` | Execution failed | `error` (error message) |
+| Event          | When emitted               | Key data fields                         |
+| -------------- | -------------------------- | --------------------------------------- |
+| `thinking`     | Query classified           | `output` (pattern name)                 |
+| `token`        | LLM token chunk arrives    | `content` (the token text)              |
+| `llm_call`     | LLM response completed     | `name`, `output`, `duration_ms`         |
+| `tool_call`    | Tool invoked               | `id`, `name`, `input`                   |
+| `tool_result`  | Tool returned              | `id`, `name`, `output`                  |
+| `worker_start` | Worker began executing     | `name`                                  |
+| `worker_end`   | Worker completed           | `name`, `output`, `duration_ms`         |
+| `cache_hit`    | Cached result found        | `output`                                |
+| `reflection`   | Reflection iteration ran   | `output`                                |
+| `fallback`     | Pattern fallback triggered | `output`                                |
+| `interrupt`    | HITL interrupt fired       | `name`                                  |
+| `done`         | Execution complete         | `result` (full ExecutionResult as dict) |
+| `error`        | Execution failed           | `error` (error message)                 |
 
 ### Tool call correlation with `id`
 
@@ -195,7 +195,7 @@ for step in result.steps:
 
 Example output:
 
-```
+```text
 [classify    ] analyze_query — 450ms
 [llm_call    ] supervisor_plan — 320ms
 [worker_start] researcher
@@ -304,11 +304,11 @@ To get token usage, just access `result.token_usage` after any `ainvoke` call.
 
 ## Choosing the Right API
 
-| Need | API | Details |
-| --- | --- | --- |
-| Simple chat UI | `astream()` | Token chunks only, simplest integration |
-| Rich "thinking" UI | `astream_events()` | Steps + tokens + tool tracking in one stream (`AgentEvent`) |
-| Same shapes as AGP / runtime | `astream_agp_events()` | Typed `Envelope` subclasses; bracketed `session.opened` / `session.closed` |
-| Post-run analysis | `ainvoke()` + `result.steps` | Full trace with timing data |
-| Raw message access | `ainvoke()` + `result.messages` | Full LangChain message objects |
-| NDJSON / SSE bridges | `astream_agp_events()` or `astream_events()` | AGP events serialize to JSON lines; agent events via `model_dump_json()` |
+| Need                         | API                                          | Details                                                                    |
+| ---------------------------- | -------------------------------------------- | -------------------------------------------------------------------------- |
+| Simple chat UI               | `astream()`                                  | Token chunks only, simplest integration                                    |
+| Rich "thinking" UI           | `astream_events()`                           | Steps + tokens + tool tracking in one stream (`AgentEvent`)                |
+| Same shapes as AGP / runtime | `astream_agp_events()`                       | Typed `Envelope` subclasses; bracketed `session.opened` / `session.closed` |
+| Post-run analysis            | `ainvoke()` + `result.steps`                 | Full trace with timing data                                                |
+| Raw message access           | `ainvoke()` + `result.messages`              | Full LangChain message objects                                             |
+| NDJSON / SSE bridges         | `astream_agp_events()` or `astream_events()` | AGP events serialize to JSON lines; agent events via `model_dump_json()`   |

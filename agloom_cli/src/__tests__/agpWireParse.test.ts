@@ -1,6 +1,4 @@
-/**
- * Wire validation for inbound AGP events (Zod).
- */
+/** Wire validation for inbound AGP events (Zod). */
 
 import { parseInboundAGPEventJSONWire } from '../types/agpWireParse'
 
@@ -56,5 +54,15 @@ describe('parseInboundAGPEventJSONWire', () => {
     })
     expect(out.type).toBe('future.event')
     expect((out.data as Record<string, unknown>)['foo']).toBe(1)
+  })
+
+  it('rejects unknown type with non-object data (message names type)', () => {
+    expect(() =>
+      parseInboundAGPEventJSONWire({
+        ...baseEnv,
+        type: 'future.bad',
+        data: 'not-an-object',
+      }),
+    ).toThrow(/future\.bad/)
   })
 })

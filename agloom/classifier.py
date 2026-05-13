@@ -249,10 +249,9 @@ async def analyze_query(
     """
     tools_desc = "\n".join(f"  - {t.name}: {getattr(t, 'description', '')}" for t in tools) or "none"
 
-    prompt = CLASSIFIER_PROMPT.format(
-        query=query,
-        tools=tools_desc,
-    )
+    # Replace longer / structured placeholders first so ``{tools}`` inside the user
+    # ``query`` string is not clobbered when substituting ``{tools}``.
+    prompt = CLASSIFIER_PROMPT.replace("{tools}", tools_desc).replace("{query}", query)
 
     if skill_context:
         prompt = prompt.replace(

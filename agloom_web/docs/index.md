@@ -12,13 +12,13 @@ Production build: **`npm run build`** → static **`dist/`**. Set **`VITE_AGP_WS
 
 ## Routes
 
-| Path | Screen |
-| --- | --- |
-| **`/`** | Home — sessions list / navigation |
-| **`/session/:id`** | Chat + right-hand runtime panel (graph, workers, trace, artifacts) |
-| **`/observe`** | Observability dashboard (live metrics / sessions; uses proxied **`/observe`** HTTP in dev) |
-| **`/sessions/:id/trace`** | Per-session trace & replay |
-| **`/settings`** | Runtime connection hints (WS URL is primarily **`VITE_AGP_WS_URL`**) |
+| Path                      | Screen                                                                                     |
+| ------------------------- | ------------------------------------------------------------------------------------------ |
+| **`/`**                   | Home — sessions list / navigation                                                          |
+| **`/session/:id`**        | Chat + right-hand runtime panel (graph, workers, trace, artifacts)                         |
+| **`/observe`**            | Observability dashboard (live metrics / sessions; uses proxied **`/observe`** HTTP in dev) |
+| **`/sessions/:id/trace`** | Per-session trace & replay                                                                 |
+| **`/settings`**           | Runtime connection hints (WS URL is primarily **`VITE_AGP_WS_URL`**)                       |
 
 ## Documentation
 

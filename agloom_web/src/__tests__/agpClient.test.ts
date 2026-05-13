@@ -1,5 +1,4 @@
-/**
- * Unit tests for createAGPClient — WebSocket lifecycle, message dispatch, reconnect scheduling.
+/** Unit tests for createAGPClient — WebSocket lifecycle, message dispatch, reconnect scheduling.
  * Uses a MockWebSocket implementation (no real network).
  */
 

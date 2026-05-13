@@ -1,8 +1,5 @@
-/**
- * Zod validation for inbound AGP NDJSON frames (after ``JSON.parse``).
- *
- * Matches Pydantic rules in ``agloom/protocol/events.py``: required ``data`` fields are
- * enforced; unknown keys on ``data`` are preserved (forward-compatible with ``extra="allow"``).
+/** Zod validation for inbound AGP NDJSON frames (after ``JSON.parse``).
+ * Matches Pydantic rules in ``agloom/protocol/events.py``: required ``data`` fields are enforced; unknown keys on ``data`` are preserved (forward-compatible with ``extra="allow"``).
  */
 
 import { z } from 'zod'
@@ -20,9 +17,15 @@ const envelope = z.object({
   data: z.unknown(),
 })
 
-function asDataObject(data: unknown): Record<string, unknown> {
+function asDataObject(data: unknown, eventType?: string): Record<string, unknown> {
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-    throw new SyntaxError('AGP event data must be a plain object')
+    const kind = data === null ? 'null' : Array.isArray(data) ? 'array' : typeof data
+    const head = eventType
+      ? `AGP event type "${eventType}"`
+      : 'AGP event'
+    throw new SyntaxError(
+      `${head}: \`data\` must be a plain object (got ${kind}). Unknown types still require object-shaped \`data\` for forward compatibility.`,
+    )
   }
   return { ...(data as Record<string, unknown>) }
 }
@@ -61,6 +64,12 @@ const d = {
     complexity: z.number().optional(),
     confidence: z.number().optional(),
     reason: z.string().optional(),
+  }),
+  planPreview: z.object({
+    pattern: z.string(),
+    complexity: z.number().optional(),
+    reasoning: z.string().optional(),
+    steps: z.array(z.string()).optional(),
   }),
   thinkingStep: z.object({
     step: z.string(),
@@ -257,6 +266,7 @@ const d = {
     turn_count: z.number().optional(),
   }),
   memorySessionCleared: z.object({ thread: z.string() }),
+  memorySessionTurnPopped: z.object({ thread: z.string(), remaining_turns: z.number() }),
   memoryLtStore: z.object({
     namespace: z.string().optional(),
     key: z.string().optional(),
@@ -343,6 +353,7 @@ const DATA_BY_TYPE: Record<string, z.ZodTypeAny> = {
   'session.closed': d.sessionClosed,
   'session.heartbeat': d.sessionHeartbeat,
   'pattern.classified': d.patternClassified,
+  'plan.preview': d.planPreview,
   'thinking.step': d.thinkingStep,
   'token.delta': d.tokenDelta,
   'message.user': d.messageUser,
@@ -379,6 +390,7 @@ const DATA_BY_TYPE: Record<string, z.ZodTypeAny> = {
   'memory.lt.recall': d.memoryLtRecall,
   'memory.session.write': d.memorySessionWrite,
   'memory.session.cleared': d.memorySessionCleared,
+  'memory.session.turn_popped': d.memorySessionTurnPopped,
   'memory.lt.store': d.memoryLtStore,
   'checkpoint.saved': d.checkpointSaved,
   'checkpoint.restored': d.checkpointRestored,
@@ -407,11 +419,12 @@ export function parseInboundAGPEventJSONWire(parsed: unknown): Record<string, un
     throw new SyntaxError(`Invalid AGP envelope: ${msg}`)
   }
   const { data, ...rest } = o.data
-  const rawData = asDataObject(data)
+  const rawData = asDataObject(data, rest.type)
   const schema = DATA_BY_TYPE[rest.type]
   if (schema) {
     const merged = mergeData(rawData, schema)
     return { ...rest, data: merged }
   }
+  // Forward-compatible: no Zod schema for this ``type`` yet — ``data`` is still validated as an object above.
   return { ...rest, data: rawData }
 }

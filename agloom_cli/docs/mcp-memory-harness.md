@@ -27,26 +27,26 @@ args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
 
 Runtime flags (`serve`):
 
-| Flag | Role |
-| --- | --- |
-| `--memory <type>` | Backend hint (`sqlite`, `in-memory`, `none`, …). |
-| `--memory-path <path>` | SQLite file when using sqlite session memory. |
-| `--no-memory` | Minimal in-process memory. |
-| `--session-max-turns` | Rolling window size. |
-| `--summarizer-model` | Separate model id for summarization. |
-| `--no-auto-summarize` | Disable rolling summarization. |
+| Flag                   | Role                                             |
+| ---------------------- | ------------------------------------------------ |
+| `--memory <type>`      | Backend hint (`sqlite`, `in-memory`, `none`, …). |
+| `--memory-path <path>` | SQLite file when using sqlite session memory.    |
+| `--no-memory`          | Minimal in-process memory.                       |
+| `--session-max-turns`  | Rolling window size.                             |
+| `--summarizer-model`   | Separate model id for summarization.             |
+| `--no-auto-summarize`  | Disable rolling summarization.                   |
 
-Defaults integrate with LangGraph stores opened by the runtime (`serve_cli.py`, `__main__.py`).
+Defaults integrate with LangGraph stores opened by the Python runtime process.
 
 ## LangGraph store & harness
 
 Separate from AGP EventStore:
 
-| Flag | Role |
-| --- | --- |
-| `--agent-store <none\|memory\|sqlite\|sqlite-sync>` | Long-lived agent store (skills, LT memory tools). Default sqlite async. |
-| `--agent-store-path <path>` | SQLite path (default `.agloom/graph_store.sqlite`). |
-| `--no-harness` | Disable harness tools (progress + git) while keeping store-backed features available. |
+| Flag                        | Role                                                                                  |         |               |                                                                         |
+| --------------------------- | ------------------------------------------------------------------------------------- | ------- | ------------- | ----------------------------------------------------------------------- |
+| `--agent-store <none\       | memory\                                                                               | sqlite\ | sqlite-sync>` | Long-lived agent store (skills, LT memory tools). Default sqlite async. |
+| `--agent-store-path <path>` | SQLite path (default `.agloom/graph_store.sqlite`).                                   |         |               |                                                                         |
+| `--no-harness`              | Disable harness tools (progress + git) while keeping store-backed features available. |         |               |                                                                         |
 
 **Harness** emits structured progress (`agloom-progress.json` convention) and git-aware helpers — see [Long-running harness](../agloom/features/harness.md).
 
@@ -54,11 +54,11 @@ Separate from AGP EventStore:
 
 Typical workspace artifacts:
 
-| Path | Purpose |
-| --- | --- |
-| `.agloom/graph_store.sqlite` | LangGraph async store (default) |
-| `.agloom/session_memory.sqlite` | Session memory when `--memory sqlite` |
-| `.agloom/agp_events.db` | AGP EventStore when `--store sqlite` (CLI default) |
+| Path                            | Purpose                                            |
+| ------------------------------- | -------------------------------------------------- |
+| `.agloom/graph_store.sqlite`    | LangGraph async store (default)                    |
+| `.agloom/session_memory.sqlite` | Session memory when `--memory sqlite`              |
+| `.agloom/agp_events.db`         | AGP EventStore when `--store sqlite` (CLI default) |
 
 Tune paths via flags or YAML (`store_path`, `memory_path`) plus pass-through **`--`**.
 

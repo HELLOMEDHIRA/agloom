@@ -1,12 +1,11 @@
-/**
- * Unit tests for the Zustand session store's `dispatch` reducer.
+/** Unit tests for the Zustand session store's `dispatch` reducer.
  * All AGP event branches are tested in isolation — no Ink rendering needed.
  */
 
 import { useSessionStore } from '../store/session'
 import type { AGPEvent } from '../types/agp'
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// helpers
 
 const env = (overrides: Partial<Pick<AGPEvent, 'v' | 'session' | 'seq' | 'ts' | 'id'>> = {}): Pick<AGPEvent, 'v' | 'session' | 'seq' | 'ts' | 'id'> => {
   return {
@@ -27,13 +26,13 @@ const state = () => {
   return useSessionStore.getState()
 }
 
-// ── reset between tests ───────────────────────────────────────────────────────
+// reset between tests
 
 beforeEach(() => {
   useSessionStore.getState().reset()
 })
 
-// ── session events ────────────────────────────────────────────────────────────
+// session events
 
 describe('session.opened', () => {
   it('sets sessionId and runtimeVersion', () => {
@@ -58,7 +57,7 @@ describe('session.closed', () => {
   })
 })
 
-// ── turn lifecycle ────────────────────────────────────────────────────────────
+// turn lifecycle
 
 describe('message.user', () => {
   it('creates an activeTurn with the user message', () => {
@@ -84,7 +83,7 @@ describe('pattern.classified', () => {
   })
 })
 
-// ── streaming tokens ──────────────────────────────────────────────────────────
+// streaming tokens
 
 describe('token.delta', () => {
   it('accumulates streamed tokens', () => {
@@ -100,7 +99,7 @@ describe('token.delta', () => {
   })
 })
 
-// ── tool calls ────────────────────────────────────────────────────────────────
+// tool calls
 
 describe('tool.call.start + tool.call.result + tool.call.error', () => {
   it('adds a pending tool call', () => {
@@ -131,7 +130,7 @@ describe('tool.call.start + tool.call.result + tool.call.error', () => {
   })
 })
 
-// ── workers ───────────────────────────────────────────────────────────────────
+// workers
 
 describe('worker.spawned / worker.completed / worker.failed', () => {
   beforeEach(() => {
@@ -160,7 +159,7 @@ describe('worker.spawned / worker.completed / worker.failed', () => {
   })
 })
 
-// ── HITL ──────────────────────────────────────────────────────────────────────
+// HITL
 
 describe('hitl lifecycle', () => {
   it('enqueues a HITL request and sets status hitl', () => {
@@ -194,7 +193,7 @@ describe('hitl lifecycle', () => {
   })
 })
 
-// ── message.assistant — turn completion ───────────────────────────────────────
+// message.assistant — turn completion
 
 describe('message.assistant', () => {
   it('caps completedTurns length for long sessions', () => {
@@ -233,7 +232,7 @@ describe('message.assistant', () => {
   })
 })
 
-// ── metrics ───────────────────────────────────────────────────────────────────
+// metrics
 
 describe('metric.tokens', () => {
   it('accumulates total token counts', () => {
@@ -265,7 +264,7 @@ describe('metric.cost', () => {
   })
 })
 
-// ── errors ────────────────────────────────────────────────────────────────────
+// errors
 
 describe('error events', () => {
   it('error.fatal sets error status', () => {
@@ -280,7 +279,7 @@ describe('error events', () => {
   })
 })
 
-// ── graph.node.enter ──────────────────────────────────────────────────────────
+// graph.node.enter
 
 describe('graph.node.enter', () => {
   it('appends the node name to activeTurn.graphNodes', () => {
@@ -291,7 +290,7 @@ describe('graph.node.enter', () => {
   })
 })
 
-// ── reset ─────────────────────────────────────────────────────────────────────
+// reset
 
 describe('reset', () => {
   it('clears all mutable state', () => {

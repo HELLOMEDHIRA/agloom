@@ -155,73 +155,86 @@ def test_bash_background_stop_escalates_kill_after_term_timeout(mock_popen: Magi
     proc.kill.assert_called_once()
 
 
-@patch("httpx.Client")
-def test_fetch_url_extract_readable_toggle(mock_client_cls: MagicMock, tmp_path: Path) -> None:
+@patch("httpx.AsyncClient")
+@pytest.mark.asyncio
+async def test_fetch_url_extract_readable_toggle(mock_client_cls: MagicMock, tmp_path: Path) -> None:
     html_body = b"<html><body><p>Hello</p><script>x</script></body></html>"
 
     def _ctx():
-        cm = MagicMock()
         resp = MagicMock()
         resp.status_code = 200
         resp.content = html_body
         resp.headers = {"content-type": "text/html"}
         resp.raise_for_status = MagicMock()
-        cm.__enter__ = MagicMock(return_value=MagicMock(get=MagicMock(return_value=resp)))
-        cm.__exit__ = MagicMock(return_value=False)
+        inner = MagicMock()
+        inner.get = AsyncMock(return_value=resp)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=inner)
+        cm.__aexit__ = AsyncMock(return_value=None)
         return cm
 
     mock_client_cls.return_value = _ctx()
     ft = _tools(tmp_path, network=True)["fetch_url"]
-    plain = ft.invoke({"url": "http://example.test/x", "extract_readable_text": True})
+    plain = await ft.ainvoke({"url": "http://example.test/x", "extract_readable_text": True})
     assert "hello" in plain.lower()
     assert "<script>" not in plain.lower()
 
     mock_client_cls.return_value = _ctx()
-    rawish = ft.invoke({"url": "http://example.test/x", "extract_readable_text": False})
+    rawish = await ft.ainvoke({"url": "http://example.test/x", "extract_readable_text": False})
     assert "<html>" in rawish.lower()
 
 
+@patch("httpx.AsyncClient")
 @patch("agloom.cli_tools.web._try_trafilatura_extract", return_value="TRAFILATURA_MAIN_BODY")
-@patch("httpx.Client")
-def test_read_url_markdown_prefers_trafilatura_when_available(mock_client_cls: MagicMock, tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_read_url_markdown_prefers_trafilatura_when_available(
+    mock_traf: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
+) -> None:
     html_body = b"<html><body><nav>skip</nav><p>Hello</p></body></html>"
 
     def _ctx():
-        cm = MagicMock()
         resp = MagicMock()
         resp.status_code = 200
         resp.content = html_body
         resp.headers = {"content-type": "text/html"}
         resp.raise_for_status = MagicMock()
-        cm.__enter__ = MagicMock(return_value=MagicMock(get=MagicMock(return_value=resp)))
-        cm.__exit__ = MagicMock(return_value=False)
+        inner = MagicMock()
+        inner.get = AsyncMock(return_value=resp)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=inner)
+        cm.__aexit__ = AsyncMock(return_value=None)
         return cm
 
     mock_client_cls.return_value = _ctx()
     rum = _tools(tmp_path, network=True)["read_url_markdown"]
-    out = rum.invoke({"url": "http://example.test/article"})
+    out = await rum.ainvoke({"url": "http://example.test/article"})
     assert "TRAFILATURA_MAIN_BODY" in out
 
 
+@patch("httpx.AsyncClient")
 @patch("agloom.cli_tools.web._try_trafilatura_extract", return_value=None)
-@patch("httpx.Client")
-def test_read_url_markdown_falls_back_when_trafilatura_none(mock_client_cls: MagicMock, tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_read_url_markdown_falls_back_when_trafilatura_none(
+    mock_traf: MagicMock, mock_client_cls: MagicMock, tmp_path: Path
+) -> None:
     html_body = b"<html><body><p>FallbackHello</p></body></html>"
 
     def _ctx():
-        cm = MagicMock()
         resp = MagicMock()
         resp.status_code = 200
         resp.content = html_body
         resp.headers = {"content-type": "text/html"}
         resp.raise_for_status = MagicMock()
-        cm.__enter__ = MagicMock(return_value=MagicMock(get=MagicMock(return_value=resp)))
-        cm.__exit__ = MagicMock(return_value=False)
+        inner = MagicMock()
+        inner.get = AsyncMock(return_value=resp)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=inner)
+        cm.__aexit__ = AsyncMock(return_value=None)
         return cm
 
     mock_client_cls.return_value = _ctx()
     rum = _tools(tmp_path, network=True)["read_url_markdown"]
-    out = rum.invoke({"url": "http://example.test/page"})
+    out = await rum.ainvoke({"url": "http://example.test/page"})
     assert "fallbackhello" in out.lower()
 
 

@@ -9,7 +9,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 
 from .. import worker as worker_module
-from ..llm_streaming import astream_llm_to_event_queue
+from ..llm_streaming import stream_or_invoke_llm
 from ..logging_utils import get_logger
 from ..models import (
     ExecutionResult,
@@ -217,25 +217,11 @@ async def handle_blackboard(
     try:
         _timeout = agent.get("llm_timeout", 120.0) if isinstance(agent, dict) else 120.0
         t_synth = time.perf_counter()
-        event_queue = agent.get("_event_queue")
-        if event_queue is not None:
-            synthesis, last_chunk = await astream_llm_to_event_queue(
-                llm, synth_input, event_queue, timeout=_timeout
-            )
-            raw_messages.extend(synth_input)
-            if last_chunk is not None:
-                raw_messages.append(last_chunk)
-            synthesis = synthesis.strip()
-            synth_usage = _extract_token_usage(last_chunk) if last_chunk else {}
-        else:
-            response = await asyncio.wait_for(
-                llm.ainvoke(synth_input),
-                timeout=_timeout,
-            )
-            raw_messages.extend(synth_input)
-            raw_messages.append(response)
-            synthesis = response.content.strip()
-            synth_usage = _extract_token_usage(response)
+        synthesis, tail, last_chunk = await stream_or_invoke_llm(
+            llm, synth_input, agent, timeout=_timeout
+        )
+        raw_messages.extend(tail)
+        synth_usage = _extract_token_usage(last_chunk) if last_chunk else {}
         synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
         if synth_usage:
             usage = _merge_token_usage(usage, synth_usage)

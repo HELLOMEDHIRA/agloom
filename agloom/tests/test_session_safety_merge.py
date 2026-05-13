@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from agloom.protocol.emitter import SessionEmitter, _SharedSeq
 
-# ── _SharedSeq ───────────────────────────────────────────────────────────────
+# _SharedSeq
 
 
 def test_shared_seq_monotonic() -> None:
@@ -47,7 +47,7 @@ def test_shared_seq_thread_safe_no_duplicates() -> None:
     assert sorted(results) == list(range(1, N * PER_THREAD + 1)), "duplicate or missing seq values"
 
 
-# ── SessionEmitter ────────────────────────────────────────────────────────────
+# SessionEmitter
 
 
 def _make_emitter(buf: io.StringIO, session: str = "s_test", thread: str = "t_main") -> SessionEmitter:

@@ -11,7 +11,7 @@ async def main():
 
 ### debug=True output
 
-```
+```text
 21:04:29 DEBUG unified_agent — [my-agent] Analysis: {pattern: DIRECT, complexity: 0, ...}
 21:04:29 INFO  classifier — [Classifier] Pattern=DIRECT | Complexity=0/10
 21:04:29 INFO  unified_agent — [my-agent] DIRECT short-circuit — 1 LLM call total.
@@ -20,7 +20,7 @@ async def main():
 
 ### debug=False output (default)
 
-```
+```text
 21:04:29 INFO  classifier — [Classifier] Pattern=DIRECT | Complexity=0/10
 21:04:29 INFO  unified_agent — [my-agent] DIRECT short-circuit — 1 LLM call total.
 ```
@@ -38,7 +38,7 @@ Set the `LOG_FORMAT` environment variable:
     ```
 
     Output:
-    ```
+    ```text
     21:04:29 INFO  classifier — [Classifier] Pattern=DIRECT | Complexity=0/10
     ```
 
@@ -69,14 +69,14 @@ configure_package_logging("CRITICAL") # silent
 
 ## What Gets Logged
 
-| Component | INFO logs | DEBUG logs |
-| --- | --- | --- |
-| Classifier | Pattern selected, complexity | Full analysis JSON |
+| Component     | INFO logs                      | DEBUG logs                         |
+| ------------- | ------------------------------ | ---------------------------------- |
+| Classifier    | Pattern selected, complexity   | Full analysis JSON                 |
 | Unified Agent | Pattern execution, step counts | Memory injection, cache operations |
-| Worker | Worker start/end | Worker config, retry attempts |
-| Feedback | User feedback applied | Score calculations |
-| Skills | Skill injected | Skill matching, lifecycle events |
-| Memory | Trim warnings | Context build, injection |
+| Worker        | Worker start/end               | Worker config, retry attempts      |
+| Feedback      | User feedback applied          | Score calculations                 |
+| Skills        | Skill injected                 | Skill matching, lifecycle events   |
+| Memory        | Trim warnings                  | Context build, injection           |
 
 ## Suppressing Third-Party Logs
 

@@ -1,12 +1,17 @@
-/**
- * Slash commands for the Ink CLI — `/help` output lines (also listed in README / docs).
- */
+/** Slash commands for the Ink CLI — `/help` output lines (also listed in README / docs). */
 
 /** Short hints keyed by command prefix (used by InputBar autocomplete overlay). */
 export const SLASH_HINTS: Record<string, string> = {
   '/help': 'Show slash commands',
   '/cancel': 'Cancel the current run (Ctrl+X)',
   '/clear': 'Clear transcript + metrics notes',
+  '/undo': 'Pop last turn from session memory + transcript (AGP)',
+  '/retry': 'Re-send the last completed user message',
+  '/checkpoint': 'Harness git checkpoint (name + optional description)',
+  '/diff': 'Unified diff (optional path; --staged for index)',
+  '/hint': 'Harness revert hint after checkpoint',
+  '/plan': 'Classifier-only plan preview (no agent run)',
+  '/git': 'Harness git status or checkpoints',
   '/model': 'Print active model from runtime',
   '/memory': 'Session memory: /memory clear',
   '/cost': 'Token/cost breakdown (wire notes + metrics history)',
@@ -30,6 +35,13 @@ export const SLASH_HELP_LINES: string[] = [
   '  /help              Show this list',
   '  /cancel            Cancel the current run (Ctrl+X)',
   '  /clear             Clear transcript + metrics notes',
+  '  /undo              Remove last turn (session memory + sidebar transcript)',
+  '  /retry             Re-run the last completed user message',
+  '  /checkpoint [name] [desc]   Git harness checkpoint tag',
+  '  /diff [--staged] [path]     Unified diff (harness)',
+  '  /hint              Revert hint (harness)',
+  '  /plan <goal>       Classifier plan preview only',
+  '  /git status        Repo summary · /git checkpoints',
   '  /model             Print active model (from runtime.config / metrics)',
   '  /memory clear      Clear short-term session memory (current thread)',
   '  /cost              Token + cost summary and recent metric slices',

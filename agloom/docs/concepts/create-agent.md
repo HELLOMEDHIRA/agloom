@@ -33,15 +33,15 @@ For agents that keep a **structured task graph**, **verification steps**, and **
 
 `create_agent` returns a `UnifiedAgent` with these methods:
 
-| Method | Description |
-| --- | --- |
-| `await agent.ainvoke(query)` | Run the full pipeline, return `ExecutionResult` |
-| `async for token in agent.astream(query)` | Stream tokens as they arrive |
-| `async for event in agent.astream_events(query)` | Stream structured events + real-time tokens |
-| `await agent.abatch(queries)` | Process multiple queries in parallel |
-| `await agent.feedback(run_id, rating)` | Submit user feedback for a run |
-| `agent.register_pattern(pattern_type, handler)` | Register a custom pattern handler |
-| `async with agent:` | Context manager for graceful cleanup |
+| Method                                           | Description                                     |
+| ------------------------------------------------ | ----------------------------------------------- |
+| `await agent.ainvoke(query)`                     | Run the full pipeline, return `ExecutionResult` |
+| `async for token in agent.astream(query)`        | Stream tokens as they arrive                    |
+| `async for event in agent.astream_events(query)` | Stream structured events + real-time tokens     |
+| `await agent.abatch(queries)`                    | Process multiple queries in parallel            |
+| `await agent.feedback(run_id, rating)`           | Submit user feedback for a run                  |
+| `agent.register_pattern(pattern_type, handler)`  | Register a custom pattern handler               |
+| `async with agent:`                              | Context manager for graceful cleanup            |
 
 ### Full Method Signatures
 
@@ -111,12 +111,12 @@ agent.register_pattern(
 
 The `thread_id` and `user_id` parameters (passed at **call time**) control memory isolation:
 
-| Parameter | Effect |
-| --- | --- |
-| `thread_id=None` | Ephemeral UUID — no cross-call session memory |
-| `thread_id="t1"` | Stateful session — session memory active across calls with same ID |
-| `user_id="u123"` (at call time) | Stable cross-session LT namespace → `(agent_name, "u123")` |
-| `lt_namespace=(...)` | Explicit shared namespace (multi-agent coordination, highest priority) |
+| Parameter                       | Effect                                                                 |
+| ------------------------------- | ---------------------------------------------------------------------- |
+| `thread_id=None`                | Ephemeral UUID — no cross-call session memory                          |
+| `thread_id="t1"`                | Stateful session — session memory active across calls with same ID     |
+| `user_id="u123"` (at call time) | Stable cross-session LT namespace → `(agent_name, "u123")`             |
+| `lt_namespace=(...)`            | Explicit shared namespace (multi-agent coordination, highest priority) |
 
 !!! warning "`user_id` at create_agent vs call time"
     `create_agent(user_id="u123")` sets a config default but does **not** automatically scope long-term memory. You must pass `user_id=` on each `ainvoke()` / `astream()` / `astream_events()` call for it to take effect.

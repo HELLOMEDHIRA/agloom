@@ -1,10 +1,5 @@
-/**
- * InputBar — primary message input (optional multiline compose buffer shown above).
- *
- * **Paste with newlines (B1):** when not in explicit multiline mode, `App` passes
- * `onChange` through `splitPastedMultilineWhenSingleLineMode` so bracketed paste
- * opens the same queued-line + blank-Enter send flow (no `onPaste` here — the
- * Ink text field surfaces pastes as a single `onChange` with `\n` embedded).
+/** InputBar — primary message input (optional multiline compose buffer shown above).
+ * **Paste with newlines (B1):** when not in explicit multiline mode, `App` passes `onChange` through `splitPastedMultilineWhenSingleLineMode` so bracketed paste opens the same queued-line + blank-Enter send flow (no `onPaste` here — the Ink text field surfaces pastes as a single `onChange` with `\n` embedded).
  */
 
 import React from 'react'
@@ -13,6 +8,7 @@ import TextInput from 'ink-text-input'
 import { useInput } from 'ink'
 import { useSessionStore } from '../store/session.js'
 import { SLASH_HINTS } from '../utils/slashCommands.js'
+import { useAgloomTheme } from '../themeContext.js'
 
 interface Props {
   value: string
@@ -23,6 +19,8 @@ interface Props {
   pendingLines?: string[]
   onRecallPrev?: () => void
   onRecallNext?: () => void
+  /** Fuzzy matches from prompt history (non-slash input). */
+  suggestions?: string[]
 }
 
 export const InputBar = ({
@@ -32,7 +30,10 @@ export const InputBar = ({
   pendingLines,
   onRecallPrev,
   onRecallNext,
+  suggestions,
 }: Props): React.ReactElement => {
+  const theme = useAgloomTheme()
+  const accent = theme === 'light' ? 'blue' : 'cyan'
   const status = useSessionStore((s) => s.status)
   const isDisabled = status === 'running' || status === 'thinking' || status === 'hitl'
   const errorMessage = useSessionStore((s) => s.errorMessage)
@@ -70,7 +71,7 @@ export const InputBar = ({
             .slice(0, 6)
             .map(([cmd, hint]) => (
               <Box key={cmd}>
-                <Text bold color="cyan">
+                <Text bold color={accent}>
                   {cmd.padEnd(14)}
                 </Text>
                 <Text color="gray" dimColor>
@@ -78,6 +79,16 @@ export const InputBar = ({
                 </Text>
               </Box>
             ))}
+        </Box>
+      )}
+
+      {suggestions !== undefined && suggestions.length > 0 && !value.startsWith('/') && (
+        <Box flexDirection="column" marginX={2} marginBottom={0}>
+          {suggestions.map((s, i) => (
+            <Text key={`${i}-${s.slice(0, 40)}`} dimColor color="gray">
+              ↪ {s.length > 140 ? `${s.slice(0, 137)}…` : s}
+            </Text>
+          ))}
         </Box>
       )}
 
@@ -93,7 +104,7 @@ export const InputBar = ({
       )}
 
       <Box paddingX={1}>
-        <Text bold color={isDisabled ? 'gray' : 'cyan'}>
+        <Text bold color={isDisabled ? 'gray' : accent}>
           {'❯ '}
         </Text>
         {isDisabled ? (

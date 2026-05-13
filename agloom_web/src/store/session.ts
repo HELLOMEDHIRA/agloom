@@ -140,6 +140,17 @@ const pushProtocolNotes = (notes: string[], line: string): string[] => {
   return [...notes, line].slice(-PROTOCOL_NOTES_CAP)
 }
 
+function stringifyWireResultPreview(v: unknown, max = 520): string {
+  if (v == null) return ''
+  if (typeof v === 'string') return v.length > max ? `${v.slice(0, max - 1)}…` : v
+  try {
+    const j = JSON.stringify(v)
+    return j.length > max ? `${j.slice(0, max - 1)}…` : j
+  } catch {
+    return String(v).slice(0, max)
+  }
+}
+
 const newActiveTurn = (userMessage: string): ActiveTurnState => {
   return { id: uid(), userMessage, thinkingSteps: [], toolCalls: [], workers: [], graphNodes: [], streamedTokens: '', pattern: null }
 }
@@ -201,9 +212,16 @@ const summarise = (evt: AGPEvent): string => {
     case 'runtime.file.staged':
       return `file staged · ${evt.data.path} (${evt.data.bytes} B)`
     case 'runtime.tool.result':
-      return evt.data.ok ? 'tool.invoke · OK' : `tool.invoke · ${evt.data.error ?? 'error'}`
+      return evt.data.ok
+        ? `tool.invoke · OK${evt.data.result !== undefined ? ` · ${stringifyWireResultPreview(evt.data.result)}` : ''}`
+        : `tool.invoke · ${evt.data.error ?? 'error'}`
     case 'pattern.classified':
       return `pattern: ${evt.data.pattern} (complexity ${evt.data.complexity ?? '?'})`
+    case 'plan.preview': {
+      const steps = evt.data.steps ?? []
+      const joined = steps.slice(0, 6).join(' · ')
+      return `plan.preview · ${evt.data.pattern} · ${joined}${steps.length > 6 ? ' …' : ''}`
+    }
     case 'thinking.step':
       return `thinking: ${evt.data.label ?? evt.data.step}`
     case 'token.delta':
@@ -238,6 +256,8 @@ const summarise = (evt: AGPEvent): string => {
       return `memory.session.write · ${evt.data.thread}${evt.data.turn_count != null ? ` · turns ${evt.data.turn_count}` : ''}`
     case 'memory.session.cleared':
       return `memory.session.cleared · ${evt.data.thread}`
+    case 'memory.session.turn_popped':
+      return `memory.session.turn_popped · ${evt.data.thread} · ${evt.data.remaining_turns} left`
     case 'memory.lt.recall':
       return `memory.lt.recall · ${evt.data.hits} hits · +${evt.data.injected_chars} chars`
     case 'memory.lt.store':
@@ -554,7 +574,12 @@ export const useSessionStore = create<SessionStore>((set) => ({
           executionTrace: trace,
           protocolNotes: pushProtocolNotes(
             s.protocolNotes,
-            evt.data.ok ? 'tool.invoke · OK' : `tool.invoke · ${evt.data.error ?? 'error'}`,
+            (() => {
+              const base = evt.data.ok ? 'tool.invoke · OK' : `tool.invoke · ${evt.data.error ?? 'error'}`
+              if (!evt.data.ok || evt.data.result === undefined) return base
+              const preview = stringifyWireResultPreview(evt.data.result)
+              return preview.length > 0 ? `${base} · ${preview}` : base
+            })(),
           ),
         }
 
@@ -576,6 +601,14 @@ export const useSessionStore = create<SessionStore>((set) => ({
       case 'pattern.classified':
         if (!s.activeTurn) return { ...s, executionTrace: trace }
         return { ...s, executionTrace: trace, activeTurn: { ...s.activeTurn, pattern: evt.data.pattern } }
+
+      case 'plan.preview': {
+        const steps = evt.data.steps ?? []
+        const joined = steps.slice(0, 8).join(' · ')
+        const more = steps.length > 8 ? ` …+${steps.length - 8}` : ''
+        const line = `plan.preview · ${evt.data.pattern} · c=${evt.data.complexity ?? 0}${joined ? ` · ${joined}${more}` : ''}`
+        return { ...s, executionTrace: trace, protocolNotes: pushProtocolNotes(s.protocolNotes, line) }
+      }
 
       case 'thinking.step': {
         if (!s.activeTurn) return { ...s, executionTrace: trace }
@@ -836,6 +869,20 @@ export const useSessionStore = create<SessionStore>((set) => ({
             `memory.session.cleared · ${evt.data.thread}`,
           ),
         }
+
+      case 'memory.session.turn_popped': {
+        const turns = s.completedTurns
+        const nextTurns = turns.length > 0 ? turns.slice(0, -1) : turns
+        return {
+          ...s,
+          executionTrace: trace,
+          completedTurns: nextTurns,
+          protocolNotes: pushProtocolNotes(
+            s.protocolNotes,
+            `Undo · thread ${evt.data.thread} · ${evt.data.remaining_turns} turn(s) in session memory`,
+          ),
+        }
+      }
 
       case 'memory.lt.recall':
         return {

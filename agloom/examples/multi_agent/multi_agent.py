@@ -2,7 +2,11 @@
 
 Both agents read/write to the same long-term memory namespace, allowing
 the writer to build on what the researcher discovered.
+
+Requires ``langchain-groq`` (``pip install langchain-groq``) and ``GROQ_API_KEY``.
 """
+
+from __future__ import annotations
 
 import asyncio
 import os
@@ -12,15 +16,22 @@ from langgraph.store.memory import InMemoryStore
 
 from agloom import create_agent
 
-llm = ChatGroq(
-    model="meta-llama/llama-4-scout-17b-16e-instruct",
-    api_key=os.environ["GROQ_API_KEY"],
-    temperature=0,
-)
+
+def _require_env(name: str) -> str:
+    v = os.environ.get(name, "").strip()
+    if not v:
+        raise SystemExit(f"Set {name} (e.g. export {name}=...) to run this example.")
+    return v
+
+
+def _groq_llm() -> ChatGroq:
+    model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+    return ChatGroq(model=model, api_key=_require_env("GROQ_API_KEY"), temperature=0)
 
 
 async def main():
     store = InMemoryStore()
+    llm = _groq_llm()
 
     researcher = await create_agent(
         model=llm,
@@ -53,6 +64,7 @@ async def main():
     print(f"Output:  {r2.output[:200]}...\n")
 
     print("=== Batch Processing ===")
+    # ``abatch`` runs each query on its own thread id prefix so checkpoints never collide.
     results = await researcher.abatch(
         [
             "What is solar energy?",

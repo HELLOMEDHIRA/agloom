@@ -1,17 +1,10 @@
-/**
- * TypeScript mirror of the Pydantic AGP event and command models.
- *
- * Every interface here maps 1-to-1 to the Python Pydantic models in
- * `agloom/protocol/events.py` and `agloom/protocol/commands.py`.
- *
- * Duplicated at agloom_cli/src/types/agp.ts and agloom_web/src/lib/agp/types.ts — keep both files identical.
- *
- * Zod wire validation lives in ``agpWireParse.ts`` (duplicate at ``agloom_web/src/lib/agp/agpWireParse.ts``).
+/** TypeScript mirror of the Pydantic AGP event and command models.
+ * Every interface here maps 1-to-1 to the Python Pydantic models in `agloom/protocol/events.py` and `agloom/protocol/commands.py`. Duplicated at agloom_cli/src/types/agp.ts and agloom_web/src/lib/agp/types.ts — keep both files identical. Zod wire validation lives in ``agpWireParse.ts`` (duplicate at ``agloom_web/src/lib/agp/agpWireParse.ts``).
  */
 
 import { parseInboundAGPEventJSONWire } from './agpWireParse.js'
 
-// ── Envelope (base fields present on every event) ────────────────────────────
+// Envelope (base fields present on every event)
 
 export interface Envelope {
   /** AGP protocol version — always "1" for AGP v1 */
@@ -32,7 +25,7 @@ export interface Envelope {
   trace?: string
 }
 
-// ── session.* ────────────────────────────────────────────────────────────────
+// session.*
 
 export interface SessionOpenedEvent extends Envelope {
   type: 'session.opened'
@@ -59,21 +52,26 @@ export interface SessionClosedEvent extends Envelope {
   }
 }
 
-// ── pattern.* ────────────────────────────────────────────────────────────────
+// pattern.*
 
 export interface PatternClassifiedEvent extends Envelope {
   type: 'pattern.classified'
   data: { pattern: string; complexity?: number; confidence?: number; reason?: string }
 }
 
-// ── thinking.* ───────────────────────────────────────────────────────────────
+export interface PlanPreviewEvent extends Envelope {
+  type: 'plan.preview'
+  data: { pattern: string; complexity?: number; reasoning?: string; steps?: string[] }
+}
+
+// thinking.*
 
 export interface ThinkingStepEvent extends Envelope {
   type: 'thinking.step'
   data: { step: string; label?: string; detail?: string; elapsed_ms?: number }
 }
 
-// ── token.* ──────────────────────────────────────────────────────────────────
+// token.*
 
 export interface TokenDeltaEvent extends Envelope {
   type: 'token.delta'
@@ -81,7 +79,7 @@ export interface TokenDeltaEvent extends Envelope {
   data: { text: string; role?: 'assistant' | 'tool'; message_id?: string }
 }
 
-// ── message.* ────────────────────────────────────────────────────────────────
+// message.*
 
 export interface MessageUserAttachmentSummary {
   name: string
@@ -110,7 +108,7 @@ export interface MessageToolEvent extends Envelope {
   }
 }
 
-// ── tool.* ───────────────────────────────────────────────────────────────────
+// tool.*
 
 export interface ToolCallStartEvent extends Envelope {
   type: 'tool.call.start'
@@ -146,7 +144,7 @@ export interface ToolCallErrorEvent extends Envelope {
   }
 }
 
-// ── hitl.* ───────────────────────────────────────────────────────────────────
+// hitl.*
 
 export interface HITLRequestEvent extends Envelope {
   type: 'hitl.request'
@@ -190,7 +188,7 @@ export interface HITLAllowlistedEvent extends Envelope {
   data: HITLDecisionData
 }
 
-// ── worker.* ─────────────────────────────────────────────────────────────────
+// worker.*
 
 export interface WorkerSpawnedEvent extends Envelope {
   type: 'worker.spawned'
@@ -207,7 +205,7 @@ export interface WorkerFailedEvent extends Envelope {
   data: { worker_id: string; error: string; error_class?: string; duration_ms?: number }
 }
 
-// ── graph.* ──────────────────────────────────────────────────────────────────
+// graph.*
 
 export interface GraphNodeEnterEvent extends Envelope {
   type: 'graph.node.enter'
@@ -219,7 +217,7 @@ export interface GraphNodeExitEvent extends Envelope {
   data: { node: string; pattern?: string; duration_ms?: number; output_preview?: string; error?: string }
 }
 
-// ── memory.* ─────────────────────────────────────────────────────────────────
+// memory.*
 
 export interface MemoryLtRecallEvent extends Envelope {
   type: 'memory.lt.recall'
@@ -236,12 +234,17 @@ export interface MemorySessionClearedEvent extends Envelope {
   data: { thread: string }
 }
 
+export interface MemorySessionTurnPoppedEvent extends Envelope {
+  type: 'memory.session.turn_popped'
+  data: { thread: string; remaining_turns: number }
+}
+
 export interface MemoryLtStoreEvent extends Envelope {
   type: 'memory.lt.store'
   data: { namespace?: string; key?: string; content_preview?: string }
 }
 
-// ── checkpoint.* ─────────────────────────────────────────────────────────────
+// checkpoint.*
 
 export interface CheckpointSavedEvent extends Envelope {
   type: 'checkpoint.saved'
@@ -253,7 +256,7 @@ export interface CheckpointRestoredEvent extends Envelope {
   data: { thread: string; resumed_from_run_id?: string }
 }
 
-// ── feedback.* ───────────────────────────────────────────────────────────────
+// feedback.*
 
 export interface FeedbackScoredEvent extends Envelope {
   type: 'feedback.scored'
@@ -261,7 +264,7 @@ export interface FeedbackScoredEvent extends Envelope {
   data: { run_id: string; rating: string; comment?: string; correct?: string; metadata?: Record<string, unknown> }
 }
 
-// ── metric.* ─────────────────────────────────────────────────────────────────
+// metric.*
 
 export interface MetricTokensEvent extends Envelope {
   type: 'metric.tokens'
@@ -290,7 +293,7 @@ export interface MetricBudgetExhaustedEvent extends Envelope {
   data: { dimension: 'tokens' | 'cost_usd'; used: number; limit: number }
 }
 
-// ── error.* ──────────────────────────────────────────────────────────────────
+// error.*
 
 export interface ErrorEventData {
   severity: 'transient' | 'fatal'
@@ -310,7 +313,7 @@ export interface ErrorFatalEvent extends Envelope {
   data: ErrorEventData
 }
 
-// ── skill.* / prompt.* ────────────────────────────────────────────────────────
+// skill.* / prompt.*
 
 export interface SkillLoadedEvent extends Envelope {
   type: 'skill.loaded'
@@ -347,7 +350,7 @@ export interface PromptCancelledEvent extends Envelope {
   data: { reason: 'user_aborted' | 'shutdown' | string; detail?: string }
 }
 
-// ── runtime.* & session heartbeat / agent markers / stream liveness ───────────
+// runtime.* & session heartbeat / agent markers / stream liveness
 
 export interface RuntimeReadyEvent extends Envelope {
   type: 'runtime.ready'
@@ -460,7 +463,7 @@ export interface StreamHeartbeatEvent extends Envelope {
   data: { thread?: string; chars_since_last?: number }
 }
 
-// ── Discriminated union ───────────────────────────────────────────────────────
+// Discriminated union
 
 export type AGPKnownEvent =
   | SessionOpenedEvent
@@ -468,6 +471,7 @@ export type AGPKnownEvent =
   | SessionClosedEvent
   | SessionHeartbeatEvent
   | PatternClassifiedEvent
+  | PlanPreviewEvent
   | ThinkingStepEvent
   | TokenDeltaEvent
   | MessageUserEvent
@@ -509,6 +513,7 @@ export type AGPKnownEvent =
   | MemoryLtRecallEvent
   | MemorySessionWriteEvent
   | MemorySessionClearedEvent
+  | MemorySessionTurnPoppedEvent
   | MemoryLtStoreEvent
   | CheckpointSavedEvent
   | CheckpointRestoredEvent
@@ -523,11 +528,11 @@ export type AGPKnownEvent =
 /** Known AGP v1 catalogue + additive types above. Wire may carry other `type` strings — the runtime ``dispatch`` default branch must tolerate them (forward-compat). */
 export type AGPEvent = AGPKnownEvent
 
-/** Parse and validate one NDJSON / WebSocket frame after ``JSON.parse`` (Zod; see ``agpWireParse.ts``). */
+/** Parse and validate one NDJSON / WebSocket frame after ``JSON.parse`` (Zod; see ``agpWireParse.ts``). Prefer importing from this module — do not re-parse in callers. */
 export const parseInboundAGPEventJSON = (parsed: unknown): AGPEvent =>
   parseInboundAGPEventJSONWire(parsed) as unknown as AGPEvent
 
-// ── Inbound commands (CLI / web → Python runtime) ────────────────────────────
+// Inbound commands (CLI / web → Python runtime)
 
 export interface InvokeAttachment {
   name?: string
@@ -657,9 +662,30 @@ export interface CommandMemoryClearCmd {
   data?: { thread?: string }
 }
 
+export interface CommandMemoryPopLastTurnCmd {
+  type: 'command.memory.pop_last_turn'
+  data?: { thread?: string }
+}
+
 export interface CommandAttachFileCmd {
   type: 'command.attach.file'
   data: { filename: string; content_base64: string; thread?: string }
+}
+
+export interface CommandHarnessGitCmd {
+  type: 'command.harness.git'
+  data?: {
+    op?: 'checkpoint' | 'diff' | 'status' | 'checkpoints' | 'revert_hint'
+    name?: string
+    description?: string
+    path?: string
+    cached?: boolean
+  }
+}
+
+export interface CommandPlanPreviewCmd {
+  type: 'command.plan.preview'
+  data: { prompt: string }
 }
 
 export type AGPCommand =
@@ -684,8 +710,11 @@ export type AGPCommand =
   | CommandToolInvokeCmd
   | CommandConfigSetCmd
   | CommandMemoryClearCmd
+  | CommandMemoryPopLastTurnCmd
   | CommandAttachFileCmd
+  | CommandHarnessGitCmd
+  | CommandPlanPreviewCmd
 
-// ── Utility types ──────────────────────────────────────────────────────────────
+// Utility types
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed' | 'error'

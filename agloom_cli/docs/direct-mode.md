@@ -8,7 +8,7 @@ Direct mode runs **one prompt** (or stdin), streams or buffers the answer, then 
 - **`--prompt` / `-p`**
 - **Stdin piped** when no TTY (or combined with explicit prompt flags)
 
-If stdin holds piped content, it is merged according to `readStdin` logic in the CLI.
+If stdin holds piped content, it is merged with explicit prompt flags using the same rules as the interactive CLI (stdin body plus your prompt when both are present).
 
 ## Common patterns
 
@@ -36,23 +36,23 @@ agloom --no-stream "long task"
 
 Tool approvals still arrive over AGP. Controls:
 
-| Flag | Behavior |
-| --- | --- |
-| *(default)* | Non-TTY stdin → often **auto-reject** gates (see runtime HITL policy). |
-| `--hitl-tty` | Prompt approve/deny on a controlling terminal. |
+| Flag             | Behavior                                                                |
+| ---------------- | ----------------------------------------------------------------------- |
+| *(default)*      | Non-TTY stdin → often **auto-reject** gates (see runtime HITL policy).  |
+| `--hitl-tty`     | Prompt approve/deny on a controlling terminal.                          |
 | `--auto-approve` | Accept all gates (**dangerous** — can run shell/write tools unchecked). |
-| `--auto-reject` | Decline gated tools. |
+| `--auto-reject`  | Decline gated tools.                                                    |
 
 Pair **`--auto-approve`** only in locked-down CI with read-only tools if at all.
 
 ## Exit codes
 
-| Code | Meaning |
-| --- | --- |
-| **0** | Success |
-| **1** | Bridge/runtime error, spawn failure, or non-zero child |
-| **2** | Invalid arguments (Python argparse) when surfaced |
-| **130** | Typical Ctrl+C (`128 + SIGINT`) |
+| Code    | Meaning                                                |
+| ------- | ------------------------------------------------------ |
+| **0**   | Success                                                |
+| **1**   | Bridge/runtime error, spawn failure, or non-zero child |
+| **2**   | Invalid arguments (Python argparse) when surfaced      |
+| **130** | Typical Ctrl+C (`128 + SIGINT`)                        |
 
 Exact mapping follows Node child exit codes from `agloom-runtime`.
 

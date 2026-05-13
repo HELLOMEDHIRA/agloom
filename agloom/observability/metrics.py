@@ -1,11 +1,4 @@
-"""
-agloom.observability.metrics
-─────────────────────────────
-Derives per-session performance metrics by aggregating stored AGP events.
-
-All computation runs in-process against the SQLite store — no separate
-time-series database required for Phase 1.
-"""
+"""Per-session metrics derived from stored AGP events (SQLite, in-process)."""
 
 from __future__ import annotations
 

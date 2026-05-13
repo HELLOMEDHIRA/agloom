@@ -1,4 +1,6 @@
-/** Spawns `agloom-runtime serve` (stdio NDJSON); stderr → `diagnostic`. Runtime: `AGLOOM_RUNTIME` or `agloom-runtime` on PATH. */
+/** Spawns `agloom-runtime serve` (stdio NDJSON); stderr → `diagnostic`.
+ * Runtime: `AGLOOM_RUNTIME` or `agloom-runtime` on PATH.
+ */
 
 import { execSync, spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -31,6 +33,7 @@ export interface AGPBridge {
   invoke(prompt: string, thread?: string, attachments?: InvokeAttachment[]): void
   cancel(thread?: string): void
   memoryClear(thread?: string): void
+  memoryPopLastTurn(thread?: string): void
   configSet(data: {
     model_id?: string
     cli_tools?: Record<string, unknown>
@@ -44,6 +47,11 @@ export interface AGPBridge {
   hitlRespond(requestId: string, decision: string, text?: string): void
   feedback(runId: string, rating: string, comment?: string): void
   snapshot(thread?: string, label?: string): void
+  harnessGit(
+    op: 'checkpoint' | 'diff' | 'status' | 'checkpoints' | 'revert_hint',
+    data?: { name?: string; description?: string; path?: string; cached?: boolean },
+  ): void
+  planPreview(prompt: string): void
   shutdown(): void
   kill(): void
 
@@ -81,6 +89,39 @@ export const createAGPBridge = (): AGPBridge => {
   let buf = ''
   let status: BridgeStatus = 'starting'
   let pid: number | undefined
+  let forceKillTimer: ReturnType<typeof setTimeout> | null = null
+  /** Sync child teardown when the Node process exits; single hook avoids duplicate teardown. */
+  let syncKillOrphanChild: (() => void) | null = null
+
+  const clearForceKillTimer = (): void => {
+    if (forceKillTimer) {
+      clearTimeout(forceKillTimer)
+      forceKillTimer = null
+    }
+  }
+
+  const detachProcessExitHooks = (): void => {
+    if (syncKillOrphanChild) {
+      process.removeListener('exit', syncKillOrphanChild)
+      syncKillOrphanChild = null
+    }
+  }
+
+  const forceKillChild = (childPid: number): void => {
+    if (process.platform === 'win32') {
+      try {
+        execSync(`taskkill /F /T /PID ${childPid}`, { stdio: 'ignore' })
+      } catch {
+        proc?.kill('SIGKILL')
+      }
+      return
+    }
+    try {
+      process.kill(-childPid, 'SIGKILL')
+    } catch {
+      proc?.kill('SIGKILL')
+    }
+  }
 
   const send = (cmd: AGPCommand): void => {
     if (!proc?.stdin?.writable) return
@@ -101,6 +142,33 @@ export const createAGPBridge = (): AGPBridge => {
     })
 
     pid = proc.pid
+
+    detachProcessExitHooks()
+    let syncKillRan = false
+    syncKillOrphanChild = () => {
+      if (syncKillRan) return
+      syncKillRan = true
+      if (!proc) return
+      const childPid = proc.pid
+      if (childPid == null) {
+        proc.kill('SIGTERM')
+        return
+      }
+      if (process.platform === 'win32') {
+        try {
+          execSync(`taskkill /F /T /PID ${childPid}`, { stdio: 'ignore' })
+        } catch {
+          proc.kill('SIGTERM')
+        }
+      } else {
+        try {
+          process.kill(-childPid, 'SIGTERM')
+        } catch {
+          proc.kill('SIGTERM')
+        }
+      }
+    }
+    process.once('exit', syncKillOrphanChild)
 
     proc.stdout?.setEncoding('utf8')
     proc.stdout?.on('data', (chunk: string) => {
@@ -132,6 +200,8 @@ export const createAGPBridge = (): AGPBridge => {
     })
 
     proc.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
+      clearForceKillTimer()
+      detachProcessExitHooks()
       status = 'exited'
       emitter.emit('exit', { code, signal })
     })
@@ -141,6 +211,8 @@ export const createAGPBridge = (): AGPBridge => {
     })
 
     proc.on('error', (err: NodeJS.ErrnoException) => {
+      clearForceKillTimer()
+      detachProcessExitHooks()
       const guidance =
         err.code === 'ENOENT'
           ? new Error(
@@ -154,6 +226,7 @@ export const createAGPBridge = (): AGPBridge => {
 
   const kill = (): void => {
     if (!proc) return
+    clearForceKillTimer()
     const childPid = proc.pid
     if (childPid == null) {
       proc.kill('SIGTERM')
@@ -165,13 +238,18 @@ export const createAGPBridge = (): AGPBridge => {
       } catch {
         proc.kill('SIGTERM')
       }
-    } else {
-      try {
-        process.kill(-childPid, 'SIGTERM')
-      } catch {
-        proc.kill('SIGTERM')
-      }
+      return
     }
+    try {
+      process.kill(-childPid, 'SIGTERM')
+    } catch {
+      proc.kill('SIGTERM')
+    }
+    forceKillTimer = setTimeout(() => {
+      forceKillTimer = null
+      if (!proc || proc.pid !== childPid) return
+      forceKillChild(childPid)
+    }, 5000)
   }
 
   const bridgeRef: { current: AGPBridge | null } = { current: null }
@@ -193,6 +271,8 @@ export const createAGPBridge = (): AGPBridge => {
     cancel: (thread?: string) => send({ type: 'command.cancel', data: { thread } }),
     memoryClear: (thread?: string) =>
       send({ type: 'command.memory.clear', data: thread ? { thread } : {} }),
+    memoryPopLastTurn: (thread?: string) =>
+      send({ type: 'command.memory.pop_last_turn', data: thread ? { thread } : {} }),
     configSet: (data) => send({ type: 'command.config.set', data }),
     sessionList: () => send({ type: 'command.session.list', data: {} }),
     hitlRespond: (requestId: string, decision: string, text?: string) =>
@@ -201,6 +281,12 @@ export const createAGPBridge = (): AGPBridge => {
       send({ type: 'command.feedback', data: { run_id: runId, rating, comment } }),
     snapshot: (thread?: string, label?: string) =>
       send({ type: 'command.snapshot.request', data: { thread, label } }),
+    harnessGit: (op, data) =>
+      send({
+        type: 'command.harness.git',
+        data: { op, ...(data ?? {}) },
+      }),
+    planPreview: (prompt) => send({ type: 'command.plan.preview', data: { prompt } }),
     shutdown: () => send({ type: 'command.runtime.shutdown' }),
     kill,
 

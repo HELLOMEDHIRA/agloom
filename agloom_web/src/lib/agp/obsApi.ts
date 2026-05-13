@@ -1,5 +1,4 @@
-/**
- * Observability API client — thin REST wrapper for the agloom observability backend.
+/** Observability API client — thin REST wrapper for the agloom observability backend.
  * Base URL: VITE_OBS_API_URL (default: http://localhost:8766)
  */
 

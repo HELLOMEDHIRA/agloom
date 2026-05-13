@@ -2,19 +2,21 @@
 /** Entry: `agloom-runtime serve` over stdio; direct one-shot or Ink TUI. Pass-through: `agloom -- …`. */
 
 import { readFile } from 'node:fs/promises'
-import { basename } from 'node:path'
+import { createWriteStream, type WriteStream } from 'node:fs'
+import { basename, dirname, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { render } from 'ink'
 import React from 'react'
 import { Command } from 'commander'
 import { App } from './components/App.js'
+import { ThemeProvider, type AgloomTheme } from './themeContext.js'
 import { createAGPBridge } from './runtime/bridge.js'
 import { readStdinIfPiped } from './utils/readStdin.js'
 import { runDirect } from './direct.js'
 import { bannerEnvDisabled, formatBannerLine, readCliPackageVersion } from './banner.js'
 import { applyAgloomConfigLayers, buildResolvedConfigSnapshot } from './config.js'
 import { ensureAgloomCliWorkspace } from './workspaceBootstrap.js'
-import type { InvokeAttachment } from './types/agp.js'
+import type { AGPEvent, InvokeAttachment } from './types/agp.js'
 
 type CliOpts = {
   thread?: string
@@ -68,22 +70,32 @@ type CliOpts = {
   budgetCostUsd?: number
   /** File paths forwarded as ``command.invoke`` attachments (base64 on the wire). */
   attach: string[]
+  /** TUI: append each inbound AGP event as one NDJSON line. */
+  capture?: string
+  /** TUI: ``dark`` (default) or ``light`` terminal palette hints. */
+  theme?: string
 }
 
 const doubleDash = process.argv.indexOf('--')
 const argvMain = doubleDash === -1 ? process.argv : process.argv.slice(0, doubleDash)
 const passthroughRuntime = doubleDash === -1 ? [] : process.argv.slice(doubleDash + 1)
 
-if (argvMain[2] === 'init') {
-  const { runInitCli } = await import('./commands/init.js')
-  process.exit(await runInitCli(process.cwd()))
+function shouldPrintCombinedVersion(argv: string[]): boolean {
+  const args = argv.slice(2)
+  if (!args.some((a) => a === '--version' || a === '-V')) return false
+  const firstSub = args.find((a) => !a.startsWith('-'))
+  if (firstSub === 'init' || firstSub === 'eval' || firstSub === 'upgrade') return false
+  return true
 }
 
-if (argvMain[2] === 'eval') {
-  const f = argvMain[3] || 'eval.yaml'
-  const cmd = process.env['AGLOOM_RUNTIME'] ?? 'agloom-runtime'
-  const r = spawnSync(cmd, ['eval', f, ...argvMain.slice(4)], { stdio: 'inherit', shell: false })
-  process.exit(r.status === null ? 1 : r.status)
+function readRuntimeSemverLine(): string {
+  const run = process.env['AGLOOM_RUNTIME'] ?? 'agloom-runtime'
+  const r = spawnSync(run, ['version'], { encoding: 'utf8', shell: false, maxBuffer: 256 })
+  if (r.error || r.status !== 0) {
+    return '(not available — install the `agloom` Python package so `agloom-runtime version` works)'
+  }
+  const line = (r.stdout ?? '').trim().split(/\r?\n/)[0] ?? ''
+  return line || '(empty)'
 }
 
 function collectMcp(v: string, prev: string[]): string[] {
@@ -127,7 +139,54 @@ const cliVersion = readCliPackageVersion()
 const program = new Command()
   .name('agloom')
   .description('agloom CLI — AGP terminal client (Ink + React) or one-shot direct mode')
-  .version(cliVersion)
+
+program
+  .command('upgrade')
+  .description('Compare installed agloom-cli + agloom versions to npm / PyPI latest')
+  .action(async () => {
+    try {
+      const { runUpgradeCli } = await import('./commands/upgrade.js')
+      process.exit(await runUpgradeCli())
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      process.stderr.write(`[agloom] upgrade failed: ${msg}\n`)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('init')
+  .description('Create .agloom/ directories and starter agloom.yaml when missing')
+  .option('--config <path>', 'Use the directory containing this file as the project root')
+  .option('--template <name>', 'starter agloom.yaml: python | node (optional)')
+  .action(async (opts: { config?: string; template?: string }) => {
+    try {
+      const { runInitCli } = await import('./commands/init.js')
+      const root = opts.config ? dirname(resolve(opts.config)) : process.cwd()
+      process.exit(await runInitCli(root, { template: opts.template }))
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      process.stderr.write(`[agloom] init failed: ${msg}\n`)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('eval')
+  .description('Run agloom-runtime eval (remaining argv forwarded after the optional file)')
+  .allowUnknownOption(true)
+  .action(() => {
+    const run = process.env['AGLOOM_RUNTIME'] ?? 'agloom-runtime'
+    const idx = argvMain.indexOf('eval')
+    const tail = idx >= 0 ? argvMain.slice(idx + 1) : []
+    const first = tail[0]
+    const file = first && !first.startsWith('-') ? first : 'eval.yaml'
+    const rest = first && !first.startsWith('-') ? tail.slice(1) : tail
+    const r = spawnSync(run, ['eval', file, ...rest], { stdio: 'inherit', shell: false })
+    process.exit(r.status === null ? 1 : r.status)
+  })
+
+program
   .argument('[prompt]', 'one-shot prompt (enables direct mode when stdin is TTY)')
   .option('-t, --thread <id>', 'LangGraph thread id')
   .option('-s, --session <id>', 'AGP session id')
@@ -187,6 +246,7 @@ const program = new Command()
   .option('--list-providers', 'print curated provider table from registry and exit', false)
   .option('--resolve-model <spec>', 'dry-run model resolution (Python registry); no LLM call')
   .option('--multiline', 'TUI: compose prompts over multiple lines (blank Enter sends)', false)
+  .option('--theme <mode>', 'TUI: dark | light (subtle palette hints)', 'dark')
   .option('--history-file <path>', 'TUI: append-only prompt history JSON (default ~/.agloom/history.json)')
   .option(
     '--budget-tokens <n>',
@@ -194,9 +254,15 @@ const program = new Command()
     (v) => parseInt(v, 10),
   )
   .option('--budget-cost-usd <n>', 'forward to runtime: session cumulative USD cost cap', (v) => parseFloat(v))
+  .option('--capture <path>', 'TUI: append each inbound AGP event as one NDJSON line', undefined)
   .allowUnknownOption(false)
 
-program.parse(argvMain, { from: 'node' })
+if (shouldPrintCombinedVersion(argvMain)) {
+  process.stdout.write(`agloom CLI ${cliVersion}\nagloom runtime ${readRuntimeSemverLine()}\n`)
+  process.exit(0)
+}
+
+await program.parseAsync(argvMain, { from: 'node' })
 
 const rawOpts = program.opts<CliOpts>()
 const positionalPrompt = program.args[0] as string | undefined
@@ -219,6 +285,13 @@ if (rawOpts.printConfig) {
 }
 
 const opts = applyAgloomConfigLayers(program, rawOpts, cwd, rawOpts.configPath) as CliOpts
+
+const themeRaw = (rawOpts.theme ?? 'dark').toLowerCase()
+if (themeRaw !== 'dark' && themeRaw !== 'light') {
+  process.stderr.write('[agloom] invalid --theme (use dark|light)\n')
+  process.exit(2)
+}
+const themeUi: AgloomTheme = themeRaw === 'light' ? 'light' : 'dark'
 
 function buildRuntimeArgs(o: CliOpts): string[] {
   const turns = o.maxTurns ?? o.sessionMaxTurns
@@ -302,6 +375,7 @@ if (directExec) {
 }
 
 const bridge = createAGPBridge()
+let captureStream: WriteStream | undefined
 let exitCode = 0
 bridge.once('exit', (info) => {
   if (info.code !== null && info.code !== 0) exitCode = info.code
@@ -315,6 +389,14 @@ bridge.once('error', (err: Error) => {
 
 ensureAgloomCliWorkspace(cwd)
 
+if (opts.capture) {
+  captureStream = createWriteStream(opts.capture, { flags: 'a' })
+  bridge.on('event', (evt: AGPEvent) => {
+    captureStream!.write(`${JSON.stringify(evt)}\n`)
+  })
+}
+
+process.stderr.write('Starting agloom-runtime…\n')
 bridge.start(runtimeArgs, { transport: 'stdio' })
 
 if (!opts.noBanner && !bannerEnvDisabled()) {
@@ -323,12 +405,15 @@ if (!opts.noBanner && !bannerEnvDisabled()) {
 }
 
 const { waitUntilExit } = render(
-  React.createElement(App, {
-    bridge,
-    initialThread: thread,
-    showDiag: opts.diag,
-    multiline: rawOpts.multiline,
-    historyFile: rawOpts.historyFile,
+  React.createElement(ThemeProvider, {
+    value: themeUi,
+    children: React.createElement(App, {
+      bridge,
+      initialThread: thread,
+      showDiag: opts.diag,
+      multiline: rawOpts.multiline,
+      historyFile: rawOpts.historyFile,
+    }),
   }),
   { exitOnCtrlC: false },
 )
@@ -336,6 +421,7 @@ const { waitUntilExit } = render(
 try {
   await waitUntilExit()
 } finally {
+  captureStream?.end()
   if (bridge.status !== 'exited') bridge.kill()
   process.exit(exitCode)
 }

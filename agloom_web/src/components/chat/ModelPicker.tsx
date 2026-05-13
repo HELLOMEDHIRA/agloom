@@ -1,6 +1,4 @@
-/**
- * Dropdown of curated providers (`command.providers.list` → `runtime.providers`).
- */
+/** Dropdown of curated providers (`command.providers.list` → `runtime.providers`). */
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { cn } from '../../lib/utils/cn.js'

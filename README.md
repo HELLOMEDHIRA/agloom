@@ -62,13 +62,13 @@ asyncio.run(main())
 
 ## What you get (in plain language)
 
-| You want to… | agloom helps by… |
-| --- | --- |
-| Ship faster | Picking a strategy per query instead of hand-writing routers and graphs |
-| Keep context | Session memory by default; optional long-term memory and skills |
-| Show progress | Token streaming plus structured events for “thinking” / tool UIs |
-| Stay safe | Human-in-the-loop levels, timeouts, retries, rate limits — configurable |
-| Improve over time | Skill library and feedback hooks so behavior compounds |
+| You want to…      | agloom helps by…                                                        |
+| ----------------- | ----------------------------------------------------------------------- |
+| Ship faster       | Picking a strategy per query instead of hand-writing routers and graphs |
+| Keep context      | Session memory by default; optional long-term memory and skills         |
+| Show progress     | Token streaming plus structured events for “thinking” / tool UIs        |
+| Stay safe         | Human-in-the-loop levels, timeouts, retries, rate limits — configurable |
+| Improve over time | Skill library and feedback hooks so behavior compounds                  |
 
 For the full feature tour, see **[What you get](https://agloom.readthedocs.io/_packages/agloom/getting-started/why-agloom/)** in the docs — the README stays short on purpose.
 
@@ -85,13 +85,13 @@ PyPI’s **`agloom`** package includes the library and **`agloom-runtime`**. The
 
 ## Learn more (documentation hub)
 
-| Guide | What it’s for |
-| --- | --- |
-| [Quick Start](https://agloom.readthedocs.io/_packages/agloom/getting-started/quickstart/) | Smallest path to a running agent |
-| [Execution patterns](https://agloom.readthedocs.io/_packages/agloom/concepts/patterns/) | How routing works (conceptual + diagrams) |
-| [Streaming & events](https://agloom.readthedocs.io/_packages/agloom/features/streaming/) | Responsive UI patterns |
-| [Production](https://agloom.readthedocs.io/_packages/agloom/guides/production/) | Deploying, testing, operating |
-| [Errors & fixes](https://agloom.readthedocs.io/_packages/agloom/configuration/errors/) | When something goes wrong |
+| Guide                                                                                     | What it’s for                             |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------- |
+| [Quick Start](https://agloom.readthedocs.io/_packages/agloom/getting-started/quickstart/) | Smallest path to a running agent          |
+| [Execution patterns](https://agloom.readthedocs.io/_packages/agloom/concepts/patterns/)   | How routing works (conceptual + diagrams) |
+| [Streaming & events](https://agloom.readthedocs.io/_packages/agloom/features/streaming/)  | Responsive UI patterns                    |
+| [Production](https://agloom.readthedocs.io/_packages/agloom/guides/production/)           | Deploying, testing, operating             |
+| [Errors & fixes](https://agloom.readthedocs.io/_packages/agloom/configuration/errors/)    | When something goes wrong                 |
 
 <br>
 

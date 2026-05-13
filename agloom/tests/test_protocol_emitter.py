@@ -167,7 +167,7 @@ def test_emitter_runtime_config_carries_capabilities() -> None:
     assert events[1].data.capabilities == ["tools"]
 
 
-# ── Phase 0.5: tool.* / message.user / error.* emit_* shortcuts ──────────────
+# tool.* / message.user / error.* emit_* shortcuts
 
 
 def test_emitter_emit_message_user() -> None:
@@ -256,7 +256,7 @@ def test_emitter_tool_call_start_default_args_is_empty_dict() -> None:
     assert events[1].data.args == {}
 
 
-# ── fork_for_thread ────────────────────────────────────────────────────────────
+# fork_for_thread
 
 
 def test_fork_for_thread_shares_seq_counter() -> None:
@@ -303,7 +303,7 @@ def test_fork_for_thread_same_session_id() -> None:
     assert all(e.session == "sess_shared" for e in events)
 
 
-# ── callback-only mode ─────────────────────────────────────────────────────────
+# callback-only mode
 
 
 def test_callback_only_emitter_never_writes_to_stdout(capsys: object) -> None:
@@ -323,7 +323,7 @@ def test_callback_only_emitter_never_writes_to_stdout(capsys: object) -> None:
     # Nothing was written (no file descriptor involved — just confirm no crash)
 
 
-# ── AsyncSessionEmitter ────────────────────────────────────────────────────────
+# AsyncSessionEmitter
 
 
 def test_async_emitter_drains_all_events() -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC
 from pathlib import Path
@@ -368,29 +369,32 @@ def _build_index_text(manifest: SkillManifest, content: SkillContent) -> str:
 
 _cached_skill_dirs: list[str] | None = None
 _EXTRA_SKILL_DIRS: list[str] = []
+_skill_dirs_cache_lock = threading.Lock()
 
 
 def set_extra_skill_dirs(dirs: list[str] | None) -> None:
     """Prepend these directories to skill bootstrap search (e.g. ``<project>/.agloom/skills``)."""
     global _cached_skill_dirs, _EXTRA_SKILL_DIRS
-    _EXTRA_SKILL_DIRS = list(dirs or [])
-    _cached_skill_dirs = None
+    with _skill_dirs_cache_lock:
+        _EXTRA_SKILL_DIRS = list(dirs or [])
+        _cached_skill_dirs = None
 
 
 def _resolve_skill_dirs() -> list[str]:
     global _cached_skill_dirs
-    if _cached_skill_dirs is not None:
-        return _cached_skill_dirs
+    with _skill_dirs_cache_lock:
+        if _cached_skill_dirs is not None:
+            return _cached_skill_dirs
 
-    dirs: list[str] = []
-    dirs.extend(_EXTRA_SKILL_DIRS)
-    if env_dir := os.environ.get("AGENT_SKILLS_DIR"):
-        dirs.append(env_dir)
-    dirs.extend(_DEFAULT_SKILL_DIRS)
+        dirs: list[str] = []
+        dirs.extend(_EXTRA_SKILL_DIRS)
+        if env_dir := os.environ.get("AGENT_SKILLS_DIR"):
+            dirs.append(env_dir)
+        dirs.extend(_DEFAULT_SKILL_DIRS)
 
-    pkg_skills = Path(__file__).parent.parent / "bundled_skills"
-    if pkg_skills.exists():
-        dirs.append(str(pkg_skills))
+        pkg_skills = Path(__file__).parent.parent / "bundled_skills"
+        if pkg_skills.exists():
+            dirs.append(str(pkg_skills))
 
-    _cached_skill_dirs = dirs
-    return dirs
+        _cached_skill_dirs = dirs
+        return dirs

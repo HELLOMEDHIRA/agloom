@@ -13,6 +13,7 @@ process and shared across all sessions via a single connection pool.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from dataclasses import dataclass
@@ -37,8 +38,11 @@ CREATE TABLE IF NOT EXISTS events (
 """
 
 _CREATE_IDX_SESSION = "CREATE INDEX IF NOT EXISTS idx_ev_session ON events(session_id, seq);"
-_CREATE_IDX_TYPE    = "CREATE INDEX IF NOT EXISTS idx_ev_type    ON events(event_type);"
-_CREATE_IDX_TS      = "CREATE INDEX IF NOT EXISTS idx_ev_ts      ON events(created_at);"
+_CREATE_IDX_TYPE = "CREATE INDEX IF NOT EXISTS idx_ev_type    ON events(event_type);"
+_CREATE_IDX_TS = "CREATE INDEX IF NOT EXISTS idx_ev_ts      ON events(created_at);"
+_CREATE_UNIQ_SESSION_SEQ = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ev_session_seq ON events(session_id, seq);"
+)
 
 _CREATE_SESSIONS = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -55,12 +59,16 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 """
 
+_CREATE_IDX_SESSION_STATUS = "CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);"
+
 _SCHEMA = [
     _CREATE_EVENTS,
     _CREATE_IDX_SESSION,
     _CREATE_IDX_TYPE,
     _CREATE_IDX_TS,
+    _CREATE_UNIQ_SESSION_SEQ,
     _CREATE_SESSIONS,
+    _CREATE_IDX_SESSION_STATUS,
 ]
 
 # ── Data models ───────────────────────────────────────────────────────────────
@@ -107,6 +115,8 @@ class SQLiteObservabilityStore:
     def __init__(self, db: aiosqlite.Connection, path: str) -> None:
         self._db = db
         self.path = path
+        self._ingest_lock = asyncio.Lock()
+        self._pending_commits = 0
 
     # ── Factory ───────────────────────────────────────────────────────────────
 
@@ -123,72 +133,79 @@ class SQLiteObservabilityStore:
         return cls(db, path)
 
     async def close(self) -> None:
+        async with self._ingest_lock:
+            await self._db.commit()
+            self._pending_commits = 0
         await self._db.close()
 
     # ── Ingest ────────────────────────────────────────────────────────────────
 
     async def ingest(self, envelope: dict[str, Any]) -> None:
         """Persist a single AGP Envelope dict.  Idempotent on (session_id, seq)."""
-        session_id = envelope.get("session", "")
-        thread_id  = envelope.get("thread")
-        run_id     = envelope.get("run_id")
-        seq        = int(envelope.get("seq", 0))
-        event_type = str(envelope.get("type", "unknown"))
-        ts         = str(envelope.get("ts", ""))
-        now_ms     = int(time.time() * 1000)
+        async with self._ingest_lock:
+            session_id = envelope.get("session", "")
+            thread_id = envelope.get("thread")
+            run_id = envelope.get("run_id")
+            seq = int(envelope.get("seq", 0))
+            event_type = str(envelope.get("type", "unknown"))
+            ts = str(envelope.get("ts", ""))
+            now_ms = int(time.time() * 1000)
 
-        await self._db.execute(
-            """
-            INSERT OR IGNORE INTO events
-                (session_id, thread_id, run_id, seq, event_type, ts, payload, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (session_id, thread_id, run_id, seq, event_type, ts, json.dumps(envelope), now_ms),
-        )
-
-        # Upsert session summary
-        data = envelope.get("data", {}) or {}
-        if event_type == "session.opened":
             await self._db.execute(
                 """
-                INSERT OR IGNORE INTO sessions (session_id, thread_id, started_at, status)
-                VALUES (?, ?, ?, 'open')
+                INSERT OR IGNORE INTO events
+                    (session_id, thread_id, run_id, seq, event_type, ts, payload, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (session_id, thread_id, ts),
-            )
-        elif event_type == "session.closed":
-            reason = data.get("reason", "unknown")
-            dur    = data.get("duration_ms")
-            status = "error" if reason == "error" else "closed"
-            await self._db.execute(
-                """
-                UPDATE sessions SET ended_at=?, status=?, duration_ms=?
-                WHERE session_id=?
-                """,
-                (ts, status, dur, session_id),
-            )
-        elif event_type == "pattern.classified":
-            await self._db.execute(
-                "UPDATE sessions SET pattern=? WHERE session_id=?",
-                (data.get("pattern"), session_id),
-            )
-        elif event_type == "message.user":
-            await self._db.execute(
-                "UPDATE sessions SET total_turns = total_turns + 1 WHERE session_id=?",
-                (session_id,),
-            )
-        elif event_type == "metric.tokens":
-            await self._db.execute(
-                """
-                UPDATE sessions
-                SET input_tokens  = input_tokens  + ?,
-                    output_tokens = output_tokens + ?
-                WHERE session_id=?
-                """,
-                (data.get("input_tokens", 0), data.get("output_tokens", 0), session_id),
+                (session_id, thread_id, run_id, seq, event_type, ts, json.dumps(envelope), now_ms),
             )
 
-        await self._db.commit()
+            # Upsert session summary
+            data = envelope.get("data", {}) or {}
+            if event_type == "session.opened":
+                await self._db.execute(
+                    """
+                    INSERT OR IGNORE INTO sessions (session_id, thread_id, started_at, status)
+                    VALUES (?, ?, ?, 'open')
+                    """,
+                    (session_id, thread_id, ts),
+                )
+            elif event_type == "session.closed":
+                reason = data.get("reason", "unknown")
+                dur = data.get("duration_ms")
+                status = "error" if reason == "error" else "closed"
+                await self._db.execute(
+                    """
+                    UPDATE sessions SET ended_at=?, status=?, duration_ms=?
+                    WHERE session_id=?
+                    """,
+                    (ts, status, dur, session_id),
+                )
+            elif event_type == "pattern.classified":
+                await self._db.execute(
+                    "UPDATE sessions SET pattern=? WHERE session_id=?",
+                    (data.get("pattern"), session_id),
+                )
+            elif event_type == "message.user":
+                await self._db.execute(
+                    "UPDATE sessions SET total_turns = total_turns + 1 WHERE session_id=?",
+                    (session_id,),
+                )
+            elif event_type == "metric.tokens":
+                await self._db.execute(
+                    """
+                    UPDATE sessions
+                    SET input_tokens  = input_tokens  + ?,
+                        output_tokens = output_tokens + ?
+                    WHERE session_id=?
+                    """,
+                    (data.get("input_tokens", 0), data.get("output_tokens", 0), session_id),
+                )
+
+            self._pending_commits += 1
+            if self._pending_commits >= 50:
+                await self._db.commit()
+                self._pending_commits = 0
 
     # ── Query: sessions ───────────────────────────────────────────────────────
 
@@ -277,9 +294,11 @@ class SQLiteObservabilityStore:
     # ── Delete ────────────────────────────────────────────────────────────────
 
     async def delete_session(self, session_id: str) -> None:
-        await self._db.execute("DELETE FROM events  WHERE session_id=?", (session_id,))
-        await self._db.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
-        await self._db.commit()
+        async with self._ingest_lock:
+            await self._db.execute("DELETE FROM events  WHERE session_id=?", (session_id,))
+            await self._db.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
+            await self._db.commit()
+            self._pending_commits = 0
 
 
 # ── Row converters ────────────────────────────────────────────────────────────

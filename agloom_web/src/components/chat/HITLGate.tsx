@@ -1,8 +1,5 @@
-/**
- * HITLGate — approval prompt rendered inside the chat stream.
- *
- * Mirrors AGP kinds: tool/pattern/worker gates (accept | reject | allowlist),
- * react_recovery (retry | stop), clarification (free-text via accept + text).
+/** HITLGate — approval prompt rendered inside the chat stream.
+ * Mirrors AGP kinds: tool/pattern/worker gates (accept | reject | allowlist), react_recovery (retry | stop), clarification (free-text via accept + text).
  */
 import React, { useState } from 'react'
 import { AlertTriangle } from 'lucide-react'

@@ -17,7 +17,9 @@ from agloom.protocol import (
     FeedbackScored,
     MemoryLtRecall,
     MemoryLtStore,
+    MemorySessionTurnPopped,
     MemorySessionWrite,
+    PlanPreview,
     event_adapter,
 )
 from agloom.protocol.commands import (
@@ -27,7 +29,7 @@ from agloom.protocol.commands import (
 )
 from agloom.protocol.emitter import SessionEmitter
 
-# ── helpers ────────────────────────────────────────────────────────────────────
+# helpers
 
 
 def _emitter() -> tuple[SessionEmitter, io.StringIO]:
@@ -40,7 +42,7 @@ def _lines(buf: io.StringIO) -> list[dict]:
     return [json.loads(l) for l in buf.getvalue().splitlines() if l.strip()]
 
 
-# ── HITL server-side timeout ───────────────────────────────────────────────────
+# HITL server-side timeout
 
 
 @pytest.mark.asyncio
@@ -117,7 +119,7 @@ async def test_hitl_no_timeout_waits_for_respond():
     assert result_holder[0] == "continue"
 
 
-# ── CommandFeedback parsing ────────────────────────────────────────────────────
+# CommandFeedback parsing
 
 
 def test_command_feedback_parse():
@@ -159,7 +161,34 @@ def test_command_snapshot_request_no_data():
     assert cmd.data.label is None
 
 
-# ── checkpoint.* events ────────────────────────────────────────────────────────
+def test_emit_plan_preview():
+    em, buf = _emitter()
+    em.open()
+    evt = em.emit_plan_preview(
+        pattern="react",
+        complexity=2,
+        reasoning="User wants steps",
+        steps=["1. Parse", "2. Act"],
+    )
+    assert isinstance(evt, PlanPreview)
+    lines = _lines(buf)
+    row = next(l for l in lines if l["type"] == "plan.preview")
+    assert row["data"]["pattern"] == "react"
+    assert row["data"]["complexity"] == 2
+    assert row["data"]["steps"] == ["1. Parse", "2. Act"]
+
+
+def test_plan_preview_event_round_trip():
+    em, buf = _emitter()
+    em.open()
+    em.emit_plan_preview(pattern="sequential", steps=["a"])
+    raw = next(l for l in _lines(buf) if l["type"] == "plan.preview")
+    parsed = event_adapter.validate_python(raw)
+    assert isinstance(parsed, PlanPreview)
+    assert parsed.data.pattern == "sequential"
+
+
+# checkpoint.* events
 
 
 def test_emit_checkpoint_saved():
@@ -194,7 +223,7 @@ def test_checkpoint_event_round_trip():
         assert parsed.type in ("session.opened", "checkpoint.saved", "checkpoint.restored")
 
 
-# ── feedback.* events ──────────────────────────────────────────────────────────
+# feedback.* events
 
 
 def test_emit_feedback_scored():
@@ -219,7 +248,7 @@ def test_feedback_event_round_trip():
     assert parsed.data.rating == "negative"
 
 
-# ── memory.* events ────────────────────────────────────────────────────────────
+# memory.* events
 
 
 def test_emit_memory_session_write():
@@ -232,6 +261,18 @@ def test_emit_memory_session_write():
     lines = _lines(buf)
     mem = next(l for l in lines if l["type"] == "memory.session.write")
     assert mem["data"]["turn_count"] == 3
+
+
+def test_emit_memory_session_turn_popped():
+    em, buf = _emitter()
+    em.open()
+    evt = em.emit_memory_session_turn_popped(thread="t_1", remaining_turns=0)
+    assert isinstance(evt, MemorySessionTurnPopped)
+    lines = _lines(buf)
+    raw = next(l for l in lines if l["type"] == "memory.session.turn_popped")
+    parsed = event_adapter.validate_python(raw)
+    assert isinstance(parsed, MemorySessionTurnPopped)
+    assert parsed.data.remaining_turns == 0
 
 
 def test_emit_memory_lt_recall():
@@ -271,7 +312,7 @@ def test_all_memory_events_round_trip():
         )
 
 
-# ── new commands in the full Event union ──────────────────────────────────────
+# new commands in the full Event union
 
 
 def test_feedback_command_json_round_trip():

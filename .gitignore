@@ -64,10 +64,13 @@ skills_store/
 .vscode/
 .aider*
 
+*-lock.json
+
+agloom_web/package-lock.json
 
 # agloom config (local only)
 .agloom
-.agloom.yaml
 # Super-Brain
 .agsuperbrain/
 .agsuperbrainignore
+uv.lock

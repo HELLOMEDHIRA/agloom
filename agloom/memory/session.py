@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
 from typing import Any
 
@@ -83,6 +85,8 @@ class SessionMemory:
         self.auto_summarize = auto_summarize
         self.summarize_threshold = summarize_threshold
         self.summarizer_model = summarizer_model
+        self._turn_lock = asyncio.Lock()
+        self._sync_turn_lock = threading.Lock()
 
     def _ns(self, thread_id: str) -> tuple:
         return _NAMESPACE_PREFIX + (thread_id,)
@@ -142,26 +146,27 @@ class SessionMemory:
         metadata: dict | None = None,
     ) -> None:
         """Append one turn. Drops oldest when max_turns exceeded."""
-        ns = self._ns(thread_id)
-        key = "turns"
-        try:
-            item = self.store.get(ns, key)
-            turns: list[dict] = item.value.get("turns", []) if item else []
-        except Exception as exc:
-            logger.debug(f"SessionMemory.add_turn read failed: {exc!r}")
-            turns = []
+        with self._sync_turn_lock:
+            ns = self._ns(thread_id)
+            key = "turns"
+            try:
+                item = self.store.get(ns, key)
+                turns: list[dict] = item.value.get("turns", []) if item else []
+            except Exception as exc:
+                logger.debug(f"SessionMemory.add_turn read failed: {exc!r}")
+                turns = []
 
-        turns.append(
-            {
-                "q": query[:500],
-                "a": output[:1000],
-                "p": pattern,
-                **(metadata or {}),
-            }
-        )
-        if len(turns) > self.max_turns:
-            turns = turns[-self.max_turns :]
-        self.store.put(ns, key, {"turns": turns})
+            turns.append(
+                {
+                    "q": query[:500],
+                    "a": output[:1000],
+                    "p": pattern,
+                    **(metadata or {}),
+                }
+            )
+            if len(turns) > self.max_turns:
+                turns = turns[-self.max_turns :]
+            self.store.put(ns, key, {"turns": turns})
 
     async def aadd_turn(
         self,
@@ -171,29 +176,55 @@ class SessionMemory:
         pattern: str = "",
         metadata: dict | None = None,
     ) -> None:
-        ns = self._ns(thread_id)
-        key = "turns"
-        try:
-            item = await self.store.aget(ns, key)
-            turns: list[dict] = item.value.get("turns", []) if item else []
-        except Exception as exc:
-            logger.debug(f"SessionMemory.aadd_turn read failed: {exc!r}")
-            turns = []
+        async with self._turn_lock:
+            ns = self._ns(thread_id)
+            key = "turns"
+            try:
+                item = await self.store.aget(ns, key)
+                turns: list[dict] = item.value.get("turns", []) if item else []
+            except Exception as exc:
+                logger.debug(f"SessionMemory.aadd_turn read failed: {exc!r}")
+                turns = []
 
-        turns.append(
-            {
-                "q": query[:500],
-                "a": output[:1000],
-                "p": pattern,
-                **(metadata or {}),
-            }
-        )
+            turns.append(
+                {
+                    "q": query[:500],
+                    "a": output[:1000],
+                    "p": pattern,
+                    **(metadata or {}),
+                }
+            )
 
-        turns = await self._maybe_summarize(turns)
+            turns = await self._maybe_summarize(turns)
 
-        if len(turns) > self.max_turns:
-            turns = turns[-self.max_turns :]
-        await self.store.aput(ns, key, {"turns": turns})
+            if len(turns) > self.max_turns:
+                turns = turns[-self.max_turns :]
+            await self.store.aput(ns, key, {"turns": turns})
+
+    async def apop_last_turn(self, thread_id: str) -> int | None:
+        """Remove the last persisted turn for *thread_id*.
+
+        Returns the **new** turn count after removal, or ``None`` if there was nothing
+        to pop or the store could not be updated.
+        """
+        async with self._turn_lock:
+            ns = self._ns(thread_id)
+            key = "turns"
+            try:
+                item = await self.store.aget(ns, key)
+                turns: list[dict] = item.value.get("turns", []) if item else []
+            except Exception as exc:
+                logger.debug(f"SessionMemory.apop_last_turn read failed: {exc!r}")
+                return None
+            if not turns:
+                return None
+            turns.pop()
+            try:
+                await self.store.aput(ns, key, {"turns": turns})
+            except Exception as exc:
+                logger.warning(f"SessionMemory.apop_last_turn write failed: {exc!r}")
+                return None
+            return len(turns)
 
     @staticmethod
     def _format_turns(turns: list[dict], last_n: int) -> str:

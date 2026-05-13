@@ -84,6 +84,23 @@ class PatternClassified(Envelope):
     data: PatternClassifiedData
 
 
+# ── plan.preview ───────────────────────────────────────────────────────────────
+
+
+class PlanPreviewData(_DataBase):
+    """Classifier-only plan (``command.plan.preview``); does not run tools or patterns."""
+
+    pattern: str
+    complexity: int = 0
+    reasoning: str = ""
+    steps: list[str] = Field(default_factory=list)
+
+
+class PlanPreview(Envelope):
+    type: Literal["plan.preview"] = "plan.preview"
+    data: PlanPreviewData
+
+
 # ── thinking.step ─────────────────────────────────────────────────────────────
 
 
@@ -450,6 +467,18 @@ class MemorySessionClearedData(_DataBase):
 class MemorySessionCleared(Envelope):
     type: Literal["memory.session.cleared"] = "memory.session.cleared"
     data: MemorySessionClearedData
+
+
+class MemorySessionTurnPoppedData(_DataBase):
+    """One short-term session turn was removed (e.g. user ``/undo`` in the CLI)."""
+
+    thread: str
+    remaining_turns: int
+
+
+class MemorySessionTurnPopped(Envelope):
+    type: Literal["memory.session.turn_popped"] = "memory.session.turn_popped"
+    data: MemorySessionTurnPoppedData
 
 
 class MemoryLtRecallData(_DataBase):
@@ -979,6 +1008,7 @@ Event = Annotated[
     | MessageTool
     | StreamHeartbeat
     | PatternClassified
+    | PlanPreview
     | ThinkingStep
     | TokenDelta
     | MessageUser
@@ -1002,6 +1032,7 @@ Event = Annotated[
     | PromptCancelled
     | MemorySessionWrite
     | MemorySessionCleared
+    | MemorySessionTurnPopped
     | MemoryLtRecall
     | MemoryLtStore
     | CheckpointSaved
@@ -1084,6 +1115,8 @@ __all__ = [
     "MemorySessionWriteData",
     "MemorySessionCleared",
     "MemorySessionClearedData",
+    "MemorySessionTurnPopped",
+    "MemorySessionTurnPoppedData",
     "MessageAssistant",
     "MessageAssistantData",
     "MessageUser",
@@ -1125,6 +1158,8 @@ __all__ = [
     "RuntimeToolsPayloadData",
     "PatternClassified",
     "PatternClassifiedData",
+    "PlanPreview",
+    "PlanPreviewData",
     "SessionCloseReason",
     "SessionClosed",
     "SessionClosedData",

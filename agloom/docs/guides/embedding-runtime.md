@@ -20,9 +20,9 @@ await run_invocation(agent=agent, prompt="Hello", thread="thread_demo", emitter=
 - **`translate`** — maps a single **`AgentEvent`** to emitter calls if you are building a custom loop.
 - **`HITLBridge`** — pass into **`run_invocation`** when cancellations must distinguish user abort vs runtime shutdown (same as `agloom-runtime serve`).
 
-See module docstring and **`agloom/runtime/bridge.py`** for exact lifecycle (**`session.opened`**, **`message.user`**, **`session.closed`**, **`error.fatal`** ordering).
+See module docstring and the runtime **bridge** helpers for exact lifecycle (**`session.opened`**, **`message.user`**, **`session.closed`**, **`error.fatal`** ordering).
 
-## `RuntimeNode` — scheduler + worker pool (Phase 1)
+## `RuntimeNode` — scheduler + worker pool
 
 For multi-task queues and health-aware workers, **`RuntimeNode`** bundles **`WorkerPool`**, **`InProcessScheduler`**, and **`InMemoryRegistry`**. **`RuntimeNode.create_local`** wires one **`LocalAIWorker`** around your agent.
 
@@ -41,7 +41,7 @@ await node.stop()
 
 Use an async-capable **`writer`** (or the emitter’s context manager — see **`AsyncSessionEmitter`** docstring) so the drain task can flush NDJSON without blocking the event loop.
 
-Public symbols include **`WorkerPool`**, **`BaseWorker`**, **`LocalAIWorker`**, **`Scheduler`**, **`InProcessScheduler`**, **`SchedulerFullError`**, **`WorkerRegistry`**, **`InMemoryRegistry`**, **`WorkerTask`**, **`WorkerHealth`**, **`WorkerStatus`**, **`WorkerType`**, **`TaskStatus`**, **`RetryPolicy`**. These are **supported** for Phase 1 local execution and custom worker registration; remote/pluggable backends are expected to grow without breaking the names imported from **`agloom.runtime`**.
+Public symbols include **`WorkerPool`**, **`BaseWorker`**, **`LocalAIWorker`**, **`Scheduler`**, **`InProcessScheduler`**, **`SchedulerFullError`**, **`WorkerRegistry`**, **`InMemoryRegistry`**, **`WorkerTask`**, **`WorkerHealth`**, **`WorkerStatus`**, **`WorkerType`**, **`TaskStatus`**, **`RetryPolicy`**. These are **supported** for in-process local execution and custom worker registration; additional backends may appear over time without breaking the names imported from **`agloom.runtime`**.
 
 ## See also
 

@@ -22,6 +22,21 @@ from .models import ExecutionResult, PatternType, QueryAnalysis
 logger = get_logger(__name__)
 
 
+def _merge_handler_invoke_config(runnable_config: RunnableConfig | dict | None) -> dict:
+    """Flatten LangGraph ``RunnableConfig`` into the per-run dict pattern handlers expect."""
+    out: dict = {"_steps": []}
+    if not runnable_config:
+        return out
+    try:
+        rd = dict(runnable_config)  # RunnableConfig is mapping-like
+    except Exception:
+        return out
+    cfg = rd.get("configurable")
+    if isinstance(cfg, dict):
+        out.update(cfg)
+    return out
+
+
 class AgentGraphState(TypedDict):
     """Typed state flowing through every node of the compiled graph."""
 
@@ -81,7 +96,7 @@ def _make_pattern_node(agent: dict, pattern: PatternType, handlers: dict):
             agent=agent,
             query=state["query"],
             analysis=state["analysis"],
-            config=config,
+            config=_merge_handler_invoke_config(config),
         )
         return {"result": result}
 

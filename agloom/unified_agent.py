@@ -33,7 +33,7 @@ from .delegation import (
 from .hitl_contract import HITLEvent, call_user_callback
 from .logging_utils import configure_package_logging, get_logger
 from .multimodal import merge_context_into_user_turn, text_from_user_turn
-from .mcp_support import MCPServerConfig
+from .mcp_support import MCPServerConfig, aclose_mcp_client
 from .memory import (
     LongTermStore,
     SessionMemory,
@@ -88,6 +88,7 @@ try:
         GitSession,
         git_checkpoint_tool,
         git_commit_tool,
+        git_diff_tool,
         git_log_tool,
         git_revert_hint_tool,
         git_status_tool,
@@ -125,6 +126,7 @@ except ImportError:
     git_commit_tool = _no_harness
     git_checkpoint_tool = _no_harness
     git_revert_hint_tool = _no_harness
+    git_diff_tool = _no_harness
 
 
 logger = get_logger(__name__)
@@ -154,8 +156,10 @@ async def _handle_direct(
 
     if not output:
         _timeout = agent.get("llm_timeout", 120.0)
+        _raw_sp = agent.get("system_prompt")
+        _sys_body = _raw_sp.strip() if isinstance(_raw_sp, str) and _raw_sp.strip() else DEFAULT_SYSTEM_PROMPT
         messages = [
-            SystemMessage(content=agent.get("system_prompt", "")),
+            SystemMessage(content=_sys_body),
             HumanMessage(content=query),
         ]
         t0 = time.perf_counter()
@@ -898,7 +902,7 @@ async def run_fresh(
             "memory_lt_recall",
             node="memory.lt.recall",
             namespace=".".join(str(p) for p in effective_ltns) if effective_ltns else None,
-            query_preview=processed_query[:200],
+            query_preview=processed_query,
             hits=1 if injected > 0 else 0,
             injected_chars=injected,
         )
@@ -982,7 +986,7 @@ async def run_fresh(
                 )
             )
         t_classify = time.perf_counter()
-        await _emit_graph_node_event(config, "graph_node_enter", node="classify", input_preview=augmented_query[:200])
+        await _emit_graph_node_event(config, "graph_node_enter", node="classify", input_preview=augmented_query)
         analysis: QueryAnalysis = await analyze_query(
             llm=config["llm"],
             query=augmented_query,
@@ -1004,12 +1008,19 @@ async def run_fresh(
         )
         _steps.append(classify_step)
         await _emit_step_event(config, classify_step)
+        sub_lines = [f"- {st.worker_id}: {st.task}" for st in analysis.subtasks]
+        sub_block = "\n".join(sub_lines) if sub_lines else "(none)"
+        classify_summary = (
+            f"pattern={analysis.pattern.value} complexity={analysis.complexity}\n"
+            f"reasoning:\n{analysis.reasoning or ''}\n"
+            f"subtasks ({len(analysis.subtasks)}):\n{sub_block}"
+        )
         await _emit_graph_node_event(
             config,
             "graph_node_exit",
             node="classify",
             duration_ms=round(classify_ms),
-            output_preview=f"pattern={analysis.pattern.value} complexity={analysis.complexity}",
+            output_preview=classify_summary,
         )
         logger.event(
             f"[{name}] classify → pattern={analysis.pattern.value} "
@@ -1165,7 +1176,7 @@ async def run_fresh(
     assert handler is not None, "handler must be set by frozen or dynamic path"
     exec_invoke_config = {**(invoke_config or {}), "_steps": _steps}
     t_exec = time.perf_counter()
-    await _emit_graph_node_event(config, "graph_node_enter", node=pattern_val, pattern=pattern_val, input_preview=augmented_query[:200])
+    await _emit_graph_node_event(config, "graph_node_enter", node=pattern_val, pattern=pattern_val, input_preview=augmented_query)
     handler_user_turn = merge_context_into_user_turn(augmented_query, query)
     result: ExecutionResult = await handler(config, handler_user_turn, analysis, exec_invoke_config)
     exec_ms = round((time.perf_counter() - t_exec) * 1000, 1)
@@ -1175,7 +1186,7 @@ async def run_fresh(
         node=pattern_val,
         pattern=pattern_val,
         duration_ms=round(exec_ms),
-        output_preview=result.output[:200] if result.output else None,
+        output_preview=result.output if result.output else None,
         error=None if result.success else "execution failed",
     )
     logger.debug(f"[{name}] pattern execution took {exec_ms}ms")
@@ -1359,13 +1370,7 @@ class UnifiedAgent:
         """Release all held resources: MCP connections, thread pools, HTTP clients."""
         if self.config.get("_mcp_client") is not None:
             try:
-                client = self.config["_mcp_client"]
-                # MultiServerMCPClient (langchain-mcp-adapters ≥0.1.0) does not support ``__aexit__``.
-                if hasattr(client, "__aexit__"):
-                    try:
-                        await client.__aexit__(None, None, None)
-                    except NotImplementedError:
-                        logger.debug(f"[{self.name}] MCP client __aexit__ not implemented (expected for MultiServerMCPClient)")
+                await aclose_mcp_client(self.config["_mcp_client"], log_name=self.name)
             except Exception as exc:
                 logger.debug(f"[{self.name}] MCP client cleanup: {exc!r}")
             self.config["_mcp_client"] = None
@@ -1978,7 +1983,7 @@ class UnifiedAgent:
                 await _record_turn(
                     memory,
                     thread_id,
-                    f"RESUME: {str(value)[:200]}",
+                    f"RESUME: {value!r}",
                     result,
                     None,
                     effective_ltns,
@@ -2465,6 +2470,7 @@ async def create_agent(
             _make_tool(git_log_tool, _git_session),
             _make_tool(git_commit_tool, _git_session),
             _make_tool(git_checkpoint_tool, _git_session, session_id=""),
+            _make_tool(git_diff_tool, _git_session),
             _make_tool(git_revert_hint_tool, _git_session),
             _make_tool(bootstrap_progress_tool, _harness_progress_tracker),
             _make_tool(save_progress_tool, _harness_progress_tracker),

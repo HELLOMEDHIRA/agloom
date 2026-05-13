@@ -1,13 +1,11 @@
-/**
- * Unit tests for the web platform Zustand session store's `dispatch` reducer.
- * Tests cover: turn lifecycle, streaming, tools, workers, HITL,
- * execution trace, artifact extraction, and metrics.
+/** Unit tests for the web platform Zustand session store's `dispatch` reducer.
+ * Tests cover: turn lifecycle, streaming, tools, workers, HITL, execution trace, artifact extraction, and metrics.
  */
 
 import { useSessionStore } from '../store/session'
 import type { AGPEvent } from '../lib/agp/types'
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+// helpers
 
 let _seq = 0
 const env = (overrides: Partial<Pick<AGPEvent, 'v' | 'session' | 'seq' | 'ts' | 'id'>> = {}): Pick<AGPEvent, 'v' | 'session' | 'seq' | 'ts' | 'id'> => {
@@ -35,7 +33,7 @@ beforeEach(() => {
   useSessionStore.getState().reset()
 })
 
-// ── session lifecycle ─────────────────────────────────────────────────────────
+// session lifecycle
 
 describe('session.opened', () => {
   it('records sessionId and runtimeVersion', () => {
@@ -101,7 +99,7 @@ describe('session.resumed', () => {
   })
 })
 
-// ── turn lifecycle ────────────────────────────────────────────────────────────
+// turn lifecycle
 
 describe('message.user', () => {
   it('opens an active turn', () => {
@@ -130,7 +128,7 @@ describe('thinking.step', () => {
   })
 })
 
-// ── streaming ─────────────────────────────────────────────────────────────────
+// streaming
 
 describe('token.delta', () => {
   it('accumulates tokens without appending to trace', () => {
@@ -146,7 +144,7 @@ describe('token.delta', () => {
   })
 })
 
-// ── tool calls ────────────────────────────────────────────────────────────────
+// tool calls
 
 describe('tool.call.start + tool.call.result + tool.call.error', () => {
   beforeEach(() => {
@@ -173,7 +171,7 @@ describe('tool.call.start + tool.call.result + tool.call.error', () => {
   })
 })
 
-// ── workers ───────────────────────────────────────────────────────────────────
+// workers
 
 describe('worker events', () => {
   beforeEach(() => {
@@ -200,7 +198,7 @@ describe('worker events', () => {
   })
 })
 
-// ── graph nodes ───────────────────────────────────────────────────────────────
+// graph nodes
 
 describe('graph.node.enter', () => {
   it('tracks visited graph nodes', () => {
@@ -211,7 +209,7 @@ describe('graph.node.enter', () => {
   })
 })
 
-// ── HITL ──────────────────────────────────────────────────────────────────────
+// HITL
 
 describe('hitl lifecycle', () => {
   it('enqueues request and sets hitl status', () => {
@@ -243,7 +241,7 @@ describe('hitl lifecycle', () => {
   })
 })
 
-// ── message.assistant — turn finalisation ─────────────────────────────────────
+// message.assistant — turn finalisation
 
 describe('message.assistant', () => {
   it('completes the turn and populates completedTurns', () => {
@@ -279,7 +277,7 @@ describe('message.assistant', () => {
   })
 })
 
-// ── execution trace ────────────────────────────────────────────────────────────
+// execution trace
 
 describe('execution trace', () => {
   it('accumulates non-token events in order', () => {
@@ -294,7 +292,7 @@ describe('execution trace', () => {
   })
 })
 
-// ── metrics ───────────────────────────────────────────────────────────────────
+// metrics
 
 describe('metric.tokens', () => {
   it('accumulates across multiple metric events', () => {
@@ -315,7 +313,7 @@ describe('metric.cost', () => {
   })
 })
 
-// ── errors ────────────────────────────────────────────────────────────────────
+// errors
 
 describe('error events', () => {
   it('error.fatal sets error status and message', () => {
@@ -331,7 +329,7 @@ describe('error events', () => {
   })
 })
 
-// ── connectionStatus ──────────────────────────────────────────────────────────
+// connectionStatus
 
 describe('setConnectionStatus', () => {
   it('updates connectionStatus independently', () => {
@@ -342,7 +340,7 @@ describe('setConnectionStatus', () => {
   })
 })
 
-// ── reset ─────────────────────────────────────────────────────────────────────
+// reset
 
 describe('reset', () => {
   it('wipes all mutable state', () => {
@@ -362,7 +360,7 @@ describe('reset', () => {
   })
 })
 
-// ── AGPKnownEvent exhaustiveness (must stay aligned with types.ts) ─────────────
+// AGPKnownEvent exhaustiveness (must stay aligned with types.ts)
 
 describe('AGPKnownEvent smoke', () => {
   it('dispatches one exemplar per inbound wire type', () => {

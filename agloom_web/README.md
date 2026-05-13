@@ -6,13 +6,13 @@
 
 ## Features & routes
 
-| Route | Purpose |
-| --- | --- |
-| `/` | Workspace home — open or start sessions |
-| `/session/:sessionId` | Three-panel workspace (chat + runtime tabs) |
-| `/observe` | Observability dashboard (HTTP `/observe` API in dev) |
-| `/sessions/:sessionId/trace` | Session trace / replay |
-| `/settings` | Runtime URL and UI preferences |
+| Route                        | Purpose                                              |
+| ---------------------------- | ---------------------------------------------------- |
+| `/`                          | Workspace home — open or start sessions              |
+| `/session/:sessionId`        | Three-panel workspace (chat + runtime tabs)          |
+| `/observe`                   | Observability dashboard (HTTP `/observe` API in dev) |
+| `/sessions/:sessionId/trace` | Session trace / replay                               |
+| `/settings`                  | Runtime URL and UI preferences                       |
 
 ## Configuration
 

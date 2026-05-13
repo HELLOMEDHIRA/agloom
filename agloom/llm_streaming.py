@@ -38,3 +38,34 @@ async def astream_llm_to_event_queue(
 
     await asyncio.wait_for(_consume(), timeout=timeout)
     return "".join(chunks), last_chunk
+
+
+async def stream_or_invoke_llm(
+    llm: Any,
+    messages: Sequence[BaseMessage],
+    agent: dict,
+    *,
+    timeout: float,
+    worker_id: str | None = None,
+) -> tuple[str, list[BaseMessage], Any | None]:
+    """Stream tokens to ``agent['_event_queue']`` when set; else ``ainvoke``.
+
+    Returns ``(text, message_tail_for_logging, usage_source)`` where *usage_source* is the
+    last streamed chunk or the final ``AIMessage`` from ``ainvoke`` — suitable for
+    :func:`_extract_token_usage` in pattern modules.
+    """
+    event_queue = agent.get("_event_queue")
+    base: list[BaseMessage] = list(messages)
+    if event_queue is not None:
+        text, last_chunk = await astream_llm_to_event_queue(
+            llm, messages, event_queue, timeout=timeout, worker_id=worker_id
+        )
+        tail = base.copy()
+        if last_chunk is not None:
+            tail.append(last_chunk)
+        return text.strip(), tail, last_chunk
+    resp = await asyncio.wait_for(llm.ainvoke(messages), timeout=timeout)
+    tail = base + [resp]
+    content = getattr(resp, "content", "")
+    out = content if isinstance(content, str) else str(content)
+    return out.strip(), tail, resp

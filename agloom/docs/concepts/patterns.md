@@ -24,7 +24,7 @@ flowchart TD
 
 **When selected:** Simple factual queries, greetings, straightforward instructions.
 
-```
+```text
 Query → LLM → Response
 ```
 
@@ -38,7 +38,7 @@ No tools, no workers, no overhead. One LLM call, one response.
 
 **When selected:** Queries that require tools (calculator, search, API calls).
 
-```
+```text
 Query → LLM → Tool Call → Observation → LLM → ... → Response
 ```
 
@@ -72,7 +72,7 @@ flowchart TD
 
 **When selected:** Queries requiring ordered transformations.
 
-```
+```text
 Query → Stage 1 → Stage 2 → Stage 3 → Response
 ```
 
@@ -86,7 +86,7 @@ Each stage's output feeds into the next.
 
 **When selected:** Multi-step reasoning where later steps depend on all prior context.
 
-```
+```text
 Query → Plan → Step 1 → Step 2 (+history) → Step 3 (+history) → Synthesis
 ```
 
@@ -120,7 +120,7 @@ Walkthrough (runtime behaviour, parameters, HITL): [Reflection pattern](../featu
 
 **When selected:** Queries benefiting from debate or multiple viewpoints.
 
-```
+```text
 Query → [Expert A, Expert B, Expert C] → Synthesis → Response
 ```
 
@@ -132,7 +132,7 @@ Query → [Expert A, Expert B, Expert C] → Synthesis → Response
 
 **When selected:** Complex problems requiring collaborative expert contributions.
 
-```
+```text
 Query → Expert 1 (board) → Expert 2 (board+) → ... → Synthesis (full board)
 ```
 
@@ -144,7 +144,7 @@ Each specialist reads and writes to a shared "blackboard" state.
 
 **When selected:** Queries with complex dependency graphs.
 
-```
+```text
 Query → [Parallel A, Parallel B] → Sequential C (combined) → Response
 ```
 

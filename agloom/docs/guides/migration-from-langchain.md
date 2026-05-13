@@ -4,12 +4,12 @@ You already have **`ChatOpenAI`**, **`create_tool_calling_agent`**, **`AgentExec
 
 ## Mental model
 
-| LangChain building block | In agloom |
-| --- | --- |
-| Manual loop / `AgentExecutor` | Single **`create_agent()`** — patterns chosen per query |
-| Tool list | Same tools; optional **CLI tools**, MCP, harness tools |
-| Memory / checkpoints | **`memory=`**, **`store=`**, LangGraph checkpointers — see [Memory](../features/memory.md) |
-| Streaming callbacks | **`agent.astream_events`** + AGP translation if you use **`agloom-runtime`** |
+| LangChain building block      | In agloom                                                                                  |
+| ----------------------------- | ------------------------------------------------------------------------------------------ |
+| Manual loop / `AgentExecutor` | Single **`create_agent()`** — patterns chosen per query                                    |
+| Tool list                     | Same tools; optional **CLI tools**, MCP, harness tools                                     |
+| Memory / checkpoints          | **`memory=`**, **`store=`**, LangGraph checkpointers — see [Memory](../features/memory.md) |
+| Streaming callbacks           | **`agent.astream_events`** + AGP translation if you use **`agloom-runtime`**               |
 
 ## Step 1 — Swap the shell, keep the brain
 

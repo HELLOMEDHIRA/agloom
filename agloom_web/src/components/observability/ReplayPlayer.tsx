@@ -1,5 +1,4 @@
-/**
- * ReplayPlayer — SSE-based session replay with speed control.
+/** ReplayPlayer — SSE-based session replay with speed control.
  * Feeds replayed envelopes directly into the Zustand store — identical rendering to live.
  */
 import React, { useEffect, useRef, useState } from 'react'

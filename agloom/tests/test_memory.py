@@ -43,6 +43,20 @@ def test_session_memory_thread_isolation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_session_memory_apop_last_turn() -> None:
+    sm = SessionMemory(store=InMemoryStore())
+    await sm.aadd_turn("t1", "q1", "a1")
+    await sm.aadd_turn("t1", "q2", "a2")
+    n = await sm.apop_last_turn("t1")
+    assert n == 1
+    ctx = await sm.aformat_context("t1", last_n=10)
+    assert "q2" not in ctx
+    assert "q1" in ctx
+    assert await sm.apop_last_turn("t1") == 0
+    assert await sm.apop_last_turn("t1") is None
+
+
+@pytest.mark.asyncio
 async def test_session_memory_async() -> None:
     sm = SessionMemory(store=InMemoryStore())
     await sm.aadd_turn("t1", "async_q", "async_a")
@@ -125,3 +139,27 @@ def test_create_memory_tools_count() -> None:
     assert len(tools) == 2
     assert tools[0].name == "save_memory"
     assert tools[1].name == "recall_memory"
+
+
+def test_save_memory_ephemeral_namespace_message() -> None:
+    lts = LongTermStore(store=InMemoryStore())
+    save_tool = create_memory_tools(lts)[0]
+    out = save_tool.invoke({"key": "k", "content": "hello"}, config={"configurable": {}})
+    assert "non-persistent" in out
+    assert "✓ Saved" not in out
+
+
+def test_save_memory_persistent_namespace_success_prefix() -> None:
+    lts = LongTermStore(store=InMemoryStore())
+    save_tool = create_memory_tools(lts)[0]
+    cfg = {"configurable": {"memory_namespace": ("mem", "user-1")}}
+    out = save_tool.invoke({"key": "k", "content": "hello"}, config=cfg)
+    assert out.startswith("✓ Saved")
+
+
+def test_recall_memory_ephemeral_warns_when_empty() -> None:
+    lts = LongTermStore(store=InMemoryStore())
+    recall_tool = create_memory_tools(lts)[1]
+    out = recall_tool.invoke({"query": "anything"}, config={"configurable": {}})
+    assert "non-persistent" in out
+    assert "No relevant memories found" in out

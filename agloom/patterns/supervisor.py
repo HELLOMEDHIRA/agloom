@@ -4,6 +4,7 @@ import asyncio
 import time
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel as PydanticBaseModel
 
 from ..logging_utils import get_logger
 from ..models import (
@@ -19,10 +20,22 @@ from ..models import (
     _merge_token_usage,
     _trunc,
 )
+from ..llm_streaming import astream_llm_to_event_queue
 from ._resolve import resolve_worker_configs
 from .hitl import run_workers_with_hitl
 
 logger = get_logger(__name__)
+
+
+class _ManagerPlanList(PydanticBaseModel):
+    """Structured output for manager LLM worker decomposition.
+
+    Defined at **module scope** (not inside ``plan_via_manager_llm``) so Pydantic /
+    ``with_structured_output`` reuse the same model class and ``robust_structured_call``'s
+    LRU cache keys stay stable — nesting under the coroutine would recreate types per call.
+    """
+
+    plans: list[WorkerPlan]
 
 
 MANAGER_AGGREGATION_PROMPT = """You are a Synthesis Manager. Multiple specialist workers have completed \
@@ -222,18 +235,13 @@ async def plan_via_manager_llm(
     query: str,
     analysis: QueryAnalysis,
 ) -> list[WorkerPlan]:
-    from pydantic import BaseModel as PydanticBase
-
-    class PlanList(PydanticBase):
-        plans: list[WorkerPlan]
-
     tool_names = [t.name for t in agent["tools"]]
     try:
         from ..llm_utils import robust_structured_call
 
         result = await robust_structured_call(
             agent["llm"],
-            PlanList,
+            _ManagerPlanList,
             [
                 SystemMessage(content=MANAGER_PLANNING_PROMPT),
                 HumanMessage(
@@ -303,24 +311,17 @@ async def aggregate_results(
 
     try:
         if event_queue is not None:
-            chunks: list[str] = []
-
-            async def _stream():
-                async for chunk in agent["llm"].astream(messages):
-                    content = getattr(chunk, "content", "")
-                    if content:
-                        content = content if isinstance(content, str) else str(content)
-                        chunks.append(content)
-                        await event_queue.put(AgentEvent(type="token", data={"content": content}))
-
-            await asyncio.wait_for(_stream(), timeout=agg_timeout)
-            output = "".join(chunks)
+            output, last_chunk = await astream_llm_to_event_queue(
+                agent["llm"], messages, event_queue, timeout=agg_timeout
+            )
+            if last_chunk is not None:
+                llm_messages.append(last_chunk)
         else:
             resp = await asyncio.wait_for(
                 agent["llm"].ainvoke(messages),
                 timeout=agg_timeout,
             )
-            output = resp.content
+            output = resp.content if isinstance(resp.content, str) else str(resp.content)
             llm_messages.append(resp)
 
         logger.event(f"[Supervisor] Aggregation done: {len(output)} chars.")

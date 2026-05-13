@@ -1,8 +1,7 @@
 """WorkerRegistry — discovery and capability lookup for workers.
 
-Phase 1: ``InMemoryRegistry`` — single-process, zero infrastructure.
-Phase 2: ``RedisRegistry`` — multi-process, same-host or multi-host.
-Phase 3: ``EtcdRegistry``  — cluster-grade, with TTL-based liveness.
+The shipped implementation is :class:`InMemoryRegistry` (single process, no external services).
+The abstract :class:`WorkerRegistry` interface allows alternative backends for larger deployments.
 
 The registry is *read-only* from the scheduler's perspective.
 Workers register/deregister themselves (or the WorkerPool does it on their behalf).
@@ -95,10 +94,7 @@ class InMemoryRegistry(WorkerRegistry):
         return self._workers.get(worker_id)
 
     def find_available(self, required_capabilities: list[str]) -> BaseWorker | None:
-        """Linear scan — acceptable for Phase 1 (few workers per node).
-
-        Phase 2 will add a capability index for O(1) lookup.
-        """
+        """Linear scan over registered workers (typical node counts are small)."""
         for worker in self._workers.values():
             if worker.is_available and worker.has_capabilities(required_capabilities):
                 return worker

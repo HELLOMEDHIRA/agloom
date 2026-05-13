@@ -1,6 +1,4 @@
-/**
- * Theme: dark / light / system (persisted). Sets `html.dark` for Tailwind `dark:` variants.
- */
+/** Theme: dark / light / system (persisted). Sets `html.dark` for Tailwind `dark:` variants. */
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 
 export type ThemeMode = 'dark' | 'light' | 'system'

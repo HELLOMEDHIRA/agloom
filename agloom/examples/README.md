@@ -9,13 +9,13 @@ uv run examples/quickstart/basic_agent.py
 
 ## Directories
 
-| Directory | What it covers |
-| --- | --- |
-| [`quickstart/`](quickstart/) | Minimal `create_agent` + `ainvoke` — best starting point |
-| [`tools/`](tools/) | Custom `@tool` functions, REACT pattern, step traces |
-| [`streaming/`](streaming/) | `astream` (tokens) and `astream_events` (rich event stream) |
-| [`patterns/`](patterns/) | Frozen agent — skip re-classification for batch workloads |
-| [`multi_agent/`](multi_agent/) | Two agents sharing a `LongTermStore`, `abatch` concurrency |
+| Directory                      | What it covers                                              |
+| ------------------------------ | ----------------------------------------------------------- |
+| [`quickstart/`](quickstart/)   | Minimal `create_agent` + `ainvoke` — best starting point    |
+| [`tools/`](tools/)             | Custom `@tool` functions, REACT pattern, step traces        |
+| [`streaming/`](streaming/)     | `astream` (tokens) and `astream_events` (rich event stream) |
+| [`patterns/`](patterns/)       | Frozen agent — skip re-classification for batch workloads   |
+| [`multi_agent/`](multi_agent/) | Two agents sharing a `LongTermStore`, `abatch` concurrency  |
 
 ## Prerequisites
 

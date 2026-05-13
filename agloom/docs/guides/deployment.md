@@ -4,13 +4,13 @@ agloom is two moving parts: the **Python `agloom` package** (library + `agloom-r
 
 ## Environment variables (checklist)
 
-| Variable | When |
-| --- | --- |
+| Variable                                                 | When                                                                                                           |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GROQ_API_KEY`, … | Upstream LLM (see [LLM resolution](llm-resolution.md); CLI table under **agloom CLI → Models** on ReadTheDocs) |
-| `AGLOOM_RUNTIME` | Non-default path to the Python entrypoint for the bridge |
-| `AGLOOM_PROVIDER` / `AGLOOM_MODEL` | Optional defaults for auto-detect / library |
-| `VITE_AGP_WS_URL` | **Web** build: WebSocket URL for `agloom-runtime --transport=ws` |
-| `AWS_*` / `GOOGLE_APPLICATION_CREDENTIALS` | Bedrock / Vertex / cloud IAM providers |
+| `AGLOOM_RUNTIME`                                         | Non-default path to the Python entrypoint for the bridge                                                       |
+| `AGLOOM_PROVIDER` / `AGLOOM_MODEL`                       | Optional defaults for auto-detect / library                                                                    |
+| `VITE_AGP_WS_URL`                                        | **Web** build: WebSocket URL for `agloom-runtime --transport=ws`                                               |
+| `AWS_*` / `GOOGLE_APPLICATION_CREDENTIALS`               | Bedrock / Vertex / cloud IAM providers                                                                         |
 
 Keep secrets out of images: mount env files or use your orchestrator’s secret store.
 
@@ -70,12 +70,12 @@ Terminate TLS at **nginx**, **Caddy**, or a cloud LB; forward WebSocket upgrades
 
 With **`agloom-runtime serve --obs`**:
 
-| Route | Purpose |
-| --- | --- |
-| `GET /observe/healthz` | Liveness JSON `{ "status": "ok" }` |
-| `GET /observe/readyz` | Readiness JSON or **503** if the observability store is unavailable |
-| `GET /observe/metrics` | Minimal Prometheus text (`agloom_up`) |
-| Other `/observe/*` | Sessions, replay, metrics — see [Observability](../features/observability.md) |
+| Route                  | Purpose                                                                       |
+| ---------------------- | ----------------------------------------------------------------------------- |
+| `GET /observe/healthz` | Liveness JSON `{ "status": "ok" }`                                            |
+| `GET /observe/readyz`  | Readiness JSON or **503** if the observability store is unavailable           |
+| `GET /observe/metrics` | Minimal Prometheus text (`agloom_up`)                                         |
+| Other `/observe/*`     | Sessions, replay, metrics — see [Observability](../features/observability.md) |
 
 ## Static web (`agloom_web`)
 

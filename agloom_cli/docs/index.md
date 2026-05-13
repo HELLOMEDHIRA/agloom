@@ -32,19 +32,19 @@ agloom -m groq:meta-llama/llama-3.3-70b-versatile
 
 ## Documentation map
 
-| Page | Purpose |
-| --- | --- |
-| [Quickstart](quickstart.md) | 5-minute tour |
-| [Models & providers](models.md) | `--model` prefixes, env keys, extras, catalogs |
-| [CLI flags](flags.md) | Every npm CLI option |
-| [Config & environment](config.md) | `agloom.yaml`, discovery order, env vars |
-| [Direct mode](direct-mode.md) | Scripting, `--json`, exit codes |
-| [Interactive UI](interactive.md) | TUI layout, status bar, slash commands |
-| [Tools & HITL](tools-hitl.md) | Built-in CLI tools, approvals, allowlist |
-| [MCP, memory & harness](mcp-memory-harness.md) | MCP configs, session memory, harness |
-| [Recipes](recipes.md) | Copy-paste workflows |
-| [Troubleshooting](troubleshooting.md) | Common errors |
-| [AGP wire reference](reference.md) | Stdout/stderr AGP rules for CLI clients |
+| Page                                           | Purpose                                        |
+| ---------------------------------------------- | ---------------------------------------------- |
+| [Quickstart](quickstart.md)                    | 5-minute tour                                  |
+| [Models & providers](models.md)                | `--model` prefixes, env keys, extras, catalogs |
+| [CLI flags](flags.md)                          | Every npm CLI option                           |
+| [Config & environment](config.md)              | `agloom.yaml`, discovery order, env vars       |
+| [Direct mode](direct-mode.md)                  | Scripting, `--json`, exit codes                |
+| [Interactive UI](interactive.md)               | TUI layout, status bar, slash commands         |
+| [Tools & HITL](tools-hitl.md)                  | Built-in CLI tools, approvals, allowlist       |
+| [MCP, memory & harness](mcp-memory-harness.md) | MCP configs, session memory, harness           |
+| [Recipes](recipes.md)                          | Copy-paste workflows                           |
+| [Troubleshooting](troubleshooting.md)          | Common errors                                  |
+| [AGP wire reference](reference.md)             | Stdout/stderr AGP rules for CLI clients        |
 
 **Full docs site:** [agloom.readthedocs.io — CLI section](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/).
 

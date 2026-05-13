@@ -24,13 +24,17 @@ logger = get_logger(__name__)
 _FALLBACK_NS: tuple[str, ...] = ("memory", "default")
 
 
-def _resolve_namespace(config: RunnableConfig | None) -> tuple[str, ...]:
-    """Return ``memory_namespace`` from config, or a one-off fallback if absent."""
+def _resolve_namespace(config: RunnableConfig | None) -> tuple[tuple[str, ...], bool]:
+    """Return ``(memory_namespace, is_ephemeral)``.
+
+    When *is_ephemeral* is True, the namespace is unique per call; writes are not
+    durable across agent invocations unless the runner fixes ``configurable`` wiring.
+    """
     try:
         configurable = (config or {}).get("configurable", {})
         ns = configurable.get("memory_namespace")
         if ns is not None:
-            return tuple(ns)
+            return tuple(ns), False
     except Exception as exc:
         logger.debug(f"_resolve_namespace config read failed: {exc!r}")
 
@@ -40,7 +44,7 @@ def _resolve_namespace(config: RunnableConfig | None) -> tuple[str, ...]:
         f"using ephemeral namespace {ephemeral}. Saves will not persist across calls "
         "unless the caller sets configurable.memory_namespace (e.g. via UnifiedAgent)."
     )
-    return ephemeral
+    return ephemeral, True
 
 
 def create_memory_tools(store: LongTermStore) -> list:
@@ -58,10 +62,15 @@ def create_memory_tools(store: LongTermStore) -> list:
         Use stable keys (e.g. ``user_name``, ``project_goal``) and one or two sentences in
         ``content`` so retrieval stays meaningful.
         """
-        ns = _resolve_namespace(config)
+        ns, ephemeral = _resolve_namespace(config)
         store.store.put(ns, key, {"memory": content, "topic": key, "source": "agent"})
 
         logger.event(f"[MemoryTool] save_memory | ns={ns} | key={key!r} | content={content[:80]!r}")
+        if ephemeral:
+            return (
+                "⚠ Stored in a non-persistent memory namespace (memory_namespace missing from "
+                f"RunnableConfig); this will not survive the next agent run. [{key}]: {content}"
+            )
         return f"✓ Saved [{key}]: {content}"
 
     @tool
@@ -70,12 +79,15 @@ def create_memory_tools(store: LongTermStore) -> list:
 
         Do not invent facts when nothing is returned.
         """
-        ns = _resolve_namespace(config)
+        ns, _ephemeral = _resolve_namespace(config)
         results = store.search(ns, query, limit=5)
 
         if not results:
             logger.debug(f"[MemoryTool] recall_memory | ns={ns} | query={query!r} → 0 results")
-            return "No relevant memories found."
+            msg = "No relevant memories found."
+            if _ephemeral:
+                return f"⚠ (non-persistent memory namespace) {msg}"
+            return msg
 
         lines = []
         for i, item in enumerate(results):
@@ -85,6 +97,8 @@ def create_memory_tools(store: LongTermStore) -> list:
         response = "Recalled memories:\n" + "\n".join(lines) if lines else "No relevant memories found."
 
         logger.event(f"[MemoryTool] recall_memory | ns={ns} | query={query!r} → {len(results)} result(s)")
+        if _ephemeral:
+            return f"⚠ (non-persistent memory namespace) {response}"
         return response
 
     return [save_memory, recall_memory]

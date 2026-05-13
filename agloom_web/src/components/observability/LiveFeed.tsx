@@ -1,5 +1,4 @@
-/**
- * LiveFeed — SSE-based realtime event ticker for the /observe dashboard sidebar.
+/** LiveFeed — SSE-based realtime event ticker for the /observe dashboard sidebar.
  * Shows last N events across all sessions in the system.
  */
 import React, { useEffect, useRef, useState } from 'react'

@@ -1,6 +1,4 @@
-/**
- * RuntimePanel — right-side panel hosting the runtime visualization tabs.
- */
+/** RuntimePanel — right-side panel hosting the runtime visualization tabs. */
 import React from 'react'
 import type { RightTab } from '../../routes/SessionWorkspace.js'
 import { RuntimeGraph } from './RuntimeGraph.js'

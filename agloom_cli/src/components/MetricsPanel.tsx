@@ -1,9 +1,5 @@
-/**
- * MetricsPanel — right-hand session telemetry card (turns, uptime, tokens, tools).
- *
- * Fed only from AGP-derived store state. LLM tokens are attributed per **phase** via
- * `metric.tokens` (there is no per-tool token field on the wire today); tool rows show
- * wall time from `tool.call.*` events.
+/** MetricsPanel — right-hand session telemetry card (turns, uptime, tokens, tools).
+ * Fed only from AGP-derived store state. LLM tokens are attributed per **phase** via `metric.tokens` (there is no per-tool token field on the wire today); tool rows show wall time from `tool.call.*` events.
  */
 
 import React, { useEffect, useMemo, useState } from 'react'

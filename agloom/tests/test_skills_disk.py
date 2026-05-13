@@ -22,6 +22,9 @@ from agloom.skills.skill import (
 def test_skill_dir_slug() -> None:
     assert skill_dir_slug("a/b") == "a-b"
     assert skill_dir_slug("  my skill  ") == "my skill"
+    assert skill_dir_slug("..") == "skill"
+    assert skill_dir_slug("..evil") == "skill"
+    assert skill_dir_slug("...") == "skill"
 
 
 def test_write_and_parse_skill_md_roundtrip(tmp_path: Path) -> None:

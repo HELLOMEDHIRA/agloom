@@ -62,12 +62,12 @@ stateDiagram-v2
 
 ## Configuration
 
-| Parameter | Default | Description |
-| --- | --- | --- |
-| `store` | `None` | Required — enables the skill system |
-| `max_skills` | `30` | Maximum skills in the registry |
-| `low_score_threshold` | `0.40` | Scores below this trigger decay |
-| `review_every_n_runs` | `25` | Auto-review frequency |
+| Parameter             | Default | Description                         |
+| --------------------- | ------- | ----------------------------------- |
+| `store`               | `None`  | Required — enables the skill system |
+| `max_skills`          | `30`    | Maximum skills in the registry      |
+| `low_score_threshold` | `0.40`  | Scores below this trigger decay     |
+| `review_every_n_runs` | `25`    | Auto-review frequency               |
 
 ## What Gets Captured
 

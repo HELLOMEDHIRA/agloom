@@ -1,10 +1,5 @@
-/**
- * WorkspaceLayout — three-panel responsive shell.
- *
- * ┌─────────┬──────────────────────────────┬──────────────────┐
- * │ Sidebar │         Chat (center)         │  Runtime panel   │
- * │  (left) │                              │  (right, tabs)   │
- * └─────────┴──────────────────────────────┴──────────────────┘
+/** WorkspaceLayout — three-panel responsive shell.
+ * ┌─────────┬──────────────────────────────┬──────────────────┐ │ Sidebar │ Chat (center) │ Runtime panel │ │ (left) │ │ (right, tabs) │ └─────────┴──────────────────────────────┴──────────────────┘
  */
 import React, { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
@@ -201,7 +196,7 @@ export const WorkspaceLayout = ({ leftSlot, centerSlot, rightSlot, rightTab, onR
         </main>
 
         {/* Right panel */}
-        <aside className={cn('w-[380px] shrink-0 border-l overflow-hidden hidden lg:flex lg:flex-col', asideBorder)}>
+        <aside className={cn('w-95 shrink-0 border-l overflow-hidden hidden lg:flex lg:flex-col', asideBorder)}>
           {/* Tab bar */}
           <div className={cn('flex items-center gap-0.5 px-2 py-1.5 border-b shrink-0', barBorder)}>
             {RIGHT_TABS.map((t) => (

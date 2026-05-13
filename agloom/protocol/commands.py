@@ -119,10 +119,10 @@ class CommandRuntimeShutdown(_CmdBase):
 class CommandWorkerAssignData(_CmdBase):
     """Assign a task to a worker.
 
-    In Phase 1 (single-process) the runtime spawns an in-process agent and maps
-    results back onto the session via ``worker.*`` events. In Phase 2 (distributed)
-    this command routes to a remote worker node identified by ``worker_id``; the
-    node emits results back through the same AGP session.
+    The runtime assigns work to a worker identified by ``worker_id`` and maps results
+    back onto the session via ``worker.*`` events. In the current single-process
+    runtime this is typically an in-process worker; the same command shape applies if
+    workers are remote peers that emit AGP back into the session.
 
     ``parent_thread`` is the supervisor's thread id — used to correlate worker
     events to the originating invocation when multiple invocations run concurrently.
@@ -424,6 +424,55 @@ class CommandMemoryClear(_CmdBase):
     data: CommandMemoryClearData = Field(default_factory=CommandMemoryClearData)
 
 
+# ── command.memory.pop_last_turn ───────────────────────────────────────────────
+
+
+class CommandMemoryPopLastTurnData(_CmdBase):
+    """Pop the last short-term session-memory turn for ``thread`` (LangGraph thread id).
+
+    The runtime emits ``memory.session.turn_popped`` with the new turn count on success.
+    """
+
+    thread: str | None = None
+
+
+class CommandMemoryPopLastTurn(_CmdBase):
+    type: Literal["command.memory.pop_last_turn"] = "command.memory.pop_last_turn"
+    data: CommandMemoryPopLastTurnData = Field(default_factory=CommandMemoryPopLastTurnData)
+
+
+# ── command.harness.git ───────────────────────────────────────────────────────
+
+
+class CommandHarnessGitData(_CmdBase):
+    """Direct harness git ops (requires runtime with harness + LT store)."""
+
+    op: Literal["checkpoint", "diff", "status", "checkpoints", "revert_hint"] = "diff"
+    name: str = "cli"
+    description: str = ""
+    path: str = ""
+    cached: bool = False
+
+
+class CommandHarnessGit(_CmdBase):
+    type: Literal["command.harness.git"] = "command.harness.git"
+    data: CommandHarnessGitData = Field(default_factory=CommandHarnessGitData)
+
+
+# ── command.plan.preview ──────────────────────────────────────────────────────
+
+
+class CommandPlanPreviewData(_CmdBase):
+    """Run classifier only; emits ``plan.preview`` (no agent execution)."""
+
+    prompt: str
+
+
+class CommandPlanPreview(_CmdBase):
+    type: Literal["command.plan.preview"] = "command.plan.preview"
+    data: CommandPlanPreviewData
+
+
 # ── Discriminated union & adapter ─────────────────────────────────────────────
 
 
@@ -449,7 +498,10 @@ Command = Annotated[
     | CommandAttachFile
     | CommandToolInvoke
     | CommandConfigSet
-    | CommandMemoryClear,
+    | CommandMemoryClear
+    | CommandMemoryPopLastTurn
+    | CommandHarnessGit
+    | CommandPlanPreview,
     Field(discriminator="type"),
 ]
 """Discriminated union over all known AGP command types.
@@ -479,6 +531,12 @@ __all__ = [
     "InvokeAttachment",
     "CommandMemoryClear",
     "CommandMemoryClearData",
+    "CommandMemoryPopLastTurn",
+    "CommandMemoryPopLastTurnData",
+    "CommandHarnessGit",
+    "CommandHarnessGitData",
+    "CommandPlanPreview",
+    "CommandPlanPreviewData",
     "CommandPing",
     "CommandPingData",
     "CommandProvidersList",

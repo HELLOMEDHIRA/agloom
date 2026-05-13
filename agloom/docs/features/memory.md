@@ -104,11 +104,11 @@ async def example(agent):
 
 Long-term memory namespace is resolved in this order:
 
-| Priority | Parameter | Namespace | Use case |
-| --- | --- | --- | --- |
-| 1 (highest) | `lt_namespace=(...)` | Explicit tuple | Multi-agent shared state |
-| 2 | `user_id="u123"` (at **call time**) | `(agent_name, "u123")` | Cross-session user identity |
-| 3 (default) | Neither passed | `(agent_name, thread_id)` | Thread-scoped (default) |
+| Priority    | Parameter                           | Namespace                 | Use case                    |
+| ----------- | ----------------------------------- | ------------------------- | --------------------------- |
+| 1 (highest) | `lt_namespace=(...)`                | Explicit tuple            | Multi-agent shared state    |
+| 2           | `user_id="u123"` (at **call time**) | `(agent_name, "u123")`    | Cross-session user identity |
+| 3 (default) | Neither passed                      | `(agent_name, thread_id)` | Thread-scoped (default)     |
 
 !!! warning "`user_id` must be passed at call time"
     Setting `user_id` on `create_agent()` sets a **config default** but does **not** activate user-scoped namespacing. You must pass `user_id=` on each `ainvoke()` / `astream()` / `astream_events()` / `abatch()` call for it to take effect:
@@ -125,10 +125,10 @@ Long-term memory namespace is resolved in this order:
 
 ### Configuration
 
-| Parameter | Default | Description |
-| --- | --- | --- |
-| `memory` | auto-created | `SessionMemory()` instance. Auto-created with ephemeral `InMemoryStore` if not provided |
-| `session_max_turns` | `20` | Max turns to retain. Only applies to the auto-created `SessionMemory` — ignored if you pass your own `memory=SessionMemory(max_turns=N)` |
+| Parameter           | Default      | Description                                                                                                                              |
+| ------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory`            | auto-created | `SessionMemory()` instance. Auto-created with ephemeral `InMemoryStore` if not provided                                                  |
+| `session_max_turns` | `20`         | Max turns to retain. Only applies to the auto-created `SessionMemory` — ignored if you pass your own `memory=SessionMemory(max_turns=N)` |
 
 ## Auto-Summarization
 
@@ -206,7 +206,7 @@ async def main():
 
 When `format_context` renders turns for the LLM, summary turns appear with a clear header:
 
-```
+```text
 Previous conversation summary: The user discussed AI agent patterns.
 They preferred the REACT pattern for tool-heavy tasks and requested...
 User: What about the SUPERVISOR pattern?
@@ -215,11 +215,11 @@ Assistant: The SUPERVISOR pattern is ideal for...
 
 ### Configuration
 
-| Parameter | Default | Description |
-| --- | --- | --- |
-| `auto_summarize` | `True` | Enable automatic conversation summarization |
-| `summarize_threshold` | `200_000` | Token count that triggers summarization (min 10,000) |
-| `summarizer_model` | `None` | Separate LLM for summarization. `None` = use agent's own model |
+| Parameter             | Default   | Description                                                    |
+| --------------------- | --------- | -------------------------------------------------------------- |
+| `auto_summarize`      | `True`    | Enable automatic conversation summarization                    |
+| `summarize_threshold` | `200_000` | Token count that triggers summarization (min 10,000)           |
+| `summarizer_model`    | `None`    | Separate LLM for summarization. `None` = use agent's own model |
 
 ## Long-Term Store
 
@@ -246,12 +246,12 @@ async def main():
 
 When you provide `store=`, agloom automatically activates:
 
-| Feature | Description |
-| --- | --- |
-| Long-term memory | Save/retrieve user-scoped memories |
-| Skill learning | Extract and reuse successful patterns |
-| Feedback system | Auto-evaluation and trend detection |
-| Memory tools | `save_memory` and `recall_memory` tools for the agent |
+| Feature          | Description                                           |
+| ---------------- | ----------------------------------------------------- |
+| Long-term memory | Save/retrieve user-scoped memories                    |
+| Skill learning   | Extract and reuse successful patterns                 |
+| Feedback system  | Auto-evaluation and trend detection                   |
+| Memory tools     | `save_memory` and `recall_memory` tools for the agent |
 
 ### Passive injection
 
@@ -345,14 +345,14 @@ cache = create_cache(
 
 The cache applies different time-to-live values per pattern:
 
-| Pattern | TTL | Reason |
-| --- | --- | --- |
-| DIRECT | 24 hours | Simple factual queries rarely change |
-| REACT | 1 hour | Tool-dependent results may update |
-| SUPERVISOR | 30 min | Multi-agent results may vary |
-| PLANNER | 30 min | Multi-step plans may differ |
+| Pattern    | TTL      | Reason                                          |
+| ---------- | -------- | ----------------------------------------------- |
+| DIRECT     | 24 hours | Simple factual queries rarely change            |
+| REACT      | 1 hour   | Tool-dependent results may update               |
+| SUPERVISOR | 30 min   | Multi-agent results may vary                    |
+| PLANNER    | 30 min   | Multi-step plans may differ                     |
 | REFLECTION | No cache | Quality-critical outputs should always be fresh |
-| HYBRID_DAG | No cache | Complex pipelines should re-execute |
+| HYBRID_DAG | No cache | Complex pipelines should re-execute             |
 
 ### Remote Qdrant (production)
 

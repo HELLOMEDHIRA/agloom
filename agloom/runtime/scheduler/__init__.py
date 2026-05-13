@@ -1,7 +1,7 @@
 """InProcessScheduler — asyncio priority-queue task scheduler.
 
-Phase 1 implementation: single-process, zero infrastructure dependencies.
-Designed so Phase 2 can drop in a ``RedisScheduler`` with the same interface.
+Single-process implementation with no external broker. The abstract :class:`Scheduler`
+interface is the extension point if a queue-backed implementation is added later.
 
 Scheduling algorithm:
 1. Tasks are submitted into an ``asyncio.PriorityQueue`` (higher priority = popped first).
@@ -36,7 +36,7 @@ class SchedulerFullError(RuntimeError):
 
 
 class Scheduler(ABC):
-    """Abstract scheduler interface.  Phase 2 will add Redis/broker backends."""
+    """Abstract scheduler interface."""
 
     @abstractmethod
     async def submit(self, task: WorkerTask) -> None:

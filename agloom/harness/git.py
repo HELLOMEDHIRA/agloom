@@ -310,6 +310,29 @@ class GitSession:
             logger.info(f"[Git] Checkpoint created: {tag_name} at {commit_hash[:7]}")
             return tag_name
 
+    async def diff_unified(
+        self,
+        *,
+        path: str = "",
+        cached: bool = False,
+        max_bytes: int = 200_000,
+    ) -> str:
+        """Return unified diff text (truncated). ``cached=True`` → ``git diff --cached``."""
+        if not await self.is_repo():
+            return "Not a git repository."
+        args: list[str] = ["diff", "--no-color"]
+        if cached:
+            args.append("--cached")
+        if path.strip():
+            args.extend(["--", path.strip()])
+        rc, stdout, stderr = await self._run(*args, timeout=60)
+        if rc != 0 and not stdout.strip():
+            return stderr or f"git diff failed (exit {rc})"
+        body = stdout
+        if len(body) > max_bytes:
+            body = body[:max_bytes] + "\n… truncated"
+        return body if body.strip() else "(no differences)"
+
     async def list_checkpoints(self) -> list[GitCheckpoint]:
         """List all agloom checkpoint tags."""
         if not await self.is_repo():
@@ -512,6 +535,20 @@ def git_checkpoint_tool(git_session: GitSession, session_id: str = ""):
         return "Checkpoint creation failed (git may not be available)."
 
     return git_checkpoint
+
+
+def git_diff_tool(git_session: GitSession):
+    async def git_diff(path: str = "", cached: bool = False) -> str:
+        """
+        Show a unified diff for uncommitted changes.
+
+        Args:
+            path: Optional file path to limit the diff.
+            cached: When True, show staged changes (``git diff --cached``).
+        """
+        return await git_session.diff_unified(path=path, cached=cached)
+
+    return git_diff
 
 
 def git_revert_hint_tool(git_session: GitSession):

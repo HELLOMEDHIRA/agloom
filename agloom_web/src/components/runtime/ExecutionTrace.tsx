@@ -1,5 +1,4 @@
-/**
- * ExecutionTrace — ordered log of all AGP events for the current session.
+/** ExecutionTrace — ordered log of all AGP events for the current session.
  * Provides full runtime observability: every event, its seq, timestamp, summary.
  */
 import React, { useRef, useEffect } from 'react'

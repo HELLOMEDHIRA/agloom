@@ -173,13 +173,13 @@ async def main():
 
 The callable receives a state dict with these keys:
 
-| Key | Type | Description |
-| --- | --- | --- |
-| `query` | `str` | The raw user query |
-| `thread_id` | `str` | Current thread ID |
-| `user_id` | `str \| None` | User ID (if passed at call time) |
-| `context` | `dict` | Context dict from `ainvoke(context=...)` |
-| `messages` | `list` | Always `[]` (reserved for future use) |
+| Key         | Type   | Description                              |                                  |
+| ----------- | ------ | ---------------------------------------- | -------------------------------- |
+| `query`     | `str`  | The raw user query                       |                                  |
+| `thread_id` | `str`  | Current thread ID                        |                                  |
+| `user_id`   | `str \ | None`                                    | User ID (if passed at call time) |
+| `context`   | `dict` | Context dict from `ainvoke(context=...)` |                                  |
+| `messages`  | `list` | Always `[]` (reserved for future use)    |                                  |
 
 ## Worker Details (SUPERVISOR / PIPELINE)
 
@@ -361,10 +361,10 @@ async def chat(tenant_id: str, query: str, user_id: str):
 
 Key isolation points:
 
-| Data | Isolated by |
-| --- | --- |
-| Session memory | `thread_id` |
-| Long-term memory | `lt_namespace` or `user_id` |
-| Skills | Agent `name` + `store` |
-| Feedback | Agent `name` + `store` |
-| Query cache | Not isolated (shared across all users) |
+| Data             | Isolated by                            |
+| ---------------- | -------------------------------------- |
+| Session memory   | `thread_id`                            |
+| Long-term memory | `lt_namespace` or `user_id`            |
+| Skills           | Agent `name` + `store`                 |
+| Feedback         | Agent `name` + `store`                 |
+| Query cache      | Not isolated (shared across all users) |

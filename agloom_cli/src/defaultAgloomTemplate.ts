@@ -1,5 +1,4 @@
-/**
- * Canonical starter ``agloom.yaml`` for the Node CLI only.
+/** Canonical starter ``agloom.yaml`` for the Node CLI only.
  * Runtime does not write project files — see ``workspaceBootstrap.ts``.
  */
 

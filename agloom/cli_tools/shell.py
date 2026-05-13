@@ -11,7 +11,10 @@ from typing import Any
 
 from langchain_core.tools import tool
 
+from .subprocess_env import safe_subprocess_env
 from .safety import BackgroundShellJob, SafetyContext, resolve_safe_path, split_command
+
+_SUBPROCESS_ENV = safe_subprocess_env()
 
 _MAX_BACKGROUND_JOBS = 16
 
@@ -67,7 +70,7 @@ def make_shell_tool(ctx: SafetyContext, *, timeout_s: float = 120.0) -> list[Any
                 text=True,
                 timeout=timeout_s,
                 shell=False,
-                env=None,
+                env=_SUBPROCESS_ENV,
             )
         except subprocess.TimeoutExpired:
             return f"execute: timed out after {timeout_s}s"
@@ -108,7 +111,7 @@ def make_shell_tool(ctx: SafetyContext, *, timeout_s: float = 120.0) -> list[Any
                 text=True,
                 timeout=timeout_s,
                 shell=True,
-                env=None,
+                env=_SUBPROCESS_ENV,
             )
         except subprocess.TimeoutExpired:
             return f"bash: timed out after {timeout_s}s"
@@ -153,6 +156,7 @@ def make_shell_tool(ctx: SafetyContext, *, timeout_s: float = 120.0) -> list[Any
             "stdin": subprocess.DEVNULL,
             "stdout": subprocess.DEVNULL,
             "stderr": subprocess.DEVNULL,
+            "env": _SUBPROCESS_ENV,
         }
         if os.name == "nt":
             popen_kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]

@@ -15,7 +15,7 @@ from agloom.patterns._sequential import (
     topological_sort,
 )
 
-# ── _sequential.py ─────────────────────────────────────────────────────────────
+# _sequential.py
 
 
 def _make_config(worker_id: str, task: str = "do work", depends_on: list[str] | None = None) -> ResolvedWorkerConfig:
@@ -130,7 +130,7 @@ class TestTopologicalSort:
         assert topological_sort([]) == []
 
 
-# ── reflection.py — parse_critic_response ──────────────────────────────────────
+# reflection.py — parse_critic_response
 
 
 def test_parse_critic_response_passes() -> None:

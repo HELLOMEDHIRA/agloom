@@ -1,6 +1,4 @@
-/**
- * Optional transcript of submitted prompts (non-slash) for TUI recall — ~/.agloom/history.json
- */
+/** Optional transcript of submitted prompts (non-slash) for TUI recall — ~/.agloom/history.json */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'

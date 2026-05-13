@@ -1,13 +1,8 @@
-"""Translate :class:`agloom.AgentEvent` events into AGP envelopes.
+"""Translate :class:`agloom.AgentEvent` instances into AGP envelopes.
 
-The bridge owns the :class:`agloom.protocol.SessionEmitter`; this module is pure: given an
-incoming ``AgentEvent`` (or ``ExecutionResult``-as-final-event) plus the emitter, pick the
-right ``emit_*`` method and call it.
-
-Phase 0 maps the most user-visible events; everything else is forwarded as ``thinking.step``
-so consumers see *something* and we don't drop information silently. Future phases add
-``tool.*`` / ``hitl.*`` / ``worker.*`` / ``graph.*`` types — additive, no behaviour change to
-existing mappings.
+Maps well-known event types to the matching :class:`~agloom.protocol.SessionEmitter`
+``emit_*`` helpers. Anything not handled explicitly is forwarded as ``thinking.step`` so the
+wire stream stays a complete trace without silently dropping data.
 """
 
 from __future__ import annotations
@@ -17,11 +12,8 @@ from typing import Any
 from ..models import AgentEvent
 from ..protocol import SessionEmitter
 
-# Event-type strings emitted by ``UnifiedAgent.astream_events``. Treat as opaque names —
-# consumers should match on these rather than reading internal step types.
-#
-# When the agloom core grows new event types, add a translator branch here. Unknown types fall
-# through to the generic ``thinking.step`` forwarder so nothing is lost.
+# Event-type strings from ``UnifiedAgent.astream_events`` (opaque to callers). New types get a
+# dedicated branch when needed; unknown names still flow through as ``thinking.step``.
 _AGENT_EVENT_THINKING_TYPES: frozenset[str] = frozenset(
     {
         "thinking",

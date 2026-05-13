@@ -156,12 +156,12 @@ The terminal client (`agloom_cli/`, npm package **`agloom-cli`**) spawns **`aglo
 
 ### Layout
 
-| Area | Role |
-| --- | --- |
-| `src/runtime/bridge.ts` | `createAGPBridge()` — spawns `agloom-runtime`, parses NDJSON, typed `on`/`emit` via internal `EventEmitter`. |
-| `src/store/session.ts` | Single zustand reducer: **`dispatch(AGPEvent)`** updates UI state + **Wire notes**. |
-| `src/hooks/useAGPStream.tsx` | Subscribes the bridge to the store (strict-mode safe). |
-| `src/components/*` | Ink UI; slash commands are handled in `App.tsx`. |
+| Area                         | Role                                                                                                         |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `src/runtime/bridge.ts`      | `createAGPBridge()` — spawns `agloom-runtime`, parses NDJSON, typed `on`/`emit` via internal `EventEmitter`. |
+| `src/store/session.ts`       | Single zustand reducer: **`dispatch(AGPEvent)`** updates UI state + **Wire notes**.                          |
+| `src/hooks/useAGPStream.tsx` | Subscribes the bridge to the store (strict-mode safe).                                                       |
+| `src/components/*`           | Ink UI; slash commands are handled in `App.tsx`.                                                             |
 
 ### Adding a new inbound event type
 

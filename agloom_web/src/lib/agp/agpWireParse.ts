@@ -1,8 +1,5 @@
-/**
- * Zod validation for inbound AGP NDJSON frames (after ``JSON.parse``).
- *
- * Matches Pydantic rules in ``agloom/protocol/events.py``: required ``data`` fields are
- * enforced; unknown keys on ``data`` are preserved (forward-compatible with ``extra="allow"``).
+/** Zod validation for inbound AGP NDJSON frames (after ``JSON.parse``).
+ * Matches Pydantic rules in ``agloom/protocol/events.py``: required ``data`` fields are enforced; unknown keys on ``data`` are preserved (forward-compatible with ``extra="allow"``).
  */
 
 import { z } from 'zod'
@@ -61,6 +58,12 @@ const d = {
     complexity: z.number().optional(),
     confidence: z.number().optional(),
     reason: z.string().optional(),
+  }),
+  planPreview: z.object({
+    pattern: z.string(),
+    complexity: z.number().optional(),
+    reasoning: z.string().optional(),
+    steps: z.array(z.string()).optional(),
   }),
   thinkingStep: z.object({
     step: z.string(),
@@ -257,6 +260,7 @@ const d = {
     turn_count: z.number().optional(),
   }),
   memorySessionCleared: z.object({ thread: z.string() }),
+  memorySessionTurnPopped: z.object({ thread: z.string(), remaining_turns: z.number() }),
   memoryLtStore: z.object({
     namespace: z.string().optional(),
     key: z.string().optional(),
@@ -343,6 +347,7 @@ const DATA_BY_TYPE: Record<string, z.ZodTypeAny> = {
   'session.closed': d.sessionClosed,
   'session.heartbeat': d.sessionHeartbeat,
   'pattern.classified': d.patternClassified,
+  'plan.preview': d.planPreview,
   'thinking.step': d.thinkingStep,
   'token.delta': d.tokenDelta,
   'message.user': d.messageUser,
@@ -379,6 +384,7 @@ const DATA_BY_TYPE: Record<string, z.ZodTypeAny> = {
   'memory.lt.recall': d.memoryLtRecall,
   'memory.session.write': d.memorySessionWrite,
   'memory.session.cleared': d.memorySessionCleared,
+  'memory.session.turn_popped': d.memorySessionTurnPopped,
   'memory.lt.store': d.memoryLtStore,
   'checkpoint.saved': d.checkpointSaved,
   'checkpoint.restored': d.checkpointRestored,

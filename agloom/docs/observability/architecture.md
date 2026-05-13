@@ -9,7 +9,7 @@
 Every AGP event that the Python runtime emits is a first-class trace event.  
 The observability platform is not a bolt-on monitoring layer — it is the **natural consequence of AGP being an event-sourced protocol**.
 
-```
+```text
 agloom-core / agloom-runtime
        │  emits AGP Envelopes
        ▼
@@ -32,7 +32,7 @@ The default stack uses SQLite only. Heavier analytics backends can be layered on
 
 ### 2.1 `agloom.observability` Python package
 
-```
+```text
 agloom/observability/
 ├── __init__.py            # Public API: ObservabilityStore, MetricsAggregator, ReplayEngine
 ├── store/
@@ -81,21 +81,21 @@ CREATE TABLE sessions (
 
 Derived on-demand from the `events` table — no separate write path needed.
 
-| Metric | Derived from | Unit |
-| --- | --- | --- |
-| `input_tokens` | `metric.tokens` events | count |
-| `output_tokens` | `metric.tokens` events | count |
-| `llm_latency_ms` | `thinking.step` with `elapsed_ms` where step='llm_call' | ms |
-| `tool_duration_ms` | `tool.result` with `duration_ms` | ms |
-| `worker_duration_ms` | `worker.completed` with `duration_ms` | ms |
-| `node_duration_ms` | `graph.node.exit` with `duration_ms` | ms |
-| `hitl_gates` | `hitl.request` event count | count |
-| `retries` | `error.transient` event count | count |
-| `turn_count` | `message.user` event count | count |
+| Metric               | Derived from                                            | Unit  |
+| -------------------- | ------------------------------------------------------- | ----- |
+| `input_tokens`       | `metric.tokens` events                                  | count |
+| `output_tokens`      | `metric.tokens` events                                  | count |
+| `llm_latency_ms`     | `thinking.step` with `elapsed_ms` where step='llm_call' | ms    |
+| `tool_duration_ms`   | `tool.result` with `duration_ms`                        | ms    |
+| `worker_duration_ms` | `worker.completed` with `duration_ms`                   | ms    |
+| `node_duration_ms`   | `graph.node.exit` with `duration_ms`                    | ms    |
+| `hitl_gates`         | `hitl.request` event count                              | count |
+| `retries`            | `error.transient` event count                           | count |
+| `turn_count`         | `message.user` event count                              | count |
 
 ### 2.4 Replay Architecture
 
-```
+```text
 ReplayEngine.replay(session_id, speed=1.0)
     │
     ├── load events from ObservabilityStore (ordered by seq)
@@ -113,7 +113,7 @@ The frontend cannot distinguish replay from live — ensuring UX parity.
 
 ### REST endpoints
 
-```
+```text
 GET  /observe/sessions                           → SessionSummary[]
 GET  /observe/sessions/:session_id               → SessionDetail (summary + first 50 events)
 GET  /observe/sessions/:session_id/events        → AGP Envelope[]  (paginated, filterable)
@@ -125,7 +125,7 @@ DELETE /observe/sessions/:session_id             → 204 (purge)
 
 ### SSE / streaming endpoints
 
-```
+```text
 GET  /observe/live                               → SSE stream of all live AGP events
 GET  /observe/sessions/:session_id/replay        → SSE stream of stored events
      ?speed=1.0                                    (1.0=real-time, 2.0=2x, 0=instant)
@@ -133,7 +133,7 @@ GET  /observe/sessions/:session_id/replay        → SSE stream of stored events
 
 ### Ingest endpoint (internal — called by RuntimeNode)
 
-```
+```text
 POST /observe/ingest                             → accepts a single AGP Envelope
 ```
 
@@ -146,7 +146,7 @@ and envelopes are appended in-process — no separate HTTP ingest endpoint is re
 
 Added to `agloom_web`:
 
-```
+```text
 /observe                                → ObservabilityDashboard (session list + global metrics)
 /observe/session/:sessionId             → SessionTrace (full trace viewer)
   ├── TraceTimeline                     — horizontal swim-lane timeline
@@ -163,15 +163,19 @@ Added to `agloom_web`:
 All AGP event types contribute to observability. Priority groupings:
 
 ### Tier 1 — Core Execution Trace
+
 `message.user`, `message.assistant`, `pattern.classified`, `thinking.step`, `tool.call`, `tool.result`
 
 ### Tier 2 — Orchestration Visibility
+
 `graph.node.enter`, `graph.node.exit`, `worker.spawned`, `worker.completed`, `worker.failed`
 
 ### Tier 3 — Runtime State
+
 `checkpoint.saved`, `checkpoint.restored`, `session.opened`, `session.closed`, `session.resumed`
 
 ### Tier 4 — Performance Metrics
+
 `metric.tokens`, `hitl.request`, `hitl.decided`, `error.transient`, `error.fatal`
 
 ---
@@ -181,6 +185,7 @@ All AGP event types contribute to observability. Priority groupings:
 AGP envelopes already carry `session`, `thread`, `run_id` — sufficient for correlation.
 
 Future extension: emit AGP events with W3C TraceContext headers:
+
 ```python
 # Envelope extension (additive, non-breaking)
 trace_id: Optional[str]   # W3C trace-id (128-bit hex)
@@ -188,6 +193,7 @@ span_id:  Optional[str]   # W3C parent-id (64-bit hex)
 ```
 
 This maps directly to OpenTelemetry spans:
+
 - `session` → root span
 - `thread` → sub-span per conversation turn
 - `graph.node.enter/exit` → child spans per LangGraph node
@@ -228,7 +234,7 @@ Future hardening may add JWT-gated APIs and row-level session ownership.
 
 ## 10. Developer Debugging Workflow
 
-```
+```text
 1. Agent run fails
 2. Open /observe/session/:id
 3. TraceTimeline shows exactly where execution diverged
