@@ -734,6 +734,7 @@ class RuntimeReadyData(_DataBase):
     agent_name: str | None = None
     cli_tools_enabled: bool | None = None
     cli_tools_count: int | None = None
+    harness_enabled: bool | None = None
 
 
 class RuntimeReady(Envelope):
@@ -870,7 +871,15 @@ class RuntimeConfigApplied(Envelope):
     data: RuntimeConfigAppliedData
 
 
-# ── todos.updated ──────────────────────────────────────────────────────────────
+class RuntimeMCPServersData(_DataBase):
+    """Emitted after MCP servers connect (may be empty if none configured)."""
+
+    server_names: list[str]
+
+
+class RuntimeMCPServers(Envelope):
+    type: Literal["runtime.mcp.servers"] = "runtime.mcp.servers"
+    data: RuntimeMCPServersData
 
 
 class TodosUpdatedData(_DataBase):
@@ -1001,6 +1010,7 @@ Event = Annotated[
     | RuntimeFileStaged
     | RuntimeToolInvokeResult
     | RuntimeConfigApplied
+    | RuntimeMCPServers
     | TodosUpdated
     | SessionHeartbeat
     | AgentBusy
@@ -1134,6 +1144,8 @@ __all__ = [
     "RuntimeConfigApplied",
     "RuntimeConfigAppliedData",
     "RuntimeConfigData",
+    "RuntimeMCPServers",
+    "RuntimeMCPServersData",
     "RuntimeFileStaged",
     "RuntimeFileStagedData",
     "RuntimePong",

@@ -42,13 +42,89 @@ Defaults integrate with LangGraph stores opened by the Python runtime process.
 
 Separate from AGP EventStore:
 
-| Flag                        | Role                                                                                  |         |               |                                                                         |
-| --------------------------- | ------------------------------------------------------------------------------------- | ------- | ------------- | ----------------------------------------------------------------------- |
-| `--agent-store <none\       | memory\                                                                               | sqlite\ | sqlite-sync>` | Long-lived agent store (skills, LT memory tools). Default sqlite async. |
-| `--agent-store-path <path>` | SQLite path (default `.agloom/graph_store.sqlite`).                                   |         |               |                                                                         |
-| `--no-harness`              | Disable harness tools (progress + git) while keeping store-backed features available. |         |               |                                                                         |
+| Flag                        | Role                                                                                  |
+| --------------------------- | ------------------------------------------------------------------------------------- |
+| `--agent-store <type>`      | Long-lived agent store (skills, LT memory tools). Default sqlite async. |
+| `--agent-store-path <path>` | SQLite path (default `.agloom/graph_store.sqlite`).                                   |
+| `--no-harness`              | Disable harness tools (progress + git) while keeping store-backed features available. |
 
-**Harness** emits structured progress (`agloom-progress.json` convention) and git-aware helpers — see [Long-running harness](../agloom/features/harness.md).
+### What is the harness?
+
+The harness is a **cross-session task management system** built into the runtime. It helps the agent maintain accuracy and progress across **long-running**, **multi-turn**, or **multi-session** goals — without losing context or repeating work.
+
+Think of it as a structured "scratchpad" that the agent reads and writes on every turn, so it always knows:
+- **Where am I?** (which task is active)
+- **What have I done?** (completed tasks, verification results)
+- **What's next?** (pending tasks with priority)
+- **Is the codebase healthy?** (git status + checkpoints)
+
+### Why it is needed
+
+- **Without harness:** An agent may fix one bug, then in the next turn forget what it was doing and break something else. It has no durable memory of task progress across sessions.
+- **With harness:** The agent reads the **progress artifact** before each turn, updates it after each task, and uses git checkpoints to revert if something goes wrong. Accuracy compounds instead of degrading.
+
+The harness solves the "agent forgetfulness" problem for anything longer than a single prompt-response.
+
+### How it is enabled (default: ON)
+
+The harness is **enabled automatically** whenever a LangGraph store is available. The runtime opens a default SQLite store at `.agloom/graph_store.sqlite`, so harness activates automatically unless you explicitly pass `--no-harness`.
+
+To confirm: when you run `agloom`, the boot logs will say:
+```
+[agloom-runtime] agent LT store=sqlite harness=on
+```
+
+### How it manages long-running tasks
+
+The harness injects **11 tools** that form a structured workflow:
+
+| Phase | Tool | What it does |
+|-------|------|-------------|
+| **Init** | `initialize_project` | Decompose a high-level goal into structured tasks with verification steps |
+| **Session start** | `bootstrap_progress` | Read current progress and suggest the next task for this session |
+| **Tracking** | `save_progress` | Persist progress notes + artifact snapshot to store + disk |
+| | `get_next_task` | Claim the next `PENDING` task for the current session |
+| | `update_task` | Mark task as `PASSING`/`FAILING`/`IN_PROGRESS` with notes |
+| | `add_task` | Insert a new task mid-session when discovery happens |
+| **Git** | `git_status` | Working tree summary (branch, clean/dirty, staged/unstaged counts) |
+| | `git_log` | Recent commit history |
+| | `git_commit` | Stage all + commit with a message |
+| | `git_checkpoint` | Create a named annotated tag for recovery |
+| | `git_revert_hint` | When the tree is broken, suggest how to revert |
+
+### Typical flow
+
+```
+1. User: "Build a login system"
+2. Agent calls initialize_project → creates tasks:
+   [T1] Design DB schema  [PENDING]
+   [T2] Build auth routes  [PENDING]
+   [T3] Write tests        [PENDING]
+3. Agent calls get_next_task → claims T1
+4. Agent implements T1, calls update_task → marks PASSING
+5. Agent commits via git_commit ("feat: add user schema")
+6. Crashes / session ends / new session starts
+7. Next session: bootstrap_progress shows T1=PASSING
+8. Agent picks T2 — never loses context
+```
+
+### Storage
+
+- **Long-term store:** progress data lives in the LangGraph store under the `("harness", "progress")` namespace
+- **Disk mirror:** the agent can write `agloom-progress.json` for human inspection alongside LTS
+- **Git:** checkpoints create annotated tags (not branches) so they don't interfere with normal git workflow
+
+### Disabling
+
+```bash
+agloom --no-harness    # disable harness tools (store-backed features still available)
+```
+
+Or in `agloom.yaml`:
+```yaml
+harness:
+  enabled: false
+```
 
 ## SQLite defaults
 

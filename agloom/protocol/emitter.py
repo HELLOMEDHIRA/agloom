@@ -1165,6 +1165,7 @@ class SessionEmitter:
         agent_name: str | None = None,
         cli_tools_enabled: bool | None = None,
         cli_tools_count: int | None = None,
+        harness_enabled: bool | None = None,
         parent: str | None = None,
     ) -> RuntimeReady:
         evt = RuntimeReady(
@@ -1176,6 +1177,7 @@ class SessionEmitter:
                 agent_name=agent_name,
                 cli_tools_enabled=cli_tools_enabled,
                 cli_tools_count=cli_tools_count,
+                harness_enabled=harness_enabled,
             ),
         )
         self._write(evt)
@@ -1361,6 +1363,22 @@ class SessionEmitter:
                 cli_tools_enabled=cli_tools_enabled,
                 cli_tools_count=cli_tools_count,
             ),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_runtime_mcp_servers(
+        self,
+        *,
+        server_names: list[str],
+        parent: str | None = None,
+    ) -> RuntimeMCPServers:
+        evt = RuntimeMCPServers(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=RuntimeMCPServersData(server_names=server_names),
         )
         self._write(evt)
         return evt

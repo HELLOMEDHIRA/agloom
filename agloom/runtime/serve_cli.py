@@ -256,7 +256,11 @@ async def open_sqlite_session_memory(
     stack = AsyncExitStack()
     store = await stack.enter_async_context(AsyncSqliteStore.from_conn_string(conn))
     await store.setup()
-    sm = SessionMemory(store=store)
+    sm = SessionMemory(
+        store=store,
+        max_turns=int(getattr(args, "session_max_turns", 50) or 50),
+        auto_summarize=bool(getattr(args, "auto_summarize", True)),
+    )
 
     async def cleanup() -> None:
         await stack.aclose()

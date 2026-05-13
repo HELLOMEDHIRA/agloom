@@ -358,6 +358,7 @@ export interface RuntimeReadyEvent extends Envelope {
     agent_name?: string
     cli_tools_enabled?: boolean
     cli_tools_count?: number
+    harness_enabled?: boolean
   }
 }
 
@@ -438,6 +439,13 @@ export interface RuntimeConfigAppliedEvent extends Envelope {
   }
 }
 
+export interface RuntimeMCPServersEvent extends Envelope {
+  type: 'runtime.mcp.servers'
+  data: {
+    server_names: string[]
+  }
+}
+
 export interface TodosUpdatedEvent extends Envelope {
   type: 'todos.updated'
   data: { items?: Array<Record<string, unknown>> }
@@ -492,6 +500,7 @@ export type AGPKnownEvent =
   | RuntimeFileStagedEvent
   | RuntimeToolResultEvent
   | RuntimeConfigAppliedEvent
+  | RuntimeMCPServersEvent
   | TodosUpdatedEvent
   | ToolCallStartEvent
   | ToolCallResultEvent

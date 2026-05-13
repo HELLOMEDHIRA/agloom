@@ -1,6 +1,4 @@
-/** MetricsPanel — right-hand session telemetry card (turns, uptime, tokens, tools).
- * Fed only from AGP-derived store state. LLM tokens are attributed per **phase** via `metric.tokens` (there is no per-tool token field on the wire today); tool rows show wall time from `tool.call.*` events.
- */
+/** MetricsPanel — right-hand session telemetry card. */
 
 import React, { useEffect, useMemo, useState } from 'react'
 import { Box, Text } from 'ink'
@@ -42,9 +40,14 @@ const STATUS_DOT: Record<ToolCall['status'], string> = {
   error: '✗',
 }
 
+function fmtTime(iso: string | null): string {
+  if (!iso) return '—'
+  try { return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }
+  catch { return iso }
+}
+
 interface Props {
   thread: string
-  /** Inner width (inside border). */
   width: number
 }
 
@@ -57,6 +60,8 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
 
   const sessionId = useSessionStore((s) => s.sessionId)
   const sessionOpenedAtMs = useSessionStore((s) => s.sessionOpenedAtMs)
+  const sessionStartedAt = useSessionStore((s) => s.sessionStartedAt)
+  const sessionUpdatedAt = useSessionStore((s) => s.sessionUpdatedAt)
   const runtimeVersion = useSessionStore((s) => s.runtimeVersion)
   const model = useSessionStore((s) => s.model)
   const completedTurns = useSessionStore((s) => s.completedTurns)
@@ -70,9 +75,19 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
   const status = useSessionStore((s) => s.status)
   const protocolNotes = useSessionStore((s) => s.protocolNotes)
   const toolNames = useSessionStore((s) => s.toolNames)
+  const memoryEnabled = useSessionStore((s) => s.memoryEnabled)
+  const skillsEnabled = useSessionStore((s) => s.skillsEnabled)
+  const harnessEnabled = useSessionStore((s) => s.harnessEnabled)
+  const cliToolsCount = useSessionStore((s) => s.cliToolsCount)
+  const mcpServerNames = useSessionStore((s) => s.mcpServerNames)
+  const autoApprovedTools = useSessionStore((s) => s.autoApprovedTools)
+  const filesUpdated = useSessionStore((s) => s.filesUpdated)
 
   const uptimeMs = sessionOpenedAtMs ? nowMs - sessionOpenedAtMs : 0
   const turnCount = completedTurns.length + (activeTurn ? 1 : 0)
+  const innerW = Math.max(22, width - 2)
+  const sid = sessionId ? shortenMiddle(sessionId, Math.min(28, width - 2)) : '—'
+  const th = shortenMiddle(thread, Math.min(24, width - 2))
 
   const phaseRows = useMemo(() => {
     const rollup = rollupPhases(metricsHistory)
@@ -89,76 +104,70 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
     [completedTurns, activeTurn?.toolCalls],
   )
 
-  const sid = sessionId ? shortenMiddle(sessionId, Math.min(28, width - 2)) : '—'
-  const th = shortenMiddle(thread, Math.min(24, width - 2))
-
-  const innerW = Math.max(22, width - 2)
-
   return (
-    <Box
-      flexDirection="column"
-      width={width}
-      borderStyle="round"
-      borderColor="cyan"
-      paddingX={1}
-    >
-      <Text bold color="cyan">
-        Session
-      </Text>
+    <Box flexDirection="column" width={width} borderStyle="round" borderColor="cyan" paddingX={1}>
+      <Text bold color="cyan">Session</Text>
       <Text color="gray" dimColor>
         {runtimeVersion ? `rt ${runtimeVersion}` : ' '}
         {model ? ` · ${truncate(model, innerW - 12)}` : ''}
       </Text>
 
+      {/* ── Session Info ─────────────────────────────────────────── */}
       <Box marginTop={1} flexDirection="column">
-        <Text bold color="white">
-          Identity
-        </Text>
+        <Text bold color="white">Identity</Text>
         <Text color="gray">session</Text>
         <Text color="white">{sid}</Text>
         <Text color="gray">thread</Text>
         <Text color="white">{th}</Text>
-        {toolNames != null && toolNames.length > 0 && (
-          <>
-            <Text color="gray">tools ({toolNames.length})</Text>
-            <Text color="gray" dimColor>
-              {truncate(toolNames.join(', '), innerW)}
-            </Text>
-          </>
-        )}
+        <Text color="gray">started</Text>
+        <Text color="white">{fmtTime(sessionStartedAt)}</Text>
+        <Text color="gray">updated</Text>
+        <Text color="white">{fmtTime(sessionUpdatedAt)}</Text>
       </Box>
 
+      {/* ── Status Toggles ────────────────────────────────────────── */}
       <Box marginTop={1} flexDirection="column">
-        <Text bold color="white">
-          Activity
+        <Text bold color="white">Features</Text>
+        <Text>
+          <Text color="gray">memory </Text>
+          <Text color={memoryEnabled === true ? 'green' : memoryEnabled === false ? 'red' : 'gray'}>
+            {memoryEnabled === true ? '✓ ON' : memoryEnabled === false ? '✗ OFF' : '—'}
+          </Text>
+          <Text color="gray">  skills </Text>
+          <Text color={skillsEnabled === true ? 'green' : skillsEnabled === false ? 'red' : 'gray'}>
+            {skillsEnabled === true ? '✓ ON' : skillsEnabled === false ? '✗ OFF' : '—'}
+          </Text>
         </Text>
         <Text>
-          <Text color="gray">uptime </Text>
-          <Text color="yellow">{sessionOpenedAtMs ? fmtDuration(uptimeMs) : '—'}</Text>
+          <Text color="gray">cli tools </Text>
+          <Text color={cliToolsCount != null && cliToolsCount > 0 ? 'green' : 'gray'}>
+            {cliToolsCount != null ? `${cliToolsCount} tools` : '—'}
+          </Text>
         </Text>
         <Text>
-          <Text color="gray">turns </Text>
-          <Text color="yellow">{turnCount}</Text>
-          <Text color="gray"> · </Text>
-          <Text color="gray" dimColor>
-            {status}
+          <Text color="gray">harness </Text>
+          <Text color={harnessEnabled === true ? 'green' : harnessEnabled === false ? 'red' : 'gray'}>
+            {harnessEnabled === true ? '✓ ON' : harnessEnabled === false ? '✗ OFF' : '—'}
           </Text>
         </Text>
       </Box>
 
+      {/* ── Activity ──────────────────────────────────────────────── */}
       <Box marginTop={1} flexDirection="column">
-        <Text bold color="white">
-          Tokens
-        </Text>
+        <Text bold color="white">Activity</Text>
+        <Text><Text color="gray">uptime </Text><Text color="yellow">{sessionOpenedAtMs ? fmtDuration(uptimeMs) : '—'}</Text></Text>
+        <Text><Text color="gray">turns </Text><Text color="yellow">{turnCount}</Text><Text color="gray"> · </Text><Text color="gray" dimColor>{status}</Text></Text>
+      </Box>
+
+      {/* ── Tokens ────────────────────────────────────────────────── */}
+      <Box marginTop={1} flexDirection="column">
+        <Text bold color="white">Tokens</Text>
         <Text>
           <Text color="gray">session </Text>
           <Text color="green">{fmtTokens(totalIn)}↑</Text>
           <Text color="gray"> </Text>
           <Text color="blue">{fmtTokens(totalOut)}↓</Text>
-          <Text color="gray" dimColor>
-            {' '}
-            ({totalIn + totalOut} Σ)
-          </Text>
+          <Text color="gray" dimColor> ({totalIn + totalOut} Σ)</Text>
         </Text>
         {activeTurn && (
           <Text>
@@ -170,28 +179,23 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
         )}
         {completedTurns.length > 0 && (
           <Text color="gray" dimColor>
-            last answer ·{' '}
-            {completedTurns.at(-1)?.tokens != null
-              ? `${completedTurns.at(-1)!.tokens} tok`
-              : '—'}
+            last answer · {completedTurns.at(-1)?.tokens != null ? `${completedTurns.at(-1)!.tokens} tok` : '—'}
           </Text>
         )}
       </Box>
 
+      {/* ── Cost ──────────────────────────────────────────────────── */}
       {totalCostUsd > 0 && (
         <Box marginTop={1} flexDirection="column">
-          <Text bold color="white">
-            Cost
-          </Text>
+          <Text bold color="white">Cost</Text>
           <Text color="yellow">{fmtUsd(totalCostUsd)} est.</Text>
         </Box>
       )}
 
+      {/* ── By Phase ──────────────────────────────────────────────── */}
       {phaseRows.length > 0 && (
         <Box marginTop={1} flexDirection="column">
-          <Text bold color="white">
-            By phase
-          </Text>
+          <Text bold color="white">By phase</Text>
           {phaseRows.map(([phase, v]) => (
             <Text key={phase}>
               <Text color="magenta">{truncate(phase, 14).padEnd(14)}</Text>
@@ -203,14 +207,39 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
         </Box>
       )}
 
+      {/* ── MCP Servers ────────────────────────────────────────────── */}
+      {mcpServerNames.length > 0 && (
+        <Box marginTop={1} flexDirection="column">
+          <Text bold color="white">MCP servers</Text>
+          {mcpServerNames.map((n, i) => (
+            <Text key={i} color="cyan" dimColor>◈ {n}</Text>
+          ))}
+        </Box>
+      )}
+
+      {/* ── Files Updated ─────────────────────────────────────────── */}
+      {filesUpdated.length > 0 && (
+        <Box marginTop={1} flexDirection="column">
+          <Text bold color="white">Files updated</Text>
+          {filesUpdated.slice(-6).map((f, i) => (
+            <Text key={i} color="green" dimColor>✓ {truncate(f, innerW - 2)}</Text>
+          ))}
+        </Box>
+      )}
+
+      {/* ── Auto-Approved Tools ────────────────────────────────────── */}
+      {autoApprovedTools.length > 0 && (
+        <Box marginTop={1} flexDirection="column">
+          <Text bold color="white">Auto-approved</Text>
+          <Text color="gray" dimColor>{autoApprovedTools.join(', ')}</Text>
+        </Box>
+      )}
+
+      {/* ── Recent Tools ──────────────────────────────────────────── */}
       <Box marginTop={1} flexDirection="column">
-        <Text bold color="white">
-          Tools (recent)
-        </Text>
+        <Text bold color="white">Tools (recent)</Text>
         {toolRows.length === 0 ? (
-          <Text color="gray" dimColor>
-            —
-          </Text>
+          <Text color="gray" dimColor>—</Text>
         ) : (
           toolRows.map(({ turnLabel, tc }) => (
             <Box key={tc.id} flexDirection="column">
@@ -221,30 +250,20 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
                 </Text>
                 <Text bold> {truncate(tc.tool, 18)}</Text>
                 {tc.durationMs !== undefined ? (
-                  <Text color="gray" dimColor>
-                    {' '}
-                    {fmtDuration(tc.durationMs)}
-                  </Text>
+                  <Text color="gray" dimColor> {fmtDuration(tc.durationMs)}</Text>
                 ) : tc.status === 'pending' ? (
-                  <Text color="gray" dimColor>
-                    {' '}
-                    …
-                  </Text>
+                  <Text color="gray" dimColor> …</Text>
                 ) : null}
               </Text>
             </Box>
           ))
         )}
-        <Text color="gray" dimColor>
-          {truncate('Tool time = wall clock. LLM tokens roll up by phase.', innerW)}
-        </Text>
       </Box>
 
+      {/* ── Wire Notes ────────────────────────────────────────────── */}
       {protocolNotes.length > 0 && (
         <Box marginTop={1} flexDirection="column">
-          <Text bold color="white">
-            Wire notes
-          </Text>
+          <Text bold color="white">Wire notes</Text>
           {protocolNotes.slice(-8).map((line, i) => (
             <Text key={`${i}-${line.slice(0, 20)}`} color="gray" dimColor>
               {truncate(line, innerW)}

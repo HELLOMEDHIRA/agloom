@@ -99,9 +99,21 @@ Shows resolved model, store, MCP specs, and which YAML files contributed.
 
 ## UI-only
 
-| Flag     | Meaning                                 |
-| -------- | --------------------------------------- |
+| Flag | Meaning |
+| --- | --- |
 | `--diag` | Open stderr diagnostic pane on startup. |
+| `--theme <dark\|light>` | Terminal palette hint (default: dark). |
+| `--capture <path>` | Append all AGP events as NDJSON to a file during the session. |
+
+## Subcommands
+
+| Command | Action |
+| --- | --- |
+| `agloom init` | Scaffold `.agloom/` directory and starter YAML. |
+| `agloom sessions` | List past sessions with model/date/turns table and pick one to resume. |
+| `agloom clean` | Remove `.agloom/`, `.agsuperbrain/`, `agloom.yaml`, and clean `.gitignore`. |
+| `agloom upgrade` | Compare installed versions against npm/PyPI latest. |
+| `agloom eval` | Forward to `agloom-runtime eval` for evaluation runs. |
 
 ## Pass-through (`--`)
 

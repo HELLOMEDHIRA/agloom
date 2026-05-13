@@ -118,6 +118,7 @@ const d = {
     agent_name: z.string().optional(),
     cli_tools_enabled: z.boolean().optional(),
     cli_tools_count: z.number().optional(),
+    harness_enabled: z.boolean().optional(),
   }),
   runtimeConfig: z.object({
     model_id: z.string().optional(),
@@ -166,6 +167,9 @@ const d = {
     model_id: z.string().optional(),
     cli_tools_enabled: z.boolean().optional(),
     cli_tools_count: z.number().optional(),
+  }),
+  runtimeMCPServers: z.object({
+    server_names: z.array(z.string()),
   }),
   todosUpdated: z.object({
     items: z.array(z.record(z.string(), z.unknown())).optional(),
@@ -374,6 +378,7 @@ const DATA_BY_TYPE: Record<string, z.ZodTypeAny> = {
   'runtime.file.staged': d.runtimeFileStaged,
   'runtime.tool.result': d.runtimeToolResult,
   'runtime.config.applied': d.runtimeConfigApplied,
+  'runtime.mcp.servers': d.runtimeMCPServers,
   'todos.updated': d.todosUpdated,
   'tool.call.start': d.toolCallStart,
   'tool.call.result': d.toolCallResult,

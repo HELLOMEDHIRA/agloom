@@ -333,6 +333,12 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
         )
         return
 
+    if et == "runtime.mcp.servers":
+        names = data.get("server_names", [])
+        if isinstance(names, list):
+            emitter.emit_runtime_mcp_servers(server_names=[str(n) for n in names])
+        return
+
     # Forward-compat: unknown event types still surface as a thinking step so nothing is lost.
     # When new categories ship (tool.*, hitl.*, …) we add explicit branches above this line.
     emitter.emit_thinking_step(

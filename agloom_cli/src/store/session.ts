@@ -124,6 +124,19 @@ export interface SessionStore {
   /** From `metric.budget.*`. */
   budgetUi: 'ok' | 'approaching' | 'exhausted'
 
+  // ── Enhanced session info ────────────────────────────────────────────
+  sessionStartedAt: string | null
+  sessionUpdatedAt: string | null
+  memoryEnabled: boolean | null
+  skillsEnabled: boolean | null
+  harnessEnabled: boolean | null
+  cliToolsEnabled: boolean | null
+  cliToolsCount: number | null
+  mcpServerNames: string[]
+  autoApprovedTools: string[]
+  noApprovalTools: string[]
+  filesUpdated: string[]
+
   dispatch: (evt: AGPEvent) => void
   addDiagnostic: (line: string) => void
   clearError: () => void
@@ -167,6 +180,17 @@ export const useSessionStore = create<SessionStore>((set) => ({
   diagnostics: [],
   toolCallExpandedById: {},
   budgetUi: 'ok',
+  sessionStartedAt: null,
+  sessionUpdatedAt: null,
+  memoryEnabled: null,
+  skillsEnabled: null,
+  harnessEnabled: null,
+  cliToolsEnabled: null,
+  cliToolsCount: null,
+  mcpServerNames: [],
+  autoApprovedTools: [],
+  noApprovalTools: [],
+  filesUpdated: [],
 
   dispatch: (evt: AGPEvent) => set((s) => dispatchAgpEvent(s, evt)),
 

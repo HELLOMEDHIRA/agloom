@@ -608,6 +608,11 @@ async def _ensure_mcp_connected(config: dict) -> None:
         )
         config["_mcp_client"] = client
         config["_mcp_connected"] = True
+        # Emit MCP server names to the event stream so the CLI can display them
+        eq = config.get("_event_queue")
+        if eq is not None:
+            names = [getattr(s, "name", str(s)) for s in config.get("_mcp_servers", [])]
+            await eq.put(AgentEvent(type="runtime.mcp.servers", data={"server_names": names}))
 
 
 async def _ensure_skills_bootstrapped(

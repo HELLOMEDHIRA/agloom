@@ -44,6 +44,7 @@ export interface AGPBridge {
     budget_cost_usd_limit?: number | null
   }): void
   sessionList(): void
+  resume(thread: string, fromSeq?: number): void
   hitlRespond(requestId: string, decision: string, text?: string): void
   feedback(runId: string, rating: string, comment?: string): void
   snapshot(thread?: string, label?: string): void
@@ -124,7 +125,10 @@ export const createAGPBridge = (): AGPBridge => {
   }
 
   const send = (cmd: AGPCommand): void => {
-    if (!proc?.stdin?.writable) return
+    if (!proc?.stdin?.writable) {
+      emitter.emit('diagnostic', `[bridge] cannot send ${cmd.type} — stdin not writable (runtime may have exited)`)
+      return
+    }
     proc.stdin.write(`${JSON.stringify(cmd)}\n`)
   }
 
@@ -275,6 +279,8 @@ export const createAGPBridge = (): AGPBridge => {
       send({ type: 'command.memory.pop_last_turn', data: thread ? { thread } : {} }),
     configSet: (data) => send({ type: 'command.config.set', data }),
     sessionList: () => send({ type: 'command.session.list', data: {} }),
+    resume: (thread: string, fromSeq?: number) =>
+      send({ type: 'command.session.resume', data: { thread, from_seq: fromSeq ?? 0 } }),
     hitlRespond: (requestId: string, decision: string, text?: string) =>
       send({ type: 'command.hitl.respond', data: { request_id: requestId, decision, text } }),
     feedback: (runId: string, rating: string, comment?: string) =>

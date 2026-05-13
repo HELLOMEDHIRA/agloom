@@ -58,7 +58,11 @@ ai:
     Remember: You're collaborating with a human. They control the session, you assist.
 
 mcp:
-  servers: []
+  servers:
+    - name: agsuperbrain
+      transport: stdio
+      command: agsuperbrain
+      args: ["mcp-serve"]
 
 tools:
   dir: ''

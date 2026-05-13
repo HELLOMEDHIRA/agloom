@@ -271,29 +271,10 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         write_session_started_json,
     )
 
-    llm = resolve_llm_for_serve(args)
-    if llm is None:
-        _eprint(
-            "[agloom-runtime] no provider key set (OPENAI_API_KEY / ANTHROPIC_API_KEY / GROQ_API_KEY / …), "
-            "or pass --model with credentials."
-        )
-        return 1
-
-    ca_kw = build_create_agent_kwargs(args)
-    mem_cleanup_extra: Any = None
-    try:
-        sm_mem, sm_cleanup = await open_sqlite_session_memory(args)
-        if sm_mem is not None:
-            ca_kw["memory"] = sm_mem
-            mem_cleanup_extra = sm_cleanup
-    except Exception as exc:
-        _eprint(f"[agloom-runtime] session memory init failed: {exc!r}")
-        return 1
-
     store = None
     if args.store == "sqlite":
         from ..protocol.store import SqliteEventStore
-        store = SqliteEventStore(args.store_path or "agp_events.db")
+        store = SqliteEventStore(args.store_path or ".agloom/agp_events.db")
     elif args.store == "memory":
         from ..protocol.store import MemoryEventStore
         store = MemoryEventStore()
@@ -342,43 +323,103 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             f"({_agent_lt_boot_suffix(args)})"
         )
 
-    agent: Any
-    try:
-        agent = await create_agent(
-            model=llm,
-            name="agloom-runtime",
-            user_callback=hitl_bridge.callback,
-            store=lg_store,
-            harness=use_harness,
-            cli_tools=cli_tools_options_from_args(args),
-            **ca_kw,
+    agent_holder: dict[str, Any] = {"agent": None}
+
+    def _rewrite_session_marker(model_id: str | None = None) -> None:
+        """Re-write the session JSON so it reflects the live resolved state."""
+        extra = session_started_snapshot_from_args(args)
+        if model_id:
+            extra["model"] = model_id
+            extra["llm_resolution"] = "lazy_agent_bootstrap"
+        write_session_started_json(
+            _sd,
+            session_id,
+            transport="stdio",
+            thread=initial_thread,
+            record_cwd=_cwd,
+            hitl_tool_allowlist=sorted(_al_set),
+            extra=extra,
         )
-    except Exception:
-        await lg_store_cleanup()
-        if mem_cleanup_extra:
-            await mem_cleanup_extra()
-        raise
 
-    agent.config["_hitl_tool_allowlist"] = _al_set
+    async def _ensure_agent() -> Any:
+        """Resolve LLM and create agent on demand (first command that needs it)."""
+        nonlocal agent_holder
+        if agent_holder["agent"] is not None:
+            return agent_holder["agent"]
+        try:
+            llm = resolve_llm_for_serve(args)
+        except ImportError as exc:
+            emitter.emit_error(severity="transient", message=str(exc), stage="agent.bootstrap")
+            raise
+        if llm is None:
+            msg = (
+                "no provider key set (OPENAI_API_KEY / ANTHROPIC_API_KEY / GROQ_API_KEY / …), "
+                "or pass --model with credentials."
+            )
+            _eprint(f"[agloom-runtime] {msg}")
+            emitter.emit_error(severity="fatal", message=msg, stage="agent.bootstrap")
+            raise RuntimeError(msg)
+        ca_kw = build_create_agent_kwargs(args)
+        mem_cleanup_acc: list[Any] = []
+        try:
+            sm_mem, sm_cleanup = await open_sqlite_session_memory(args)
+            if sm_mem is not None:
+                ca_kw["memory"] = sm_mem
+                mem_cleanup_acc.append(sm_cleanup)
+        except Exception as exc:
+            _eprint(f"[agloom-runtime] session memory init failed: {exc!r}")
+            emitter.emit_error(severity="transient", message=str(exc), stage="agent.bootstrap")
+            agent_holder["_mem_cleanup"] = mem_cleanup_acc
+            raise
+        agent_holder["_mem_cleanup"] = mem_cleanup_acc
+        try:
+            agent = await create_agent(
+                model=llm,
+                name="agloom-runtime",
+                user_callback=hitl_bridge.callback,
+                store=lg_store,
+                harness=use_harness,
+                cli_tools=cli_tools_options_from_args(args),
+                **ca_kw,
+            )
+        except Exception:
+            for fn in mem_cleanup_acc:
+                await fn()
+            raise
+        agent.config["_hitl_tool_allowlist"] = _al_set
+        agent_holder["agent"] = agent
+        _ct_en, _ct_ct = _runtime_cli_tool_metrics(agent)
+        llm_obj = agent.config.get("llm")
+        model_id_guess = None
+        if llm_obj is not None:
+            model_id_guess = getattr(llm_obj, "model_name", None) or getattr(llm_obj, "model", None)
+            if model_id_guess is None:
+                model_id_guess = type(llm_obj).__name__
+        tool_objs = agent.config.get("tools", []) or []
+        emitter.emit_runtime_config(
+            model_id=str(model_id_guess) if model_id_guess else None,
+            tool_names=[getattr(t, "name", str(t)) for t in tool_objs],
+            cli_tools_enabled=_ct_en,
+            cli_tools_count=_ct_ct,
+        )
+        # Emit connected MCP server names
+        mcp_names = [getattr(s, "name", str(s)) for s in agent.config.get("_mcp_servers", [])]
+        if mcp_names:
+            emitter.emit_runtime_mcp_servers(server_names=mcp_names)
+        # Update session marker with resolved model info
+        _rewrite_session_marker(model_id=str(model_id_guess) if model_id_guess else None)
+        return agent
 
-    emitter.open()
-
-    agent_label = getattr(agent, "config", {}).get("name", "agloom-runtime")
-    _ct_en, _ct_ct = _runtime_cli_tool_metrics(agent)
-    emitter.emit_runtime_ready(agent_name=str(agent_label), cli_tools_enabled=_ct_en, cli_tools_count=_ct_ct)
-    llm_obj = getattr(agent, "config", {}).get("llm")
-    model_id_guess = None
-    if llm_obj is not None:
-        model_id_guess = getattr(llm_obj, "model_name", None) or getattr(llm_obj, "model", None)
-        if model_id_guess is None:
-            model_id_guess = type(llm_obj).__name__
-    tool_objs = getattr(agent, "config", {}).get("tools", []) or []
-    emitter.emit_runtime_config(
-        model_id=str(model_id_guess) if model_id_guess else None,
-        tool_names=[getattr(t, "name", str(t)) for t in tool_objs],
-        cli_tools_enabled=_ct_en,
-        cli_tools_count=_ct_ct,
-    )
+    is_resume = store is not None and await store.count(session_id) > 0
+    if is_resume:
+        emitter.resume(resumed_from_thread=initial_thread)
+        async for evt_dict in store.replay(session_id, from_seq=0):
+            json_line = json.dumps(evt_dict, ensure_ascii=False)
+            sys.stdout.write(json_line + "\n")
+            sys.stdout.flush()
+    else:
+        emitter.open()
+    emitter.emit_runtime_ready(agent_name="agloom-runtime", harness_enabled=use_harness)
 
     budget_tracker = None
     bt_n = getattr(args, "budget_tokens", None)
@@ -454,19 +495,24 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             except (json.JSONDecodeError, Exception) as exc:
                 _eprint(f"[agloom-runtime] dropping malformed inbound line: {exc!r}")
                 continue
-            await _dispatch_command(
-                cmd,
-                agent=agent,
-                emitter=emitter,
-                hitl_bridge=hitl_bridge,
-                invocation_tasks=invocation_tasks,
-                thread_tasks=thread_tasks,
-                shutdown=shutdown,
-                store=store,
-                session_id=session_id,
-                budget_tracker=budget_tracker,
-                invoke_working_dir=Path(getattr(args, "cli_tools_working_dir", None) or ".").resolve(),
-            )
+            try:
+                await _dispatch_command(
+                    cmd,
+                    agent=agent_holder.get("agent"),
+                    emitter=emitter,
+                    hitl_bridge=hitl_bridge,
+                    ensure_agent=_ensure_agent,
+                    rewrite_session_marker=lambda mid=None: _rewrite_session_marker(mid),
+                    invocation_tasks=invocation_tasks,
+                    thread_tasks=thread_tasks,
+                    shutdown=shutdown,
+                    store=store,
+                    session_id=session_id,
+                    budget_tracker=budget_tracker,
+                    invoke_working_dir=Path(getattr(args, "cli_tools_working_dir", None) or ".").resolve(),
+                )
+            except RuntimeError:
+                pass
     finally:
         shutdown.set()
         if hb_task is not None:
@@ -488,10 +534,12 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         except (asyncio.CancelledError, Exception):
             pass
         emitter.close(reason="shutdown")
-        await agent.aclose()
+        a = agent_holder.get("agent")
+        if a is not None:
+            await a.aclose()
         await lg_store_cleanup()
-        if mem_cleanup_extra:
-            await mem_cleanup_extra()
+        for fn in agent_holder.get("_mem_cleanup", []):
+            await fn()
         if obs_server_task and not obs_server_task.done():
             obs_server_task.cancel()
         if obs_store:
@@ -527,7 +575,7 @@ async def _serve_ws(args: argparse.Namespace) -> int:
     store = None
     if args.store == "sqlite":
         from ..protocol.store import SqliteEventStore
-        store = SqliteEventStore(args.store_path or "agp_events.db")
+        store = SqliteEventStore(args.store_path or ".agloom/agp_events.db")
     elif args.store == "memory":
         from ..protocol.store import MemoryEventStore
         store = MemoryEventStore()
@@ -570,6 +618,8 @@ async def _dispatch_command(
     agent: Any,
     emitter: SessionEmitter,
     hitl_bridge: HITLBridge,
+    ensure_agent: Any = None,
+    rewrite_session_marker: Any = None,
     invocation_tasks: set[asyncio.Task[None]],
     thread_tasks: dict[str, asyncio.Task[None]],
     shutdown: asyncio.Event,
@@ -595,7 +645,22 @@ async def _dispatch_command(
             _eprint(f"[agloom-runtime] no pending HITL request for id={cmd.data.request_id!r}")
         return
 
+    async def _agent_or_skip() -> Any | None:
+        if agent is not None:
+            return agent
+        if ensure_agent is not None:
+            try:
+                return await ensure_agent()
+            except (ImportError, RuntimeError):
+                return None
+        emitter.emit_error(severity="transient", message="agent not available — no model configured", stage="invoke")
+        return None
+
     if isinstance(cmd, CommandInvoke):
+        resolved = await _agent_or_skip()
+        if resolved is None:
+            return
+        agent = resolved
         if budget_tracker is not None and budget_tracker.is_invoke_blocked():
             emitter.emit_error(
                 severity="transient",
@@ -663,6 +728,9 @@ async def _dispatch_command(
         return
 
     if isinstance(cmd, CommandWorkerAssign):
+        agent = await _agent_or_skip()
+        if agent is None:
+            return
         wthread = cmd.data.thread or f"wt_{uuid4().hex[:12]}"
         w_emitter = emitter.fork_for_thread(wthread)
         # Emit worker.spawned so the supervisor sees the task has been dispatched.
@@ -707,7 +775,9 @@ async def _dispatch_command(
         return
 
     if isinstance(cmd, CommandFeedback):
-        # Forward feedback to the agent's feedback handler (NoOp when not configured).
+        agent = await _agent_or_skip()
+        if agent is None:
+            return
         feedback_handler = getattr(agent, "config", {}).get("feedback_handler")
         if feedback_handler is None:
             _eprint("[agloom-runtime] command.feedback received but no feedback_handler configured")
@@ -733,7 +803,9 @@ async def _dispatch_command(
         return
 
     if isinstance(cmd, CommandSnapshotRequest):
-        # Trigger a manual checkpoint save and emit checkpoint.saved.
+        agent = await _agent_or_skip()
+        if agent is None:
+            return
         checkpointer = getattr(agent, "config", {}).get("checkpointer")
         label = cmd.data.label
         thread = cmd.data.thread or session_id
@@ -774,6 +846,9 @@ async def _dispatch_command(
         return
 
     if isinstance(cmd, CommandToolList):
+        agent = await _agent_or_skip()
+        if agent is None:
+            return
         tools = getattr(agent, "config", {}).get("tools", []) or []
         rows: list[tuple[str, str | None]] = []
         for t in tools:
@@ -837,6 +912,9 @@ async def _dispatch_command(
         return
 
     if isinstance(cmd, CommandAttachFile):
+        agent = await _agent_or_skip()
+        if agent is None:
+            return
         import base64
 
         from .upload import stage_attached_bytes
@@ -859,6 +937,9 @@ async def _dispatch_command(
         return
 
     if isinstance(cmd, CommandToolInvoke):
+        agent = await _agent_or_skip()
+        if agent is None:
+            return
         raw_sz = len(json.dumps(cmd.data.arguments, ensure_ascii=False))
         if raw_sz > 32_000:
             emitter.emit_runtime_tool_result(ok=False, error="arguments too large")
@@ -876,6 +957,9 @@ async def _dispatch_command(
         return
 
     if isinstance(cmd, CommandConfigSet):
+        agent = await _agent_or_skip()
+        if agent is None:
+            return
         try:
             from agloom.unified_agent import resolve_model, resolve_system_prompt
 
@@ -937,9 +1021,15 @@ async def _dispatch_command(
             cli_tools_enabled=_cta,
             cli_tools_count=_ctb,
         )
+        # Update session marker when model changes mid-session
+        if cmd.data.model_id is not None and rewrite_session_marker is not None:
+            rewrite_session_marker(str(mid_guess) if mid_guess else cmd.data.model_id)
         return
 
     if isinstance(cmd, CommandMemoryClear):
+        agent = await _agent_or_skip()
+        if agent is None:
+            return
         mem = agent.config.get("memory")
         if mem is None:
             emitter.emit_error(
@@ -966,6 +1056,9 @@ async def _dispatch_command(
         return
 
     if isinstance(cmd, CommandMemoryPopLastTurn):
+        agent = await _agent_or_skip()
+        if agent is None:
+            return
         mem = agent.config.get("memory")
         if mem is None:
             emitter.emit_error(
@@ -999,6 +1092,9 @@ async def _dispatch_command(
         return
 
     if isinstance(cmd, CommandHarnessGit):
+        agent = await _agent_or_skip()
+        if agent is None:
+            return
         gs = agent.config.get("_git_session")
         if gs is None:
             emitter.emit_runtime_tool_result(

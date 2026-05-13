@@ -172,6 +172,34 @@ program
   })
 
 program
+  .command('sessions')
+  .description('List past sessions and pick one to resume')
+  .action(async () => {
+    try {
+      const { runSessionsCli } = await import('./commands/sessions.js')
+      process.exit(await runSessionsCli())
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      process.stderr.write(`[agloom] sessions failed: ${msg}\n`)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('clean')
+  .description('Remove .agloom/, .agsuperbrain/, and clean .gitignore')
+  .action(async () => {
+    try {
+      const { runCleanCli } = await import('./commands/clean.js')
+      process.exit(await runCleanCli())
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      process.stderr.write(`[agloom] clean failed: ${msg}\n`)
+      process.exit(1)
+    }
+  })
+
+program
   .command('eval')
   .description('Run agloom-runtime eval (remaining argv forwarded after the optional file)')
   .allowUnknownOption(true)
@@ -374,6 +402,14 @@ if (directExec) {
   process.exit(process.exitCode ?? 0)
 }
 
+try {
+  ensureAgloomCliWorkspace(cwd)
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err)
+  process.stderr.write(`[agloom] workspace bootstrap failed: ${msg}\n`)
+  process.exit(1)
+}
+
 const bridge = createAGPBridge()
 let captureStream: WriteStream | undefined
 let exitCode = 0
@@ -386,8 +422,6 @@ bridge.once('error', (err: Error) => {
   process.stderr.write(`\n[agloom] bridge error: ${err.message}\n`)
   process.exit(1)
 })
-
-ensureAgloomCliWorkspace(cwd)
 
 if (opts.capture) {
   captureStream = createWriteStream(opts.capture, { flags: 'a' })

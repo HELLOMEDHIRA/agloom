@@ -1,8 +1,12 @@
-/** HITLPrompt — replaces the normal input bar when a HITL gate is pending.
- * Kind-aware shortcuts (AGP `command.hitl.respond` decisions): - tool_approval / pattern_approval / worker_approval: y/yes→accept, n/no→reject, a→allowlist - react_recovery: r/retry→retry, s/stop→stop - clarification: free text → decision `accept` + `text` payload (wire contract) Escape or empty submit sends `request.default` when present, else kind-safe fallback (`reject` for gates, `cancelled` for clarification).
+/**
+ * HITLPrompt — replaces the normal input bar when a HITL gate is pending.
+ *
+ * Renders beautiful button-style options for tool approvals / clarifications.
+ * The model can also ask questions mid-execution via the ask_user meta-tool
+ * (kind=clarification) with custom Yes/No/Custom answer buttons.
  */
 
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import { Box, Text, useInput } from 'ink'
 import TextInput from 'ink-text-input'
 import type { HITLRequest } from '../store/session.js'
@@ -14,148 +18,150 @@ interface Props {
   bridge: AGPBridge
 }
 
+const BTN_COLORS = ['green', 'red', 'blue', 'yellow', 'cyan', 'magenta'] as const
+type BtnColor = (typeof BTN_COLORS)[number]
+
+interface ButtonDef {
+  key: string
+  label: string
+  decision: string
+  color: BtnColor
+}
+
+const BUTTONS_BY_KIND: Record<string, ButtonDef[]> = {
+  tool_approval: [
+    { key: 'y', label: 'Accept', decision: 'accept', color: 'green' as BtnColor },
+    { key: 'n', label: 'Reject', decision: 'reject', color: 'red' as BtnColor },
+    { key: 'a', label: 'Allowlist', decision: 'allowlist', color: 'blue' as BtnColor },
+  ],
+  pattern_approval: [
+    { key: 'y', label: 'Accept', decision: 'accept', color: 'green' as BtnColor },
+    { key: 'n', label: 'Reject', decision: 'reject', color: 'red' as BtnColor },
+  ],
+  worker_approval: [
+    { key: 'y', label: 'Accept', decision: 'accept', color: 'green' as BtnColor },
+    { key: 'n', label: 'Reject', decision: 'reject', color: 'red' as BtnColor },
+    { key: 's', label: 'Skip', decision: 'skip', color: 'yellow' as BtnColor },
+  ],
+  react_recovery: [
+    { key: 'r', label: 'Retry', decision: 'retry', color: 'green' as BtnColor },
+    { key: 's', label: 'Stop', decision: 'stop', color: 'red' as BtnColor },
+  ],
+}
+
 const hitlDefaultDecision = (kind: string, wireDefault?: string): string => {
   if (kind === 'clarification') return wireDefault ?? 'cancelled'
   return wireDefault ?? 'reject'
 }
 
-const resolveNonClarificationDecision = (kind: string, options: string[], raw: string): string => {
-  const t = raw.trim().toLowerCase()
-  if (kind === 'tool_approval' || kind === 'pattern_approval' || kind === 'worker_approval') {
-    if (t === 'y' || t === 'yes') return 'accept'
-    if (t === 'n' || t === 'no') return 'reject'
-    if (t === 'a' || t === 'allowlist') return 'allowlist'
-    const canon = options.find((o) => o.toLowerCase() === t)
-    return canon ?? raw.trim()
-  }
-  if (kind === 'react_recovery') {
-    if (t === 'r' || t === 'retry') return 'retry'
-    if (t === 's' || t === 'stop') return 'stop'
-    const canon = options.find((o) => o.toLowerCase() === t)
-    return canon ?? raw.trim()
-  }
-  const canon = options.find((o) => o.toLowerCase() === t)
-  return canon ?? raw.trim()
+function buildOptionButtons(options: string[]): ButtonDef[] {
+  const colors: BtnColor[] = ['cyan', 'green', 'yellow', 'magenta', 'blue']
+  return options.map((opt, i) => ({
+    key: String(i + 1),
+    label: opt,
+    decision: opt,
+    color: colors[i % colors.length]!,
+  }))
 }
 
-const formatOptionHints = (kind: string, options: string[]): string => {
-  if (kind === 'clarification') {
-    return 'free-text answer · Enter = submit · Esc = cancel'
-  }
-  if (kind === 'react_recovery') {
-    return options.map((o) => (o === 'retry' ? 'r(etry)' : o === 'stop' ? 's(top)' : o)).join('  ·  ')
-  }
-  return options
-    .map((o) => {
-      if (o === 'accept') return 'y(es) · accept'
-      if (o === 'reject') return 'n(o) · reject'
-      if (o === 'allowlist') return 'a · allowlist'
-      return o
-    })
-    .join('  ·  ')
-}
-
-const placeholderForKind = (kind: string): string => {
-  if (kind === 'clarification') return 'Your answer…'
-  if (kind === 'react_recovery') return 'r / s · or retry | stop'
-  return 'y / n / a · or accept | reject | allowlist'
+function buildButtons(kind: string, options: string[]): { buttons: ButtonDef[] } {
+  const predefined = BUTTONS_BY_KIND[kind]
+  if (predefined) return { buttons: predefined }
+  if (options.length > 0) return { buttons: buildOptionButtons(options) }
+  return { buttons: [{ key: 'y', label: 'Accept', decision: 'accept', color: 'green' as BtnColor }, { key: 'n', label: 'Reject', decision: 'reject', color: 'red' as BtnColor }] }
 }
 
 export const HITLPrompt = ({ request, bridge }: Props): React.ReactElement => {
-  const [value, setValue] = useState('')
+  const [freeText, setFreeText] = useState('')
+  const [mode, setMode] = useState<'option' | 'free_text'>(
+    request.kind === 'clarification' && request.options.length === 0 ? 'free_text' : 'option',
+  )
+
+  const { buttons } = useMemo(() => buildButtons(request.kind, request.options), [request.kind, request.options])
 
   const sendDefault = (): void => {
     bridge.hitlRespond(request.requestId, hitlDefaultDecision(request.kind, request.default))
   }
 
-  useInput((_input, key) => {
-    if (key.escape) sendDefault()
+  useInput((input: string, key) => {
+    if (key.escape) {
+      if (mode === 'free_text') { setMode('option'); setFreeText(''); return }
+      sendDefault()
+      return
+    }
+    if (mode === 'option') {
+      if (key.return) { sendDefault(); return }
+      if (request.kind === 'clarification' && input.toLowerCase() === 'c') {
+        setMode('free_text')
+        return
+      }
+      for (const btn of buttons) {
+        if (input.toLowerCase() === btn.key) {
+          bridge.hitlRespond(request.requestId, btn.decision)
+          return
+        }
+      }
+    }
   })
 
-  const handleSubmit = (text: string): void => {
-    if (request.kind === 'clarification') {
-      const answer = text.trim()
-      if (!answer) {
-        sendDefault()
-      } else {
-        bridge.hitlRespond(request.requestId, 'accept', answer)
-      }
-      setValue('')
-      return
-    }
-
-    const trimmed = text.trim()
-    if (!trimmed) {
-      sendDefault()
-      setValue('')
-      return
-    }
-
-    const decision = resolveNonClarificationDecision(request.kind, request.options, text)
-    bridge.hitlRespond(request.requestId, decision)
-    setValue('')
+  // ── Free-text mode (clarifications without options, or user pressed C) ─────
+  if (mode === 'free_text') {
+    return (
+      <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} marginBottom={0}>
+        <Box>
+          <Text bold color="yellow">⚠ HITL:{' '}</Text>
+          <Text bold>{request.kind}</Text>
+          {request.tool && <Text color="gray" dimColor> · {request.tool}</Text>}
+        </Box>
+        {request.detail && <Box marginLeft={2}><Text color="white">{truncate(request.detail, 300)}</Text></Box>}
+      {request.question && <Box marginLeft={2}><Text color="cyan" italic>{request.question}</Text></Box>}
+        <Box marginLeft={2}>
+          <Text color="gray" dimColor>Type your answer · Enter to submit · Esc to go back</Text>
+        </Box>
+        <Box marginTop={0}>
+          <Text color="yellow" bold>{'  ❯ '}</Text>
+          <TextInput value={freeText} onChange={setFreeText} onSubmit={(t) => { const a = t.trim(); if (a) { bridge.hitlRespond(request.requestId, 'answered', a); setFreeText('') } else { sendDefault(); setFreeText('') } }} placeholder="Your answer…" />
+        </Box>
+      </Box>
+    )
   }
 
-  const optionHints = formatOptionHints(request.kind, request.options)
-  const escHint = hitlDefaultDecision(request.kind, request.default)
-
+  // ── Button mode ──────────────────────────────────────────────────────────
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor="yellow"
-      paddingX={1}
-      paddingY={0}
-      marginBottom={0}
-    >
-      {/* Gate header */}
+    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} marginBottom={0}>
+      {/* Header */}
       <Box>
-        <Text bold color="yellow">
-          ⚠ HITL:{' '}
-        </Text>
+        <Text bold color="yellow">⚠ HITL:{' '}</Text>
         <Text bold>{request.kind}</Text>
-        {request.tool && (
-          <Text color="gray" dimColor>
-            {' '}
-            · {request.tool}
-          </Text>
+        {request.tool && <Text color="gray" dimColor> · {request.tool}</Text>}
+      </Box>
+
+      {/* Detail / Question */}
+      {request.detail && <Box marginLeft={2} marginTop={1}><Text color="white">{truncate(request.detail, 300)}</Text></Box>}
+      {request.question && <Box marginLeft={2} marginTop={1}><Text color="cyan" italic>{request.question}</Text></Box>}
+
+      {/* Buttons */}
+      <Box marginLeft={2} marginTop={1} gap={1}>
+        {buttons.map((btn) => (
+          <Box key={btn.key} borderStyle="round" borderColor={btn.color} paddingX={1}>
+            <Text color={btn.color}>
+              <Text bold color="white">[{btn.key.toUpperCase()}]</Text> {btn.label}
+            </Text>
+          </Box>
+        ))}
+        {request.kind === 'clarification' && (
+          <Box borderStyle="round" borderColor="white" paddingX={1}>
+            <Text color="white"><Text bold color="white">[C]</Text> Custom…</Text>
+          </Box>
         )}
       </Box>
 
-      {/* Detail */}
-      {request.detail && (
-        <Box marginLeft={2}>
-          <Text color="white">{truncate(request.detail, 100)}</Text>
-        </Box>
-      )}
-
-      {/* Question */}
-      {request.question && (
-        <Box marginLeft={2}>
-          <Text color="cyan" italic>
-            {request.question}
-          </Text>
-        </Box>
-      )}
-
-      {/* Options */}
-      <Box marginLeft={2}>
+      {/* Esc hint */}
+      <Box marginLeft={2} marginTop={1}>
         <Text color="gray" dimColor>
-          [{optionHints}]  Esc = {escHint}
+          Esc = {hitlDefaultDecision(request.kind, request.default)}
+          {request.kind === 'clarification' ? ' · C = type your own answer' : ''}
         </Text>
-      </Box>
-
-      {/* Input */}
-      <Box marginTop={0}>
-        <Text color="yellow" bold>
-          {'  ❯ '}
-        </Text>
-        <TextInput
-          value={value}
-          onChange={setValue}
-          onSubmit={handleSubmit}
-          placeholder={placeholderForKind(request.kind)}
-        />
       </Box>
     </Box>
   )

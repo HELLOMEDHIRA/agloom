@@ -48,28 +48,37 @@ const newActiveTurn = (userMessage: string): ActiveTurnState => ({
 /** Apply one inbound AGP event to the current store snapshot. */
 export function dispatchAgpEvent(s: SessionStore, evt: AGPEvent): SessionStore {
   switch (evt.type) {
-    case 'session.opened':
+    case 'session.opened': {
+      const now = new Date().toISOString()
       return {
         ...s,
         sessionId: evt.session,
         runtimeVersion: evt.data.runtime_version,
         sessionOpenedAtMs: Date.now(),
+        sessionStartedAt: now,
+        sessionUpdatedAt: now,
         status: 'idle',
         toolCallExpandedById: {},
         budgetUi: 'ok',
+        filesUpdated: [],
       }
+    }
 
-    case 'session.resumed':
+    case 'session.resumed': {
+      const now = new Date().toISOString()
       return {
         ...s,
         sessionId: evt.session,
         runtimeVersion: evt.data.runtime_version,
         sessionOpenedAtMs: Date.now(),
+        sessionStartedAt: s.sessionStartedAt ?? now,
+        sessionUpdatedAt: now,
         status: 'idle',
         activeTurn: null,
         toolCallExpandedById: {},
         budgetUi: 'ok',
       }
+    }
 
     case 'session.closed': {
       const isError = evt.data.reason === 'error'
@@ -100,11 +109,15 @@ export function dispatchAgpEvent(s: SessionStore, evt: AGPEvent): SessionStore {
 
     case 'runtime.ready': {
       const cli = evt.data.cli_tools_count != null ? ` · cli_tools=${evt.data.cli_tools_count}` : ''
+      const harness = evt.data.harness_enabled != null ? ` · harness=${evt.data.harness_enabled ? 'on' : 'off'}` : ''
       return {
         ...s,
+        cliToolsEnabled: evt.data.cli_tools_enabled ?? s.cliToolsEnabled,
+        cliToolsCount: evt.data.cli_tools_count ?? s.cliToolsCount,
+        harnessEnabled: evt.data.harness_enabled ?? s.harnessEnabled,
         protocolNotes: pushProtocolNotes(
           s.protocolNotes,
-          `Runtime ready (${evt.data.agent_name ?? 'agent'})${cli}`,
+          `Runtime ready (${evt.data.agent_name ?? 'agent'})${cli}${harness}`,
         ),
       }
     }
@@ -118,6 +131,8 @@ export function dispatchAgpEvent(s: SessionStore, evt: AGPEvent): SessionStore {
         model: evt.data.model_id ?? s.model,
         toolNames: tools.length ? tools : s.toolNames,
         capabilities: caps.length ? caps : s.capabilities,
+        cliToolsEnabled: evt.data.cli_tools_enabled ?? s.cliToolsEnabled,
+        cliToolsCount: evt.data.cli_tools_count ?? s.cliToolsCount,
         protocolNotes: pushProtocolNotes(
           s.protocolNotes,
           `runtime.config · model=${evt.data.model_id ?? '—'} · ${tools.length} tools${cli}`,
@@ -133,6 +148,18 @@ export function dispatchAgpEvent(s: SessionStore, evt: AGPEvent): SessionStore {
         protocolNotes: pushProtocolNotes(
           s.protocolNotes,
           `Config applied · model=${evt.data.model_id ?? 'ok'}${cli}`,
+        ),
+      }
+    }
+
+    case 'runtime.mcp.servers': {
+      const names = evt.data.server_names ?? []
+      return {
+        ...s,
+        mcpServerNames: names,
+        protocolNotes: pushProtocolNotes(
+          s.protocolNotes,
+          `MCP servers: ${names.join(', ') || 'none'}`,
         ),
       }
     }
@@ -303,8 +330,16 @@ export function dispatchAgpEvent(s: SessionStore, evt: AGPEvent): SessionStore {
 
     case 'tool.call.result': {
       if (!s.activeTurn) return s
+      const isFileWrite = evt.data.tool === 'write_file' || evt.data.tool === 'edit_file'
+      let filesUpdated = s.filesUpdated
+      if (isFileWrite) {
+        const match = s.activeTurn.toolCalls.find((tc) => tc.toolCallId === evt.data.tool_call_id)
+        const fname = match ? String(match.args?.path ?? '') : ''
+        if (fname && !filesUpdated.includes(fname)) filesUpdated = [...filesUpdated, fname]
+      }
       return {
         ...s,
+        filesUpdated,
         activeTurn: {
           ...s.activeTurn,
           toolCalls: s.activeTurn.toolCalls.map((tc) =>
@@ -420,10 +455,19 @@ export function dispatchAgpEvent(s: SessionStore, evt: AGPEvent): SessionStore {
     case 'hitl.allowlisted':
     case 'hitl.denied': {
       const remaining = s.hitlQueue.filter((r) => r.requestId !== evt.data.request_id)
+      const matched = s.hitlQueue.find((r) => r.requestId === evt.data.request_id)
+      const toolName = matched?.tool ?? null
+      const isAllowlist = evt.type === 'hitl.allowlisted'
+      const autoApprovedTools = isAllowlist && toolName && !s.autoApprovedTools.includes(toolName)
+        ? [...s.autoApprovedTools, toolName]
+        : s.autoApprovedTools
+      const now = new Date().toISOString()
       return {
         ...s,
         hitlQueue: remaining,
         status: remaining.length > 0 ? 'hitl' : 'running',
+        autoApprovedTools,
+        sessionUpdatedAt: now,
       }
     }
 
@@ -452,6 +496,7 @@ export function dispatchAgpEvent(s: SessionStore, evt: AGPEvent): SessionStore {
         status: 'idle',
         turnInputTokens: 0,
         turnOutputTokens: 0,
+        sessionUpdatedAt: new Date().toISOString(),
       }
     }
 
@@ -537,6 +582,7 @@ export function dispatchAgpEvent(s: SessionStore, evt: AGPEvent): SessionStore {
     case 'memory.session.write':
       return {
         ...s,
+        memoryEnabled: true,
         protocolNotes: pushProtocolNotes(
           s.protocolNotes,
           `memory.session.write · ${evt.data.thread}${evt.data.turn_count != null ? ` · turns ${evt.data.turn_count}` : ''}`,
@@ -555,6 +601,7 @@ export function dispatchAgpEvent(s: SessionStore, evt: AGPEvent): SessionStore {
       return {
         ...s,
         completedTurns: nextTurns,
+        sessionUpdatedAt: new Date().toISOString(),
         protocolNotes: pushProtocolNotes(
           s.protocolNotes,
           `Undo · thread ${evt.data.thread} · ${evt.data.remaining_turns} turn(s) in session memory`,
@@ -565,6 +612,7 @@ export function dispatchAgpEvent(s: SessionStore, evt: AGPEvent): SessionStore {
     case 'memory.lt.recall':
       return {
         ...s,
+        memoryEnabled: true,
         protocolNotes: pushProtocolNotes(
           s.protocolNotes,
           `memory.lt.recall · ${evt.data.hits} hits · +${evt.data.injected_chars} chars`,
@@ -583,6 +631,7 @@ export function dispatchAgpEvent(s: SessionStore, evt: AGPEvent): SessionStore {
     case 'skill.loaded':
       return {
         ...s,
+        skillsEnabled: true,
         protocolNotes: pushProtocolNotes(
           s.protocolNotes,
           `Skill loaded · ${evt.data.skill_name}${evt.data.source ? ` (${evt.data.source})` : ''}`,
@@ -592,6 +641,7 @@ export function dispatchAgpEvent(s: SessionStore, evt: AGPEvent): SessionStore {
     case 'skill.applied':
       return {
         ...s,
+        skillsEnabled: true,
         protocolNotes: pushProtocolNotes(
           s.protocolNotes,
           `Skill applied · ${evt.data.phase ?? '—'} · +${evt.data.injected_chars ?? 0} chars`,

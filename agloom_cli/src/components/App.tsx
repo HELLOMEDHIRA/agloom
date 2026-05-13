@@ -206,6 +206,7 @@ export const App = ({
 
       case '/undo':
         bridge.memoryPopLastTurn(thread)
+        appendProtocolNote('/undo · popping last turn from session memory')
         break
 
       case '/retry': {
@@ -222,6 +223,7 @@ export const App = ({
         }
         bridge.invoke(last.userMessage, thread)
         appendHistory(histPath, last.userMessage)
+        appendProtocolNote(`/retry · re-running: "${last.userMessage.slice(0, 60)}${last.userMessage.length > 60 ? '…' : ''}"`)
         setHistRefresh((n) => n + 1)
         break
       }

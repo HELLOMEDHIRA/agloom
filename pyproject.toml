@@ -1,6 +1,6 @@
 [project]
 name = "agloom"
-version = "0.1.61"
+version = "0.1.1"
 description = "Production agent framework on LangChain/LangGraph: nine execution patterns, persistent memory, skills, feedback, multi-level HITL, MCP, AGP protocol, runtime bridge, and observability hooks."
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -16,18 +16,18 @@ classifiers = [
 ]
 
 dependencies = [
-    "qdrant-client>=1.17.1",
-    "langchain>=1.2.17",
+    "qdrant-client>=1.18.0",
+    "langchain>=1.3.0",
     "langchain-mcp-adapters>=0.2.2",
-    "langgraph>=1.1.10",
+    "langgraph>=1.2.0",
     "pyyaml>=6.0.3",
     "tomli>=2.4.1",
     "httpx>=0.28.1",
     "tiktoken>=0.12.0",
-    "langgraph-checkpoint-sqlite>=3.0.3",
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.34.0",
-    "sse-starlette>=2.4.0",
+    "langgraph-checkpoint-sqlite>=3.1.0",
+    "fastapi>=0.136.0",
+    "uvicorn[standard]>=0.46.0",
+    "sse-starlette>=3.4.4",
 ]
 
 [project.urls]
@@ -77,7 +77,7 @@ xai = ["langchain-xai>=1.2.2"]
 ws = ["websockets>=12.0"]
 readability = ["trafilatura>=2.0.0"]
 memory = [
-    "sentence-transformers>=5.4.1",
+    "sentence-transformers>=5.5.0",
     "langchain-huggingface>=1.2.2",
 ]
 superbrain = ["agsuperbrain>=0.0.1"]
@@ -104,14 +104,14 @@ dev = [
     "mkdocs-gen-files>=0.6.1",
     "mkdocs-literate-nav>=0.6.3",
     "pre-commit>=4.6.0",
-    "pyrefly>=0.63.1",
+    "pyrefly>=1.0.0",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
     "ruff>=0.15.12",
-    "llama-cpp-python>=0.3.22",
+    "llama-cpp-python>=0.3.23",
     "ipykernel>=7.2.0",
     "iprogress>=0.4",
-    "types-pyyaml>=6.0.12.20260408",
+    "types-pyyaml>=6.0.12.20260510",
 ]
 
 # Super-Brain (graspologic) requires numpy 1.x; cap so qdrant-client resolves to a compatible build.
@@ -119,7 +119,7 @@ dev = [
 # NumPy: Super-Brain stack. ML pins: optional LangChain extras pull older ``tokenizers``/``transformers``
 # which downgrades the default env — overrides keep ``sentence-transformers`` on a modern HF stack.
 override-dependencies = [
-    "numpy>=1.26.4,<2.0",
+    "numpy>=1.26.4",
     "transformers>=5.7.0",
     "tokenizers>=0.23.1",
     "huggingface-hub>=1.13.0",
