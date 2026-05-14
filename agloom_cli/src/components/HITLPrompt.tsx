@@ -1,10 +1,4 @@
-/**
- * HITLPrompt — replaces the normal input bar when a HITL gate is pending.
- *
- * Renders beautiful button-style options for tool approvals / clarifications.
- * The model can also ask questions mid-execution via the ask_user meta-tool
- * (kind=clarification) with custom Yes/No/Custom answer buttons.
- */
+/** HITL gate UI: option buttons or free-text (e.g. `ask_user` clarification). */
 
 import React, { useState, useMemo } from 'react'
 import { Box, Text, useInput } from 'ink'
@@ -105,7 +99,6 @@ export const HITLPrompt = ({ request, bridge }: Props): React.ReactElement => {
     }
   })
 
-  // ── Free-text mode (clarifications without options, or user pressed C) ─────
   const hitlSummary = `${request.kind}${request.tool ? ` · ${request.tool}` : ''}`
 
   if (mode === 'free_text') {
@@ -127,14 +120,12 @@ export const HITLPrompt = ({ request, bridge }: Props): React.ReactElement => {
     )
   }
 
-  // ── Button mode ──────────────────────────────────────────────────────────
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} marginBottom={0}>
       <Box marginBottom={0}>
         <StatusMessage variant="warning">{`HITL · ${hitlSummary}`}</StatusMessage>
       </Box>
 
-      {/* Detail / Question */}
       {request.detail && <Box marginLeft={2} marginTop={1}><Text color="white">{truncate(request.detail, 300)}</Text></Box>}
       {request.question && <Box marginLeft={2} marginTop={1}><Text color="cyan" italic>{request.question}</Text></Box>}
 
@@ -146,7 +137,6 @@ export const HITLPrompt = ({ request, bridge }: Props): React.ReactElement => {
         </Box>
       )}
 
-      {/* Buttons */}
       <Box marginLeft={2} marginTop={1} gap={1}>
         {buttons.map((btn) => (
           <Box key={btn.key} borderStyle="round" borderColor={btn.color} paddingX={1}>
@@ -166,7 +156,6 @@ export const HITLPrompt = ({ request, bridge }: Props): React.ReactElement => {
         )}
       </Box>
 
-      {/* Esc hint */}
       <Box marginLeft={2} marginTop={1}>
         <Text color="gray" dimColor>
           Enter = default ({hitlDefaultDecision(request.kind, request.default)}) · Esc = reject / default

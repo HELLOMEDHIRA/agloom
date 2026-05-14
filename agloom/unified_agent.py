@@ -1425,7 +1425,16 @@ async def run_fresh(
     if result.steps is _steps:
         all_steps = list(_steps)
     else:
-        all_steps = _steps + [s for s in result.steps if s not in _steps]
+        # Merge by object identity — two distinct steps must not collapse just because Pydantic __eq__ matches.
+        _seen_ids = {id(s) for s in _steps}
+        _extra: list = []
+        for s in result.steps:
+            sid = id(s)
+            if sid in _seen_ids:
+                continue
+            _seen_ids.add(sid)
+            _extra.append(s)
+        all_steps = _steps + _extra
 
     result = result.model_copy(
         update={
@@ -2423,7 +2432,7 @@ async def create_agent(
     """
     configure_package_logging(debug)
 
-    from .cli_tools import get_cli_tools, normalize_cli_tools_kwargs
+    from .cli_tools import CLI_TOOLS_SYSTEM_APPENDIX, get_cli_tools, normalize_cli_tools_kwargs
 
     cli_tools_kw = normalize_cli_tools_kwargs(cli_tools)
     ibi_merged = list(interrupt_before_tools or [])
@@ -2537,10 +2546,14 @@ async def create_agent(
             sandbox=bool(cli_tools_kw.get("sandbox", True)),
             task_agent_cell=_task_agent_cell,
         )
+        builtins_by_name = {t.name: t for t in builtins}
         merged = OrderedDict((t.name, t) for t in builtins)
         for t in resolved_tools:
             merged[t.name] = t
         resolved_tools = list(merged.values())
+        builtins_still_present = any(merged[n] is builtins_by_name[n] for n in builtins_by_name)
+        if isinstance(resolved_prompt, str) and builtins_still_present:
+            resolved_prompt = resolved_prompt.rstrip() + CLI_TOOLS_SYSTEM_APPENDIX
 
     resolved_store: LongTermStore | None = None
     if store is not None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import cast
 
 from .. import worker as worker_module
 from ..hitl_contract import HITLEvent, call_user_callback
@@ -258,7 +259,7 @@ async def _collect_with_after_interrupt(
             for t in pending:
                 cfg = tasks[t]
                 try:
-                    r = await t
+                    r = cast(WorkerResult, await t)
                 except asyncio.CancelledError:
                     r = WorkerResult(
                         worker_id=cfg.worker_id,
@@ -270,16 +271,30 @@ async def _collect_with_after_interrupt(
                 results.append(r)
             break
 
-        done, pending = await asyncio.wait(
-            pending,
-            return_when=asyncio.FIRST_COMPLETED,
-            timeout=0.3,
-        )
+        # Wake as soon as any worker finishes or HALT_ALL sets the event (no fixed polling delay).
+        halt_wait = asyncio.create_task(halt_event.wait())
+        try:
+            done, unfinished = await asyncio.wait(
+                frozenset(pending) | {halt_wait},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            if not halt_wait.done():
+                halt_wait.cancel()
+                try:
+                    await halt_wait
+                except asyncio.CancelledError:
+                    pass
+
+        pending = {t for t in unfinished if t is not halt_wait}
+        halt_done = halt_wait in done
 
         for task in done:
+            if task is halt_wait:
+                continue
             cfg = tasks[task]
             try:
-                result = await task
+                result = cast(WorkerResult, await task)
             except asyncio.CancelledError:
                 result = WorkerResult(
                     worker_id=cfg.worker_id,
@@ -315,6 +330,9 @@ async def _collect_with_after_interrupt(
                     logger.error(f"[HITL] L3-After callback raised: {exc}")
 
             results.append(result)
+
+        if halt_done:
+            continue
 
     return results
 

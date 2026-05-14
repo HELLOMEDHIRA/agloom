@@ -1,4 +1,4 @@
-/** CompletedTurnCard — renders a finished conversation turn in the live Ink tree (replay-safe). */
+/** One completed turn in the live transcript (replay-safe). */
 
 import React, { memo } from 'react'
 import { Box, Text } from 'ink'

@@ -126,16 +126,31 @@ async def _user_decision_after_tool_use_failed(user_callback: Any, exc: BaseExce
 REACT_TOOL_DISCIPLINE = """
 
 === TOOL USAGE RULES ===
-- Do **not** repeat the **same** tool call with identical arguments. Multiple calls are required when
-  inputs differ (e.g. **read_file** with advancing ``offset`` / ``limit`` to page through a large file,
-  or another path after a failed lookup).
-- Prefer **small, purposeful reads**: use ``read_file`` with ``limit`` (and increase ``offset`` using
-  the continuation hint in the tool result) instead of pulling huge ranges in one call. Use
-  **grep_files** when searching for a symbol or pattern across a file or tree.
+- Do **not** emit **two** ``read_file`` calls for the **same** ``path`` in one assistant turn unless
+  the first result had ``complete=false`` and you are **paging** with a higher ``offset``. The
+  runtime may suppress a redundant second HITL for overlapping byte reads — still avoid double
+  calls; they waste tokens and confuse users.
+- Do **not** repeat the **same** tool call with identical arguments (other tools). Multiple calls are
+  required when inputs differ (e.g. **read_file** with advancing ``offset`` / ``limit`` to page
+  through a large file, or another path after a failed lookup).
+- Prefer **small, purposeful reads**: ``read_file`` parameter ``limit`` is **bytes**, not lines — a few
+  hundred bytes is only a tiny prefix. When the user asks for the **first N lines**, pass
+  ``line_cap=N`` and a byte ``limit`` large enough for those lines (e.g. ``200 * N`` as a rough
+  budget). Increase ``offset`` using the continuation hint to page. Use **grep_files** when
+  searching for a symbol or pattern across a file or tree.
 - Tool truthfulness contract: if you claim you **read/fetched/ran** something via a tool, you must
   include the relevant excerpt in your final answer **or** explicitly mark it as incomplete and
   continue. Never imply you saw data you did not receive.
-- UI-agnostic: never say “shown above / below” — the user only sees what you print in the Answer.
+- **Never** tell the user to **call**, **invoke**, **run**, or **use** a tool by name (e.g. “you can
+  call ``read_file`` …”). They cannot run tools — **only you** can. If the first read was too small,
+  issue another **tool call yourself** in the same turn (larger ``limit`` and/or ``line_cap``) until
+  you can answer; do not end by delegating a second read to the user.
+- UI-agnostic: never say “shown above / below”, “in the trace”, “in the panel”, “as displayed in the
+  UI”, or similar — the user only sees what you print in your **Answer** text. When they asked for
+  file lines or content, **paste the excerpt** (or the requested line range) in that answer, not a
+  pointer to elsewhere.
+- Do **not** claim a line count (e.g. “first 8 lines”) unless the tool output you actually received
+  contains at least that many **logical** lines for the path you read.
 - Completeness: if a tool returns an ``[agloom:tool_result]`` envelope with ``complete=false``, treat
   the payload as **partial** (usually with a preview). Follow Recovery hints and paginate/narrow the
   request; do not summarize as if complete.
@@ -149,7 +164,12 @@ REACT_TOOL_DISCIPLINE = """
 - Never claim tool results (e.g. file contents) until the tool has returned — Groq will reject prose masquerading as a tool call.
 - **Final user-visible text = normal prose only.** Do not lead with pseudo-invocations: no ``left-hand-side -> outcome`` lines where the left side is structured arguments or JSON-like blobs, and no pasting of tool message shapes the runtime would emit. Summarize in sentences; the UI already shows real tool traces.
 - Behave like Cursor / Claude Code in the terminal: **outcome-first**, not a tutorial.
-- If tools already did the work, the UI shows tool traces. Your **final** message must be **short**: what you did, paths or command outcomes, errors if any, one optional next step. **Do not** write "Step 1 / Step 2" walkthroughs or explain *how* to do something you already finished with tools.
+- If tools already did the work, the UI shows tool traces. Your **final** message must be **short**:
+  what you did, paths or command outcomes, errors if any, one optional next step. **Do not** write
+  "Step 1 / Step 2" walkthroughs or explain *how* to do something you already finished with tools.
+- If the user asked for **concrete file content** (lines, snippet, “show me …”), your final message
+  must include that content **in prose** (quoted or fenced) when it fits; do not substitute with
+  “see above” or “call read_file again”.
 - Do not repeat long tool arguments, JSON payloads, or full file bodies unless the user explicitly asked to review them.
 - Default length: a few sentences or a tiny bullet list. Go longer only when the user asks for depth, design, or teaching.
 """

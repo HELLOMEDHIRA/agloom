@@ -81,19 +81,25 @@ def _grep_via_rg(pattern: str, root: Path, lim: int) -> str | None:
 
 def make_filesystem_tools(ctx: SafetyContext, *, max_read_bytes: int = _DEFAULT_READ_LIMIT) -> list:
     @tool
-    def read_file(path: str, offset: int = 0, limit: int = 8000, line_numbers: bool = True) -> str:
-        """Read a **byte slice** of a UTF-8 text file (not “N lines”).
+    def read_file(
+        path: str,
+        offset: int = 0,
+        limit: int = 8000,
+        line_numbers: bool = True,
+        line_cap: int | None = None,
+    ) -> str:
+        """Read a UTF-8 slice of a text file. ``limit`` = max **bytes** from ``offset`` (not lines).
 
-        ``offset`` is the start byte in the file; ``limit`` is the maximum number of **bytes**
-        to read (default ``8000`` ≈ one 8KiB chunk, not 8000 lines). Output may include a
-        ``[agloom:tool_result]`` footer with ``complete=`` and a ``next offset=`` hint when the
-        file continues — prefer **one** adequately sized read over many tiny reads unless you
-        are deliberately paging. Line numbers in the body are computed from the file start and
-        reflect logical lines inside the decoded slice.
+        For “first N lines” use ``line_cap=N`` and a byte ``limit`` large enough for those lines
+        (e.g. ``min(64000, 200 * N)``). Optional ``line_cap`` trims logical lines after decode; if
+        lines are cut short, raise ``limit`` or page with ``offset``. With ``line_numbers``, prefixes
+        are 1-based from file start. Result may include ``[agloom:tool_result]`` with ``complete=``
+        and a ``next offset=`` hint when the file extends past this slice.
         """
         off = max(0, offset)
         lim = max(1, min(limit, max_read_bytes))
         ln = line_numbers
+        cap = line_cap if isinstance(line_cap, int) and line_cap > 0 else None
         try:
             p = resolve_safe_path(path, ctx)
         except ValueError as exc:
@@ -109,8 +115,21 @@ def make_filesystem_tools(ctx: SafetyContext, *, max_read_bytes: int = _DEFAULT_
             return f"[agloom:tool_result] complete=true\n(empty beyond offset {off}; file size {len(raw)} bytes)"
         chunk = raw[off : off + lim]
         text = chunk.decode("utf-8", errors="replace")
+        split_lines = text.splitlines()
+        line_trunc = False
+        if cap is not None and len(split_lines) > cap:
+            text = "\n".join(split_lines[:cap])
+            line_trunc = True
         done = off + len(chunk) >= len(raw)
         tail = "" if done else f"\n\n… truncated (next offset={off + len(chunk)}, total_bytes={len(raw)})"
+        if line_trunc:
+            assert cap is not None
+            cap_n = cap
+            tail = (
+                f"\n\n… output limited to first {cap_n} line(s) from this byte slice"
+                f" (raise ``limit`` if lines were cut off before line {cap_n + 1})"
+                + tail
+            )
         if ln:
             start_line = raw[:off].count(b"\n") + 1
             out_lines = []

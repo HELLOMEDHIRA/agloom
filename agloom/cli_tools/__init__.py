@@ -1,7 +1,8 @@
 """Built-in CLI/workspace tools (filesystem, shell, network, meta).
 
-Injected by ``create_agent(..., cli_tools=True|dict)``. User-defined tools with the same name
-replace these builtins (last-write wins merge — user overlay).
+Merged by name in ``create_agent(..., cli_tools=...)`` (user tools override builtins).
+When any builtin instance remains after merge, :data:`CLI_TOOLS_SYSTEM_APPENDIX` is appended
+to a string ``system_prompt`` only (callable prompts unchanged).
 """
 
 from __future__ import annotations
@@ -16,6 +17,12 @@ from .safety import SafetyContext
 from .shell import make_shell_tool, make_which_tools
 from .task import make_task_tools
 from .web import make_web_tools
+
+CLI_TOOLS_SYSTEM_APPENDIX = """
+
+=== Bundled workspace tools ===
+- For each tool you invoke, **parameter names, types, and units** are defined by that tool's own description (the schema bundled with the model). Follow those definitions — do not invent semantics from memory.
+"""
 
 CLI_TOOL_NAMES: frozenset[str] = frozenset(
     {

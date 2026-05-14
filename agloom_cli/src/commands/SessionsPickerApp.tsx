@@ -1,6 +1,4 @@
-/**
- * Full-screen session picker for ``agloom sessions`` — `@inkjs/ui` Select + keyboard cancel.
- */
+/** Session picker (`agloom sessions`): `@inkjs/ui` Select; Esc cancels. */
 
 import React from 'react'
 import { Box, Text, useInput, useApp } from 'ink'

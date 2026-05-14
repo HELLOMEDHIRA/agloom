@@ -189,6 +189,28 @@ def test_translate_token_with_empty_text_skipped() -> None:
     assert em.calls == []
 
 
+def test_translate_token_empty_output_falls_through_to_content() -> None:
+    em = _CaptureEmitter()
+    translate(
+        AgentEvent(type="token", data={"output": "", "content": "x"}),  # type: ignore[arg-type]
+        em,
+    )
+    assert em.calls == [
+        ("emit_token_delta", {"text": "x", "role": "assistant", "message_id": None}),
+    ]
+
+
+def test_translate_token_empty_text_falls_through_to_content() -> None:
+    em = _CaptureEmitter()
+    translate(
+        AgentEvent(type="token", data={"text": "", "content": "y"}),  # type: ignore[arg-type]
+        em,
+    )
+    assert em.calls == [
+        ("emit_token_delta", {"text": "y", "role": "assistant", "message_id": None}),
+    ]
+
+
 def test_translate_done_nested_result_direct_emits_output() -> None:
     em = _CaptureEmitter()
     translate(

@@ -1,7 +1,5 @@
 /**
- * First paint: credential preflight (fast fail), then workspace bootstrap (including optional
- * ``agsuperbrain init``), then ``bridge.start`` so AGP replay is buffered until {@link App}
- * mounts and subscribes.
+ * Boot: credential check → workspace bootstrap → `bridge.start` before {@link App} subscribes.
  */
 
 import React, { useEffect, useState } from 'react'

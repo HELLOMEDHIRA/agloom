@@ -1,4 +1,4 @@
-/** Merges `@inkjs/ui` defaults with Agloom light/dark palette hints. */
+/** Light mode: tweak `@inkjs/ui` defaults (e.g. ProgressBar). */
 
 import { defaultTheme, extendTheme, type Theme } from '@inkjs/ui'
 import type { AgloomTheme } from './themeContext.js'

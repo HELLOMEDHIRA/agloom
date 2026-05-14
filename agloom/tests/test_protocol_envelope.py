@@ -61,6 +61,13 @@ def test_envelope_protocol_version_pinned() -> None:
     assert PROTOCOL_VERSION == "1"
 
 
+def test_protocol_module_version_lazy_and_stable() -> None:
+    from agloom.protocol import envelope as env_mod
+
+    v1 = env_mod.PROTOCOL_MODULE_VERSION
+    v2 = env_mod.PROTOCOL_MODULE_VERSION
+    assert isinstance(v1, str) and len(v1) > 0
+    assert v1 == v2
 def test_envelope_default_fields_are_minted() -> None:
     """``id`` and ``ts`` should auto-populate; ``seq`` is required."""
     evt = SessionOpened(

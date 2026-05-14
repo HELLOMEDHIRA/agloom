@@ -61,6 +61,19 @@ def test_read_file_line_numbers_and_offset(tmp_path: Path) -> None:
     assert "|line2" in out  # ``cat -n`` style column
 
 
+def test_read_file_line_cap_trims_logical_lines(tmp_path: Path) -> None:
+    content = "\n".join(f"row{i}" for i in range(1, 31)) + "\n"
+    (tmp_path / "many.txt").write_text(content, encoding="utf-8")
+    rf = _tools(tmp_path)["read_file"]
+    out = rf.invoke(
+        {"path": "many.txt", "offset": 0, "limit": 8000, "line_numbers": True, "line_cap": 5},
+    )
+    assert "row1" in out
+    assert "row5" in out
+    assert "|row6" not in out
+    assert "limited to first 5" in out.lower()
+
+
 def test_write_file_requires_read_first(tmp_path: Path) -> None:
     (tmp_path / "w.txt").write_text("orig", encoding="utf-8")
     wf = _tools(tmp_path)["write_file"]

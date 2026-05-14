@@ -207,6 +207,7 @@ class SessionMemory:
     ) -> None:
         """Append one turn (async store). Summarize, trim, write, and hook — all under one lock."""
         async with self._turn_lock:
+            # Hold the lock through summarize + aput so concurrent aadd_turn(thread_id) cannot interleave.
             ns = self._ns(thread_id)
             key = "turns"
             try:

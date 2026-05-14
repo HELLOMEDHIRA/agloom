@@ -535,7 +535,7 @@ const { waitUntilExit, waitUntilRenderFlush } = render(
     value: themeUi,
     children: React.createElement(InkUiProvider, {
       children: React.createElement(BootstrapGate, {
-        bridge,
+    bridge,
         cwd,
         configPath: explicitAgloomYamlPath,
         runtimeArgs,
@@ -544,8 +544,8 @@ const { waitUntilExit, waitUntilRenderFlush } = render(
           return m
         })(),
         providerForPreflight: opts.provider ?? null,
-        initialThread: thread,
-        showDiag: opts.diag,
+    initialThread: thread,
+    showDiag: opts.diag,
         multiline: opts.multiline ?? true,
         historyFile: rawOpts.historyFile,
         cliSessionId: opts.session ?? undefined,

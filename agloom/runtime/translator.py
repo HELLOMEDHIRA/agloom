@@ -90,12 +90,17 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
         # Use raw value (not ``_str``) — token deltas MUST preserve leading/trailing whitespace
         # or the rendered stream loses word boundaries.
         # Production code (unified_agent.py, worker.py, patterns/react.py) uses "content";
-        # keep "output" and "text" as legacy fallbacks.
-        raw = data.get("output")
-        if raw is None:
-            raw = data.get("text")
-        if raw is None:
-            raw = data.get("content")
+        # keep "output" and "text" as legacy fallbacks. Treat empty string like absent so
+        # ``{"output": "", "content": "hi"}`` does not suppress ``content``.
+        raw: Any = None
+        for key in ("output", "text", "content"):
+            v = data.get(key)
+            if v is None:
+                continue
+            if isinstance(v, str) and v == "":
+                continue
+            raw = v
+            break
         if raw is None:
             return
         text = raw if isinstance(raw, str) else str(raw)

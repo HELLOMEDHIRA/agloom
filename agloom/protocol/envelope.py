@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _distribution_version
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -55,8 +55,17 @@ def _protocol_module_version() -> str:
     return "0.0.0+unknown"
 
 
-PROTOCOL_MODULE_VERSION = _protocol_module_version()
-"""Agloom package version (see :file:`pyproject.toml`). Distinct from :data:`PROTOCOL_VERSION` (wire ``v``)."""
+_protocol_module_version_cache: str | None = None
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy :data:`PROTOCOL_MODULE_VERSION` — avoids ``pyproject`` walk when only ``Envelope`` is imported."""
+    if name == "PROTOCOL_MODULE_VERSION":
+        global _protocol_module_version_cache
+        if _protocol_module_version_cache is None:
+            _protocol_module_version_cache = _protocol_module_version()
+        return _protocol_module_version_cache
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def new_event_id() -> str:

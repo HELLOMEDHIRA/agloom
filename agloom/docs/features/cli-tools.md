@@ -22,7 +22,7 @@ All keys are optional when using a dict (defaults match `cli_tools=True`):
 
 | Tool                                                         | Purpose                                                                            |
 | ------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `read_file(path, offset=0, limit=8000, line_numbers=True)`   | Read UTF-8 text; optional line prefixes; chunked via `offset`.                     |
+| `read_file(path, offset=0, limit=8000, line_numbers=True, line_cap=None)` | Read UTF-8 text; **`limit` = max bytes** (not lines). Optional **`line_cap`** trims to the first *N* logical lines after decoding the slice. Chunked via `offset`. |
 | `write_file(path, content, force=False)`                     | Write text; existing files require prior `read_file` in-session or `force=True`.   |
 | `edit_file(path, old_string, new_string, replace_all=False)` | First or all occurrences; atomic write.                                            |
 | `multi_edit(path, edits_json)`                               | Ordered JSON array of `{old_string, new_string, replace_all?}`; atomic on success. |

@@ -11,6 +11,8 @@ from langchain_core.messages import HumanMessage
 
 from ..hitl_contract import HITLEvent, call_user_callback
 from ..logging_utils import get_logger
+from .hitl_read_file_dedupe import ReadFileHitlDeduper
+from .hitl_tool_coalesce import CompositeToolHitlCoalescer
 
 logger = get_logger(__name__)
 
@@ -20,15 +22,7 @@ class UserAbort(Exception):
 
 
 class ReactUserTurnToolChoiceMiddleware(AgentMiddleware):
-    """Align LangChain agent ``tool_choice`` with conversation state for ReAct.
-
-    LangChain's ``create_agent`` defaults ``tool_choice=None`` on every model call. Providers
-    such as Groq then allow plain-text assistant turns that *look* like tool output, which
-    triggers ``tool_use_failed``. After a **HumanMessage** (user turn or retry nudge), set
-    ``tool_choice="required"`` so the model must emit a structured tool call when tools exist.
-    After **ToolMessage** / other turns, use ``tool_choice=None`` so the model can answer
-    with plain text.
-    """
+    """After a user ``HumanMessage``, force ``tool_choice`` so the model emits structured tool calls."""
 
     def __init__(
         self,
@@ -62,10 +56,7 @@ class ReactUserTurnToolChoiceMiddleware(AgentMiddleware):
 
 
 class HumanApprovalMiddleware(AgentMiddleware):
-    """
-    Intercepts tool calls inline in the ReAct loop for user approval.
-    'tools' in interrupt list = wildcard. Supports sync and async callbacks.
-    """
+    """Pause before listed tools; ``"tools"`` in the interrupt list matches all tool names."""
 
     def __init__(
         self,
@@ -78,15 +69,12 @@ class HumanApprovalMiddleware(AgentMiddleware):
         self.user_callback = user_callback
         self.agent_name = agent_name
         self.tool_allowlist = tool_allowlist
+        self._hitl_coalescer = CompositeToolHitlCoalescer([ReadFileHitlDeduper()])
 
     @staticmethod
     def _extract_tool_call(request: Any) -> tuple[str, dict[str, Any], str | None]:
-        """Pull ``(tool_name, args, tool_call_id)`` from a LangChain ``ToolCallRequest``.
+        """LangChain ``ToolCallRequest``: ``tool_call`` dict (>=1.x) or legacy ``name``/``args``/``tool_call_id``."""
 
-        Handles both LangChain >=1.x (``request.tool_call`` is a ``ToolCall`` dict with
-        ``{"name", "args", "id"}`` plus ``request.tool`` for the BaseTool) and older shapes
-        with flat ``request.name`` / ``request.args`` / ``request.tool_call_id``.
-        """
         tc = getattr(request, "tool_call", None)
         if isinstance(tc, dict):
             name = tc.get("name") or ""
@@ -118,14 +106,26 @@ class HumanApprovalMiddleware(AgentMiddleware):
 
         if should_pause and self.tool_allowlist is not None and tool_name in self.tool_allowlist:
             logger.event(f"{self.agent_name}[L2-HITL] Allowlisted — executing '{tool_name}' without prompt")
+            self._hitl_coalescer.record_approval(tool_name, tool_args)
             return await handler(request)
 
         if not should_pause:
             return await handler(request)
 
+        if self._hitl_coalescer.should_skip_hitl(tool_name, tool_args):
+            logger.event(
+                f"{self.agent_name}[L2-HITL] Skipping HITL — coalesced with a recent approval "
+                f"(tool-specific safe duplicate for `{tool_name}`)."
+            )
+            return await handler(request)
+
         logger.event(f"{self.agent_name}[L2-HITL] Pausing before tool '{tool_name}'")
 
-        tool_call_id = str(raw_id).strip() if raw_id is not None and str(raw_id).strip() else uuid.uuid4().hex
+        if raw_id is None:
+            tool_call_id = uuid.uuid4().hex
+        else:
+            s = raw_id if isinstance(raw_id, str) else str(raw_id)
+            tool_call_id = s.strip() or uuid.uuid4().hex
         payload: dict[str, Any] = {
             "tool_name": tool_name,
             "tool_call_id": tool_call_id,
@@ -136,8 +136,8 @@ class HumanApprovalMiddleware(AgentMiddleware):
                 f"Tool  : {tool_name}\n"
                 f"Args  : {tool_args}\n"
                 "\n"
-                "Each tool invocation is approved separately — approving an earlier call does not "
-                "auto-approve the next.\n"
+                "Each tool invocation is approved on its own unless the runtime detects a safe "
+                "duplicate of a call you already approved (logged when it happens).\n"
                 "In the agloom TUI: press Y = Accept, N = Reject, A = Allowlist (this tool name "
                 "for the rest of the session). Esc defaults to Reject."
             ),
@@ -161,11 +161,13 @@ class HumanApprovalMiddleware(AgentMiddleware):
         if decision_norm in ("allowlist", "a", "3"):
             if self.tool_allowlist is not None and tool_name and tool_name != "unknown_tool":
                 self.tool_allowlist.add(tool_name)
+            self._hitl_coalescer.record_approval(tool_name, tool_args)
             logger.event(
                 f"{self.agent_name}[L2-HITL] Allowlisted — executing '{tool_name}' "
                 f"(future calls skip prompt while allowlist is in effect)."
             )
             return await handler(request)
 
+        self._hitl_coalescer.record_approval(tool_name, tool_args)
         logger.event(f"{self.agent_name}[L2-HITL] Approved — executing '{tool_name}'.")
         return await handler(request)

@@ -1,7 +1,4 @@
-/** InputBar — primary message input (optional multiline compose buffer shown above).
- * **Paste with newlines (B1):** when not in explicit multiline mode, `App` passes `onChange` through `splitPastedMultilineWhenSingleLineMode` so bracketed paste opens the same queued-line + blank-Enter send flow (no `onPaste` here — the text input surfaces pastes as a single `onChange` with `\n` embedded).
- * Composer uses **`ink-text-input`** (controlled `value`); `@inkjs/ui` ``TextInput`` is uncontrolled (`defaultValue` only) and is not a drop-in.
- */
+/** Composer: multiline when `pendingLines`; paste/newlines handled in `App` via `onChange`. Uses `ink-text-input` (controlled); `@inkjs/ui` TextInput is uncontrolled. */
 
 import React from 'react'
 import { Box, Text } from 'ink'

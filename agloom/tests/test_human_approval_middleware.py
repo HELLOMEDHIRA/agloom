@@ -200,6 +200,96 @@ def test_awrap_tool_call_aborts_on_user_reject() -> None:
         asyncio.run(mw.awrap_tool_call(req, handler))
 
 
+def test_awrap_tool_call_read_file_second_smaller_limit_skips_second_hitl() -> None:
+    """Two read_file calls same path/offset; second limit <= first approved → one HITL only."""
+    calls: list[int] = []
+
+    async def callback(event: str, payload: Any) -> str:
+        calls.append(1)
+        return "accept"
+
+    mw = HumanApprovalMiddleware(
+        interrupt_before_tools=["tools"],
+        user_callback=callback,
+        agent_name="agent_coalesce",
+    )
+
+    async def handler(req: Any) -> str:
+        return "ok"
+
+    r1 = _make_request_v1(
+        "read_file",
+        {"path": "pyproject.toml", "offset": 0, "limit": 8000},
+        tool_call_id="a",
+    )
+    r2 = _make_request_v1(
+        "read_file",
+        {"path": "pyproject.toml", "offset": 0, "limit": 160},
+        tool_call_id="b",
+    )
+
+    async def run() -> None:
+        assert await mw.awrap_tool_call(r1, handler) == "ok"
+        assert await mw.awrap_tool_call(r2, handler) == "ok"
+
+    asyncio.run(run())
+    assert len(calls) == 1
+
+
+def test_awrap_tool_call_read_file_larger_limit_after_smaller_still_prompts() -> None:
+    calls: list[int] = []
+
+    async def callback(event: str, payload: Any) -> str:
+        calls.append(1)
+        return "accept"
+
+    mw = HumanApprovalMiddleware(
+        interrupt_before_tools=["tools"],
+        user_callback=callback,
+        agent_name="agent_two",
+    )
+
+    async def handler(req: Any) -> str:
+        return "ok"
+
+    r1 = _make_request_v1("read_file", {"path": "x.toml", "offset": 0, "limit": 200}, tool_call_id="1")
+    r2 = _make_request_v1("read_file", {"path": "x.toml", "offset": 0, "limit": 9000}, tool_call_id="2")
+
+    async def run() -> None:
+        assert await mw.awrap_tool_call(r1, handler) == "ok"
+        assert await mw.awrap_tool_call(r2, handler) == "ok"
+
+    asyncio.run(run())
+    assert len(calls) == 2
+
+
+def test_awrap_tool_call_read_file_different_path_no_coalesce() -> None:
+    calls: list[int] = []
+
+    async def callback(event: str, payload: Any) -> str:
+        calls.append(1)
+        return "accept"
+
+    mw = HumanApprovalMiddleware(
+        interrupt_before_tools=["tools"],
+        user_callback=callback,
+        agent_name="agent_paths",
+    )
+
+    async def handler(req: Any) -> str:
+        return "ok"
+
+    r1 = _make_request_v1("read_file", {"path": "a.toml", "limit": 5000}, tool_call_id="1")
+    r2 = _make_request_v1("read_file", {"path": "b.toml", "limit": 100}, tool_call_id="2")
+
+    async def run() -> None:
+        assert await mw.awrap_tool_call(r1, handler) == "ok"
+        assert await mw.awrap_tool_call(r2, handler) == "ok"
+
+    asyncio.run(run())
+    assert len(calls) == 2
+
+
 def test_awrap_tool_call_callback_failure_aborts_safely() -> None:
     """Callback errors → UserAbort (do NOT silently auto-approve)."""
 

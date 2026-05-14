@@ -8,7 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from langchain_core.tools import tool
 
-from agloom.cli_tools import CLI_TOOL_NAMES
+from agloom.cli_tools import CLI_TOOL_NAMES, CLI_TOOLS_SYSTEM_APPENDIX
+from agloom.models import DEFAULT_SYSTEM_PROMPT
 from agloom.unified_agent import create_agent
 
 
@@ -27,6 +28,37 @@ async def test_cli_tools_adds_builtin_names() -> None:
     assert "delete_file" in ibi
     assert "notebook_edit" in ibi
     assert agent.config.get("_cli_tools") is not None
+    sp = agent.config["system_prompt"]
+    assert isinstance(sp, str)
+    assert "Bundled workspace tools" in sp
+    assert DEFAULT_SYSTEM_PROMPT in sp
+    assert CLI_TOOLS_SYSTEM_APPENDIX.strip() in sp
+
+
+@pytest.mark.asyncio
+async def test_cli_tools_appendix_omitted_when_builtins_fully_replaced_by_name() -> None:
+    """If every built-in name is shadowed by user tools, do not claim bundled workspace tools."""
+    from unittest.mock import patch
+
+    from langchain_core.tools import StructuredTool
+
+    builtin = StructuredTool.from_function(lambda: "b", name="read_file", description="built")
+    user_tool = StructuredTool.from_function(lambda: "u", name="read_file", description="usr")
+
+    llm = MagicMock()
+    llm.ainvoke = AsyncMock(return_value=MagicMock())
+    with patch("agloom.cli_tools.get_cli_tools", return_value=[builtin]):
+        agent = await create_agent(model=llm, name="shadow-read", cli_tools=True, tools=[user_tool])
+    assert agent.config["system_prompt"] == DEFAULT_SYSTEM_PROMPT
+    assert "Bundled workspace tools" not in agent.config["system_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_cli_tools_disabled_leaves_default_system_prompt() -> None:
+    llm = MagicMock()
+    llm.ainvoke = AsyncMock(return_value=MagicMock())
+    agent = await create_agent(model=llm, name="no-cli", cli_tools=None)
+    assert agent.config["system_prompt"] == DEFAULT_SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio

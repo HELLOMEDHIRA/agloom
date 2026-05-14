@@ -1,4 +1,4 @@
-/** Wraps Ink subtrees that use `@inkjs/ui` (theme context + Agloom light/dark merge). */
+/** `@inkjs/ui` theme provider; merges light/dark from `useAgloomTheme`. */
 
 import React, { useMemo } from 'react'
 import { ThemeProvider as InkThemeProvider } from '@inkjs/ui'

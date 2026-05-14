@@ -16,7 +16,7 @@ overrides = [
 
 [[package]]
 name = "agloom"
-version = "0.1.77"
+version = "0.1.79"
 source = { editable = "." }
 dependencies = [
     { name = "agsuperbrain" },
