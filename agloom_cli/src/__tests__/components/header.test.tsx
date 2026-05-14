@@ -1,11 +1,11 @@
-/** Component tests: ``Header`` via Ink ``renderToString`` (no live TTY; Jest-safe). */
+/** Component tests: ``Header`` via ``renderToString`` (no live TTY; Jest-safe). */
 
 import React from 'react'
 import { renderToString } from 'ink'
 import { Header } from '../../components/Header.js'
 import { useSessionStore } from '../../store/session.js'
 
-describe('Header (Ink renderToString)', () => {
+describe('Header (renderToString)', () => {
   beforeEach(() => {
     useSessionStore.getState().reset()
   })

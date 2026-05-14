@@ -1,4 +1,4 @@
-/** Slash commands for the Ink CLI — `/help` output lines (also listed in README / docs). */
+/** Slash commands for the interactive CLI — `/help` output lines (also listed in README / docs). */
 
 /** Short hints keyed by command prefix (used by InputBar autocomplete overlay). */
 export const SLASH_HINTS: Record<string, string> = {

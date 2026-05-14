@@ -86,6 +86,8 @@ export interface AGPBridge {
  */
 export const createAGPBridge = (): AGPBridge => {
   const emitter = new EventEmitter()
+  /** Events from stdout before any ``event`` listener attaches (resume replay vs. TUI mount race). */
+  const eventPreBuffer: AGPEvent[] = []
   let proc: ChildProcess | null = null
   let buf = ''
   let status: BridgeStatus = 'starting'
@@ -93,6 +95,25 @@ export const createAGPBridge = (): AGPBridge => {
   let forceKillTimer: ReturnType<typeof setTimeout> | null = null
   /** Sync child teardown when the Node process exits; single hook avoids duplicate teardown. */
   let syncKillOrphanChild: (() => void) | null = null
+
+  const flushEventPreBuffer = (): void => {
+    if (eventPreBuffer.length === 0) return
+    const batch = eventPreBuffer.splice(0, eventPreBuffer.length)
+    for (const e of batch) {
+      emitter.emit('event', e)
+    }
+  }
+
+  const emitOrBufferAgpEvent = (evt: AGPEvent): void => {
+    if (evt.type === 'session.opened' || evt.type === 'session.resumed') {
+      status = 'ready'
+    }
+    if (emitter.listenerCount('event') > 0) {
+      emitter.emit('event', evt)
+    } else {
+      eventPreBuffer.push(evt)
+    }
+  }
 
   const clearForceKillTimer = (): void => {
     if (forceKillTimer) {
@@ -185,8 +206,7 @@ export const createAGPBridge = (): AGPBridge => {
         if (!trimmed) continue
         try {
           const evt = parseInboundAGPEventJSON(JSON.parse(trimmed))
-          emitter.emit('event', evt)
-          if (evt.type === 'session.opened') status = 'ready'
+          emitOrBufferAgpEvent(evt)
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e)
           const preview = trimmed.length > 160 ? `${trimmed.slice(0, 157)}…` : trimmed
@@ -298,11 +318,13 @@ export const createAGPBridge = (): AGPBridge => {
 
     on: ((event: string, listener: (...args: unknown[]) => void) => {
       emitter.on(event, listener)
+      if (event === 'event') flushEventPreBuffer()
       return bridgeRef.current!
     }) as AGPBridge['on'],
 
     once: ((event: string, listener: (...args: unknown[]) => void) => {
       emitter.once(event, listener)
+      if (event === 'event') flushEventPreBuffer()
       return bridgeRef.current!
     }) as AGPBridge['once'],
 

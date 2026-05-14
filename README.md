@@ -76,7 +76,7 @@ For the full feature tour, see **[What you get](https://agloom.readthedocs.io/_p
 
 ## agloom CLI & web workspace
 
-- **Terminal:** the **agloom CLI** (npm `agloom-cli`, repo **`agloom_cli/`**) is the terminal client — UI built with **Ink** and **React**. From that folder: `npm install` → `npm run build` → `npm start`. It talks to **`agloom-runtime`** over AGP (stdio by default). [CLI quick start](agloom_cli/docs/index.md)
+- **Terminal:** the **agloom CLI** (npm `agloom-cli`, repo **`agloom_cli/`**) is the terminal client — **React**-based UI. From that folder: `npm install` → `npm run build` → `npm start`. It talks to **`agloom-runtime`** over AGP (stdio by default). [CLI quick start](agloom_cli/docs/index.md)
 - **Browser:** **`agloom_web/`** is the Vite workspace for sessions and observability — same idea, run commands inside that folder.
 
 PyPI’s **`agloom`** package includes the library and **`agloom-runtime`**. The **`agloom`** command prints a short pointer to the **agloom CLI** (repo folder `agloom_cli/`) for backwards compatibility.

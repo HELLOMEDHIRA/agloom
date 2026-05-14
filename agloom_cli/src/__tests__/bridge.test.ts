@@ -165,6 +165,28 @@ describe('AGPBridge — NDJSON parsing', () => {
     mockStdoutEmitter.emit('data', `${full.slice(half)  }\n`)
     expect(events).toHaveLength(1)
   })
+
+  it('buffers stdout events until the first event listener, then delivers in order (resume replay race)', () => {
+    const bridge = newBridge()
+    const resumed = JSON.stringify({
+      ...env({ seq: 1, id: 'evt_resume_0000000000000001' }),
+      type: 'session.resumed',
+      data: { runtime_version: '0.1.0', protocol_version: '1' },
+    })
+    const userMsg = JSON.stringify({
+      ...env({ seq: 2, id: 'evt_user_00000000000000001' }),
+      type: 'message.user',
+      data: { content: 'prior turn' },
+    })
+
+    mockStdoutEmitter.emit('data', `${resumed  }\n${  userMsg  }\n`)
+    expect(bridge.status).toBe('ready')
+
+    const received: string[] = []
+    bridge.on('event', (e) => received.push(e.type))
+
+    expect(received).toEqual(['session.resumed', 'message.user'])
+  })
 })
 
 // command methods

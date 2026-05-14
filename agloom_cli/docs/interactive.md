@@ -1,6 +1,6 @@
 # Interactive UI (TUI)
 
-Running **`agloom`** without a one-shot prompt (and with stdin as a TTY) opens the **Ink** fullscreen UI. It renders AGP events as transcript cards, metrics, and optional diagnostics.
+Running **`agloom`** without a one-shot prompt (and with stdin as a TTY) opens the **fullscreen interactive UI**. It renders AGP events as transcript cards, metrics, and optional diagnostics.
 
 ## Layout
 

@@ -1,11 +1,11 @@
-/** Component tests: ``StatusBar`` via Ink ``renderToString``. */
+/** Component tests: ``StatusBar`` via ``renderToString`` (no live TTY; Jest-safe). */
 
 import React from 'react'
 import { renderToString } from 'ink'
 import { StatusBar } from '../../components/StatusBar.js'
 import { useSessionStore } from '../../store/session.js'
 
-describe('StatusBar (Ink renderToString)', () => {
+describe('StatusBar (renderToString)', () => {
   beforeEach(() => {
     useSessionStore.getState().reset()
   })

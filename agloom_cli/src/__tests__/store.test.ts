@@ -1,5 +1,5 @@
 /** Unit tests for the Zustand session store's `dispatch` reducer.
- * All AGP event branches are tested in isolation — no Ink rendering needed.
+ * All AGP event branches are tested in isolation — no TUI rendering needed.
  */
 
 import { useSessionStore } from '../store/session'

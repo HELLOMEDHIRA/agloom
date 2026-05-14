@@ -32,7 +32,7 @@ const STATUS_COLORS = {
   exited: 'gray',
 } as const
 
-type StatusInkColor = (typeof STATUS_COLORS)[keyof typeof STATUS_COLORS]
+type StatusBadgeColor = (typeof STATUS_COLORS)[keyof typeof STATUS_COLORS]
 
 interface Props {
   thread: string
@@ -53,7 +53,7 @@ export const StatusBar = ({ thread, layoutWidth }: Props): React.ReactElement =>
 
   const icon = STATUS_LABEL[status] ?? '●'
   const tag = STATUS_TAG[status] ?? status.toUpperCase()
-  let color: StatusInkColor | 'white' =
+  let color: StatusBadgeColor | 'white' =
     status in STATUS_COLORS ? STATUS_COLORS[status as keyof typeof STATUS_COLORS] : 'white'
   if (budgetUi === 'exhausted') color = 'red'
   else if (budgetUi === 'approaching') color = 'yellow'
@@ -79,7 +79,7 @@ export const StatusBar = ({ thread, layoutWidth }: Props): React.ReactElement =>
     }
   }, [openedAt])
   const uptimeSec =
-    openedAt != null ? ((nowMs - openedAt) / 1000).toFixed(1) : null
+    openedAt != null ? (Math.max(0, nowMs - openedAt) / 1000).toFixed(1) : null
 
   return (
     <Box

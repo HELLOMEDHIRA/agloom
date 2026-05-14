@@ -161,7 +161,7 @@ The terminal client (`agloom_cli/`, npm package **`agloom-cli`**) spawns **`aglo
 | `src/runtime/bridge.ts`      | `createAGPBridge()` — spawns `agloom-runtime`, parses NDJSON, typed `on`/`emit` via internal `EventEmitter`. |
 | `src/store/session.ts`       | Single zustand reducer: **`dispatch(AGPEvent)`** updates UI state + **Wire notes**.                          |
 | `src/hooks/useAGPStream.tsx` | Subscribes the bridge to the store (strict-mode safe).                                                       |
-| `src/components/*`           | Ink UI; slash commands are handled in `App.tsx`.                                                             |
+| `src/components/*`           | Interactive TUI (React); slash commands are handled in `App.tsx`.                                                             |
 
 ### Adding a new inbound event type
 
@@ -172,7 +172,7 @@ The terminal client (`agloom_cli/`, npm package **`agloom-cli`**) spawns **`aglo
 ### Tests (`agloom_cli/`)
 
 - **`npm test`** — `bridge.test.ts` (serialization, NDJSON framing) + `store.test.ts` (reducers).
-- Ink components are not rendered in CI; exercise logic via the store where possible.
+- TUI components are not rendered in CI; exercise logic via the store where possible.
 
 ### Build (`agloom_cli/`)
 

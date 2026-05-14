@@ -1,5 +1,5 @@
 /**
- * Ink / yoga-layout need native ESM (top-level await, import.meta). Run with:
+ * Terminal UI tests (yoga-layout) need native ESM (top-level await, import.meta). Run with:
  *   node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.ink.config.mjs
  */
 /** @type {import('jest').Config} */

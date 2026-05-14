@@ -23,9 +23,7 @@ def test_ensure_creates_yaml_and_sessions_dir(tmp_path: Path) -> None:
     assert dot_yml.is_file()
     assert not (tmp_path / "agloom.yaml").exists()
     assert "model:" in dot_yml.read_text(encoding="utf-8")
-    ptr = tmp_path / ".agloom" / "AGLOOM_CONFIG_PATH.txt"
-    assert ptr.is_file()
-    assert str(dot_yml.resolve()) in ptr.read_text(encoding="utf-8")
+    assert "agsuperbrain:mcp/agsuperbrain.yaml" in dot_yml.read_text(encoding="utf-8")
     assert (tmp_path / ".agloom" / "mcp" / "agsuperbrain.yaml").is_file()
     assert (tmp_path / ".agloom" / "rules" / "README.txt").is_file()
 
@@ -42,11 +40,25 @@ def test_migrate_root_only_yaml_into_dot_agloom(tmp_path: Path) -> None:
     nested = tmp_path / ".agloom" / "agloom.yaml"
     assert nested.is_file()
     assert "root-only" in nested.read_text(encoding="utf-8")
-    ptr = (tmp_path / ".agloom" / "AGLOOM_CONFIG_PATH.txt").read_text(encoding="utf-8")
-    assert str(nested.resolve()) in ptr
+    assert "agsuperbrain:mcp/agsuperbrain.yaml" in nested.read_text(encoding="utf-8")
     assert sessions_dir == tmp_path / ".agloom" / "sessions"
     _, created2 = ensure_agloom_workspace(tmp_path)
     assert created2 is False
+
+
+def test_ensure_adds_agsuperbrain_mcp_when_nested_yaml_has_none(tmp_path: Path) -> None:
+    import yaml as pyyaml
+
+    dot = tmp_path / ".agloom"
+    dot.mkdir(parents=True)
+    y = dot / "agloom.yaml"
+    y.write_text("ai:\n  name: t\n  model: auto\n", encoding="utf-8")
+    sessions_dir, created = ensure_agloom_workspace(tmp_path)
+    assert created is False
+    data = pyyaml.safe_load(y.read_text(encoding="utf-8"))
+    servers = (data.get("mcp") or {}).get("servers") or []
+    assert any(isinstance(x, str) and x.startswith("agsuperbrain:") for x in servers)
+    assert sessions_dir == tmp_path / ".agloom" / "sessions"
 
 
 def test_ensure_when_cwd_is_dot_agloom_dir(tmp_path: Path) -> None:

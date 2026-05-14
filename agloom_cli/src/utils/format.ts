@@ -111,7 +111,7 @@ export const renderMarkdown = (md: string, termWidth = 80): string => {
   return out
 }
 
-/** Produce a coloured status badge string (no Ink dependency). */
+/** Produce a coloured status badge string (ANSI only; no React / TUI dependency). */
 export const statusBadge = (status: string): string => {
   switch (status) {
     case 'running':

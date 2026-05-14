@@ -1,6 +1,6 @@
 # agloom CLI
 
-The **agloom CLI** (`npm install -g agloom-cli`) is a terminal client built with **Ink** and **React**. It speaks **AGP** (newline-delimited JSON) over stdio to **`agloom-runtime`** from the PyPI **`agloom`** package.
+The **agloom CLI** (`npm install -g agloom-cli`) is a terminal client with a **React**-based interactive UI. It speaks **AGP** (newline-delimited JSON) over stdio to **`agloom-runtime`** from the PyPI **`agloom`** package.
 
 ## Prerequisites
 

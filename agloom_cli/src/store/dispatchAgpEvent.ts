@@ -58,6 +58,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         sessionStartedAt: now,
         sessionUpdatedAt: now,
         status: 'idle',
+        outboundPrompt: null,
         toolCallExpandedById: {},
         budgetUi: 'ok',
         filesUpdated: [],
@@ -75,6 +76,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         sessionUpdatedAt: now,
         status: 'idle',
         activeTurn: null,
+        outboundPrompt: null,
         toolCallExpandedById: {},
         budgetUi: 'ok',
       }
@@ -87,6 +89,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         status: isError ? 'error' : 'idle',
         errorMessage: isError ? (evt.data.error ?? 'Unknown error') : null,
         activeTurn: null,
+        outboundPrompt: null,
       }
     }
 
@@ -259,6 +262,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         hitlQueue: [],
         status: 'running',
         errorMessage: null,
+        outboundPrompt: null,
         turnInputTokens: 0,
         turnOutputTokens: 0,
         toolCallExpandedById: {},
@@ -658,10 +662,10 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
       }
 
     case 'error.fatal':
-      return { ...s, status: 'error', errorMessage: evt.data.message }
+      return { ...s, status: 'error', errorMessage: evt.data.message, outboundPrompt: null }
 
     case 'error.transient':
-      return { ...s, errorMessage: evt.data.message }
+      return { ...s, errorMessage: evt.data.message, outboundPrompt: null }
 
     default:
       return s

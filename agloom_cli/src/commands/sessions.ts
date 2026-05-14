@@ -5,6 +5,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 interface SessionInfo {
   id: string
@@ -122,10 +123,10 @@ export const runSessionsCli = async(): Promise<number> => {
     const pick = sessions[n - 1]!
     process.stdout.write(`\n  Resuming session ${pick.id} (model: ${pick.model})...\n\n`)
 
-    // Launch agloom CLI with this session
+    // Launch agloom CLI with this session (file path: Windows-safe vs URL.pathname).
     const { spawnSync } = await import('node:child_process')
     const node = process.execPath
-    const cliEntry = new URL('../index.js', import.meta.url).pathname
+    const cliEntry = fileURLToPath(new URL('../index.js', import.meta.url))
     const args = [cliEntry, ...(pick.model !== '—' ? ['-m', pick.model] : []), '--session', pick.id]
     if (pick.thread !== '—') args.push('--thread', pick.thread)
     process.stdout.write(`  Starting: agloom ${args.slice(1).join(' ')}\n\n`)

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Entry: `agloom-runtime serve` over stdio; direct one-shot or Ink TUI. Pass-through: `agloom -- …`. */
+/** Entry: `agloom-runtime serve` over stdio; direct one-shot or interactive TUI. Pass-through: `agloom -- …`. */
 
 import { readFile } from 'node:fs/promises'
 import { createWriteStream, type WriteStream } from 'node:fs'
@@ -61,6 +61,8 @@ type CliOpts = {
   /** From ``--config`` (Commander); preferred over legacy ``configPath`` if both set. */
   config?: string
   configPath?: string
+  /** List sessions and pick one to resume (same as ``agloom sessions``). */
+  sessions?: boolean
   printConfig: boolean
   listProviders: boolean
   resolveModel?: string
@@ -138,7 +140,7 @@ const cliVersion = readCliPackageVersion()
 
 const program = new Command()
   .name('agloom')
-  .description('agloom CLI — AGP terminal client (Ink + React) or one-shot direct mode')
+  .description('agloom CLI — AGP terminal client (interactive UI or one-shot direct mode)')
 
 program
   .command('upgrade')
@@ -218,6 +220,7 @@ program
   .argument('[prompt]', 'one-shot prompt (enables direct mode when stdin is TTY)')
   .option('-t, --thread <id>', 'LangGraph thread id')
   .option('-s, --session <id>', 'AGP session id')
+  .option('--sessions', 'list past sessions and pick one to resume (same as agloom sessions)', false)
   .option(
     '--store <type>',
     'AGP EventStore (replay/resume): none | memory | sqlite (default: sqlite → disk replay)',
@@ -311,6 +314,17 @@ if (rawOpts.printConfig) {
   process.exit(0)
 }
 
+if (rawOpts.sessions) {
+  try {
+    const { runSessionsCli } = await import('./commands/sessions.js')
+    process.exit(await runSessionsCli())
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    process.stderr.write(`[agloom] sessions failed: ${msg}\n`)
+    process.exit(1)
+  }
+}
+
 const opts: CliOpts = {
   ...rawOpts,
   ...applyAgloomConfigLayers(program, rawOpts, cwd, explicitAgloomYamlPath),
@@ -331,7 +345,8 @@ const buildRuntimeArgs = (o: CliOpts): string[] => {
     parts.push('--store-path', o.storePath ?? '.agloom/agp_events.db')
   }
   if (o.session) parts.push('--session', o.session)
-  if (o.model) parts.push('--model', o.model)
+  const modelArg = typeof o.model === 'string' ? o.model.trim() : o.model != null ? String(o.model).trim() : ''
+  if (modelArg && modelArg.toLowerCase() !== 'auto') parts.push('--model', modelArg)
   if (o.provider) parts.push('--provider', o.provider)
   if (o.apiKeyEnv) parts.push('--api-key-env', o.apiKeyEnv)
   if (o.temperature !== undefined) parts.push('--temperature', String(o.temperature))
@@ -439,7 +454,9 @@ if (!opts.noBanner && !bannerEnvDisabled()) {
   process.stderr.write(`${formatBannerLine({ version: ver })}\n`)
 }
 
-const { waitUntilExit } = render(
+const useAltScreen = process.env['AGLOOM_NO_ALT_SCREEN'] !== '1'
+
+const { waitUntilExit, waitUntilRenderFlush } = render(
   React.createElement(ThemeProvider, {
     value: themeUi,
     children: React.createElement(App, {
@@ -450,7 +467,11 @@ const { waitUntilExit } = render(
       historyFile: rawOpts.historyFile,
     }),
   }),
-  { exitOnCtrlC: false },
+  {
+    exitOnCtrlC: false,
+    /** Restore prior terminal buffer on exit (vim-style); avoids TUI “ghost” above the shell prompt. */
+    alternateScreen: useAltScreen,
+  },
 )
 
 try {
@@ -458,5 +479,10 @@ try {
 } finally {
   captureStream?.end()
   if (bridge.status !== 'exited') bridge.kill()
-  process.exit(exitCode)
+  try {
+    await waitUntilRenderFlush()
+  } catch {
+    /* ignore — stream may already be closed */
+  }
 }
+process.exit(exitCode)

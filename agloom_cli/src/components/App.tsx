@@ -1,4 +1,4 @@
-/** Root Ink layout: AGP-driven state via `useSessionStore.dispatch`; completed turns use `<Static>`. */
+/** Root terminal UI layout: AGP-driven state via `useSessionStore.dispatch`; completed turns use `<Static>`. */
 
 import React, { useMemo, useState } from 'react'
 import { dirname, resolve } from 'node:path'
@@ -40,6 +40,8 @@ export const App = ({
   useAGPStream(bridge)
 
   const completedTurns = useSessionStore((s) => s.completedTurns)
+  const activeTurn = useSessionStore((s) => s.activeTurn)
+  const outboundPrompt = useSessionStore((s) => s.outboundPrompt)
   const hitlQueue = useSessionStore((s) => s.hitlQueue)
   const status = useSessionStore((s) => s.status)
   const errorMessage = useSessionStore((s) => s.errorMessage)
@@ -75,8 +77,10 @@ export const App = ({
   /** Multiline compose: explicit flag/env, or auto after pasting text with newlines. */
   const ml = multilineOpt || pasteCompose
 
-  const { columns } = useWindowSize()
+  const { columns, rows } = useWindowSize()
   const termWidth = columns ?? 80
+  /** Full-height layout when the terminal reports rows (flex transcript + bottom composer). */
+  const termHeight = rows != null && rows > 6 ? rows : undefined
 
   const SIDEBAR_WIDTH = 38
   /** Minimum terminal width before we split chat + metrics (≈44 cols chat + sidebar + gap). */
@@ -156,6 +160,7 @@ export const App = ({
     if (ml) {
       if (text === '' && pendingLines.length > 0) {
         const body = pendingLines.join('\n')
+        useSessionStore.setState({ outboundPrompt: body })
         bridge.invoke(body, thread)
         appendHistory(histPath, body)
         setHistRefresh((n) => n + 1)
@@ -173,6 +178,7 @@ export const App = ({
     }
 
     if (!trimmed) return
+    useSessionStore.setState({ outboundPrompt: trimmed })
     bridge.invoke(trimmed, thread)
     appendHistory(histPath, trimmed)
     setHistRefresh((n) => n + 1)
@@ -437,10 +443,11 @@ export const App = ({
   }
 
   return (
-    <Box flexDirection="row" width={termWidth}>
-      <Box flexDirection="column" width={mainColumnWidth}>
+    <Box flexDirection="row" width={termWidth} height={termHeight}>
+      <Box flexDirection="column" width={mainColumnWidth} height={termHeight}>
         <Header layoutWidth={mainColumnWidth} />
 
+        <Box flexDirection="column" flexGrow={1} minHeight={0} width={mainColumnWidth}>
         {slashHelpOpen && (
           <Box
             flexDirection="column"
@@ -505,24 +512,44 @@ export const App = ({
             ))}
           </Box>
         )}
+        </Box>
 
-        {status !== 'hitl' && (
-          <InputBar
-            value={input}
-            onChange={handleInputChange}
-            onSubmit={handleSubmit}
-            pendingLines={ml ? pendingLines : undefined}
-            onRecallPrev={recallPrev}
-            onRecallNext={recallNext}
-            suggestions={fuzzySuggestions}
-          />
+        {outboundPrompt && !activeTurn && (
+          <Box paddingX={1} flexDirection="row" flexWrap="wrap">
+            <Text>
+              <Text color="cyan" bold>
+                You
+              </Text>
+              <Text color="gray"> · </Text>
+              <Text dimColor>
+                {outboundPrompt.length > 2000 ? `${outboundPrompt.slice(0, 1997)}…` : outboundPrompt}
+              </Text>
+            </Text>
+          </Box>
         )}
 
-        <StatusBar thread={thread} layoutWidth={mainColumnWidth} />
+        {status !== 'hitl' && (
+          <Box flexShrink={0} flexDirection="column" width={mainColumnWidth}>
+            <InputBar
+              value={input}
+              onChange={handleInputChange}
+              onSubmit={handleSubmit}
+              pendingLines={ml ? pendingLines : undefined}
+              onRecallPrev={recallPrev}
+              onRecallNext={recallNext}
+              suggestions={fuzzySuggestions}
+              composerWidth={mainColumnWidth}
+            />
+          </Box>
+        )}
+
+        <Box flexShrink={0}>
+          <StatusBar thread={thread} layoutWidth={mainColumnWidth} />
+        </Box>
       </Box>
 
       {showMetricsSidebar && (
-        <Box marginLeft={1} flexDirection="column" width={SIDEBAR_WIDTH}>
+        <Box marginLeft={1} flexDirection="column" width={SIDEBAR_WIDTH} height={termHeight}>
           <MetricsPanel thread={thread} width={SIDEBAR_WIDTH} />
         </Box>
       )}

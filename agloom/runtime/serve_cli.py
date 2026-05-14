@@ -15,7 +15,7 @@ from agloom.llm import get_model, try_resolve_llm_from_api_keys
 from agloom.llm.llm_provider_params import normalize_provider_slug
 from agloom.llm.model_resolver import split_provider_prefix
 from agloom.llm.provider_registry import PROVIDER_ENV_KEYS
-from agloom.llm.sampling_presets import build_sampling_section_for_session_marker
+from agloom.llm.sampling_presets import build_sampling_section_for_session_marker, infer_provider_slug_from_args
 from agloom.mcp_support import MCPServerConfig
 from agloom.memory.session import SessionMemory
 from agloom.models import PatternType
@@ -149,8 +149,12 @@ def resolve_llm_for_serve(args: Namespace) -> Any | None:
     mt = getattr(args, "max_tokens", None)
     if mt is not None:
         kw["max_tokens"] = int(mt)
-    if model_id:
-        return get_model(model_id, provider=provider, **kw)
+    bu = getattr(args, "base_url", None)
+    if isinstance(bu, str) and bu.strip():
+        kw["base_url"] = bu.strip()
+    mid = (str(model_id).strip() if model_id is not None else "")
+    if mid and mid.lower() != "auto":
+        return get_model(mid, provider=provider, **kw)
     return try_resolve_llm_from_api_keys(interactive=False, **kw)
 
 
@@ -272,6 +276,35 @@ DEFAULT_SESSION_MAX_TURNS = 50
 """Aligned with starter ``agloom.yaml`` ``memory.max_turns`` and CLI defaults."""
 
 
+def _provider_credential_env_status(resolved_slug: str | None) -> list[dict[str, Any]]:
+    """Per-env presence for the resolved provider (no values)."""
+    if not resolved_slug:
+        return []
+    keys = PROVIDER_ENV_KEYS.get(resolved_slug)
+    if not keys:
+        return []
+    return [{"env": name, "present": bool((os.environ.get(name) or "").strip())} for name in keys]
+
+
+def _llm_endpoint_snapshot(args: Namespace) -> dict[str, Any]:
+    """Non-secret HTTP hints matching :mod:`agloom.llm.model_resolver` env conventions."""
+    out: dict[str, Any] = {}
+    bu = getattr(args, "base_url", None)
+    if isinstance(bu, str) and bu.strip():
+        out["base_url"] = bu.strip()
+    oll = os.environ.get("OLLAMA_BASE_URL") or os.environ.get("OLLAMA_HOST")
+    if oll:
+        oll_s = oll.strip()
+        if oll_s:
+            out["ollama_base_url_from_env"] = oll_s
+    compat = os.environ.get("VLLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
+    if compat:
+        compat_s = compat.strip()
+        if compat_s:
+            out["openai_compatible_base_url_from_env"] = compat_s
+    return out
+
+
 def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     """Serializable effective-config snapshot for ``.agloom/sessions/<id>.json`` (no secrets).
 
@@ -279,6 +312,13 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     ``--api-key-env`` name and whether that variable was non-empty at process start, plus
     memory / summarization flags so edited YAML on the next launch diffs clearly from older
     session markers.
+
+    ``provider`` is the explicit ``--provider`` CLI value only (often ``None``). Use
+    ``provider_resolved`` for the slug inferred from ``--provider`` or ``provider:`` model
+    prefix (same basis as ``sampling.provider_slug``). ``provider_credential_env`` lists
+    canonical env vars for that slug and whether each was non-empty at process start (keys
+    only, never values). ``api_key_env`` / ``api_key_env_nonempty`` refer solely to
+    ``--api-key-env`` when you remap a custom var into the provider's standard key.
     """
     api_env = getattr(args, "api_key_env", None)
     api_present = False
@@ -293,12 +333,15 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
         model_out = stripped if stripped else None
     elif raw_model:
         model_out = str(raw_model).strip() or None
+    resolved_slug = infer_provider_slug_from_args(args)
     eff: dict[str, Any] = {
         "model": model_out,
         "provider": getattr(args, "provider", None),
+        "provider_resolved": resolved_slug,
         "llm_resolution": "explicit_model" if model_out else "env_auto",
         "api_key_env": str(api_env) if api_env else None,
         "api_key_env_nonempty": api_present,
+        "provider_credential_env": _provider_credential_env_status(resolved_slug),
         "session_max_turns": sm_turns,
         "auto_summarize": bool(getattr(args, "auto_summarize", True)),
         "summarizer_model": getattr(args, "summarizer_model", None),
@@ -306,6 +349,9 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
         "memory_path": getattr(args, "memory_path", None),
         "no_memory": bool(getattr(args, "no_memory", False)),
     }
+    endpoint = _llm_endpoint_snapshot(args)
+    if endpoint:
+        eff["llm_endpoint"] = endpoint
     tx = getattr(args, "temperature", None)
     if tx is not None:
         eff["temperature"] = float(tx)

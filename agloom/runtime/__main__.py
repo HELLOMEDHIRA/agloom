@@ -355,6 +355,11 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         except ImportError as exc:
             emitter.emit_error(severity="transient", message=str(exc), stage="agent.bootstrap")
             raise
+        except ValueError as exc:
+            msg = str(exc)
+            _eprint(f"[agloom-runtime] {msg}")
+            emitter.emit_error(severity="fatal", message=msg, stage="agent.bootstrap")
+            raise RuntimeError(msg) from exc
         if llm is None:
             msg = (
                 "no provider key set (OPENAI_API_KEY / ANTHROPIC_API_KEY / GROQ_API_KEY / …), "
@@ -669,6 +674,14 @@ async def _dispatch_command(
                 "invalid or unresolved --model, or missing optional extras. "
                 "See stderr for earlier bootstrap errors; use an up-to-date agloom-cli so direct mode "
                 "prints AGP error.* lines on stderr."
+            )
+            emitter.emit_error(
+                severity="transient",
+                message=(
+                    "Invoke skipped — the agent never started (missing API keys, unresolved model, or extras). "
+                    "Check this terminal for [agloom-runtime] lines."
+                ),
+                stage="invoke.skipped",
             )
             return
         agent = resolved
@@ -1464,6 +1477,16 @@ def _add_serve_agent_flags(serve: argparse.ArgumentParser) -> None:
         default=None,
         metavar="VAR",
         help="Read the API key from this env var and map it to the provider's standard key (use with --provider or prefixed --model).",
+    )
+    serve.add_argument(
+        "--base-url",
+        dest="base_url",
+        default=None,
+        metavar="URL",
+        help=(
+            "HTTP origin for OpenAI-compatible, Ollama, vLLM, LiteLLM, etc. "
+            "(same as get_model base_url; also see OPENAI_BASE_URL / OLLAMA_BASE_URL / VLLM_BASE_URL)."
+        ),
     )
     serve.add_argument(
         "--temperature",

@@ -83,7 +83,8 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
   const autoApprovedTools = useSessionStore((s) => s.autoApprovedTools)
   const filesUpdated = useSessionStore((s) => s.filesUpdated)
 
-  const uptimeMs = sessionOpenedAtMs ? nowMs - sessionOpenedAtMs : 0
+  const uptimeMsRaw = sessionOpenedAtMs ? nowMs - sessionOpenedAtMs : 0
+  const uptimeMs = sessionOpenedAtMs ? Math.max(0, uptimeMsRaw) : 0
   const turnCount = completedTurns.length + (activeTurn ? 1 : 0)
   const innerW = Math.max(22, width - 2)
   const sid = sessionId ? shortenMiddle(sessionId, Math.min(28, width - 2)) : '—'

@@ -114,6 +114,8 @@ export interface SessionStore {
   // UI status
   status: 'idle' | 'running' | 'thinking' | 'hitl' | 'error' | 'exited'
   errorMessage: string | null
+  /** Last prompt sent to the runtime before `message.user` arrives (invoke ack / skipped invoke UX). */
+  outboundPrompt: string | null
 
   // Diagnostic lines from stderr (shown in a scrollable log if /diag is open)
   diagnostics: string[]
@@ -176,6 +178,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
   totalCostUsd: 0,
   status: 'idle',
   errorMessage: null,
+  outboundPrompt: null,
   diagnostics: [],
   toolCallExpandedById: {},
   budgetUi: 'ok',
@@ -238,6 +241,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
       totalCostUsd: 0,
       status: 'idle',
       errorMessage: null,
+      outboundPrompt: null,
       toolCallExpandedById: {},
       budgetUi: 'ok',
     })),

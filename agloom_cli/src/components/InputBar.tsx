@@ -1,5 +1,5 @@
 /** InputBar — primary message input (optional multiline compose buffer shown above).
- * **Paste with newlines (B1):** when not in explicit multiline mode, `App` passes `onChange` through `splitPastedMultilineWhenSingleLineMode` so bracketed paste opens the same queued-line + blank-Enter send flow (no `onPaste` here — the Ink text field surfaces pastes as a single `onChange` with `\n` embedded).
+ * **Paste with newlines (B1):** when not in explicit multiline mode, `App` passes `onChange` through `splitPastedMultilineWhenSingleLineMode` so bracketed paste opens the same queued-line + blank-Enter send flow (no `onPaste` here — the text input surfaces pastes as a single `onChange` with `\n` embedded).
  */
 
 import React from 'react'
@@ -21,6 +21,8 @@ interface Props {
   onRecallNext?: () => void
   /** Fuzzy matches from prompt history (non-slash input). */
   suggestions?: string[]
+  /** Match main column width so the composer spans the chat pane. */
+  composerWidth?: number
 }
 
 export const InputBar = ({
@@ -31,6 +33,7 @@ export const InputBar = ({
   onRecallPrev,
   onRecallNext,
   suggestions,
+  composerWidth,
 }: Props): React.ReactElement => {
   const theme = useAgloomTheme()
   const accent = theme === 'light' ? 'blue' : 'cyan'
@@ -55,7 +58,7 @@ export const InputBar = ({
   const ml = pendingLines !== undefined
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" width={composerWidth}>
       {errorMessage && status !== 'error' && (
         <Box marginX={1}>
           <Text color="red" dimColor>
@@ -103,10 +106,11 @@ export const InputBar = ({
         </Box>
       )}
 
-      <Box paddingX={1}>
+      <Box paddingX={1} flexDirection="row" width={composerWidth}>
         <Text bold color={isDisabled ? 'gray' : accent}>
           {'❯ '}
         </Text>
+        <Box flexGrow={1} minWidth={8}>
         {isDisabled ? (
           <Text color="gray" dimColor>
             {status === 'running' || status === 'thinking'
@@ -125,6 +129,7 @@ export const InputBar = ({
             }
           />
         )}
+        </Box>
       </Box>
     </Box>
   )

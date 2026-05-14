@@ -4,7 +4,8 @@
 
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
+import YAML from 'yaml'
 import { resolveAgloomProjectRoot } from './config.js'
 import { AGSUPERBRAIN_MCP_CONFIG_YAML } from './agsuperbrainMcpConfig.js'
 import { DEFAULT_AGLOOM_YAML } from './defaultAgloomTemplate.js'
@@ -77,11 +78,44 @@ const yamlForTemplate = (template?: string): string => {
   return DEFAULT_AGLOOM_YAML
 }
 
+const hasAgsuperbrainServerEntry = (servers: unknown[]): boolean =>
+  servers.some((s) => {
+    if (typeof s === 'string') return s.split(':')[0]?.trim().toLowerCase() === 'agsuperbrain'
+    if (s && typeof s === 'object' && 'name' in (s as Record<string, unknown>)) {
+      return String((s as { name: unknown }).name).trim().toLowerCase() === 'agsuperbrain'
+    }
+    return false
+  })
+
+/** Ensure nested project YAML lists the stdio Super-Brain MCP shim (``.agloom/mcp/agsuperbrain.yaml``). */
+export const ensureAgsuperbrainMcpInNestedYaml = (nestedYamlPath: string): void => {
+  if (!existsSync(nestedYamlPath)) return
+  try {
+    const raw = readFileSync(nestedYamlPath, 'utf8')
+    const doc = YAML.parse(raw)
+    if (doc == null || typeof doc !== 'object' || Array.isArray(doc)) return
+    const rec = doc as Record<string, unknown>
+    const mcpRaw = rec.mcp
+    const mcp = mcpRaw && typeof mcpRaw === 'object' && !Array.isArray(mcpRaw) ? { ...(mcpRaw as object) } : {}
+    const mcpRec = mcp as { servers?: unknown }
+    const servers = Array.isArray(mcpRec.servers) ? [...mcpRec.servers] : []
+    if (hasAgsuperbrainServerEntry(servers)) return
+    servers.push('agsuperbrain:mcp/agsuperbrain.yaml')
+    rec.mcp = { ...mcp, servers }
+    writeFileSync(nestedYamlPath, YAML.stringify(rec, { lineWidth: 120 }), 'utf8')
+    process.stderr.write(
+      '[agloom] Added default `mcp.servers` entry `agsuperbrain:mcp/agsuperbrain.yaml` (Super-Brain MCP).\n',
+    )
+  } catch {
+    process.stderr.write(
+      `[agloom] could not patch MCP in ${nestedYamlPath}; add agsuperbrain under mcp.servers manually.\n`,
+    )
+  }
+}
+
 /**
  * Create ``.agloom/{rules,skills,sessions}`` and, when needed, ``.agloom/agloom.yaml`` (starter or copy
  * from legacy root ``agloom.yaml``). Walk-up discovery prefers nested YAML over root when both exist.
- *
- * Writes ``.agloom/AGLOOM_CONFIG_PATH.txt`` with the path of the active YAML file.
  */
 export const ensureAgloomCliWorkspace = async(
   cwd: string,
@@ -121,13 +155,9 @@ export const ensureAgloomCliWorkspace = async(
     }
   }
 
-  const activeYaml = existsSync(nestedYaml)
-    ? resolve(nestedYaml)
-    : existsSync(rootYaml)
-      ? resolve(rootYaml)
-      : resolve(nestedYaml)
-  const pointerText = `Edit project settings (active YAML for this workspace):\n${activeYaml}\n`
-  writeFileSync(join(dot, 'AGLOOM_CONFIG_PATH.txt'), pointerText, 'utf8')
+  if (existsSync(nestedYaml)) {
+    ensureAgsuperbrainMcpInNestedYaml(nestedYaml)
+  }
 
   // Bootstrap agsuperbrain knowledge graph if not already initialized (same root Python uses).
   const agsuperbrainDir = join(projectRoot, '.agsuperbrain')

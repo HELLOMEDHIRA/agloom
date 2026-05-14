@@ -5,7 +5,7 @@ import { renderToString } from 'ink'
 import { CompletedTurnCard } from '../../components/CompletedTurnCard.js'
 import type { CompletedTurn } from '../../store/session.js'
 
-describe('CompletedTurnCard (Ink renderToString)', () => {
+describe('CompletedTurnCard (renderToString)', () => {
   const baseTurn: CompletedTurn = {
     id: 'ct_1',
     userMessage: 'Say hello in one word.',

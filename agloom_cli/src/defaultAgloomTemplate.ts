@@ -12,7 +12,7 @@ export const DEFAULT_AGLOOM_YAML = `# Agloom — https://github.com/HELLOMEDHIRA
 # Defaults you usually edit (restart reloads YAML; no code path overwrites your file):
 #   • model / ai.model          — provider:id (e.g. groq:meta-llama/llama-3.3-70b-versatile)
 #   • ai.system_prompt          — default persona (or top-level system_prompt: | …)
-#   • mcp.servers               — agsuperbrain points at .agloom/mcp/agsuperbrain.yaml (stdio MCP)
+#   • mcp.servers               — agsuperbrain → .agloom/mcp/agsuperbrain.yaml (stdio MCP; agsuperbrain CLI on PATH)
 #   • .agloom/rules/            — drop *.md / *.mdc rule files; optional rules.dir if you relocate
 
 ai:

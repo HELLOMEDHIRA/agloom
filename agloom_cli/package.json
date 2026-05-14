@@ -1,7 +1,7 @@
 {
   "name": "agloom-cli",
   "version": "0.1.1",
-  "description": "agloom CLI — terminal client for the agloom runtime (AGP, streaming-first; Ink + React)",
+  "description": "agloom CLI — terminal client for the agloom runtime (AGP, streaming-first; interactive TUI + direct mode)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

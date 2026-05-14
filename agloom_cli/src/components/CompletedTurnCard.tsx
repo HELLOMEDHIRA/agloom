@@ -1,5 +1,5 @@
 /** CompletedTurnCard — renders a finished conversation turn.
- * This component is always used inside Ink's <Static> wrapper, meaning it is written to the terminal once and never re-rendered. Keep it pure / side-effect free. Do NOT use hooks that cause re-renders (timers, subscriptions, etc.).
+ * This component is always used inside a terminal `<Static>` wrapper: it is written to the screen once and not live-updated. Keep it pure / side-effect free. Do NOT use hooks that cause re-renders (timers, subscriptions, etc.).
  */
 
 import React from 'react'
@@ -15,7 +15,7 @@ interface Props {
 }
 
 export const CompletedTurnCard = ({ turn }: Props): React.ReactElement => {
-  // Static renders outside the Ink tree so we read the terminal width directly.
+  // <Static> renders outside the live tree; read terminal width directly.
   const termWidth = process.stdout.columns ?? 80
   const mdResponse = renderMarkdown(turn.assistantMessage, termWidth - 4)
 

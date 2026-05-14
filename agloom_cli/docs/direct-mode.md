@@ -1,6 +1,6 @@
 # Direct mode
 
-Direct mode runs **one prompt** (or stdin), streams or buffers the answer, then exits. It uses the same **`agloom-runtime`** bridge as the TUI without fullscreen Ink.
+Direct mode runs **one prompt** (or stdin), streams or buffers the answer, then exits. It uses the same **`agloom-runtime`** bridge as the TUI without the fullscreen interactive UI.
 
 ## When it activates
 

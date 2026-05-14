@@ -1,6 +1,6 @@
 # agloom-cli
 
-Terminal client for **[agloom](https://github.com/HELLOMEDHIRA/agloom)** — **Ink** + **React** UI over the **AGP** protocol (NDJSON on stdio), driven by **`agloom-runtime`** from the PyPI `agloom` package.
+Terminal client for **[agloom](https://github.com/HELLOMEDHIRA/agloom)** — **React**-based interactive UI over the **AGP** protocol (NDJSON on stdio), driven by **`agloom-runtime`** from the PyPI `agloom` package.
 
 ## Install
 

@@ -163,7 +163,7 @@ async with await create_agent(model=llm, name="safe-agent") as agent:
 
 ## Interactive CLI (Alternative)
 
-The end-user CLI ships as the **Node** package **`agloom-cli`** (Ink TUI + direct mode). The `agloom` PyPI distribution exposes **`agloom-runtime`** and library APIs; it does **not** embed the Ink shell.
+The end-user CLI ships as the **Node** package **`agloom-cli`** (interactive TUI + direct mode). The `agloom` PyPI distribution exposes **`agloom-runtime`** and library APIs; it does **not** embed the Node-based shell.
 
 ```bash
 npm install -g agloom-cli
@@ -183,7 +183,7 @@ See the [CLI overview](../../../_packages/agloom_cli/index.md) (paths resolve af
 | Topic                     | Link                                                   |
 | ------------------------- | ------------------------------------------------------ |
 | Understand the 9 patterns | [Execution Patterns](../concepts/patterns.md)          |
-| CLI (Node / Ink)          | [CLI overview](../../../_packages/agloom_cli/index.md) |
+| CLI (Node / TUI)          | [CLI overview](../../../_packages/agloom_cli/index.md) |
 | Every parameter explained | [All Parameters](../configuration/parameters.md)       |
 | Add memory to your agent  | [Memory](../features/memory.md)                        |
 | Build streaming UIs       | [Streaming & Events](../features/streaming.md)         |

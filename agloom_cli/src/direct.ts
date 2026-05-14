@@ -1,4 +1,4 @@
-/** One-shot / piped execution mode — plain stdout (no Ink). */
+/** One-shot / piped execution mode — plain stdout (no interactive TUI). */
 
 import { createInterface } from 'node:readline/promises'
 import stripAnsi from 'strip-ansi'
@@ -171,12 +171,13 @@ export const runDirect = async(options: {
           let extra = ''
           const mi = runtimeArgs.indexOf('--model')
           const mid =
-            mi >= 0 && runtimeArgs[mi + 1] && typeof runtimeArgs[mi + 1] === 'string'
-              ? runtimeArgs[mi + 1]
-              : ''
+            mi >= 0 && runtimeArgs[mi + 1] != null ? String(runtimeArgs[mi + 1]) : ''
           if (mid.startsWith('nvidia:')) {
             extra =
               '[agloom] nvidia:… models need `NVIDIA_API_KEY` and the `agloom[nvidia]` extra; use `--json` to see `error.fatal` / `worker.failed` on stdout.\n'
+          } else if (!runtimeArgs.includes('--model')) {
+            extra =
+              '[agloom] no `--model` was sent (e.g. yaml `model: auto` with no override). Set a provider API key, `AGLOOM_MODEL`, or run `agloom -m provider:model-id`.\n'
           }
           process.stderr.write(
             '[agloom] no assistant output was produced. Check stderr for `[agloom-runtime]` lines, provider API keys, and model id; use `--json` to dump every AGP event.\n' +

@@ -19,6 +19,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 _DEFAULT_RULES_README = """Add rule files here (*.md, *.mdc). Set rules.dir in agloom.yaml to use another folder.
 """
 
@@ -30,13 +32,56 @@ args:
 timeout: 120.0
 """
 
+def _has_agsuperbrain_server(servers: object) -> bool:
+    if not isinstance(servers, list):
+        return False
+    for s in servers:
+        if isinstance(s, str):
+            if s.split(":", 1)[0].strip().lower() == "agsuperbrain":
+                return True
+        if isinstance(s, dict) and str(s.get("name", "")).strip().lower() == "agsuperbrain":
+            return True
+    return False
+
+
+def _ensure_agsuperbrain_mcp_in_nested_yaml(path: Path) -> None:
+    """If project YAML has no agsuperbrain MCP entry, add the stdio shim path (matches npm bootstrap)."""
+    if not path.is_file():
+        return
+    try:
+        raw = path.read_text(encoding="utf-8")
+        doc = yaml.safe_load(raw)
+        if not isinstance(doc, dict):
+            return
+        mcp = doc.get("mcp")
+        mcp_dict: dict[str, object] = dict(mcp) if isinstance(mcp, dict) else {}
+        servers = list(mcp_dict.get("servers") or []) if isinstance(mcp_dict.get("servers"), list) else []
+        if _has_agsuperbrain_server(servers):
+            return
+        servers.append("agsuperbrain:mcp/agsuperbrain.yaml")
+        mcp_dict["servers"] = servers
+        doc["mcp"] = mcp_dict
+        path.write_text(yaml.safe_dump(doc, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        print(
+            "[agloom-runtime] added default mcp.servers entry agsuperbrain:mcp/agsuperbrain.yaml",
+            file=sys.stderr,
+            flush=True,
+        )
+    except (OSError, yaml.YAMLError, TypeError, ValueError) as exc:
+        print(
+            f"[agloom-runtime] could not patch MCP in {path}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 DEFAULT_AGLOOM_YAML = """# Agloom — https://github.com/HELLOMEDHIRA/agloom
 # CLI merges layers (see agloom_cli/docs/config.md): ~/.agloom → walk-up → --config → flags.
 #
 # Defaults you usually edit (restart reloads YAML):
 #   • model / ai.model — provider:id
 #   • ai.system_prompt or top-level system_prompt
-#   • mcp.servers — agsuperbrain → .agloom/mcp/agsuperbrain.yaml
+#   • mcp.servers — agsuperbrain → .agloom/mcp/agsuperbrain.yaml (stdio MCP; `agsuperbrain` CLI on PATH for mcp-serve)
 #   • .agloom/rules/ — drop *.md / *.mdc files
 #
 # Merge is shallow per layer: a whole top-level `ai:` block replaces prior `ai` from earlier files.
@@ -201,7 +246,7 @@ def sessions_dir_for_runtime(cwd: Path | None = None, *, args: Any | None = None
 
 
 def ensure_agloom_workspace(cwd: Path | None = None, *, args: Any | None = None) -> tuple[Path, bool]:
-    """Scaffold ``.agloom/`` dirs and starter YAML when missing (tests / tooling; not used by serve).
+    """Scaffold ``.agloom/`` dirs and starter YAML when missing (also run from ``agloom-runtime serve`` stdio).
 
     When *args* is the runtime ``serve`` namespace, paths like ``--agent-store-path`` are used to
     locate ``<project>/.agloom`` even if the process ``cwd`` is not the project root (so starter
@@ -244,16 +289,8 @@ def ensure_agloom_workspace(cwd: Path | None = None, *, args: Any | None = None)
             nested_yaml.write_text(DEFAULT_AGLOOM_YAML, encoding="utf-8")
             created = True
 
-    active = (
-        nested_yaml
-        if nested_yaml.is_file()
-        else root_yaml if root_yaml.is_file() else nested_yaml
-    )
-    pointer = agloom_root / "AGLOOM_CONFIG_PATH.txt"
-    pointer.write_text(
-        f"Edit project settings (active YAML for this workspace):\n{active.resolve()}\n",
-        encoding="utf-8",
-    )
+    if nested_yaml.is_file():
+        _ensure_agsuperbrain_mcp_in_nested_yaml(nested_yaml)
 
     return sessions_dir, created
 

@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 
-import { ensureAgloomCliWorkspace } from '../workspaceBootstrap.js'
+import { ensureAgloomCliWorkspace, ensureAgsuperbrainMcpInNestedYaml } from '../workspaceBootstrap.js'
 
 describe('ensureAgloomCliWorkspace', () => {
   it('creates .agloom dirs and starter .agloom/agloom.yaml when missing', async () => {
@@ -15,10 +15,9 @@ describe('ensureAgloomCliWorkspace', () => {
     expect(existsSync(nestedCfg)).toBe(true)
     expect(existsSync(join(dir, 'agloom.yaml'))).toBe(false)
     expect(readFileSync(nestedCfg, 'utf8')).toContain('ai:')
+    expect(readFileSync(nestedCfg, 'utf8')).toContain('agsuperbrain:mcp/agsuperbrain.yaml')
     expect(existsSync(join(dir, '.agloom', 'mcp', 'agsuperbrain.yaml'))).toBe(true)
     expect(existsSync(join(dir, '.agloom', 'rules', 'README.txt'))).toBe(true)
-    expect(existsSync(join(dir, '.agloom', 'AGLOOM_CONFIG_PATH.txt'))).toBe(true)
-    expect(readFileSync(join(dir, '.agloom', 'AGLOOM_CONFIG_PATH.txt'), 'utf8')).toContain('.agloom')
     rmSync(dir, { recursive: true })
   })
 
@@ -45,9 +44,8 @@ describe('ensureAgloomCliWorkspace', () => {
     const { wroteYaml } = await ensureAgloomCliWorkspace(dir, { configPath: rootY })
     expect(wroteYaml).toBe(true)
     expect(readFileSync(nestedCfg, 'utf8')).toContain('from-root-only')
+    expect(readFileSync(nestedCfg, 'utf8')).toContain('agsuperbrain:mcp/agsuperbrain.yaml')
     expect(readFileSync(rootY, 'utf8')).toContain('from-root-only')
-    const ptr = readFileSync(join(dir, '.agloom', 'AGLOOM_CONFIG_PATH.txt'), 'utf8')
-    expect(ptr).toContain(resolve(nestedCfg))
     rmSync(dir, { recursive: true })
   })
 
@@ -60,6 +58,17 @@ describe('ensureAgloomCliWorkspace', () => {
     expect(wroteYaml).toBe(false)
     expect(existsSync(join(dir, 'agloom.yaml'))).toBe(false)
     expect(readFileSync(ny, 'utf8')).toContain('legacy-only')
+    rmSync(dir, { recursive: true })
+  })
+})
+
+describe('ensureAgsuperbrainMcpInNestedYaml', () => {
+  it('injects agsuperbrain shorthand when mcp.servers is missing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agloom-mcp-patch-'))
+    const p = join(dir, 'agloom.yaml')
+    writeFileSync(p, 'ai:\n  name: t\n  model: auto\n', 'utf8')
+    ensureAgsuperbrainMcpInNestedYaml(p)
+    expect(readFileSync(p, 'utf8')).toContain('agsuperbrain:mcp/agsuperbrain.yaml')
     rmSync(dir, { recursive: true })
   })
 })
