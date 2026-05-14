@@ -4,7 +4,7 @@ Running **`agloom`** without a one-shot prompt (and with stdin as a TTY) opens t
 
 ## Layout
 
-- **Main pane** — active turn (streaming assistant + tool traces) and completed turn history.
+- **Main pane** — active turn (streaming assistant + tool traces) and completed turn history; **composer** (message input) is pinned to the **bottom** of the main column with the status strip directly above it.
 - **Status bar** — session/thread hints, model label, token/cost summaries when available (from runtime metrics).
 - **Metrics sidebar** (`/stats`) — structured counters and **Wire notes** (one-line AGP highlights).
 - **Diagnostic pane** (`--diag` or `/diag`) — **`agloom-runtime` stderr** (Python logs), kept off stdout so AGP stays parseable.
@@ -12,6 +12,12 @@ Running **`agloom`** without a one-shot prompt (and with stdin as a TTY) opens t
 ## Banner
 
 On startup the CLI may print a compact **banner** to stderr (version line). Suppress with **`--no-banner`** or set **`AGLOOM_BANNER`** to `0` / `false`.
+
+## Startup
+
+Before the main transcript appears, the UI shows a **spinner** while the workspace is prepared (including optional first-time **Super-Brain** / `agsuperbrain init`). Then the CLI checks that **API credentials** exist for your configured model (via `agloom-runtime providers resolve`). If keys are missing, you get an in-terminal error instead of a silent failure later.
+
+- After exit, the CLI tries to **leave the alternate screen** and restore the cursor.
 
 ## Hotkeys & flow
 
@@ -43,7 +49,6 @@ Typed at the input bar. The list below matches what **`/help`** shows in the UI.
 | `/model`             | Show active model from runtime/metrics                 |
 | `/memory clear`      | Clear session memory for current thread                |
 | `/cost`              | Token/cost slice + recent metrics                      |
-| `/pattern <name>`    | Send `command.config.set` pattern                      |
 | `/temperature <n>`   | Set temperature via config                             |
 | `/system <text>`     | Inline system prompt update                            |
 | `/session list`      | List sessions (**requires `--store`** on runtime)      |

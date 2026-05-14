@@ -18,20 +18,6 @@ from agloom.llm.provider_registry import PROVIDER_ENV_KEYS
 from agloom.llm.sampling_presets import build_sampling_section_for_session_marker, infer_provider_slug_from_args
 from agloom.mcp_support import MCPServerConfig
 from agloom.memory.session import SessionMemory
-from agloom.models import PatternType
-
-PATTERN_ALIASES: dict[str, PatternType] = {
-    "react": PatternType.REACT,
-    "sequential": PatternType.PLANNER_EXECUTOR,
-    "pipeline": PatternType.PIPELINE,
-    "blackboard": PatternType.BLACKBOARD,
-    "reflection": PatternType.REFLECTION,
-    "hitl": PatternType.REACT,
-    "supervisor": PatternType.SUPERVISOR,
-    "swarm": PatternType.SWARM,
-    "direct": PatternType.DIRECT,
-}
-
 
 def cli_tools_options_from_args(args: Namespace) -> dict[str, Any] | None:
     """Builtin CLI tools bundle for :func:`agloom.create_agent` ``cli_tools=``."""
@@ -66,8 +52,6 @@ def merge_ws_connection_args(base: Namespace, request_path: str) -> Namespace:
         out.model = m
     if (p := pick("provider")) is not None:
         out.provider = p
-    if (pat := pick("pattern")) is not None:
-        out.pattern = pat
     if (t := pick("temperature")) is not None:
         try:
             out.temperature = float(t)
@@ -88,23 +72,25 @@ def merge_ws_connection_args(base: Namespace, request_path: str) -> Namespace:
             out.session_max_turns = int(sm)
         except ValueError:
             pass
+    if (mt := pick("max_tokens")) is not None:
+        try:
+            out.max_tokens = int(mt)
+        except ValueError:
+            pass
+    if (fp := pick("frequency_penalty")) is not None:
+        try:
+            out.frequency_penalty = float(fp)
+        except ValueError:
+            pass
+    if (pp := pick("presence_penalty")) is not None:
+        try:
+            out.presence_penalty = float(pp)
+        except ValueError:
+            pass
     sk = pick("skip_tool_approval")
     if sk is not None and sk.lower() in ("1", "true", "yes"):
         out.require_tool_approval = False
     return out
-
-
-def parse_pattern_name(raw: str | None) -> PatternType | None:
-    if not raw or not raw.strip():
-        return None
-    key = raw.strip().lower()
-    if key in PATTERN_ALIASES:
-        return PATTERN_ALIASES[key]
-    try:
-        return PatternType[key.upper()]
-    except KeyError as e:
-        choices = ", ".join(sorted(PATTERN_ALIASES))
-        raise ValueError(f"unknown pattern {raw!r}; try one of: {choices}") from e
 
 
 def apply_api_key_env(args: Namespace) -> None:
@@ -149,6 +135,12 @@ def resolve_llm_for_serve(args: Namespace) -> Any | None:
     mt = getattr(args, "max_tokens", None)
     if mt is not None:
         kw["max_tokens"] = int(mt)
+    fpen = getattr(args, "frequency_penalty", None)
+    if fpen is not None:
+        kw["frequency_penalty"] = float(fpen)
+    ppen = getattr(args, "presence_penalty", None)
+    if ppen is not None:
+        kw["presence_penalty"] = float(ppen)
     bu = getattr(args, "base_url", None)
     if isinstance(bu, str) and bu.strip():
         kw["base_url"] = bu.strip()
@@ -219,7 +211,16 @@ def memory_kwargs_from_args(args: Namespace) -> dict[str, Any]:
     if mt == "in-memory":
         from langgraph.store.memory import InMemoryStore
 
-        out["memory"] = SessionMemory(store=InMemoryStore())
+        _budget: int | None = None
+        raw_mt = getattr(args, "max_tokens", None)
+        if raw_mt is not None:
+            try:
+                n = int(raw_mt)
+                if n > 0:
+                    _budget = n
+            except (TypeError, ValueError):
+                pass
+        out["memory"] = SessionMemory(store=InMemoryStore(), summarize_max_tokens_budget=_budget)
         return out
     raise ValueError(f"unsupported --memory {mt!r} (try in-memory, none, sqlite)")
 
@@ -260,10 +261,20 @@ async def open_sqlite_session_memory(
     stack = AsyncExitStack()
     store = await stack.enter_async_context(AsyncSqliteStore.from_conn_string(conn))
     await store.setup()
+    mt = getattr(args, "max_tokens", None)
+    mt_budget: int | None = None
+    if mt is not None:
+        try:
+            n = int(mt)
+            if n > 0:
+                mt_budget = n
+        except (TypeError, ValueError):
+            pass
     sm = SessionMemory(
         store=store,
         max_turns=int(getattr(args, "session_max_turns", 50) or 50),
         auto_summarize=bool(getattr(args, "auto_summarize", True)),
+        summarize_max_tokens_budget=mt_budget,
     )
 
     async def cleanup() -> None:
@@ -274,6 +285,11 @@ async def open_sqlite_session_memory(
 
 DEFAULT_SESSION_MAX_TURNS = 50
 """Aligned with starter ``agloom.yaml`` ``memory.max_turns`` and CLI defaults."""
+
+# Always written under ``effective_config`` in ``.agloom/sessions/<id>.json`` (user-editable).
+SESSION_MARKER_DEFAULT_MAX_TOKENS = 8192
+SESSION_MARKER_DEFAULT_FREQUENCY_PENALTY = 0.0
+SESSION_MARKER_DEFAULT_PRESENCE_PENALTY = 0.0
 
 
 def _provider_credential_env_status(resolved_slug: str | None) -> list[dict[str, Any]]:
@@ -312,6 +328,11 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     ``--api-key-env`` name and whether that variable was non-empty at process start, plus
     memory / summarization flags so edited YAML on the next launch diffs clearly from older
     session markers.
+
+    ``effective_config`` always includes ``max_tokens``, ``frequency_penalty``, and
+    ``presence_penalty`` (defaults when omitted on the CLI); users may override via flags or
+    by editing the session JSON. Those values are passed to the provider only when set on the
+    CLI (or WebSocket query); defaults are marker documentation unless explicitly overridden.
 
     ``provider`` is the explicit ``--provider`` CLI value only (often ``None``). Use
     ``provider_resolved`` for the slug inferred from ``--provider`` or ``provider:`` model
@@ -361,6 +382,16 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     tk = getattr(args, "top_k", None)
     if tk is not None:
         eff["top_k"] = int(tk)
+    mt = getattr(args, "max_tokens", None)
+    eff["max_tokens"] = int(mt) if mt is not None else SESSION_MARKER_DEFAULT_MAX_TOKENS
+    fp = getattr(args, "frequency_penalty", None)
+    eff["frequency_penalty"] = (
+        float(fp) if fp is not None else SESSION_MARKER_DEFAULT_FREQUENCY_PENALTY
+    )
+    pp = getattr(args, "presence_penalty", None)
+    eff["presence_penalty"] = (
+        float(pp) if pp is not None else SESSION_MARKER_DEFAULT_PRESENCE_PENALTY
+    )
     eff["with_cli_tools"] = bool(getattr(args, "with_cli_tools", False))
     eff["require_tool_approval"] = bool(getattr(args, "require_tool_approval", True))
 
@@ -373,7 +404,6 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
 def build_create_agent_kwargs(args: Namespace) -> dict[str, Any]:
     """Non-model kwargs for :func:`agloom.create_agent` (merge after ``model=``)."""
     mk = memory_kwargs_from_args(args)
-    fp = parse_pattern_name(getattr(args, "pattern", None))
     mc = mcp_configs_from_args(args)
     sm = summarizer_model_from_args(args)
     sp = system_prompt_from_args(args)
@@ -391,8 +421,6 @@ def build_create_agent_kwargs(args: Namespace) -> dict[str, Any]:
         kwargs["summarizer_model"] = sm
     if sp is not None:
         kwargs["system_prompt"] = sp
-    if fp is not None:
-        kwargs["fallback_pattern"] = fp
     if getattr(args, "auto_summarize", True) is False:
         kwargs["auto_summarize"] = False
 

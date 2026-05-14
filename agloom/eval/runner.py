@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 
 from agloom import create_agent
-from agloom.runtime.serve_cli import apply_api_key_env, parse_pattern_name, resolve_llm_for_serve
+from agloom.runtime.serve_cli import apply_api_key_env, resolve_llm_for_serve
 
 
 async def _run_async(args: argparse.Namespace, path: Path) -> int:
@@ -25,8 +25,7 @@ async def _run_async(args: argparse.Namespace, path: Path) -> int:
         print("No LLM resolved: set API keys or pass --model.", file=sys.stderr)
         return 1
 
-    fb = parse_pattern_name(getattr(args, "pattern", None))
-    agent = await create_agent(model=llm, name="agloom-eval", fallback_pattern=fb)
+    agent = await create_agent(model=llm, name="agloom-eval")
 
     for i, case in enumerate(cases):
         if not isinstance(case, dict):

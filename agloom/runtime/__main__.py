@@ -270,6 +270,7 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         ensure_agloom_workspace,
         session_marker_json_path,
         write_session_started_json,
+        attach_session_memory_to_session_marker,
     )
 
     store = None
@@ -397,6 +398,7 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             raise
         agent.config["_hitl_tool_allowlist"] = _al_set
         agent_holder["agent"] = agent
+        attach_session_memory_to_session_marker(agent.config.get("memory"), _sd, session_id)
         _ct_en, _ct_ct = _runtime_cli_tool_metrics(agent)
         llm_obj = agent.config.get("llm")
         model_id_guess = None
@@ -987,8 +989,6 @@ async def _dispatch_command(
         try:
             from agloom.unified_agent import resolve_model, resolve_system_prompt
 
-            from .serve_cli import parse_pattern_name
-
             data = cmd.data
             if data.model_id:
                 agent.config["llm"] = resolve_model(data.model_id)
@@ -1003,8 +1003,6 @@ async def _dispatch_command(
                     agent.config["llm"] = llm.bind(**bind_kw)
             if data.system_prompt is not None:
                 agent.config["system_prompt"] = resolve_system_prompt(data.system_prompt)
-            if data.pattern is not None:
-                agent.config["fallback_pattern"] = parse_pattern_name(data.pattern)
         except Exception as exc:
             emitter.emit_error(severity="transient", message=str(exc), stage="config.set")
             return
@@ -1522,11 +1520,20 @@ def _add_serve_agent_flags(serve: argparse.ArgumentParser) -> None:
         help="Max output tokens when the provider supports it.",
     )
     serve.add_argument(
-        "--pattern",
-        dest="pattern",
+        "--frequency-penalty",
+        dest="frequency_penalty",
+        type=float,
         default=None,
-        metavar="NAME",
-        help="Bias routing via fallback_pattern (react, sequential, blackboard, reflection, hitl, …).",
+        metavar="F",
+        help="OpenAI-style frequency_penalty when the provider supports it.",
+    )
+    serve.add_argument(
+        "--presence-penalty",
+        dest="presence_penalty",
+        type=float,
+        default=None,
+        metavar="F",
+        help="OpenAI-style presence_penalty when the provider supports it.",
     )
     serve.add_argument(
         "--mcp",

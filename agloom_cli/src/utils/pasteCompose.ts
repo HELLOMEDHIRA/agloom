@@ -1,5 +1,5 @@
 /** Paste auto-detect for single-line compose (Tier 2 B1).
- * When `--multiline` / `AGLOOM_MULTILINE` is off, a single `onChange` can still deliver many lines (terminal bracketed paste or platform paste). Split into queued lines + tail for the current field so the existing multiline send path applies (`App.tsx` + blank Enter).
+ * When multiline compose is off, a single `onChange` can still deliver many lines (terminal bracketed paste or platform paste). Split into queued lines + tail for the current field so the existing multiline send path applies (`App.tsx` + blank Enter).
  */
 
 export interface PastedMultilineSplit {

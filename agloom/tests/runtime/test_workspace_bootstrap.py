@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from agloom.runtime.workspace_bootstrap import (
     ensure_agloom_workspace,
+    merge_session_marker_thread_turns,
     write_session_started_json,
 )
 
@@ -126,6 +127,26 @@ def test_session_json_roundtrip(tmp_path: Path) -> None:
     assert data["transport"] == "stdio"
     assert data["initial_thread"] == "thread_x"
     assert data["cwd"] == str(tmp_path.resolve())
+
+
+def test_write_session_started_json_preserves_conversation_from_disk(tmp_path: Path) -> None:
+    sd = tmp_path / ".agloom" / "sessions"
+    sd.mkdir(parents=True)
+    write_session_started_json(sd, "s1", transport="stdio", thread="t0", record_cwd=tmp_path)
+    merge_session_marker_thread_turns(
+        sd, "s1", thread_id="thread_a", turns=[{"q": "hi", "a": "yo", "p": "DIRECT"}]
+    )
+    write_session_started_json(
+        sd,
+        "s1",
+        transport="stdio",
+        thread="t0",
+        record_cwd=tmp_path,
+        extra={"effective_config": {"model": "openai:gpt-4o-mini"}},
+    )
+    data = json.loads((sd / "s1.json").read_text(encoding="utf-8"))
+    assert data["effective_config"]["model"] == "openai:gpt-4o-mini"
+    assert data["conversation"]["by_thread"]["thread_a"]["turns"][0]["q"] == "hi"
 
 
 def test_safe_filename_for_odd_session_id(tmp_path: Path) -> None:

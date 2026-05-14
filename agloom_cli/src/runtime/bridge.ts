@@ -37,7 +37,6 @@ export interface AGPBridge {
   configSet(data: {
     model_id?: string
     cli_tools?: Record<string, unknown>
-    pattern?: string
     temperature?: number
     system_prompt?: string
     budget_token_limit?: number | null
@@ -95,6 +94,8 @@ export const createAGPBridge = (): AGPBridge => {
   let forceKillTimer: ReturnType<typeof setTimeout> | null = null
   /** Sync child teardown when the Node process exits; single hook avoids duplicate teardown. */
   let syncKillOrphanChild: (() => void) | null = null
+  /** Prevent double ``start()`` (e.g. React Strict Mode re-running effects). */
+  let serveStarted = false
 
   const flushEventPreBuffer = (): void => {
     if (eventPreBuffer.length === 0) return
@@ -154,6 +155,10 @@ export const createAGPBridge = (): AGPBridge => {
   }
 
   const start = (extraArgs: string[] = [], options?: { transport?: 'stdio' }): void => {
+    if (serveStarted) {
+      return
+    }
+    serveStarted = true
     const cmd = process.env['AGLOOM_RUNTIME'] ?? 'agloom-runtime'
     const transport = options?.transport ?? 'stdio'
     const args = ['serve', `--transport=${transport}`, ...extraArgs]

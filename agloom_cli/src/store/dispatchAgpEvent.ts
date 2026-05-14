@@ -113,8 +113,18 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
     case 'runtime.ready': {
       const cli = evt.data.cli_tools_count != null ? ` · cli_tools=${evt.data.cli_tools_count}` : ''
       const harness = evt.data.harness_enabled != null ? ` · harness=${evt.data.harness_enabled ? 'on' : 'off'}` : ''
+      const nowIso = new Date().toISOString()
+      const fillClock =
+        s.sessionId != null && s.sessionId !== '' && (s.sessionOpenedAtMs == null || !s.sessionStartedAt)
+          ? {
+              sessionOpenedAtMs: s.sessionOpenedAtMs ?? Date.now(),
+              sessionStartedAt: s.sessionStartedAt ?? nowIso,
+              sessionUpdatedAt: s.sessionUpdatedAt ?? nowIso,
+            }
+          : {}
       return {
         ...s,
+        ...fillClock,
         cliToolsEnabled: evt.data.cli_tools_enabled ?? s.cliToolsEnabled,
         cliToolsCount: evt.data.cli_tools_count ?? s.cliToolsCount,
         harnessEnabled: evt.data.harness_enabled ?? s.harnessEnabled,

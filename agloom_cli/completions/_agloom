@@ -18,7 +18,6 @@ _arguments -S -s \
   '--api-key-env[Env var for API key]:env var:_parameters -g "*export*"' \
   '(-T --temperature)'{-T,--temperature}'[Sampling temperature]:temperature:' \
   '--max-tokens[Max output tokens]:tokens:' \
-  '--pattern[Routing pattern]:pattern:' \
   '--mcp[MCP server spec]:spec:' \
   '--system-prompt[System prompt text]:text:' \
   '--system-prompt-file[System prompt file]:file:_files' \
@@ -44,5 +43,4 @@ _arguments -S -s \
   '--print-config[Print merged config JSON and exit]' \
   '--list-providers[Print provider table and exit]' \
   '--resolve-model[Dry-run model resolution]:spec:' \
-  '--multiline[TUI: multiline compose]' \
   '--history-file[Prompt history JSON path]:file:_files'

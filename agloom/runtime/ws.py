@@ -167,6 +167,7 @@ async def _session_loop(
         session_started_snapshot_from_args,
     )
     from agloom.runtime.workspace_bootstrap import (
+        attach_session_memory_to_session_marker,
         bootstrap_optional_agsuperbrain,
         ensure_agloom_workspace,
         session_marker_json_path,
@@ -251,6 +252,7 @@ async def _session_loop(
         return
 
     agent.config["_hitl_tool_allowlist"] = _al_set
+    attach_session_memory_to_session_marker(agent.config.get("memory"), sd, session_id)
 
     budget_tracker = None
     if (budget_tokens is not None and budget_tokens > 0) or (
@@ -567,7 +569,6 @@ async def _session_loop(
 
                 elif isinstance(cmd, CommandConfigSet):
                     try:
-                        from agloom.runtime.serve_cli import parse_pattern_name
                         from agloom.unified_agent import resolve_model, resolve_system_prompt
 
                         data = cmd.data
@@ -584,8 +585,6 @@ async def _session_loop(
                                 agent.config["llm"] = llm.bind(**bind_kw)
                         if data.system_prompt is not None:
                             agent.config["system_prompt"] = resolve_system_prompt(data.system_prompt)
-                        if data.pattern is not None:
-                            agent.config["fallback_pattern"] = parse_pattern_name(data.pattern)
                     except Exception as exc:
                         emitter.emit_error(severity="transient", message=str(exc), stage="config.set")
                     else:

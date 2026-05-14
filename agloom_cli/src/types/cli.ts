@@ -19,7 +19,10 @@ export interface CoreCliOpts {
   topP?: number
   topK?: number
   maxTokens?: number
-  pattern?: string
+  frequencyPenalty?: number
+  presencePenalty?: number
+  /** TUI compose from merged YAML only; default true when omitted. */
+  multiline?: boolean
   mcp: string[]
   systemPrompt?: string
   systemPromptFile?: string

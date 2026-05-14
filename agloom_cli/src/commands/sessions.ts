@@ -1,79 +1,47 @@
 /**
- * ``agloom sessions`` — list past sessions and pick one to resume.
+ * ``agloom sessions`` — list past sessions in a terminal UI and pick one to resume.
  */
 
-import { readFileSync, readdirSync, existsSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import React from 'react'
+import { render } from 'ink'
+import { SessionsPickerApp } from './SessionsPickerApp.js'
+import { loadSessions, type SessionInfo } from './sessionsLoad.js'
+import { resetTerminalForShell } from '../utils/terminalReset.js'
 
-interface SessionInfo {
-  id: string
-  startedAt: string
-  model: string
-  provider: string
-  thread: string
-  turns: number
-  transport: string
-}
+export type { SessionInfo } from './sessionsLoad.js'
+export { loadSessions } from './sessionsLoad.js'
 
-const findSessionsDirs = (): string[] => {
-  const candidates: string[] = []
-  const cwd = process.cwd()
-  const dot = join(cwd, '.agloom', 'sessions')
-  if (existsSync(dot)) candidates.push(dot)
-  const home = join(homedir(), '.agloom', 'sessions')
-  if (existsSync(home) && home !== dot) candidates.push(home)
-  return candidates
-}
-
-const loadSessions = (): SessionInfo[] => {
-  const sessions: SessionInfo[] = []
-  for (const dir of findSessionsDirs()) {
-    let entries: string[]
-    try { entries = readdirSync(dir) } catch { continue }
-    for (const f of entries) {
-      if (!f.endsWith('.json')) continue
-      try {
-        const raw = readFileSync(join(dir, f), 'utf8')
-        const d = JSON.parse(raw) as Record<string, unknown>
-        if (!d.session_id) continue
-        sessions.push({
-          id: String(d.session_id),
-          startedAt: String(d.started_at ?? ''),
-          model: String(d.model ?? '—'),
-          provider: String(d.provider ?? '—'),
-          thread: String(d.initial_thread ?? '—'),
-          turns: typeof d.turns === 'number' ? d.turns : 0,
-          transport: String(d.transport ?? 'stdio'),
-        })
-      } catch {
-        // skip unparseable files
-      }
-    }
+/** Resolve the CLI script path for spawning a nested ``agloom`` (no ``import.meta`` — Jest-safe). */
+const resolveCliEntryForSpawn = (): string => {
+  const a1 = process.argv[1]
+  if (!a1) {
+    throw new Error(
+      'Cannot locate agloom CLI entry (process.argv[1] is empty). Reinstall agloom-cli or run via `node path/to/index.js`.',
+    )
   }
-  sessions.sort((a, b) => b.startedAt.localeCompare(a.startedAt))
-  return sessions
-}
-
-const fmtDate = (iso: string): string => {
-  if (!iso || iso === '—') return '—'
-  try {
-    const d = new Date(iso)
-    return d.toLocaleDateString('en-US', {
-      month: 'short', day: 'numeric',
-      hour: '2-digit', minute: '2-digit',
-    })
-  } catch {
-    return iso.slice(0, 16)
+  const p = resolve(a1)
+  if (!existsSync(p)) {
+    throw new Error(`Cannot locate agloom CLI entry at ${p}. Reinstall agloom-cli.`)
   }
+  return p
 }
 
-const trunc = (s: string, n: number): string => {
-  return s.length <= n ? s : s.slice(0, n - 1) + '…'
+const buildResumeArgv = (pick: SessionInfo): string[] => {
+  const args: string[] = []
+  if (pick.model && pick.model !== '—') {
+    args.push('-m', pick.model)
+  }
+  args.push('--session', pick.id)
+  if (pick.thread && pick.thread !== '—') {
+    args.push('--thread', pick.thread)
+  }
+  return args
 }
 
-export const runSessionsCli = async(): Promise<number> => {
+export const runSessionsCli = async (): Promise<number> => {
   const sessions = loadSessions()
 
   if (sessions.length === 0) {
@@ -82,57 +50,51 @@ export const runSessionsCli = async(): Promise<number> => {
     return 0
   }
 
-  // ── Table header ──────────────────────────────────────────────────────
-  const rows: string[] = []
-  const hdr = `  ${'#'.padEnd(3)} ${'Session ID'.padEnd(24)} ${'Started'.padEnd(16)} ${'Model'.padEnd(22)} ${'Turns'}`
-  rows.push(hdr)
-  rows.push('  ' + '─'.repeat(hdr.length - 2))
-
-  for (let i = 0; i < sessions.length; i++) {
-    const s = sessions[i]!
-    const idx = String(i + 1).padEnd(3)
-    const sid = trunc(s.id, 22).padEnd(24)
-    const date = fmtDate(s.startedAt).padEnd(16)
-    const mdl = trunc(s.model, 20).padEnd(22)
-    const turns = String(s.turns).padStart(5)
-    rows.push(`  ${idx} ${sid} ${date} ${mdl} ${turns}`)
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    process.stderr.write('[agloom] sessions: a TTY is required for the picker (use an interactive terminal).\n')
+    sessions.slice(0, 20).forEach((s, idx) => {
+      process.stdout.write(`${idx + 1}. ${s.id}  ${s.startedAt}\n`)
+    })
+    return 1
   }
 
-  process.stdout.write('\n')
-  process.stdout.write('  ╔════════════════════════════════════════════════════════════════════════════╗\n')
-  process.stdout.write('  ║                          Past Sessions                                  ║\n')
-  process.stdout.write('  ╚════════════════════════════════════════════════════════════════════════════╝\n')
-  process.stdout.write('\n')
-  process.stdout.write(rows.join('\n') + '\n')
-  process.stdout.write('\n')
+  let chosen: SessionInfo | null = null
+  const cliEntry = resolveCliEntryForSpawn()
 
-  // ── Prompt user to pick one ───────────────────────────────────────────
-  const rl = (await import('node:readline/promises')).createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  })
+  const ink = render(
+    React.createElement(SessionsPickerApp, {
+      sessions,
+      onChosen: (row) => {
+        chosen = row
+      },
+    }),
+    {
+      exitOnCtrlC: true,
+      alternateScreen: true,
+      patchConsole: false,
+    },
+  )
 
   try {
-    const ans = await rl.question('  Enter session number to resume (or blank to exit): ')
-    const n = parseInt(ans.trim(), 10)
-    if (isNaN(n) || n < 1 || n > sessions.length) {
-      process.stdout.write('  No session selected.\n')
-      return 0
-    }
-
-    const pick = sessions[n - 1]!
-    process.stdout.write(`\n  Resuming session ${pick.id} (model: ${pick.model})...\n\n`)
-
-    // Launch agloom CLI with this session (file path: Windows-safe vs URL.pathname).
-    const { spawnSync } = await import('node:child_process')
-    const node = process.execPath
-    const cliEntry = fileURLToPath(new URL('../index.js', import.meta.url))
-    const args = [cliEntry, ...(pick.model !== '—' ? ['-m', pick.model] : []), '--session', pick.id]
-    if (pick.thread !== '—') args.push('--thread', pick.thread)
-    process.stdout.write(`  Starting: agloom ${args.slice(1).join(' ')}\n\n`)
-    const r = spawnSync(node, args, { stdio: 'inherit', shell: false })
-    return r.status === null ? 1 : r.status
+    await ink.waitUntilExit()
   } finally {
-    rl.close()
+    try {
+      await ink.waitUntilRenderFlush()
+    } catch {
+      /* ignore */
+    }
+    resetTerminalForShell()
   }
+
+  if (chosen === null) {
+    process.stdout.write('\nNo session selected.\n')
+    return 0
+  }
+
+  const pick: SessionInfo = chosen
+  process.stderr.write(`\nResuming session ${pick.id} …\n\n`)
+
+  const argv = buildResumeArgv(pick)
+  const r = spawnSync(process.execPath, [cliEntry, ...argv], { stdio: 'inherit', shell: false })
+  return r.status === null ? 1 : r.status
 }

@@ -9,7 +9,7 @@ Optional YAML layers configure defaults without long command lines. **Precedence
 3. **Walk-up** `./agloom.yaml` from the current working directory (nearest wins toward disk root)  
 4. **`AGLOOM_*`** environment variables (see below)  
 5. **`--config /path/to/agloom.yaml`** explicit file  
-6. **CLI flags** (highest)
+6. **Other CLI flags** (highest) — except **`multiline`**, which is **YAML-only** (TUI compose). Execution routing pattern is **not** user-configurable; the runtime classifier selects it.
 
 ### Supported keys
 
@@ -21,7 +21,7 @@ Validated fields (unknown keys are preserved via passthrough for forward compati
 | `provider`           | string   | Default `--provider`                              |          |                |
 | `temperature`        | number   | Sampling temperature                              |          |                |
 | `max_tokens`         | integer  | Max output tokens                                 |          |                |
-| `pattern`            | string   | Routing pattern name                              |          |                |
+| `multiline`          | boolean  | TUI compose: `true` = blank Enter sends (default **true** if omitted); `false` = single-line |
 | `system_prompt`      | string   | Inline system prompt                              |          |                |
 | `system_prompt_file` | string   | Path to prompt file                               |          |                |
 | `store`              | `none` \ | `memory` \                                        | `sqlite` | AGP EventStore |
@@ -49,7 +49,6 @@ temperature: 0
 model: openai:gpt-4o
 provider: openai
 temperature: 0.2
-pattern: react
 store: sqlite
 store_path: .agloom/agp_events.db
 memory: sqlite
@@ -74,7 +73,6 @@ Relative MCP paths resolve against the YAML file’s directory.
 | `AGLOOM_RUNTIME`  | Override executable for Python bridge (default: `agloom-runtime` on `PATH`). |
 | `AGLOOM_MODEL`    | Default model id (wired where runtime honors env).                           |
 | `AGLOOM_PROVIDER` | Default provider slug for unprefixed / ambiguous ids (Python resolver).      |
-| `AGLOOM_PATTERN`  | Default routing pattern name.                                                |
 | `AGLOOM_BANNER`   | Set `0` / `false` to suppress the stderr startup banner.                     |
 
 ### Per-provider API keys (curated)

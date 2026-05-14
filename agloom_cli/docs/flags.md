@@ -26,9 +26,10 @@ agloom --help
 | `--api-key-env <VAR>`         | `--api-key-env MYKEY`    | Map secret from `VAR` to the provider’s standard env key. |
 | `-T, --temperature <n>`       | `-T 0.2`                 | Sampling temperature.                                     |
 | `--max-tokens <n>`            |                          | Max output tokens when supported.                         |
-| `--pattern <name>`            | `--pattern react`        | Routing bias (`react`, `sequential`, …).                  |
 | `--system-prompt <text>`      |                          | Inline system prompt.                                     |
 | `--system-prompt-file <path>` |                          | System prompt from UTF-8 file.                            |
+
+TUI **`multiline`** is not a CLI flag — set it in **`agloom.yaml`** (see [Config](config.md)). Execution routing is chosen by the runtime; it is **not** overridable from YAML, flags, or slash commands.
 
 ## Provider discovery
 
@@ -108,7 +109,8 @@ Shows resolved model, store, MCP specs, and which YAML files contributed.
 | Command | Action |
 | --- | --- |
 | `agloom init` | Scaffold `.agloom/` directory and starter YAML. |
-| `agloom sessions` | List past sessions with model/date/turns table and pick one to resume. |
+| `agloom sessions` | Open an **interactive picker** (arrow keys, Enter) to choose a past session and resume it. |
+| `--list-sessions` | Same picker from the default command: `agloom --list-sessions` (also accepts legacy `--sessions`). |
 | `agloom clean` | Remove `.agloom/`, `.agsuperbrain/`, `agloom-progress.json`, and prune related lines from `.gitignore` (does **not** delete `agloom.yaml`). |
 | `agloom upgrade` | Compare installed versions against npm/PyPI latest. |
 | `agloom eval` | Forward to `agloom-runtime eval` for evaluation runs. |

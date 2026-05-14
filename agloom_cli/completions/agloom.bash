@@ -15,7 +15,7 @@ _agloom() {
     --store --store-path --diag
     --no-cli-tools --no-shell-tool --no-network-tools --unrestricted
     -m --model --provider --api-key-env
-    -T --temperature --max-tokens --pattern
+    -T --temperature --max-tokens
     --mcp --system-prompt --system-prompt-file
     --no-memory --memory --memory-path
     --no-skills --skills-dir --summarizer-model --no-auto-summarize
@@ -24,7 +24,7 @@ _agloom() {
     --auto-approve --auto-reject --hitl-tty
     --config --print-config
     --list-providers --resolve-model
-    --multiline --history-file
+    --history-file
   "
 
   mapfile -t COMPREPLY < <(compgen -W "${opts}" -- "${cur}")

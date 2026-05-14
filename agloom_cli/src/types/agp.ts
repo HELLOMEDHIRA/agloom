@@ -657,7 +657,6 @@ export interface CommandConfigSetCmd {
   data: {
     model_id?: string
     cli_tools?: Record<string, unknown>
-    pattern?: string
     temperature?: number
     top_p?: number
     system_prompt?: string

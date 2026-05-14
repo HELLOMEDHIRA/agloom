@@ -1,6 +1,6 @@
 /** Root terminal UI layout: AGP-driven state via `useSessionStore.dispatch`; completed turns use `<Static>`. */
 
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { dirname, resolve } from 'node:path'
 import { Box, Text, Static, useApp, useInput, useWindowSize } from 'ink'
 import { Header } from './Header.js'
@@ -27,17 +27,28 @@ interface AppProps {
   multiline?: boolean
   /** Prompt history JSON path (default ~/.agloom/history.json). */
   historyFile?: string
+  /** When resuming, CLI ``--session`` id (shown until ``session.opened`` / ``session.resumed`` arrives). */
+  cliSessionId?: string | null
 }
 
 export const App = ({
   bridge,
   initialThread,
   showDiag = false,
-  multiline = false,
+  multiline = true,
   historyFile,
+  cliSessionId,
 }: AppProps): React.ReactElement => {
   const { exit } = useApp()
   useAGPStream(bridge)
+
+  useEffect(() => {
+    if (!cliSessionId?.trim()) return
+    useSessionStore.setState((s) => ({
+      ...s,
+      sessionId: s.sessionId ?? cliSessionId.trim(),
+    }))
+  }, [cliSessionId])
 
   const completedTurns = useSessionStore((s) => s.completedTurns)
   const activeTurn = useSessionStore((s) => s.activeTurn)
@@ -70,17 +81,16 @@ export const App = ({
     [input, histLines],
   )
 
-  const multilineOpt =
-    multiline ||
-    (typeof process.env['AGLOOM_MULTILINE'] === 'string' &&
-      ['1', 'true', 'yes'].includes(process.env['AGLOOM_MULTILINE'].toLowerCase()))
-  /** Multiline compose: explicit flag/env, or auto after pasting text with newlines. */
+  const multilineOpt = multiline
+  /** Multiline compose from ``agloom.yaml`` ``multiline`` (default true), or auto after pasting newlines when false. */
   const ml = multilineOpt || pasteCompose
 
   const { columns, rows } = useWindowSize()
   const termWidth = columns ?? 80
-  /** Full-height layout when the terminal reports rows (flex transcript + bottom composer). */
-  const termHeight = rows != null && rows > 6 ? rows : undefined
+  /** Prefer Ink-reported rows; fall back to TTY rows so the composer stays at the physical bottom in narrow hosts. */
+  const ttyRows =
+    typeof process.stdout.rows === 'number' && process.stdout.rows > 4 ? process.stdout.rows : 24
+  const termHeight = rows != null && rows > 6 ? rows : ttyRows
 
   const SIDEBAR_WIDTH = 38
   /** Minimum terminal width before we split chat + metrics (≈44 cols chat + sidebar + gap). */
@@ -402,12 +412,6 @@ export const App = ({
         break
       }
 
-      case '/pattern': {
-        const p = rest.join(' ').trim()
-        if (p) bridge.configSet({ pattern: p })
-        break
-      }
-
       case '/temperature': {
         const t = parseFloat(rest[0] ?? '')
         if (!Number.isNaN(t)) bridge.configSet({ temperature: t })
@@ -528,6 +532,10 @@ export const App = ({
           </Box>
         )}
 
+        <Box flexShrink={0}>
+          <StatusBar thread={thread} layoutWidth={mainColumnWidth} />
+        </Box>
+
         {status !== 'hitl' && (
           <Box flexShrink={0} flexDirection="column" width={mainColumnWidth}>
             <InputBar
@@ -542,10 +550,6 @@ export const App = ({
             />
           </Box>
         )}
-
-        <Box flexShrink={0}>
-          <StatusBar thread={thread} layoutWidth={mainColumnWidth} />
-        </Box>
       </Box>
 
       {showMetricsSidebar && (

@@ -35,7 +35,7 @@ result = await agent.ainvoke("Your question here")
 
 ## Step 3 — Gradually adopt patterns
 
-Start with defaults (**auto pattern**). Once stable, bias routing with **`fallback_pattern`** or YAML **`pattern`** — see [Execution Patterns](../concepts/patterns.md).
+Start with defaults (**auto pattern**). Routing is chosen by the built-in classifier; **`fallback_pattern`** is internal and not configured via YAML or CLI — see [Execution Patterns](../concepts/patterns.md).
 
 ## Step 4 — Runtime bridge (optional)
 

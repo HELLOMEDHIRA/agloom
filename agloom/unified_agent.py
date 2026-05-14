@@ -504,6 +504,21 @@ def _memory_injection_last_n(config: dict) -> int:
     return max(1, min(n, 500))
 
 
+def _max_tokens_budget_from_chat_model(llm: Any) -> int | None:
+    """Best-effort read of ``max_tokens`` from a chat model for session-memory summarize budget."""
+    if llm is None:
+        return None
+    v = getattr(llm, "max_tokens", None)
+    if isinstance(v, int) and v > 0:
+        return v
+    mk = getattr(llm, "model_kwargs", None)
+    if isinstance(mk, dict):
+        raw = mk.get("max_tokens")
+        if isinstance(raw, int) and raw > 0:
+            return raw
+    return None
+
+
 async def _record_turn(
     memory: SessionMemory | None,
     thread_id: str,
@@ -2238,6 +2253,7 @@ async def create_agent(
     fallback_pattern: PatternType | None = None,
     auto_summarize: bool = True,
     summarize_threshold: int = 200_000,
+    summarize_max_tokens_budget: int | None = None,
     summarizer_model: Any = None,
     feedback_handler: Any | None = None,
     delegates: Sequence[Any] | None = None,
@@ -2365,6 +2381,7 @@ async def create_agent(
         react_tool_use_failed_user_rounds=react_tool_use_failed_user_rounds,
         auto_summarize=auto_summarize,
         summarize_threshold=summarize_threshold,
+        summarize_max_tokens_budget=summarize_max_tokens_budget,
         summarizer_model=summarizer_model,
     )
 
@@ -2407,6 +2424,9 @@ async def create_agent(
             logger.warning(f"[{agent_name}] Failed to create memory tools ({exc!r}) — continuing without.")
 
     resolved_summarizer = resolve_model(summarizer_model) if summarizer_model else resolved_llm
+    memory_budget = summarize_max_tokens_budget
+    if memory_budget is None:
+        memory_budget = _max_tokens_budget_from_chat_model(resolved_llm)
     resolved_memory = memory
     if resolved_memory is None:
         try:
@@ -2417,6 +2437,7 @@ async def create_agent(
                 max_turns=session_max_turns,
                 auto_summarize=auto_summarize,
                 summarize_threshold=summarize_threshold,
+                summarize_max_tokens_budget=memory_budget,
                 summarizer_model=resolved_summarizer if auto_summarize else None,
             )
         except ImportError:
@@ -2424,15 +2445,23 @@ async def create_agent(
                 max_turns=session_max_turns,
                 auto_summarize=auto_summarize,
                 summarize_threshold=summarize_threshold,
+                summarize_max_tokens_budget=memory_budget,
                 summarizer_model=resolved_summarizer if auto_summarize else None,
             )
         logger.debug(
             f"{agent_name}: SessionMemory auto-created with ephemeral InMemoryStore. "
             f"auto_summarize={auto_summarize} threshold={summarize_threshold} "
+            f"summarize_max_tokens_budget={memory_budget!r} "
             f"For persistence: memory=SessionMemory(store=AsyncSqliteStore(...))"
         )
     elif auto_summarize and resolved_memory.summarizer_model is None:
         resolved_memory.summarizer_model = resolved_summarizer
+    if (
+        memory_budget is not None
+        and isinstance(resolved_memory, SessionMemory)
+        and getattr(resolved_memory, "summarize_max_tokens_budget", None) is None
+    ):
+        resolved_memory.summarize_max_tokens_budget = memory_budget
 
     _harness_enabled = False
     _git_session: Any = None

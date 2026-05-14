@@ -5,7 +5,12 @@ from __future__ import annotations
 import argparse
 import os
 
-from agloom.runtime.serve_cli import session_started_snapshot_from_args
+from agloom.runtime.serve_cli import (
+    SESSION_MARKER_DEFAULT_FREQUENCY_PENALTY,
+    SESSION_MARKER_DEFAULT_MAX_TOKENS,
+    SESSION_MARKER_DEFAULT_PRESENCE_PENALTY,
+    session_started_snapshot_from_args,
+)
 
 
 def test_session_started_snapshot_api_key_env_nonempty(monkeypatch) -> None:
@@ -31,6 +36,10 @@ def test_session_started_snapshot_api_key_env_nonempty(monkeypatch) -> None:
     assert snap["effective_config"]["api_key_env"] == "MY_SECRET_KEY"
     assert snap["effective_config"]["api_key_env_nonempty"] is True
     assert snap["effective_config"]["llm_resolution"] == "env_auto"
+    ec = snap["effective_config"]
+    assert ec["max_tokens"] == SESSION_MARKER_DEFAULT_MAX_TOKENS
+    assert ec["frequency_penalty"] == SESSION_MARKER_DEFAULT_FREQUENCY_PENALTY
+    assert ec["presence_penalty"] == SESSION_MARKER_DEFAULT_PRESENCE_PENALTY
 
 
 def test_session_started_snapshot_explicit_model_and_missing_env(monkeypatch) -> None:
@@ -120,3 +129,25 @@ def test_session_started_snapshot_env_present_without_api_key_env(monkeypatch) -
     assert snap["effective_config"]["api_key_env"] is None
     assert snap["effective_config"]["llm_resolution"] == "env_auto"
     del os.environ["OPENAI_API_KEY"]
+
+
+def test_session_started_snapshot_sampling_penalties_and_max_tokens_override() -> None:
+    args = argparse.Namespace(
+        model="openai:gpt-4o-mini",
+        provider=None,
+        api_key_env=None,
+        session_max_turns=50,
+        auto_summarize=True,
+        summarizer_model=None,
+        memory_type=None,
+        memory_path=None,
+        no_memory=False,
+        max_tokens=2048,
+        frequency_penalty=0.5,
+        presence_penalty=-0.25,
+    )
+    snap = session_started_snapshot_from_args(args)
+    ec = snap["effective_config"]
+    assert ec["max_tokens"] == 2048
+    assert ec["frequency_penalty"] == 0.5
+    assert ec["presence_penalty"] == -0.25

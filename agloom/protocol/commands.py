@@ -366,16 +366,16 @@ class CommandToolInvoke(_CmdBase):
 
 
 class CommandConfigSetData(_CmdBase):
-    """Hot-reload pieces of agent configuration (model, sampling, routing bias, system prompt).
+    """Hot-reload pieces of agent configuration (model, sampling, system prompt).
 
     At least one field must be set. ``cli_tools`` is reserved for future hot-reconfiguration.
+    Routing pattern is chosen by the runtime classifier — not user-configurable here.
 
     **Budget** fields (optional): set session token / USD caps (``0`` or negative clears that cap).
     """
 
     model_id: str | None = None
     cli_tools: dict[str, Any] | None = None
-    pattern: str | None = None
     temperature: float | None = None
     top_p: float | None = None
     system_prompt: str | None = None
@@ -386,7 +386,6 @@ class CommandConfigSetData(_CmdBase):
     def _at_least_one_field(self) -> CommandConfigSetData:
         if (
             self.model_id is None
-            and self.pattern is None
             and self.temperature is None
             and self.top_p is None
             and self.system_prompt is None
@@ -396,7 +395,7 @@ class CommandConfigSetData(_CmdBase):
         ):
             raise ValueError(
                 "command.config.set requires at least one of "
-                "model_id, pattern, temperature, top_p, system_prompt, cli_tools, "
+                "model_id, temperature, top_p, system_prompt, cli_tools, "
                 "budget_token_limit, budget_cost_usd_limit"
             )
         return self

@@ -7,7 +7,8 @@
  */
 
 export const DEFAULT_AGLOOM_YAML = `# Agloom — https://github.com/HELLOMEDHIRA/agloom
-# CLI merges layers (see agloom_cli/docs/config.md): ~/.agloom → walk-up → --config → flags.
+# CLI merges layers (see agloom_cli/docs/config.md): ~/.agloom → walk-up → --config → other CLI flags.
+# multiline is YAML-only (no CLI flag); omit for default true (blank Enter sends). Routing pattern is chosen by the runtime, not configurable here.
 #
 # Defaults you usually edit (restart reloads YAML; no code path overwrites your file):
 #   • model / ai.model          — provider:id (e.g. groq:meta-llama/llama-3.3-70b-versatile)

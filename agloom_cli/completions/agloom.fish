@@ -18,7 +18,6 @@ complete -c agloom -l provider -d 'Force provider' -r
 complete -c agloom -l api-key-env -d 'Env var for API key' -r
 complete -c agloom -s T -l temperature -d 'Sampling temperature' -r
 complete -c agloom -l max-tokens -d 'Max output tokens' -r
-complete -c agloom -l pattern -d 'Routing pattern' -r
 complete -c agloom -l mcp -d 'MCP server spec' -r
 complete -c agloom -l system-prompt -d 'System prompt' -r
 complete -c agloom -l system-prompt-file -d 'System prompt file' -r
@@ -44,5 +43,4 @@ complete -c agloom -l config -d 'Path to agloom.yaml' -r
 complete -c agloom -l print-config -d 'Print merged config and exit'
 complete -c agloom -l list-providers -d 'Print provider table'
 complete -c agloom -l resolve-model -d 'Dry-run model resolution' -r
-complete -c agloom -l multiline -d 'TUI: multiline compose'
 complete -c agloom -l history-file -d 'Prompt history JSON' -r

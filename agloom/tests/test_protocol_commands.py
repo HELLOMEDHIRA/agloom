@@ -233,6 +233,12 @@ def test_config_set_temperature_only():
     assert cmd.data.temperature == 0.4
 
 
+def test_config_set_pattern_field_rejected():
+    """``pattern`` is not a supported config.set field (routing is classifier-driven)."""
+    with pytest.raises(ValidationError):
+        _parse({"type": "command.config.set", "data": {"pattern": "react"}})
+
+
 def test_config_set_empty_raises():
     with pytest.raises(ValidationError):
         _parse({"type": "command.config.set", "data": {}})

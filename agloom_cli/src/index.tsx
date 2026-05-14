@@ -8,14 +8,14 @@ import { spawnSync } from 'node:child_process'
 import { render } from 'ink'
 import React from 'react'
 import { Command } from 'commander'
-import { App } from './components/App.js'
+import { BootstrapGate } from './components/BootstrapGate.js'
 import { ThemeProvider, type AgloomTheme } from './themeContext.js'
 import { createAGPBridge } from './runtime/bridge.js'
 import { readStdinIfPiped } from './utils/readStdin.js'
 import { runDirect } from './direct.js'
 import { bannerEnvDisabled, formatBannerLine, readCliPackageVersion } from './banner.js'
 import { applyAgloomConfigLayers, buildResolvedConfigSnapshot } from './config.js'
-import { ensureAgloomCliWorkspace } from './workspaceBootstrap.js'
+import { resetTerminalForShell } from './utils/terminalReset.js'
 import type { AGPEvent, InvokeAttachment } from './types/agp.js'
 
 type CliOpts = {
@@ -36,7 +36,8 @@ type CliOpts = {
   topP?: number
   topK?: number
   maxTokens?: number
-  pattern?: string
+  frequencyPenalty?: number
+  presencePenalty?: number
   mcp: string[]
   systemPrompt?: string
   systemPromptFile?: string
@@ -61,12 +62,13 @@ type CliOpts = {
   /** From ``--config`` (Commander); preferred over legacy ``configPath`` if both set. */
   config?: string
   configPath?: string
-  /** List sessions and pick one to resume (same as ``agloom sessions``). */
-  sessions?: boolean
+  /** Open session picker (same as ``agloom sessions``). ``--sessions`` is accepted as an alias for ``--list-sessions``. */
+  listSessions?: boolean
   printConfig: boolean
   listProviders: boolean
   resolveModel?: string
-  multiline: boolean
+  /** From merged YAML only; default true when key omitted. */
+  multiline?: boolean
   historyFile?: string
   budgetTokens?: number
   budgetCostUsd?: number
@@ -79,14 +81,22 @@ type CliOpts = {
 }
 
 const doubleDash = process.argv.indexOf('--')
-const argvMain = doubleDash === -1 ? process.argv : process.argv.slice(0, doubleDash)
+const argvMain = (() => {
+  const base = doubleDash === -1 ? process.argv : process.argv.slice(0, doubleDash)
+  const out = [...base]
+  const i = out.indexOf('--sessions')
+  if (i !== -1) {
+    out[i] = '--list-sessions'
+  }
+  return out
+})()
 const passthroughRuntime = doubleDash === -1 ? [] : process.argv.slice(doubleDash + 1)
 
 const shouldPrintCombinedVersion = (argv: string[]): boolean => {
   const args = argv.slice(2)
   if (!args.some((a) => a === '--version' || a === '-V')) return false
   const firstSub = args.find((a) => !a.startsWith('-'))
-  if (firstSub === 'init' || firstSub === 'eval' || firstSub === 'upgrade') return false
+  if (firstSub === 'init' || firstSub === 'eval' || firstSub === 'upgrade' || firstSub === 'sessions') return false
   return true
 }
 
@@ -175,7 +185,7 @@ program
 
 program
   .command('sessions')
-  .description('List past sessions and pick one to resume')
+  .description('Interactive session picker: choose a past session to resume (arrow keys, Enter)')
   .action(async () => {
     try {
       const { runSessionsCli } = await import('./commands/sessions.js')
@@ -220,7 +230,11 @@ program
   .argument('[prompt]', 'one-shot prompt (enables direct mode when stdin is TTY)')
   .option('-t, --thread <id>', 'LangGraph thread id')
   .option('-s, --session <id>', 'AGP session id')
-  .option('--sessions', 'list past sessions and pick one to resume (same as agloom sessions)', false)
+  .option(
+    '--list-sessions',
+    'open the session picker to resume a past session (same as: agloom sessions)',
+    false,
+  )
   .option(
     '--store <type>',
     'AGP EventStore (replay/resume): none | memory | sqlite (default: sqlite → disk replay)',
@@ -247,7 +261,8 @@ program
   .option('--top-p <n>', 'nucleus sampling top_p when supported', parseFloat)
   .option('--top-k <n>', 'top-k sampling when supported', (v) => parseInt(v, 10))
   .option('--max-tokens <n>', 'max output tokens', (v) => parseInt(v, 10))
-  .option('--pattern <name>', 'routing bias: react, sequential, blackboard, …')
+  .option('--frequency-penalty <n>', 'OpenAI-style frequency penalty when supported', parseFloat)
+  .option('--presence-penalty <n>', 'OpenAI-style presence penalty when supported', parseFloat)
   .option('--mcp <spec>', 'MCP server name:path.yaml (repeatable)', collectMcp, [])
   .option('--attach <path>', 'direct mode: attach file as command.invoke payload (repeatable)', collectAttach, [])
   .option('--system-prompt <text>', 'system prompt')
@@ -274,7 +289,6 @@ program
   .option('--print-config', 'print merged YAML/env/CLI resolution and exit', false)
   .option('--list-providers', 'print curated provider table from registry and exit', false)
   .option('--resolve-model <spec>', 'dry-run model resolution (Python registry); no LLM call')
-  .option('--multiline', 'TUI: compose prompts over multiple lines (blank Enter sends)', false)
   .option('--theme <mode>', 'TUI: dark | light (subtle palette hints)', 'dark')
   .option('--history-file <path>', 'TUI: append-only prompt history JSON (default ~/.agloom/history.json)')
   .option(
@@ -314,7 +328,7 @@ if (rawOpts.printConfig) {
   process.exit(0)
 }
 
-if (rawOpts.sessions) {
+if (rawOpts.listSessions) {
   try {
     const { runSessionsCli } = await import('./commands/sessions.js')
     process.exit(await runSessionsCli())
@@ -353,7 +367,12 @@ const buildRuntimeArgs = (o: CliOpts): string[] => {
   if (o.topP !== undefined && !Number.isNaN(o.topP)) parts.push('--top-p', String(o.topP))
   if (o.topK !== undefined && !Number.isNaN(o.topK)) parts.push('--top-k', String(o.topK))
   if (o.maxTokens !== undefined) parts.push('--max-tokens', String(o.maxTokens))
-  if (o.pattern) parts.push('--pattern', o.pattern)
+  if (o.frequencyPenalty !== undefined && !Number.isNaN(o.frequencyPenalty)) {
+    parts.push('--frequency-penalty', String(o.frequencyPenalty))
+  }
+  if (o.presencePenalty !== undefined && !Number.isNaN(o.presencePenalty)) {
+    parts.push('--presence-penalty', String(o.presencePenalty))
+  }
   for (const m of o.mcp ?? []) {
     parts.push('--mcp', m)
   }
@@ -418,14 +437,6 @@ if (directExec) {
   process.exit(process.exitCode ?? 0)
 }
 
-try {
-  await ensureAgloomCliWorkspace(cwd, { configPath: explicitAgloomYamlPath })
-} catch (err) {
-  const msg = err instanceof Error ? err.message : String(err)
-  process.stderr.write(`[agloom] workspace bootstrap failed: ${msg}\n`)
-  process.exit(1)
-}
-
 const bridge = createAGPBridge()
 let captureStream: WriteStream | undefined
 let exitCode = 0
@@ -446,31 +457,35 @@ if (opts.capture) {
   })
 }
 
-process.stderr.write('Starting agloom-runtime…\n')
-bridge.start(runtimeArgs, { transport: 'stdio' })
-
 if (!opts.noBanner && !bannerEnvDisabled()) {
   const ver = readCliPackageVersion()
   process.stderr.write(`${formatBannerLine({ version: ver })}\n`)
 }
 
-const useAltScreen = process.env['AGLOOM_NO_ALT_SCREEN'] !== '1'
-
 const { waitUntilExit, waitUntilRenderFlush } = render(
   React.createElement(ThemeProvider, {
     value: themeUi,
-    children: React.createElement(App, {
+    children: React.createElement(BootstrapGate, {
       bridge,
+      cwd,
+      configPath: explicitAgloomYamlPath,
+      runtimeArgs,
+      modelForPreflight: (() => {
+        const m = typeof opts.model === 'string' ? opts.model.trim() : opts.model != null ? String(opts.model).trim() : ''
+        return m
+      })(),
+      providerForPreflight: opts.provider ?? null,
       initialThread: thread,
       showDiag: opts.diag,
-      multiline: rawOpts.multiline,
+      multiline: opts.multiline ?? true,
       historyFile: rawOpts.historyFile,
+      cliSessionId: opts.session ?? undefined,
     }),
   }),
   {
     exitOnCtrlC: false,
     /** Restore prior terminal buffer on exit (vim-style); avoids TUI “ghost” above the shell prompt. */
-    alternateScreen: useAltScreen,
+    alternateScreen: true,
   },
 )
 
@@ -484,5 +499,6 @@ try {
   } catch {
     /* ignore — stream may already be closed */
   }
+  resetTerminalForShell()
 }
 process.exit(exitCode)

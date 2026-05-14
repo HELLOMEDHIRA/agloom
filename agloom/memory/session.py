@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..logging_utils import get_logger
@@ -58,10 +59,15 @@ class SessionMemory:
     Short-term memory scoped to a thread_id.
     Each thread -> one key in the store, value = {turns: [...]}
 
+    Each turn stores full ``q`` / ``a`` text as provided. Prompt injection via
+    :func:`~agloom.memory.build_memory_context` may still cap rendered size with ``max_chars``.
+
     Auto-summarization (enabled by default):
-      When accumulated tokens exceed `summarize_threshold`, the oldest
-      70% of turns are compressed into a single summary turn via an LLM
-      call. This preserves context that would otherwise be dropped.
+      When accumulated tokens exceed a threshold, the oldest 70% of turns are compressed
+      into a single summary turn via an LLM call. The threshold is either
+      ``max(1, int(0.8 * summarize_max_tokens_budget))`` when *summarize_max_tokens_budget*
+      is set (session / model output cap), or ``summarize_threshold`` otherwise (default
+      200_000 estimated tokens).
     """
 
     def __init__(
@@ -71,6 +77,9 @@ class SessionMemory:
         auto_summarize: bool = True,
         summarize_threshold: int = 200_000,
         summarizer_model: Any = None,
+        *,
+        summarize_max_tokens_budget: int | None = None,
+        on_turns_async: Callable[[str, list[dict[str, Any]]], Awaitable[None]] | None = None,
     ) -> None:
         if store is None:
             from langgraph.store.memory import InMemoryStore
@@ -85,14 +94,33 @@ class SessionMemory:
         self.auto_summarize = auto_summarize
         self.summarize_threshold = summarize_threshold
         self.summarizer_model = summarizer_model
+        self.summarize_max_tokens_budget = summarize_max_tokens_budget
+        self.on_turns_async = on_turns_async
         self._turn_lock = asyncio.Lock()
         self._sync_turn_lock = threading.Lock()
+
+    async def _notify_turns_hook(self, thread_id: str, turns: list[dict]) -> None:
+        cb = self.on_turns_async
+        if cb is None:
+            return
+        try:
+            await cb(thread_id, turns)
+        except Exception as exc:
+            logger.debug(f"SessionMemory on_turns_async failed (non-fatal): {exc!r}")
 
     def _ns(self, thread_id: str) -> tuple:
         return _NAMESPACE_PREFIX + (thread_id,)
 
+    def _effective_summarize_token_threshold(self) -> int:
+        """Estimated-token ceiling before compressing oldest turns (see class docstring)."""
+        if self.summarize_max_tokens_budget is not None:
+            b = self.summarize_max_tokens_budget
+            if b > 0:
+                return max(1, int(b * 0.8))
+        return self.summarize_threshold
+
     async def _maybe_summarize(self, turns: list[dict]) -> list[dict]:
-        """Summarize oldest turns if total tokens exceed threshold.
+        """Summarize oldest turns if estimated tokens exceed the effective threshold.
 
         Returns the (possibly compressed) turn list. Never raises —
         falls back to the original list on any error.
@@ -103,7 +131,8 @@ class SessionMemory:
             return turns
 
         total = _total_tokens(turns)
-        if total <= self.summarize_threshold:
+        threshold = self._effective_summarize_token_threshold()
+        if total <= threshold:
             return turns
 
         split_idx = max(1, int(len(turns) * 0.7))
@@ -158,8 +187,8 @@ class SessionMemory:
 
             turns.append(
                 {
-                    "q": query[:500],
-                    "a": output[:1000],
+                    "q": query,
+                    "a": output,
                     "p": pattern,
                     **(metadata or {}),
                 }
@@ -188,8 +217,8 @@ class SessionMemory:
 
             turns.append(
                 {
-                    "q": query[:500],
-                    "a": output[:1000],
+                    "q": query,
+                    "a": output,
                     "p": pattern,
                     **(metadata or {}),
                 }
@@ -200,6 +229,7 @@ class SessionMemory:
             if len(turns) > self.max_turns:
                 turns = turns[-self.max_turns :]
             await self.store.aput(ns, key, {"turns": turns})
+            await self._notify_turns_hook(thread_id, turns)
 
     async def apop_last_turn(self, thread_id: str) -> int | None:
         """Remove the last persisted turn for *thread_id*.
@@ -224,6 +254,7 @@ class SessionMemory:
             except Exception as exc:
                 logger.warning(f"SessionMemory.apop_last_turn write failed: {exc!r}")
                 return None
+            await self._notify_turns_hook(thread_id, turns)
             return len(turns)
 
     @staticmethod

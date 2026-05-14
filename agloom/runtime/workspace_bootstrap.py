@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import Sequence
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -354,6 +355,85 @@ def session_marker_json_path(sessions_dir: Path, session_id: str) -> Path:
     return sessions_dir / f"{_safe_session_filename(session_id)}.json"
 
 
+def json_safe_turns_for_marker(turns: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """JSON-round-trip turns so session marker files stay plain JSON (no surprise types)."""
+    try:
+        raw = json.dumps(list(turns), default=str)
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return parsed
+    except (TypeError, ValueError):
+        pass
+    out: list[dict[str, Any]] = []
+    for t in turns:
+        if isinstance(t, dict):
+            out.append({k: v for k, v in t.items()})
+    return out
+
+
+def merge_session_marker_thread_turns(
+    sessions_dir: Path,
+    session_id: str,
+    *,
+    thread_id: str,
+    turns: Sequence[dict[str, Any]],
+) -> Path | None:
+    """Merge ``SessionMemory``-style turns into ``.agloom/sessions/<id>.json`` under ``conversation``.
+
+    One AGP session may run multiple LangGraph threads (invoke / workers). Turns are stored per
+    ``thread_id`` under ``conversation.by_thread`` so summarization and ``apop_last_turn`` stay
+    reflected on disk for an auditable trace.
+    """
+    if not sessions_dir.is_dir():
+        return None
+    path = session_marker_json_path(sessions_dir, session_id)
+    existing: dict[str, Any] = {}
+    if path.is_file():
+        try:
+            prev = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(prev, dict):
+                existing = dict(prev)
+        except (OSError, json.JSONDecodeError):
+            existing = {}
+
+    safe = json_safe_turns_for_marker(turns)
+    conv = existing.get("conversation")
+    if not isinstance(conv, dict):
+        conv = {}
+    by_raw = conv.get("by_thread")
+    by_thread: dict[str, Any] = dict(by_raw) if isinstance(by_raw, dict) else {}
+    by_thread[thread_id] = {
+        "turns": safe,
+        "updated_at": datetime.now(UTC).isoformat(),
+        "turn_count": len(safe),
+    }
+    conv = {**conv, "by_thread": by_thread}
+    existing["conversation"] = conv
+    existing["session_id"] = session_id
+
+    path.write_text(json.dumps(existing, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    return path
+
+
+def attach_session_memory_to_session_marker(
+    memory: Any,
+    sessions_dir: Path,
+    session_id: str,
+) -> None:
+    """If *memory* is :class:`~agloom.memory.session.SessionMemory`, persist turns to the session JSON."""
+    from agloom.memory.session import SessionMemory
+
+    if not sessions_dir.is_dir():
+        return
+    if not isinstance(memory, SessionMemory):
+        return
+
+    async def _persist(tid: str, tlist: list[dict[str, Any]]) -> None:
+        merge_session_marker_thread_turns(sessions_dir, session_id, thread_id=tid, turns=tlist)
+
+    memory.on_turns_async = _persist
+
+
 def write_session_started_json(
     sessions_dir: Path,
     session_id: str,
@@ -369,6 +449,9 @@ def write_session_started_json(
     *extra* may include ``effective_config`` (non-secret snapshot of runtime argv/YAML merge at
     process start). Editing this file does not hot-reload the running bridge; restart the CLI
     or change settings via AGP (e.g. ``command.config.set``) to apply new models or limits.
+
+    Top-level ``conversation`` (written by :func:`merge_session_marker_thread_turns`) is kept
+    across marker rewrites when absent from *extra*.
 
     If the marker file already exists for *session_id*, ``started_at`` and ``hitl_tool_allowlist``
     are preserved unless new values are supplied (resume-safe).
@@ -407,6 +490,10 @@ def write_session_started_json(
 
     if extra:
         payload.update(extra)
+
+    for pk in ("conversation",):
+        if pk in existing and pk not in payload:
+            payload[pk] = existing[pk]
 
     path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")
     return path

@@ -1,5 +1,6 @@
 /** Project + user `agloom.yaml` layers, env fallbacks, and merge with Commander CLI state.
- * Precedence (low → high): defaults < user `~/.agloom/agloom.yaml` < walk-up `.agloom/agloom.yaml` then `./agloom.yaml` < `AGLOOM_*` env < explicit `--config` file < CLI flags.
+ * Precedence (low → high): defaults < user `~/.agloom/agloom.yaml` < walk-up `.agloom/agloom.yaml` then `./agloom.yaml` < `AGLOOM_*` env < explicit `--config` file < remaining CLI flags.
+ * TUI **multiline** comes from merged YAML only (default on when omitted). Routing pattern is **not** user-configurable — the runtime classifier selects it.
  */
 
 import { existsSync, readFileSync } from 'node:fs'
@@ -171,7 +172,10 @@ const AgloomYamlSchema = z.preprocess(
       provider: z.string().optional(),
       temperature: z.number().optional(),
       max_tokens: z.number().int().optional(),
-      pattern: z.string().optional(),
+      frequency_penalty: z.number().optional(),
+      presence_penalty: z.number().optional(),
+      /** TUI: multiline compose (blank Enter sends). Default true when omitted. */
+      multiline: z.boolean().optional(),
       system_prompt: z.string().optional(),
       system_prompt_file: z.string().optional(),
       store: z.enum(['none', 'memory', 'sqlite']).optional(),
@@ -311,7 +315,10 @@ export type CliOptsLike = {
   provider?: string
   temperature?: number
   maxTokens?: number
-  pattern?: string
+  frequencyPenalty?: number
+  presencePenalty?: number
+  /** From merged ``agloom.yaml`` only; default true when unset. */
+  multiline?: boolean
   systemPrompt?: string
   systemPromptFile?: string
   store: string
@@ -337,12 +344,20 @@ const envOverrides = (): Partial<CliOptsLike> => {
   if (model) out.model = model
   const provider = g('AGLOOM_PROVIDER')
   if (provider) out.provider = provider
-  const pattern = g('AGLOOM_PATTERN')
-  if (pattern) out.pattern = pattern
   const t = g('AGLOOM_TEMPERATURE')
   if (t) {
     const n = parseFloat(t)
     if (!Number.isNaN(n)) out.temperature = n
+  }
+  const fp = g('AGLOOM_FREQUENCY_PENALTY')
+  if (fp) {
+    const n = parseFloat(fp)
+    if (!Number.isNaN(n)) out.frequencyPenalty = n
+  }
+  const pp = g('AGLOOM_PRESENCE_PENALTY')
+  if (pp) {
+    const n = parseFloat(pp)
+    if (!Number.isNaN(n)) out.presencePenalty = n
   }
   return out
 }
@@ -384,10 +399,15 @@ export const applyAgloomConfigLayers = (
     else if (y.temperature !== undefined) next.temperature = y.temperature
   }
   if (fromDefault('maxTokens') && y.max_tokens !== undefined) next.maxTokens = y.max_tokens
-  if (fromDefault('pattern')) {
-    if (env.pattern) next.pattern = env.pattern
-    else if (y.pattern) next.pattern = y.pattern
+  if (fromDefault('frequencyPenalty')) {
+    if (env.frequencyPenalty !== undefined) next.frequencyPenalty = env.frequencyPenalty
+    else if (y.frequency_penalty !== undefined) next.frequencyPenalty = y.frequency_penalty
   }
+  if (fromDefault('presencePenalty')) {
+    if (env.presencePenalty !== undefined) next.presencePenalty = env.presencePenalty
+    else if (y.presence_penalty !== undefined) next.presencePenalty = y.presence_penalty
+  }
+  next.multiline = typeof y.multiline === 'boolean' ? y.multiline : true
   if (fromDefault('systemPrompt') && y.system_prompt) next.systemPrompt = y.system_prompt
 
   if (fromDefault('systemPromptFile') && y.system_prompt_file) {
@@ -442,7 +462,6 @@ export const buildResolvedConfigSnapshot =(
         'model',
         'provider',
         'temperature',
-        'pattern',
         'store',
         'memory',
         'sessionMaxTurns',

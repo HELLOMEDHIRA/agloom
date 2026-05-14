@@ -665,6 +665,13 @@ class AgentConfig(BaseModel):
     summarize_threshold: int = Field(
         default=200_000, ge=10_000, description="Token count threshold that triggers auto-summarization"
     )
+    summarize_max_tokens_budget: int | None = Field(
+        default=None,
+        description=(
+            "When set (or inferred from the chat model's max_tokens), rolling memory summarizes "
+            "when estimated stored tokens exceed 80% of this budget; otherwise summarize_threshold applies."
+        ),
+    )
     summarizer_model: Any = None
 
     mcp_servers: list[Any] = Field(default_factory=list)

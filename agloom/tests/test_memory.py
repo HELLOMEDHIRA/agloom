@@ -57,6 +57,49 @@ async def test_session_memory_apop_last_turn() -> None:
 
 
 @pytest.mark.asyncio
+async def test_session_memory_on_turns_async() -> None:
+    hooks: list[tuple[str, list]] = []
+    sm = SessionMemory(store=InMemoryStore(), max_turns=10, auto_summarize=False)
+
+    async def cb(tid: str, turns: list) -> None:
+        hooks.append((tid, [dict(x) for x in turns]))
+
+    sm.on_turns_async = cb
+    await sm.aadd_turn("t1", "a", "b")
+    assert len(hooks) == 1
+    assert hooks[0][0] == "t1"
+    assert hooks[0][1][-1]["q"] == "a"
+    await sm.apop_last_turn("t1")
+    assert len(hooks) == 2
+    assert hooks[1][1] == []
+
+
+@pytest.mark.asyncio
+async def test_session_memory_summarize_at_max_tokens_budget() -> None:
+    class FakeSumm:
+        async def ainvoke(self, messages):
+            class R:
+                content = "rolled-up summary body"
+
+            return R()
+
+    sm = SessionMemory(
+        store=InMemoryStore(),
+        max_turns=50,
+        auto_summarize=True,
+        summarize_threshold=10**9,
+        summarize_max_tokens_budget=500,
+        summarizer_model=FakeSumm(),
+    )
+    await sm.aadd_turn("t1", "m1", "r1")
+    await sm.aadd_turn("t1", "m2", "r2")
+    await sm.aadd_turn("t1", "m3", "r3")
+    await sm.aadd_turn("t1", "x" * 4000, "y" * 4000)
+    ctx = await sm.aformat_context("t1", last_n=20)
+    assert "rolled-up summary body" in ctx or "Previous conversation summary" in ctx
+
+
+@pytest.mark.asyncio
 async def test_session_memory_async() -> None:
     sm = SessionMemory(store=InMemoryStore())
     await sm.aadd_turn("t1", "async_q", "async_a")
