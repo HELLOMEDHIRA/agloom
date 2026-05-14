@@ -317,6 +317,12 @@ async def _session_loop(
                 if mem_cleanup is not None:
                     await mem_cleanup()
                 return
+            rows = agent.config.get("_mcp_server_rows") or []
+            if rows:
+                emitter.emit_runtime_mcp_servers(
+                    server_names=[str(r.get("name") or "") for r in rows],
+                    servers=rows,
+                )
 
         try:
             async for raw in ws:

@@ -177,6 +177,7 @@ def test_inject_then_merge_then_apply_api_key_flow(tmp_path, monkeypatch) -> Non
     ec = snap["effective_config"]
     assert ec["model"] == "openai:gpt-4o"
     assert ec["llm_resolution"] == "explicit_model"
+    assert ec["api_key_env"] == "MISSING_VAR"
     assert ec["api_key_env_nonempty"] is False
     assert ec["credential_env_var"] == "MISSING_VAR"
     assert ec["credential_env_var_nonempty"] is False
@@ -206,8 +207,8 @@ def test_session_started_snapshot_nvidia_prefix_and_canonical_key(monkeypatch) -
     ec = snap["effective_config"]
     assert ec["provider"] is None
     assert ec["provider_resolved"] == "nvidia"
-    assert ec["api_key_env"] is None
-    assert ec["api_key_env_nonempty"] is False
+    assert ec["api_key_env"] == "NVIDIA_API_KEY"
+    assert ec["api_key_env_nonempty"] is True
     assert ec["credential_env_var"] == "NVIDIA_API_KEY"
     assert ec["credential_env_var_nonempty"] is True
     assert ec["provider_primary_api_key_env"] == "NVIDIA_API_KEY"
@@ -251,7 +252,8 @@ def test_session_started_snapshot_env_present_without_api_key_env(monkeypatch) -
         no_memory=False,
     )
     snap = session_started_snapshot_from_args(args)
-    assert snap["effective_config"]["api_key_env"] is None
+    assert snap["effective_config"]["api_key_env"] == "OPENAI_API_KEY"
+    assert snap["effective_config"]["api_key_env_nonempty"] is True
     assert snap["effective_config"]["credential_env_var"] == "OPENAI_API_KEY"
     assert snap["effective_config"]["credential_env_var_nonempty"] is True
     assert snap["effective_config"]["provider_primary_api_key_env"] == "OPENAI_API_KEY"

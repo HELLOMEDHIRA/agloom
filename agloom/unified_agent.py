@@ -684,6 +684,7 @@ async def _ensure_mcp_connected(config: dict) -> None:
         )
         config["_mcp_session_attempted"] = True
         config["_mcp_client"] = client
+        config["_mcp_server_rows"] = list(server_rows)
         if client is not None:
             config["_mcp_connected"] = True
 
@@ -697,23 +698,21 @@ async def _ensure_mcp_connected(config: dict) -> None:
                 )
             )
 
+        parts: list[str] = []
+        total_tools = 0
         for row in server_rows:
+            if not row.get("ok"):
+                err = row.get("error") or "unknown error"
+                raise MCPConnectionError(f"MCP server {row.get('name')!r} failed: {err}")
             sname = row.get("name") or "?"
-            if row.get("ok"):
-                tnames = row.get("tool_names") or []
-                tcount = int(row.get("tool_count") or 0)
-                preview = ", ".join(str(n) for n in tnames[:12])
-                if row.get("tool_names_truncated") or tcount > len(tnames):
-                    preview = f"{preview}, …" if preview else f"{tcount} tool(s) (names truncated)"
-                logger.event(f"MCP [{sname}] connected · {tcount} tool(s)" + (f": {preview}" if preview else ""))
-                print(
-                    f"[agloom-runtime] MCP [{sname}] connected · {tcount} tool(s)"
-                    + (f": {preview}" if preview else ""),
-                    file=sys.stderr,
-                    flush=True,
-                )
-            else:
-                logger.warning(f"MCP [{sname}] unavailable: {row.get('error') or 'unknown error'}")
+            tcount = int(row.get("tool_count") or 0)
+            total_tools += tcount
+            parts.append(f"{sname}: {tcount} tool(s)")
+        if parts:
+            summary = ", ".join(parts)
+            logger.event("mcp_connected", summary=summary, total_tools=total_tools)
+            sys.stderr.write(f"[agloom-runtime] MCP connected — {summary} (total {total_tools})\n")
+            sys.stderr.flush()
 
 
 async def _ensure_skills_bootstrapped(

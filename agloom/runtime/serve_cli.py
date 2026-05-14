@@ -165,14 +165,12 @@ def inject_api_key_secret_from_session_marker(args: Namespace, marker_path: Path
 
 
 def merge_api_key_env_from_session_marker(args: Namespace, marker_path: Path | None) -> None:
-    """If ``--api-key-env`` was not passed, read env var *name* from an existing session marker (resume).
+    """When ``--api-key-env`` was not passed, copy ``effective_config.api_key_env`` from the marker.
 
-    Looks at ``.agloom/sessions/<session>.json`` → ``effective_config`` for env var **names** only.
-    Key material in ``api_key_secret`` is handled by :func:`inject_api_key_secret_from_session_marker`.
-
-    Priority: ``api_key_env`` (user-edited remap), then ``credential_env_var`` (snapshot), then
-    ``provider_primary_api_key_env`` (older markers). Sets ``args.api_key_env`` so
-    :func:`apply_api_key_env` can map the live process env into the provider's canonical key.
+    Session JSON now records the same env var name as ``credential_env_var`` when you are not
+    remapping, so users can edit ``api_key_env`` and restart the same session id to switch
+    sources. Falls back to ``credential_env_var`` / ``provider_primary_api_key_env`` on older
+    markers. :func:`apply_api_key_env` then maps that var's value into the provider's canonical key.
 
     CLI ``--api-key-env`` always wins over the marker.
     """
@@ -238,8 +236,71 @@ def system_prompt_from_args(args: Namespace) -> Any | None:
     return None
 
 
-def mcp_configs_from_args(args: Namespace) -> list[MCPServerConfig]:
-    specs = getattr(args, "mcp", None) or []
+def _resolve_mcp_spec(spec: str, yaml_dir: Path) -> str:
+    """Resolve ``name:relative.yaml`` against the directory that contains ``agloom.yaml``."""
+    spec = spec.strip()
+    if ":" not in spec:
+        return spec
+    name, _, path_part = spec.partition(":")
+    name = name.strip()
+    path_part = path_part.strip()
+    if not path_part:
+        raise ValueError(f"invalid MCP entry {spec!r}; expected name:path")
+    p = Path(path_part)
+    resolved = p.resolve() if p.is_absolute() else (yaml_dir / p).resolve()
+    return f"{name}:{resolved}"
+
+
+def mcp_specs_from_agloom_yaml(cwd: Path | None = None) -> list[str]:
+    """Expand ``mcp`` / ``mcp.servers`` from ``.agloom/agloom.yaml`` (or root ``agloom.yaml``).
+
+    Used when ``agloom-runtime`` is started without ``--mcp`` fragments (e.g. plain
+    ``python -m agloom.runtime``) so MCP still matches the nested project YAML.
+    """
+    import yaml
+
+    root = cwd or Path.cwd()
+    for yaml_path in (root / ".agloom" / "agloom.yaml", root / "agloom.yaml"):
+        if not yaml_path.is_file():
+            continue
+        try:
+            raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(raw, dict):
+            continue
+        mcp_raw = raw.get("mcp")
+        entries: list[Any] = []
+        if isinstance(mcp_raw, dict):
+            servers = mcp_raw.get("servers")
+            if isinstance(servers, list):
+                entries = servers
+        elif isinstance(mcp_raw, list):
+            entries = mcp_raw
+        if not entries:
+            continue
+        yaml_dir = yaml_path.parent
+        out: list[str] = []
+        for entry in entries:
+            if isinstance(entry, str):
+                out.append(_resolve_mcp_spec(entry, yaml_dir))
+            elif isinstance(entry, dict):
+                name = str(entry.get("name") or "").strip()
+                cfg = entry.get("config")
+                if not name or not isinstance(cfg, str) or not cfg.strip():
+                    continue
+                p = Path(cfg.strip())
+                resolved = p.resolve() if p.is_absolute() else (yaml_dir / p).resolve()
+                out.append(f"{name}:{resolved}")
+        if out:
+            return out
+    return []
+
+
+def mcp_configs_from_args(args: Namespace, *, cwd: Path | None = None) -> list[MCPServerConfig]:
+    specs = list(getattr(args, "mcp", None) or [])
+    if not specs:
+        specs = mcp_specs_from_agloom_yaml(cwd)
     if not specs:
         return []
     import yaml
@@ -515,17 +576,19 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     ``provider_resolved`` for the slug inferred from ``--provider`` or ``provider:`` model
     prefix (same basis as ``sampling.provider_slug``). ``provider_credential_env`` lists
     canonical env vars for that slug and whether each was non-empty at process start (keys
-    only, never values). ``api_key_env`` / ``api_key_env_nonempty`` refer solely to
-    ``--api-key-env`` when you remap a custom var into the provider's standard key.
-    ``credential_env_var`` / ``credential_env_var_nonempty`` record which env var **actually
-    supplied** the key for this run: the explicit ``--api-key-env`` target when set, otherwise
-    the first non-empty canonical key for ``provider_resolved`` (same name as
-    ``provider_primary_api_key_env`` when that var is set). Use these for resume hints and
-    tooling; secret values are omitted unless persistence is explicitly enabled.
+    only, never values).
+
+    ``api_key_env`` / ``api_key_env_nonempty`` name the env var the runtime reads for key
+    material: the explicit ``--api-key-env`` target when set, otherwise the same var as
+    ``credential_env_var`` (first non-empty canonical key for the provider, or the remap
+    source). Edit ``api_key_env`` in the session JSON to point at another var; resume applies
+    it via :func:`merge_api_key_env_from_session_marker` then :func:`apply_api_key_env`.
+
+    ``credential_env_var`` / ``credential_env_var_nonempty`` mirror the resolved source for
+    older tooling. Secret values are omitted unless persistence is explicitly enabled.
 
     ``provider_primary_api_key_env`` names the **first canonical** provider API key env var
-    that was non-empty at process start (e.g. ``NVIDIA_API_KEY``) — use this when you are not
-    using ``--api-key-env``. ``provider_primary_credential_present`` is ``True`` when **any** listed canonical env
+    that was non-empty at process start (e.g. ``NVIDIA_API_KEY``). ``provider_primary_credential_present`` is ``True`` when **any** listed canonical env
     var for ``provider_resolved`` was non-empty at process start (typical ``OPENAI_API_KEY`` /
     ``NVIDIA_API_KEY`` usage without ``--api-key-env``). When ``provider_resolved`` is
     ``None`` (env auto-detect), this falls back to **any** curated provider API key being set.
@@ -558,13 +621,16 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     elif primary and (os.environ.get(primary) or "").strip():
         cred_var = primary
         cred_nonempty = True
+    api_env_s = str(api_env).strip() if api_env else ""
+    snapshot_api_key_env = api_env_s if api_env_s else cred_var
+    snapshot_api_key_nonempty = api_present if api_env_s else cred_nonempty
     eff: dict[str, Any] = {
         "model": model_out,
         "provider": getattr(args, "provider", None),
         "provider_resolved": resolved_slug,
         "llm_resolution": "explicit_model" if model_out else "env_auto",
-        "api_key_env": str(api_env) if api_env else None,
-        "api_key_env_nonempty": api_present,
+        "api_key_env": snapshot_api_key_env,
+        "api_key_env_nonempty": snapshot_api_key_nonempty,
         "credential_env_var": cred_var,
         "credential_env_var_nonempty": cred_nonempty,
         "provider_primary_api_key_env": primary,

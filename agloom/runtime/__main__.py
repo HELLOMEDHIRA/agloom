@@ -463,6 +463,12 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
                 for fn in mem_cleanup_acc:
                     await fn()
                 raise MCPConnectionError(msg) from exc
+            rows = agent.config.get("_mcp_server_rows") or []
+            if rows:
+                emitter.emit_runtime_mcp_servers(
+                    server_names=[str(r.get("name") or "") for r in rows],
+                    servers=rows,
+                )
         # Update session marker with resolved model info
         _rewrite_session_marker(model_id=str(model_id_guess) if model_id_guess else None)
         return agent
