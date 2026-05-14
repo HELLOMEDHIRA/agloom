@@ -189,7 +189,7 @@ export const runDirect = async(options: {
             mi >= 0 && runtimeArgs[mi + 1] != null ? String(runtimeArgs[mi + 1]) : ''
           if (mid.startsWith('nvidia:')) {
             extra =
-              '[agloom] nvidia:… models need `NVIDIA_API_KEY` and the `agloom[nvidia]` extra; use `--json` to see `error.fatal` / `worker.failed` on stdout.\n'
+              '[agloom] nvidia:… install `agloom[nvidia]` if imports fail. Empty stdout with a key set usually means a blank model reply or routing short-circuit — run `--json` and check `message.assistant` / `error.*`. Session JSON: `api_key_env*` is only for `--api-key-env`; see `provider_credential_env` + `provider_primary_credential_present` for standard env detection.\n'
           } else if (!runtimeArgs.includes('--model')) {
             extra =
               '[agloom] no `--model` was sent (e.g. yaml `model: auto` with no override). Set a provider API key, `AGLOOM_MODEL`, or run `agloom -m provider:model-id`.\n'

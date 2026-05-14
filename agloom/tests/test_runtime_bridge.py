@@ -230,6 +230,39 @@ def test_translate_done_nested_result_react_suppresses_terminal_duplicate() -> N
     ]
 
 
+def test_translate_done_falls_back_to_direct_shortcircuit_step_output() -> None:
+    em = _CaptureEmitter()
+    translate(
+        AgentEvent(
+            type="done",
+            data={
+                "result": {
+                    "pattern_used": "DIRECT",
+                    "output": "",
+                    "run_id": "r9",
+                    "query": "Hi",
+                    "steps_taken": 1,
+                    "success": True,
+                    "steps": [
+                        {
+                            "type": "llm_call",
+                            "name": "direct_shortcircuit",
+                            "input": "Hi",
+                            "output": "Hello!",
+                            "duration_ms": 0.0,
+                            "timestamp": "t",
+                            "metadata": {},
+                        },
+                    ],
+                },
+            },
+        ),
+        em,  # type: ignore[arg-type]
+    )
+    assert em.calls[0][0] == "emit_message_assistant"
+    assert em.calls[0][1]["content"] == "Hello!"
+
+
 # bridge end-to-end tests
 
 

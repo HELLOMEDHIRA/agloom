@@ -1136,12 +1136,20 @@ async def run_fresh(
             )
 
     _has_custom_direct = registry.get(PatternType.DIRECT) is not _handle_direct
-    if not is_frozen and analysis.pattern == PatternType.DIRECT and analysis.direct_response and not _has_custom_direct:
+    _dr = analysis.direct_response
+    _direct_text = (
+        _dr.strip()
+        if isinstance(_dr, str)
+        else (str(_dr).strip() if _dr is not None else "")
+    )
+    # Whitespace-only classifier text must not short-circuit — it would yield an empty AGP assistant
+    # message after stripping (``translate`` / wire consumers treat blank as "no output").
+    if not is_frozen and analysis.pattern == PatternType.DIRECT and _direct_text and not _has_custom_direct:
         direct_step = _make_step(
             StepType.LLM_CALL,
             "direct_shortcircuit",
             input=raw_query_str,
-            output=analysis.direct_response,
+            output=_direct_text,
             max_length=ml,
         )
         _steps.append(direct_step)
@@ -1149,7 +1157,7 @@ async def run_fresh(
         result = ExecutionResult(
             pattern_used=PatternType.DIRECT,
             query=raw_query_str,
-            output=analysis.direct_response,
+            output=_direct_text,
             steps_taken=1,
             success=True,
             analysis=analysis,

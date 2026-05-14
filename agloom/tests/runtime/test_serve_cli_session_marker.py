@@ -37,6 +37,7 @@ def test_session_started_snapshot_api_key_env_nonempty(monkeypatch) -> None:
     assert snap["effective_config"]["api_key_env_nonempty"] is True
     assert snap["effective_config"]["llm_resolution"] == "env_auto"
     ec = snap["effective_config"]
+    assert ec["provider_primary_credential_present"] is False
     assert ec["max_tokens"] == SESSION_MARKER_DEFAULT_MAX_TOKENS
     assert ec["frequency_penalty"] == SESSION_MARKER_DEFAULT_FREQUENCY_PENALTY
     assert ec["presence_penalty"] == SESSION_MARKER_DEFAULT_PRESENCE_PENALTY
@@ -88,6 +89,7 @@ def test_session_started_snapshot_nvidia_prefix_and_canonical_key(monkeypatch) -
     assert ec["provider_resolved"] == "nvidia"
     assert ec["api_key_env"] is None
     assert ec["api_key_env_nonempty"] is False
+    assert ec["provider_primary_credential_present"] is True
     cred = ec["provider_credential_env"]
     assert cred == [{"env": "NVIDIA_API_KEY", "present": True}]
 
@@ -127,6 +129,7 @@ def test_session_started_snapshot_env_present_without_api_key_env(monkeypatch) -
     )
     snap = session_started_snapshot_from_args(args)
     assert snap["effective_config"]["api_key_env"] is None
+    assert snap["effective_config"]["provider_primary_credential_present"] is True
     assert snap["effective_config"]["llm_resolution"] == "env_auto"
     del os.environ["OPENAI_API_KEY"]
 

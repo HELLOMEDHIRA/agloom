@@ -35,6 +35,30 @@ def _pattern_tail_upper(v: Any) -> str:
     return s.split(".")[-1].upper()
 
 
+def _assistant_body_from_done_result(res: dict[str, Any]) -> str:
+    """Recover user-visible assistant text from ``ExecutionResult.model_dump()`` (wire-safe dict)."""
+    raw = res.get("output")
+    if isinstance(raw, str):
+        t = raw.strip()
+    elif raw is not None:
+        t = str(raw).strip()
+    else:
+        t = ""
+    if t:
+        return t
+    for st in res.get("steps") or []:
+        if not isinstance(st, dict):
+            continue
+        if st.get("name") != "direct_shortcircuit":
+            continue
+        out = st.get("output")
+        if isinstance(out, str) and out.strip():
+            return out.strip()
+        if out is not None and str(out).strip():
+            return str(out).strip()
+    return ""
+
+
 def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
     """Dispatch one :class:`AgentEvent` to the correct AGP emit method.
 
@@ -91,7 +115,7 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
         res = data.get("result")
         content = _str(data.get("output")) or _str(data.get("content")) or ""
         if not content and isinstance(res, dict):
-            content = _str(res.get("output")) or ""
+            content = _assistant_body_from_done_result(res) or ""
         patt = ""
         if isinstance(res, dict):
             patt = _pattern_tail_upper(res.get("pattern_used"))

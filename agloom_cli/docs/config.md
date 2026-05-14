@@ -82,6 +82,10 @@ mcp:
 
 Relative MCP paths resolve against the YAML file’s directory.
 
+### Session marker (`.agloom/sessions/*.json`)
+
+Each session file includes an `effective_config` snapshot (no secrets). **`api_key_env`** and **`api_key_env_nonempty`** refer **only** to the optional **`--api-key-env`** remap. **`provider_credential_env`** lists each canonical env var for **`provider_resolved`** and whether it was non-empty at process start (empty list when the slug cannot be inferred yet). **`provider_primary_credential_present`** is `true` when any canonical var for the resolved slug was set, or — when **`provider_resolved`** is `null` (env auto-detect) — when **any** curated provider API key env var was set at process start.
+
 ## Environment variables
 
 ### CLI / bridge

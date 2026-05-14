@@ -298,6 +298,17 @@ def _provider_credential_env_status(resolved_slug: str | None) -> list[dict[str,
     return [{"env": name, "present": bool((os.environ.get(name) or "").strip())} for name in keys]
 
 
+def _any_curated_provider_api_key_present() -> bool:
+    """True when any registry-listed API key env is non-empty (used when ``provider_resolved`` is unknown)."""
+    from agloom.llm.provider_registry import PROVIDERS
+
+    for p in PROVIDERS.values():
+        for k in p.resolver_env_keys:
+            if (os.environ.get(k) or "").strip():
+                return True
+    return False
+
+
 def _llm_endpoint_snapshot(args: Namespace) -> dict[str, Any]:
     """Non-secret HTTP hints matching :mod:`agloom.llm.model_resolver` env conventions."""
     out: dict[str, Any] = {}
@@ -336,6 +347,10 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     canonical env vars for that slug and whether each was non-empty at process start (keys
     only, never values). ``api_key_env`` / ``api_key_env_nonempty`` refer solely to
     ``--api-key-env`` when you remap a custom var into the provider's standard key.
+    ``provider_primary_credential_present`` is ``True`` when **any** listed canonical env
+    var for ``provider_resolved`` was non-empty at process start (typical ``OPENAI_API_KEY`` /
+    ``NVIDIA_API_KEY`` usage without ``--api-key-env``). When ``provider_resolved`` is
+    ``None`` (env auto-detect), this falls back to **any** curated provider API key being set.
     """
     api_env = getattr(args, "api_key_env", None)
     api_present = False
@@ -351,6 +366,11 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     elif raw_model:
         model_out = str(raw_model).strip() or None
     resolved_slug = infer_provider_slug_from_args(args)
+    cred_status = _provider_credential_env_status(resolved_slug)
+    if resolved_slug:
+        any_primary_cred = bool(cred_status) and any(bool(x.get("present")) for x in cred_status)
+    else:
+        any_primary_cred = _any_curated_provider_api_key_present()
     eff: dict[str, Any] = {
         "model": model_out,
         "provider": getattr(args, "provider", None),
@@ -358,7 +378,8 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
         "llm_resolution": "explicit_model" if model_out else "env_auto",
         "api_key_env": str(api_env) if api_env else None,
         "api_key_env_nonempty": api_present,
-        "provider_credential_env": _provider_credential_env_status(resolved_slug),
+        "provider_primary_credential_present": any_primary_cred,
+        "provider_credential_env": cred_status,
         "session_max_turns": sm_turns,
         "auto_summarize": bool(getattr(args, "auto_summarize", True)),
         "summarizer_model": getattr(args, "summarizer_model", None),
