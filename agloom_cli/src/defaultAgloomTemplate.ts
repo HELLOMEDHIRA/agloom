@@ -15,6 +15,7 @@ export const DEFAULT_AGLOOM_YAML = `# Agloom — https://github.com/HELLOMEDHIRA
 #   • ai.system_prompt          — default persona (or top-level system_prompt: | …)
 #   • mcp.servers               — agsuperbrain → .agloom/mcp/agsuperbrain.yaml (stdio MCP; agsuperbrain CLI on PATH)
 #   • .agloom/rules/            — drop *.md / *.mdc rule files; optional rules.dir if you relocate
+#   • memory.* / skills.*       — tied to the store when present; tune limits below (no enable/disable toggles)
 
 ai:
   name: agloom
@@ -78,12 +79,10 @@ tools:
   cli_enabled: true
 
 memory:
-  enabled: true
   max_turns: 50
   auto_summarize: true
 
 skills:
-  enabled: true
   max_skills: 30
 
 rules:

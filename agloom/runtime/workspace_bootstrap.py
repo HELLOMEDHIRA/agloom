@@ -15,7 +15,6 @@ import subprocess
 import sys
 import threading
 from collections.abc import Sequence
-from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -84,6 +83,7 @@ DEFAULT_AGLOOM_YAML = """# Agloom — https://github.com/HELLOMEDHIRA/agloom
 #   • ai.system_prompt or top-level system_prompt
 #   • mcp.servers — agsuperbrain → .agloom/mcp/agsuperbrain.yaml (stdio MCP; `agsuperbrain` CLI on PATH for mcp-serve)
 #   • .agloom/rules/ — drop *.md / *.mdc files
+#   • memory.* / skills.* — session memory and skill registry are tied to the store; tune limits below (no toggles).
 #
 # Merge is shallow per layer: a whole top-level `ai:` block replaces prior `ai` from earlier files.
 
@@ -148,12 +148,10 @@ tools:
   cli_enabled: true
 
 memory:
-  enabled: true
   max_turns: 50
   auto_summarize: true
 
 skills:
-  enabled: true
   max_skills: 30
 
 rules:

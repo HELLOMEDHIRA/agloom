@@ -413,10 +413,8 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             cli_tools_enabled=_ct_en,
             cli_tools_count=_ct_ct,
         )
-        # Emit connected MCP server names
-        mcp_names = [getattr(s, "name", str(s)) for s in agent.config.get("_mcp_servers", [])]
-        if mcp_names:
-            emitter.emit_runtime_mcp_servers(server_names=mcp_names)
+        # MCP status is emitted lazily as ``runtime.mcp.servers`` when the client connects
+        # (see ``_ensure_mcp_connected``) so rows include tool names and per-server errors.
         # Update session marker with resolved model info
         _rewrite_session_marker(model_id=str(model_id_guess) if model_id_guess else None)
         return agent

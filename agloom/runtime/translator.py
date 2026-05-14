@@ -401,8 +401,15 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
 
     if et == "runtime.mcp.servers":
         names = data.get("server_names", [])
-        if isinstance(names, list):
-            emitter.emit_runtime_mcp_servers(server_names=[str(n) for n in names])
+        srv = data.get("servers")
+        if not isinstance(names, list):
+            names = []
+        if not isinstance(srv, list):
+            srv = []
+        emitter.emit_runtime_mcp_servers(
+            server_names=[str(n) for n in names],
+            servers=[dict(r) for r in srv if isinstance(r, dict)],
+        )
         return
 
     # Forward-compat: unknown event types still surface as a thinking step so nothing is lost.

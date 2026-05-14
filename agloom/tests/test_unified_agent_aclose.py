@@ -15,11 +15,20 @@ async def test_unified_agent_aclose_calls_mcp_shutdown() -> None:
     mcp.__aexit__ = AsyncMock(side_effect=NotImplementedError())
     mcp.aclose = AsyncMock()
 
-    agent = UnifiedAgent({"name": "u-test", "tools": [], "_mcp_client": mcp})
+    agent = UnifiedAgent(
+        {
+            "name": "u-test",
+            "tools": [],
+            "_mcp_client": mcp,
+            "_mcp_session_attempted": True,
+            "_mcp_connected": True,
+        }
+    )
     await agent.aclose()
 
     assert agent.config.get("_mcp_client") is None
     assert agent.config.get("_mcp_connected") is False
+    assert agent.config.get("_mcp_session_attempted") is False
     mcp.aclose.assert_awaited_once()
 
 

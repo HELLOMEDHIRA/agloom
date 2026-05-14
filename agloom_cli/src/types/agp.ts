@@ -443,6 +443,14 @@ export interface RuntimeMCPServersEvent extends Envelope {
   type: 'runtime.mcp.servers'
   data: {
     server_names: string[]
+    servers?: Array<{
+      name: string
+      ok: boolean
+      error?: string | null
+      tool_count?: number
+      tool_names?: string[]
+      tool_names_truncated?: boolean
+    }>
   }
 }
 

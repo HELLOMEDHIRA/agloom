@@ -18,12 +18,10 @@ tools:
   cli_enabled: true
 
 memory:
-  enabled: true
   max_turns: 50
   auto_summarize: true
 
 skills:
-  enabled: true
   max_skills: 30
 
 rules:
@@ -59,12 +57,10 @@ tools:
   cli_enabled: true
 
 memory:
-  enabled: true
   max_turns: 50
   auto_summarize: true
 
 skills:
-  enabled: true
   max_skills: 30
 
 rules:

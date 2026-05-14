@@ -85,6 +85,8 @@ from .events import (
     RuntimeConfigData,
     RuntimeFileStaged,
     RuntimeFileStagedData,
+    RuntimeMCPServers,
+    RuntimeMCPServersData,
     RuntimePong,
     RuntimePongData,
     RuntimeProviderEntry,
@@ -1371,6 +1373,7 @@ class SessionEmitter:
         self,
         *,
         server_names: list[str],
+        servers: list[dict[str, Any]] | None = None,
         parent: str | None = None,
     ) -> RuntimeMCPServers:
         evt = RuntimeMCPServers(
@@ -1378,7 +1381,7 @@ class SessionEmitter:
             thread=self._thread,
             seq=self._next_seq(),
             parent=parent,
-            data=RuntimeMCPServersData(server_names=server_names),
+            data=RuntimeMCPServersData(server_names=list(server_names), servers=list(servers or [])),
         )
         self._write(evt)
         return evt

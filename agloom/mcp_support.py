@@ -86,6 +86,7 @@ class MCPCapabilities:
     prompt_tool    → BaseTool wrapping get_prompt(name, args) — optional, None if no prompts
     prompt_names   → list of available prompt names (for classifier awareness)
     resource_uris  → list of available resource URIs (for classifier awareness)
+    last_error     → set when the primary tool load for this server fails (diagnostics / AGP)
     """
 
     server_name: str
@@ -94,6 +95,7 @@ class MCPCapabilities:
     prompt_tool: BaseTool | None = None
     prompt_names: list[str] = field(default_factory=list)
     resource_uris: list[str] = field(default_factory=list)
+    last_error: str | None = None
 
     def all_tools(self) -> list[BaseTool]:
         """All BaseTool objects from this server — tools + resource_tool + prompt_tool."""
@@ -174,6 +176,7 @@ async def load_mcp_capabilities(
 
         except Exception as e:
             logger.error(f"MCP [{cfg.name}]: capability load failed: {e}")
+            cap.last_error = str(e)
 
         capabilities.append(cap)
         logger.info(
@@ -284,7 +287,7 @@ async def connect_mcp_servers(
     servers: list[MCPServerConfig],
     agent: dict,
     agent_name: str = "Agent",
-) -> Any | None:
+) -> tuple[Any | None, list[dict[str, Any]]]:
     """
     Connect to all MCP servers and inject capabilities into agent config.
 
@@ -293,17 +296,26 @@ async def connect_mcp_servers(
         agent["mcp_prompts"]  = {server_name: [prompt_name, ...]}
         agent["mcp_uris"]     = {server_name: [uri, ...]}
 
-    Returns the open MCP client (caller must store it and close it later).
-    Returns None if all connections fail.
+    Returns ``(client, server_rows)`` where *client* is the open MCP client (or ``None`` if
+    setup failed entirely) and *server_rows* is a per-server summary for AGP / logging.
     """
     if not servers:
-        return None
+        return None, []
 
     try:
         caps, client = await load_mcp_capabilities(servers)
     except Exception as e:
         logger.error(f"[{agent_name}] MCP connect failed: {e}")
-        return None
+        return None, [
+            {
+                "name": "__connect__",
+                "ok": False,
+                "error": str(e),
+                "tool_count": 0,
+                "tool_names": [],
+                "tool_names_truncated": False,
+            }
+        ]
 
     existing_names = {t.name for t in agent.get("tools", [])}
     new_tools: list[BaseTool] = []
@@ -329,7 +341,23 @@ async def connect_mcp_servers(
     logger.info(
         f"[{agent_name}] MCP ready: +{len(new_tools)} tools | prompts: {mcp_prompts} | resources: {resource_counts}"
     )
-    return client
+
+    server_rows: list[dict[str, Any]] = []
+    for cap in caps:
+        tools = cap.all_tools()
+        names = [getattr(t, "name", "?") for t in tools]
+        server_rows.append(
+            {
+                "name": cap.server_name,
+                "ok": cap.last_error is None,
+                "error": cap.last_error,
+                "tool_count": len(tools),
+                "tool_names": names[:80],
+                "tool_names_truncated": len(names) > 80,
+            }
+        )
+
+    return client, server_rows
 
 
 async def aclose_mcp_client(client: Any, *, log_name: str = "agent") -> None:

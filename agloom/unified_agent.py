@@ -309,6 +309,24 @@ async def _emit_token_event(config: dict, content: str) -> None:
     await queue.put(AgentEvent(type="token", data={"content": content}))
 
 
+def _approx_char_tokens(text: str, *, cap_chars: int = 48_000) -> int:
+    """Rough token estimate when provider usage metadata is absent (~4 chars per token)."""
+    if not text:
+        return 0
+    if len(text) > cap_chars:
+        text = text[:cap_chars]
+    return max(1, len(text) // 4)
+
+
+def _llm_label(llm: Any) -> str | None:
+    for attr in ("model_name", "model", "model_id"):
+        v = getattr(llm, attr, None)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    cls = getattr(llm, "__class__", None)
+    return cls.__name__ if cls is not None else None
+
+
 RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "save_memory",
@@ -608,26 +626,47 @@ async def _save_checkpoint(
 
 
 async def _ensure_mcp_connected(config: dict) -> None:
-    """Connect to MCP servers on first call; no-op after _mcp_connected is set."""
-    if config.get("_mcp_connected") or not config.get("_mcp_servers"):
+    """Connect to MCP servers once per agent lifecycle; emit diagnostics (AGP + logs)."""
+    if not config.get("_mcp_servers"):
+        return
+    if config.get("_mcp_session_attempted"):
         return
     async with config["_mcp_lock"]:
-        if config.get("_mcp_connected"):
+        if config.get("_mcp_session_attempted"):
             return
+        config["_mcp_session_attempted"] = True
         from .mcp_support import connect_mcp_servers
 
-        client = await connect_mcp_servers(
+        client, server_rows = await connect_mcp_servers(
             servers=config["_mcp_servers"],
             agent=config,
             agent_name=config.get("name", "Agent"),
         )
         config["_mcp_client"] = client
-        config["_mcp_connected"] = True
-        # Emit MCP server names to the event stream so the CLI can display them
+        if client is not None:
+            config["_mcp_connected"] = True
+
+        names = [getattr(s, "name", str(s)) for s in config.get("_mcp_servers", [])]
         eq = config.get("_event_queue")
         if eq is not None:
-            names = [getattr(s, "name", str(s)) for s in config.get("_mcp_servers", [])]
-            await eq.put(AgentEvent(type="runtime.mcp.servers", data={"server_names": names}))
+            await eq.put(
+                AgentEvent(
+                    type="runtime.mcp.servers",
+                    data={"server_names": names, "servers": server_rows},
+                )
+            )
+
+        for row in server_rows:
+            sname = row.get("name") or "?"
+            if row.get("ok"):
+                tnames = row.get("tool_names") or []
+                tcount = int(row.get("tool_count") or 0)
+                preview = ", ".join(str(n) for n in tnames[:12])
+                if row.get("tool_names_truncated") or tcount > len(tnames):
+                    preview = f"{preview}, …" if preview else f"{tcount} tool(s) (names truncated)"
+                logger.event(f"MCP [{sname}] ok · {tcount} tool(s)" + (f": {preview}" if preview else ""))
+            else:
+                logger.warning(f"MCP [{sname}] unavailable: {row.get('error') or 'unknown error'}")
 
 
 async def _ensure_skills_bootstrapped(
@@ -1145,12 +1184,22 @@ async def run_fresh(
     # Whitespace-only classifier text must not short-circuit — it would yield an empty AGP assistant
     # message after stripping (``translate`` / wire consumers treat blank as "no output").
     if not is_frozen and analysis.pattern == PatternType.DIRECT and _direct_text and not _has_custom_direct:
+        out_blob = f"{analysis.pattern.value}\n{analysis.reasoning or ''}\n{_direct_text}"
+        in_tok = _approx_char_tokens(augmented_query)
+        out_tok = _approx_char_tokens(out_blob)
+        total_tok = in_tok + out_tok
+        usage_est = {"input_tokens": in_tok, "output_tokens": out_tok, "total_tokens": total_tok}
+        model_lbl = _llm_label(config["llm"])
         direct_step = _make_step(
             StepType.LLM_CALL,
             "direct_shortcircuit",
             input=raw_query_str,
             output=_direct_text,
             max_length=ml,
+            usage=usage_est,
+            model=model_lbl,
+            phase="direct_shortcircuit",
+            usage_is_estimate=True,
         )
         _steps.append(direct_step)
         await _emit_step_event(config, direct_step)
@@ -1163,6 +1212,7 @@ async def run_fresh(
             analysis=analysis,
             run_id=run_id,
             steps=_steps,
+            token_usage=dict(usage_est),
         )
 
         if pattern_val in config.get("interrupt_after", []):
@@ -1403,6 +1453,7 @@ class UnifiedAgent:
                 logger.debug(f"[{self.name}] MCP client cleanup: {exc!r}")
             self.config["_mcp_client"] = None
             self.config["_mcp_connected"] = False
+            self.config["_mcp_session_attempted"] = False
 
         fb = self.config.get("_feedback", {})
         handler = fb.get("handler")
@@ -2609,6 +2660,7 @@ async def create_agent(
     config["_mcp_servers"] = list(mcp_servers or [])
     config["_mcp_client"] = None
     config["_mcp_connected"] = False
+    config["_mcp_session_attempted"] = False
     config["_mcp_lock"] = asyncio.Lock()
     config["mcp_prompts"] = {}
     config["mcp_uris"] = {}

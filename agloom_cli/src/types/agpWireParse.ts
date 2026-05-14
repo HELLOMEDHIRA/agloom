@@ -170,6 +170,18 @@ const d = {
   }),
   runtimeMCPServers: z.object({
     server_names: z.array(z.string()),
+    servers: z
+      .array(
+        z.object({
+          name: z.string(),
+          ok: z.boolean(),
+          error: z.string().optional().nullable(),
+          tool_count: z.number().optional(),
+          tool_names: z.array(z.string()).optional(),
+          tool_names_truncated: z.boolean().optional(),
+        }),
+      )
+      .optional(),
   }),
   todosUpdated: z.object({
     items: z.array(z.record(z.string(), z.unknown())).optional(),

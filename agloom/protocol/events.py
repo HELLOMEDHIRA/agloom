@@ -872,9 +872,16 @@ class RuntimeConfigApplied(Envelope):
 
 
 class RuntimeMCPServersData(_DataBase):
-    """Emitted after MCP servers connect (may be empty if none configured)."""
+    """Emitted after MCP session init (may be empty if none configured)."""
 
-    server_names: list[str]
+    server_names: list[str] = Field(default_factory=list)
+    servers: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Per-server summary rows after connect (name, ok, error?, tool_count, tool_names, …). "
+            "Empty when MCP was not attempted or the wire predates this field."
+        ),
+    )
 
 
 class RuntimeMCPServers(Envelope):

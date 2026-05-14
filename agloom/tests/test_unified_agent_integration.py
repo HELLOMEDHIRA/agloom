@@ -71,6 +71,9 @@ async def test_ainvoke_direct_shortcircuit_patched_classifier(stub_llm) -> None:
             assert result.output == want
             assert result.pattern_used == PatternType.DIRECT
             assert result.run_id != ""
+            assert result.token_usage.get("input_tokens", 0) > 0
+            assert result.token_usage.get("output_tokens", 0) > 0
+            assert result.token_usage.get("total_tokens", 0) > 0
         finally:
             await agent.aclose()
 

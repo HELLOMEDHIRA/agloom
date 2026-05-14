@@ -167,12 +167,21 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
 
     case 'runtime.mcp.servers': {
       const names = evt.data.server_names ?? []
+      const rows = evt.data.servers ?? []
+      const parts = rows.map((r) => {
+        if (r.ok) {
+          const n = r.tool_count ?? (r.tool_names?.length ?? 0)
+          return `${r.name}:ok(${n} tools)`
+        }
+        return `${r.name}:FAIL${r.error ? `(${String(r.error).slice(0, 120)})` : ''}`
+      })
+      const detail = parts.length ? ` · ${parts.join(' · ')}` : ''
       return {
         ...s,
         mcpServerNames: names,
         protocolNotes: pushProtocolNotes(
           s.protocolNotes,
-          `MCP servers: ${names.join(', ') || 'none'}`,
+          `MCP servers: ${names.join(', ') || 'none'}${detail}`,
         ),
       }
     }
