@@ -6,6 +6,10 @@ import type { AGPEvent, InvokeAttachment } from './types/agp.js'
 import type { AGPBridge } from './runtime/bridge.js'
 import { writeBannerToStderr } from './banner.js'
 import { ensureAgloomCliWorkspace } from './workspaceBootstrap.js'
+import {
+  modelAndProviderFromRuntimeArgs,
+  preflightProviderCredentials,
+} from './utils/preflightProviderCredentials.js'
 
 export interface DirectOpts {
   thread: string
@@ -60,12 +64,19 @@ export const runDirect = async(options: {
 }): Promise<void> => {
   const { bridge, prompt, opts, runtimeArgs } = options
 
-  await ensureAgloomCliWorkspace(process.cwd(), { configPath: opts.configPath })
-
   await writeBannerToStderr({
     quiet: opts.quiet,
     noBanner: opts.noBanner,
   })
+
+  const { model: modelFromArgs, provider: providerFromArgs } = modelAndProviderFromRuntimeArgs(runtimeArgs)
+  const pf = preflightProviderCredentials(modelFromArgs, providerFromArgs)
+  if (!pf.ok) {
+    process.stderr.write(`[agloom] ${pf.message}\n`)
+    process.exit(1)
+  }
+
+  await ensureAgloomCliWorkspace(process.cwd(), { configPath: opts.configPath })
 
   let inputTok = 0
   let outputTok = 0
@@ -121,10 +132,14 @@ export const runDirect = async(options: {
       if (evt.data.text) gotModelOutput = true
       writeOut(evt.data.text)
     }
-    if (evt.type === 'message.assistant' && opts.noStream) {
-      if (evt.data.content) gotModelOutput = true
-      writeOut(evt.data.content)
-      if (!evt.data.content.endsWith('\n')) writeOut('\n')
+    if (evt.type === 'message.assistant') {
+      const c = evt.data.content ?? ''
+      if (c) gotModelOutput = true
+      if (!opts.json && c) {
+        const text = opts.noColor ? stripAnsi(c) : c
+        writeOut(text)
+        if (!text.endsWith('\n')) writeOut('\n')
+      }
     }
 
     if (evt.type === 'hitl.request') {

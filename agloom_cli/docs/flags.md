@@ -50,10 +50,12 @@ TUI **`multiline`** is not a CLI flag — set it in **`agloom.yaml`** (see [Conf
 | ------------------------- | ------------------------------------------ |
 | `--memory <type>`         | `in-memory`, `none`, `sqlite`, … |
 | `--memory-path <path>`    | SQLite path for session memory.            |
-| `--skills-dir <path>`     | Skills directory.                           |
+| `--skills-dir <path>`     | Skills **disk mirror** directory. When omitted, `agloom-runtime` defaults to **`.agloom/skills`** under the process working directory so learned skills appear as files. |
 | `--summarizer-model <id>` | Model id for summarization.                |
 | `--no-auto-summarize`     | Disable auto summarization.                |
 | `--session-max-turns <n>` | Rolling window size (`--max-turns` alias). |
+
+There is **no** `--no-memory` or `--no-skills` flag on the npm CLI or `agloom-runtime serve`; YAML `memory.enabled: false` / `skills.enabled: false` is ignored for disabling those systems (see [Config](config.md)).
 
 ## CLI tools (sandbox)
 

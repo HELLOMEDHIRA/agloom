@@ -21,10 +21,8 @@ complete -c agloom -l max-tokens -d 'Max output tokens' -r
 complete -c agloom -l mcp -d 'MCP server spec' -r
 complete -c agloom -l system-prompt -d 'System prompt' -r
 complete -c agloom -l system-prompt-file -d 'System prompt file' -r
-complete -c agloom -l no-memory -d 'Minimal session memory'
 complete -c agloom -l memory -d 'Session memory type' -r
 complete -c agloom -l memory-path -d 'SQLite path for memory' -r
-complete -c agloom -l no-skills -d 'Disable skills disk mirror'
 complete -c agloom -l skills-dir -d 'Skills directory' -r
 complete -c agloom -l summarizer-model -d 'Summarizer model' -r
 complete -c agloom -l no-auto-summarize -d 'Disable auto summarization'

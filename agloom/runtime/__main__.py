@@ -1551,13 +1551,6 @@ def _add_serve_agent_flags(serve: argparse.ArgumentParser) -> None:
         help="Read system prompt from a UTF-8 file.",
     )
     serve.add_argument(
-        "--no-memory",
-        dest="no_memory",
-        action="store_true",
-        default=False,
-        help="Disable durable session memory (minimal in-memory turns).",
-    )
-    serve.add_argument(
         "--memory",
         dest="memory_type",
         default=None,
@@ -1572,18 +1565,11 @@ def _add_serve_agent_flags(serve: argparse.ArgumentParser) -> None:
         help="SQLite path when --memory=sqlite.",
     )
     serve.add_argument(
-        "--no-skills",
-        dest="no_skills",
-        action="store_true",
-        default=False,
-        help="Disable skills disk mirror (skills_disk_mirror=None).",
-    )
-    serve.add_argument(
         "--skills-dir",
         dest="skills_dir",
         default=None,
         metavar="PATH",
-        help="Directory for skills disk mirror when enabled.",
+        help="Directory for skills disk mirror (default: .agloom/skills under the process working directory).",
     )
     serve.add_argument(
         "--summarizer-model",

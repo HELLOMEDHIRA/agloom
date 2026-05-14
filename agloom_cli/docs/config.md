@@ -26,15 +26,33 @@ Validated fields (unknown keys are preserved via passthrough for forward compati
 | `system_prompt_file` | string   | Path to prompt file                               |          |                |
 | `store`              | `none` \ | `memory` \                                        | `sqlite` | AGP EventStore |
 | `store_path`         | string   | SQLite path                                       |          |                |
-| `memory`             | string   | Session memory backend hint                       |          |                |
+| `memory`             | string   | Session memory backend hint (`sqlite`, `in-memory`, `none`, …) |          |                |
 | `memory_path`        | string   | SQLite session memory path                        |          |                |
-| `no_memory`          | boolean  | Minimal memory                                    |          |                |
-| `no_skills`          | boolean  | Disable skills mirror                             |          |                |
-| `skills_dir`         | string   | Skills directory                                  |          |                |
+| `skills_dir`         | string   | Skills **disk mirror** directory (defaults to `.agloom/skills` under cwd when omitted; see [Flags](flags.md)) |          |                |
 | `summarizer_model`   | string   | Summarizer model id                               |          |                |
 | `auto_summarize`     | boolean  | Toggle auto summarization                         |          |                |
 | `session_max_turns`  | integer  | Session window                                    |          |                |
 | `mcp`                | array    | Strings `name:path` or `{ name, config }` objects |          |                |
+
+Flat keys **`no_memory`** and **`no_skills`** are stripped when YAML is loaded — they are not supported configuration.
+
+### Nested `memory` and `skills` (rich YAML)
+
+Rich layouts may nest tuning fields:
+
+```yaml
+memory:
+  enabled: true
+  max_turns: 50
+  auto_summarize: true
+  path: .agloom/session_memory.sqlite
+skills:
+  enabled: true
+  max_skills: 30
+  dir: .agloom/skills
+```
+
+**`enabled: false` is ignored** for both blocks: you cannot disable durable session memory or the skills subsystem from YAML alone; other fields still merge (for example `max_turns` → `session_max_turns`, `path` → `memory_path`, `dir` → `skills_dir`). A bare `memory.enabled: true` continues to imply `memory: sqlite` when no backend string is present.
 
 ### Minimal example
 

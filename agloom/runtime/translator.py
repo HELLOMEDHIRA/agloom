@@ -25,6 +25,16 @@ _AGENT_EVENT_THINKING_TYPES: frozenset[str] = frozenset(
 )
 
 
+def _pattern_tail_upper(v: Any) -> str:
+    """Normalize ``PatternType.DIRECT`` / ``"DIRECT"`` / enum dumps to ``DIRECT``."""
+    if v is None:
+        return ""
+    s = str(v).strip()
+    if not s:
+        return ""
+    return s.split(".")[-1].upper()
+
+
 def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
     """Dispatch one :class:`AgentEvent` to the correct AGP emit method.
 
@@ -74,7 +84,39 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
         )
         return
 
-    if et in ("done", "answer", "message_assistant"):
+    if et == "done":
+        # ``astream_events`` ends with ``{"result": ExecutionResult.model_dump()}`` — older tests
+        # used top-level ``output``. REACT streams ``token`` deltas first; repeating ``result.output``
+        # here would duplicate assistant prose on the wire, so suppress terminal text unless DIRECT.
+        res = data.get("result")
+        content = _str(data.get("output")) or _str(data.get("content")) or ""
+        if not content and isinstance(res, dict):
+            content = _str(res.get("output")) or ""
+        patt = ""
+        if isinstance(res, dict):
+            patt = _pattern_tail_upper(res.get("pattern_used"))
+            if not patt and isinstance(res.get("analysis"), dict):
+                patt = _pattern_tail_upper((res.get("analysis") or {}).get("pattern"))
+        if content and patt and patt != "DIRECT":
+            content = ""
+        run_id = _str(data.get("run_id"))
+        pattern = _str(data.get("pattern"))
+        if isinstance(res, dict):
+            if not run_id:
+                run_id = _str(res.get("run_id")) or run_id
+            if not pattern:
+                pattern = _pattern_tail_upper(res.get("pattern_used")) or pattern
+                if not pattern and isinstance(res.get("analysis"), dict):
+                    pattern = _str((res.get("analysis") or {}).get("pattern")) or pattern
+        emitter.emit_message_assistant(
+            content=content,
+            message_id=_str(data.get("message_id")),
+            run_id=run_id or None,
+            pattern=pattern or None,
+        )
+        return
+
+    if et in ("answer", "message_assistant"):
         content = _str(data.get("output")) or _str(data.get("content")) or ""
         emitter.emit_message_assistant(
             content=content,

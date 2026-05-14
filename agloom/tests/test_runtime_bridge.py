@@ -168,6 +168,68 @@ def test_translate_token_with_empty_text_skipped() -> None:
     assert em.calls == []
 
 
+def test_translate_done_nested_result_direct_emits_output() -> None:
+    em = _CaptureEmitter()
+    translate(
+        AgentEvent(
+            type="done",
+            data={
+                "result": {
+                    "pattern_used": "DIRECT",
+                    "output": "Hello from classifier path",
+                    "run_id": "run_1",
+                    "query": "Hi",
+                    "steps_taken": 1,
+                    "success": True,
+                },
+            },
+        ),
+        em,  # type: ignore[arg-type]
+    )
+    assert em.calls == [
+        (
+            "emit_message_assistant",
+            {
+                "content": "Hello from classifier path",
+                "message_id": None,
+                "run_id": "run_1",
+                "pattern": "DIRECT",
+            },
+        ),
+    ]
+
+
+def test_translate_done_nested_result_react_suppresses_terminal_duplicate() -> None:
+    em = _CaptureEmitter()
+    translate(
+        AgentEvent(
+            type="done",
+            data={
+                "result": {
+                    "pattern_used": "REACT",
+                    "output": "Already streamed in token deltas",
+                    "run_id": "run_2",
+                    "query": "q",
+                    "steps_taken": 2,
+                    "success": True,
+                },
+            },
+        ),
+        em,  # type: ignore[arg-type]
+    )
+    assert em.calls == [
+        (
+            "emit_message_assistant",
+            {
+                "content": "",
+                "message_id": None,
+                "run_id": "run_2",
+                "pattern": "REACT",
+            },
+        ),
+    ]
+
+
 # bridge end-to-end tests
 
 

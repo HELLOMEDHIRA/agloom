@@ -1,7 +1,7 @@
 /**
- * First paint: workspace bootstrap (including optional ``agsuperbrain init``) with a visible
- * spinner, then credential preflight, then ``bridge.start`` so AGP replay is buffered until
- * {@link App} mounts and subscribes.
+ * First paint: credential preflight (fast fail), then workspace bootstrap (including optional
+ * ``agsuperbrain init``), then ``bridge.start`` so AGP replay is buffered until {@link App}
+ * mounts and subscribes.
  */
 
 import React, { useEffect, useState } from 'react'
@@ -40,7 +40,8 @@ export const BootstrapGate = ({
   ...appProps
 }: BootstrapGateProps): React.ReactElement => {
   const [phase, setPhase] = useState<Phase>('boot')
-  const [bootMessage, setBootMessage] = useState('Preparing workspace…')
+  const [bootMessage, setBootMessage] = useState('Checking API credentials…')
+  const [bootKind, setBootKind] = useState<'preflight' | 'workspace'>('preflight')
   const [errorText, setErrorText] = useState<string | null>(null)
   const spin = useSpinner(90)
 
@@ -49,10 +50,7 @@ export const BootstrapGate = ({
 
     const run = async (): Promise<void> => {
       try {
-        setBootMessage('Preparing workspace (Super-Brain may download on first run)…')
-        await ensureAgloomCliWorkspace(cwd, { configPath })
-        if (cancelled) return
-
+        setBootKind('preflight')
         setBootMessage('Checking API credentials…')
         const pf = preflightProviderCredentials(modelForPreflight, providerForPreflight)
         if (!pf.ok) {
@@ -60,6 +58,11 @@ export const BootstrapGate = ({
           setPhase('error')
           return
         }
+        if (cancelled) return
+
+        setBootKind('workspace')
+        setBootMessage('Preparing workspace (Super-Brain may download on first run)…')
+        await ensureAgloomCliWorkspace(cwd, { configPath })
         if (cancelled) return
 
         process.stderr.write('Starting agloom-runtime…\n')
@@ -103,7 +106,11 @@ export const BootstrapGate = ({
           {spin} {bootMessage}
         </Text>
         <Box marginTop={1}>
-          <Text dimColor>Please wait — first launch can take a few minutes.</Text>
+          <Text dimColor>
+            {bootKind === 'preflight'
+              ? 'Verifying provider credentials for the selected model.'
+              : 'First launch can take a few minutes while Super-Brain indexes the project.'}
+          </Text>
         </Box>
       </Box>
     )

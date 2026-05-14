@@ -21,10 +21,8 @@ _arguments -S -s \
   '--mcp[MCP server spec]:spec:' \
   '--system-prompt[System prompt text]:text:' \
   '--system-prompt-file[System prompt file]:file:_files' \
-  '--no-memory[Minimal session memory]' \
   '--memory[Session memory type]:type:' \
   '--memory-path[SQLite path for memory]:file:_files' \
-  '--no-skills[Disable skills disk mirror]' \
   '--skills-dir[Skills directory]:directory:_directories' \
   '--summarizer-model[Summarizer model id]:model:' \
   '--no-auto-summarize[Disable auto summarization]' \

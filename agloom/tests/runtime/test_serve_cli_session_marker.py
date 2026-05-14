@@ -151,3 +151,11 @@ def test_session_started_snapshot_sampling_penalties_and_max_tokens_override() -
     assert ec["max_tokens"] == 2048
     assert ec["frequency_penalty"] == 0.5
     assert ec["presence_penalty"] == -0.25
+
+
+def test_skills_disk_mirror_defaults_to_dot_agloom_skills(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    from agloom.runtime.serve_cli import skills_disk_mirror_from_args
+
+    p = skills_disk_mirror_from_args(argparse.Namespace(skills_dir=None))
+    assert p == (tmp_path / ".agloom" / "skills").resolve()

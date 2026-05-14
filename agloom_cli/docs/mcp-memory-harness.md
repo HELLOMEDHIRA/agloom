@@ -124,9 +124,10 @@ Typical workspace artifacts:
 | ------------------------------- | -------------------------------------------------- |
 | `.agloom/graph_store.sqlite`    | LangGraph async store (default)                    |
 | `.agloom/session_memory.sqlite` | Session memory when `--memory sqlite`              |
+| `.agloom/skills`                | Default **skills disk mirror** (Markdown files) when `--skills-dir` is omitted |
 | `.agloom/agp_events.db`         | AGP EventStore when `--store sqlite` (CLI default) |
 
-Tune paths via flags or YAML (`store_path`, `memory_path`) plus pass-through **`--`**.
+Learned skills are always persisted in the LangGraph store; the mirror directory is for human-readable copies. Tune paths via flags or YAML (`store_path`, `memory_path`, `skills_dir`) plus pass-through **`--`**.
 
 ## See also
 

@@ -7,7 +7,7 @@ import { basename, dirname, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { render } from 'ink'
 import React from 'react'
-import { Command } from 'commander'
+import { Command, CommanderError } from 'commander'
 import { BootstrapGate } from './components/BootstrapGate.js'
 import { ThemeProvider, type AgloomTheme } from './themeContext.js'
 import { createAGPBridge } from './runtime/bridge.js'
@@ -148,11 +148,12 @@ const exitWithRuntimeProviders = (subArgs: string[]): never => {
 
 const cliVersion = readCliPackageVersion()
 
-const program = new Command()
-  .name('agloom')
-  .description('agloom CLI — AGP terminal client (interactive UI or one-shot direct mode)')
+const CLI_DESCRIPTION = 'agloom CLI — AGP terminal client (interactive UI or one-shot direct mode)'
 
-program
+/** Subcommands only — parsed when argv[2] is exactly one of these (so `-m model Hi` does not steal `Hi`). */
+const subProgram = new Command().name('agloom').description(CLI_DESCRIPTION)
+
+subProgram
   .command('upgrade')
   .description('Compare installed agloom-cli + agloom versions to npm / PyPI latest')
   .action(async () => {
@@ -166,7 +167,7 @@ program
     }
   })
 
-program
+subProgram
   .command('init')
   .description('Create .agloom/ directories and starter agloom.yaml when missing')
   .option('--config <path>', 'Use the directory containing this file as the project root')
@@ -183,7 +184,7 @@ program
     }
   })
 
-program
+subProgram
   .command('sessions')
   .description('Interactive session picker: choose a past session to resume (arrow keys, Enter)')
   .action(async () => {
@@ -197,7 +198,7 @@ program
     }
   })
 
-program
+subProgram
   .command('clean')
   .description('Remove .agloom/, .agsuperbrain/, and clean .gitignore')
   .action(async () => {
@@ -211,7 +212,7 @@ program
     }
   })
 
-program
+subProgram
   .command('eval')
   .description('Run agloom-runtime eval (remaining argv forwarded after the optional file)')
   .allowUnknownOption(true)
@@ -226,7 +227,9 @@ program
     process.exit(r.status === null ? 1 : r.status)
   })
 
-program
+const mainProgram = new Command().name('agloom').description(CLI_DESCRIPTION)
+
+mainProgram
   .argument('[prompt]', 'one-shot prompt (enables direct mode when stdin is TTY)')
   .option('-t, --thread <id>', 'LangGraph thread id')
   .option('-s, --session <id>', 'AGP session id')
@@ -298,6 +301,8 @@ program
   )
   .option('--budget-cost-usd <n>', 'forward to runtime: session cumulative USD cost cap', (v) => parseFloat(v))
   .option('--capture <path>', 'TUI: append each inbound AGP event as one NDJSON line', undefined)
+  .helpCommand(false)
+  .showHelpAfterError(false)
   .allowUnknownOption(false)
 
 if (shouldPrintCombinedVersion(argvMain)) {
@@ -305,7 +310,60 @@ if (shouldPrintCombinedVersion(argvMain)) {
   process.exit(0)
 }
 
-await program.parseAsync(argvMain, { from: 'node' })
+const EXPLICIT_SUBCOMMANDS = new Set(['upgrade', 'init', 'sessions', 'clean', 'eval'])
+
+function useExplicitSubcommandArgv(argv: string[]): boolean {
+  const s2 = argv[2]
+  if (s2 && !s2.startsWith('-') && EXPLICIT_SUBCOMMANDS.has(s2)) {
+    return true
+  }
+  const entry = argv[2]
+  const s3 = argv[3]
+  if (
+    s3 &&
+    !s3.startsWith('-') &&
+    EXPLICIT_SUBCOMMANDS.has(s3) &&
+    entry &&
+    (entry.endsWith('.tsx') ||
+      entry.endsWith('.ts') ||
+      entry.endsWith('.js') ||
+      entry.endsWith('.mjs') ||
+      entry.endsWith('.cjs'))
+  ) {
+    return true
+  }
+  return false
+}
+
+const useSubcommandParser = useExplicitSubcommandArgv(argvMain)
+const program = useSubcommandParser ? subProgram : mainProgram
+
+/** Commander default is `process.exit`; override so we can handle help and print concise parse errors. */
+program.exitOverride()
+try {
+  await program.parseAsync(argvMain, { from: 'node' })
+} catch (err) {
+  if (err instanceof CommanderError) {
+    if (
+      err.code === 'commander.help' ||
+      err.code === 'commander.helpDisplayed' ||
+      err.code === 'commander.version'
+    ) {
+      process.exit(err.exitCode ?? 0)
+    }
+    if (/unknown command\b/i.test(err.message) && !/unknown option\b/i.test(err.message)) {
+      process.stderr.write(
+        '[agloom] "unknown command" usually means an outdated agloom-cli (prompt was parsed as a subcommand).\n' +
+          '[agloom] Fix: reinstall from this repo (`cd agloom_cli && npm run build && npm link` or `npm i -g .`).\n' +
+          '[agloom] Workaround: `agloom --prompt "Your text"` or put the prompt first: `agloom "Hi" -m "nvidia:…"`.\n',
+      )
+    } else if (!/^error:/i.test((err.message ?? '').trim())) {
+      process.stderr.write(`[agloom] ${err.message}\n`)
+    }
+    process.exit(err.exitCode ?? 1)
+  }
+  throw err
+}
 
 const rawOpts = program.opts<CliOpts>()
 const positionalPrompt = program.args[0] as string | undefined

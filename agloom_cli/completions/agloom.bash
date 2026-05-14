@@ -17,8 +17,8 @@ _agloom() {
     -m --model --provider --api-key-env
     -T --temperature --max-tokens
     --mcp --system-prompt --system-prompt-file
-    --no-memory --memory --memory-path
-    --no-skills --skills-dir --summarizer-model --no-auto-summarize
+    --memory --memory-path
+    --skills-dir --summarizer-model --no-auto-summarize
     --session-max-turns --max-turns
     --prompt --quiet --json --no-stream --no-color --no-banner
     --auto-approve --auto-reject --hitl-tty

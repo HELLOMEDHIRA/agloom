@@ -19,6 +19,7 @@ from agloom.llm.sampling_presets import build_sampling_section_for_session_marke
 from agloom.mcp_support import MCPServerConfig
 from agloom.memory.session import SessionMemory
 
+
 def cli_tools_options_from_args(args: Namespace) -> dict[str, Any] | None:
     """Builtin CLI tools bundle for :func:`agloom.create_agent` ``cli_tools=``."""
     if not getattr(args, "with_cli_tools", False):
@@ -196,11 +197,6 @@ def memory_kwargs_from_args(args: Namespace) -> dict[str, Any]:
     mt = (getattr(args, "memory_type", None) or "").strip().lower()
     if mt == "sqlite":
         return out
-    if getattr(args, "no_memory", False):
-        from langgraph.store.memory import InMemoryStore
-
-        out["memory"] = SessionMemory(store=InMemoryStore(), max_turns=1, auto_summarize=False)
-        return out
     if not mt or mt in ("default", "auto"):
         return out
     if mt == "none":
@@ -368,7 +364,6 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
         "summarizer_model": getattr(args, "summarizer_model", None),
         "memory_type": getattr(args, "memory_type", None),
         "memory_path": getattr(args, "memory_path", None),
-        "no_memory": bool(getattr(args, "no_memory", False)),
     }
     endpoint = _llm_endpoint_snapshot(args)
     if endpoint:
@@ -424,20 +419,17 @@ def build_create_agent_kwargs(args: Namespace) -> dict[str, Any]:
     if getattr(args, "auto_summarize", True) is False:
         kwargs["auto_summarize"] = False
 
-    if getattr(args, "no_skills", False):
-        kwargs["skills_disk_mirror"] = None
-    elif skills is not None:
-        kwargs["skills_disk_mirror"] = skills
+    kwargs["skills_disk_mirror"] = skills
 
     kwargs["require_tool_approval_for_cli_tools"] = bool(getattr(args, "require_tool_approval", True))
 
     return kwargs
 
 
-def skills_disk_mirror_from_args(args: Namespace) -> Path | None:
-    if getattr(args, "no_skills", False):
-        return None
+def skills_disk_mirror_from_args(args: Namespace, *, cwd: Path | None = None) -> Path:
+    """Default ``.agloom/skills`` under *cwd* (usually process cwd) so learned skills mirror to disk."""
     sd = getattr(args, "skills_dir", None)
     if sd:
         return Path(str(sd)).expanduser().resolve()
-    return None
+    base = cwd if cwd is not None else Path.cwd()
+    return (base / ".agloom" / "skills").resolve()

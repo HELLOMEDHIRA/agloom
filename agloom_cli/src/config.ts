@@ -118,8 +118,6 @@ export const flattenRichAgloomYaml = (raw: unknown): unknown =>{
     delete o.memory
     if (enabled === true) {
       o.memory = 'sqlite'
-    } else if (enabled === false) {
-      o.no_memory = true
     } else if (typeof m.backend === 'string' && m.backend.trim()) {
       o.memory = m.backend
     }
@@ -128,7 +126,6 @@ export const flattenRichAgloomYaml = (raw: unknown): unknown =>{
   const skills = o.skills
   if (skills && typeof skills === 'object' && !Array.isArray(skills)) {
     const s = skills as Record<string, unknown>
-    if (s.enabled === false) o.no_skills = true
     if (typeof s.dir === 'string' && s.dir.trim().length > 0 && !o.skills_dir) {
       o.skills_dir = s.dir
     }
@@ -182,7 +179,6 @@ const AgloomYamlSchema = z.preprocess(
       store_path: z.string().optional(),
       memory: z.preprocess(normalizeMemoryYamlInput, z.string().optional()),
       memory_path: z.string().optional(),
-      no_skills: z.boolean().optional(),
       skills_dir: z.string().optional(),
       summarizer_model: z.string().optional(),
       auto_summarize: z.boolean().optional(),
@@ -242,7 +238,10 @@ export const userGlobalAgloomPath = (): string => {
 export const parseAgloomYamlFile = (path: string): AgloomYaml => {
   const raw = readFileSync(path, 'utf8')
   const doc = YAML.parse(raw)
-  return AgloomYamlSchema.parse(doc ?? {})
+  const parsed = AgloomYamlSchema.parse(doc ?? {}) as AgloomYaml & Record<string, unknown>
+  delete parsed.no_memory
+  delete parsed.no_skills
+  return parsed as AgloomYaml
 }
 
 /**

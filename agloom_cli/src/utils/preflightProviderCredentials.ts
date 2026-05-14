@@ -7,6 +7,32 @@ import { spawnSync } from 'node:child_process'
 
 export type PreflightResult = { ok: true } | { ok: false; message: string }
 
+/** Parse ``--model`` / ``-m`` and ``--provider`` from argv-like arrays (e.g. ``buildRuntimeArgs`` output). */
+export const modelAndProviderFromRuntimeArgs = (
+  args: readonly string[],
+): { model: string; provider: string | null } => {
+  let model = ''
+  let provider: string | null = null
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]
+    if (a === '--model' || a === '-m') {
+      const v = args[i + 1]
+      if (v != null) {
+        model = String(v).trim()
+        i++
+      }
+    } else if (a === '--provider') {
+      const v = args[i + 1]
+      if (v != null) {
+        const t = String(v).trim()
+        provider = t.length > 0 ? t : null
+        i++
+      }
+    }
+  }
+  return { model, provider }
+}
+
 const parseResolveOutput = (stdout: string): { keys: Array<{ key: string; set: boolean }>; hasEnvBlock: boolean } => {
   const lines = stdout.split(/\r?\n/)
   let inBlock = false
