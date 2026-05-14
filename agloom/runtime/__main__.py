@@ -1549,8 +1549,9 @@ def _add_serve_agent_flags(serve: argparse.ArgumentParser) -> None:
         action="store_true",
         default=False,
         help=(
-            "Write resolved API key material into the session marker JSON and restore it on resume "
-            "when the target env var is empty (also AGLOOM_PERSIST_API_KEY_IN_SESSION_MARKER=1). "
+            "Set persist_api_key_in_session_marker: true in the session JSON (explicit audit flag). "
+            "API key material is written to the marker by default unless AGLOOM_OMIT_API_KEY_FROM_SESSION=1; "
+            "resume still uses inject when the target env var is empty. "
             "Dangerous: anyone who can read .agloom/sessions/*.json can use the key."
         ),
     )

@@ -15,7 +15,7 @@ export interface CoreCliOpts {
   model?: string
   provider?: string
   apiKeyEnv?: string
-  /** Forward ``--persist-api-key-in-session-marker`` (dangerous: key on disk). */
+  /** Forward ``--persist-api-key-in-session-marker`` (sets audit flag on session JSON; key material is default-on). */
   persistApiKeyInSessionMarker?: boolean
   temperature?: number
   topP?: number

@@ -8,6 +8,7 @@
 
 import React, { useState, useMemo } from 'react'
 import { Box, Text, useInput } from 'ink'
+import { StatusMessage } from '@inkjs/ui'
 import TextInput from 'ink-text-input'
 import type { HITLRequest } from '../store/session.js'
 import type { AGPBridge } from '../runtime/bridge.js'
@@ -105,16 +106,16 @@ export const HITLPrompt = ({ request, bridge }: Props): React.ReactElement => {
   })
 
   // ── Free-text mode (clarifications without options, or user pressed C) ─────
+  const hitlSummary = `${request.kind}${request.tool ? ` · ${request.tool}` : ''}`
+
   if (mode === 'free_text') {
     return (
       <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} marginBottom={0}>
-        <Box>
-          <Text bold color="yellow">⚠ HITL:{' '}</Text>
-          <Text bold>{request.kind}</Text>
-          {request.tool && <Text color="gray" dimColor> · {request.tool}</Text>}
+        <Box marginBottom={0}>
+          <StatusMessage variant="warning">{`HITL · ${hitlSummary}`}</StatusMessage>
         </Box>
         {request.detail && <Box marginLeft={2}><Text color="white">{truncate(request.detail, 300)}</Text></Box>}
-      {request.question && <Box marginLeft={2}><Text color="cyan" italic>{request.question}</Text></Box>}
+        {request.question && <Box marginLeft={2}><Text color="cyan" italic>{request.question}</Text></Box>}
         <Box marginLeft={2}>
           <Text color="gray" dimColor>Type your answer · Enter to submit · Esc to go back</Text>
         </Box>
@@ -129,11 +130,8 @@ export const HITLPrompt = ({ request, bridge }: Props): React.ReactElement => {
   // ── Button mode ──────────────────────────────────────────────────────────
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} marginBottom={0}>
-      {/* Header */}
-      <Box>
-        <Text bold color="yellow">⚠ HITL:{' '}</Text>
-        <Text bold>{request.kind}</Text>
-        {request.tool && <Text color="gray" dimColor> · {request.tool}</Text>}
+      <Box marginBottom={0}>
+        <StatusMessage variant="warning">{`HITL · ${hitlSummary}`}</StatusMessage>
       </Box>
 
       {/* Detail / Question */}

@@ -740,7 +740,8 @@ class RuntimeReadyData(_DataBase):
         default=None,
         description=(
             "Session rolling-memory backend from CLI/YAML before lazy agent bootstrap: "
-            "``sqlite`` | ``in-memory`` | ``none`` | ``off`` (unset → no SessionMemory bundle)."
+            "``sqlite`` | ``in-memory`` | ``none``; when ``--memory`` is omitted, ``in-memory`` "
+            "(ephemeral SessionMemory matching :func:`agloom.unified_agent.create_agent` defaults)."
         ),
     )
     agent_store_kind: str | None = Field(

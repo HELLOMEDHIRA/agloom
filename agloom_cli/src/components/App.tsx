@@ -1,7 +1,8 @@
 /** Root terminal UI layout: AGP-driven state via `useSessionStore.dispatch`; completed turns render in the live tree (replay-safe). */
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { dirname, resolve } from 'node:path'
+import { Alert } from '@inkjs/ui'
 import { Box, Text, useApp, useInput, useWindowSize } from 'ink'
 import { Header } from './Header.js'
 import { CompletedTurnCard } from './CompletedTurnCard.js'
@@ -85,8 +86,20 @@ export const App = ({
   )
 
   const multilineOpt = multiline
-  /** Multiline compose from ``agloom.yaml`` ``multiline`` (default true), or auto after pasting newlines when false. */
+  /** Multiline compose from ``agloom.yaml`` ``multiline`` (default on when omitted), or auto after pasting newlines when false. */
   const ml = multilineOpt || pasteCompose
+
+  const fireThinkingHotkey = useCallback(() => {
+    const before = useSessionStore.getState()
+    const hadActive = Boolean(before.activeTurn && before.activeTurn.thinkingSteps.length > 0)
+    toggleThinkingUiExpand()
+    const after = useSessionStore.getState()
+    if (hadActive) {
+      appendProtocolNote(`Thinking (current turn): ${after.expandActiveThinking ? 'expanded' : 'compact (live summary line)'}`)
+    } else {
+      appendProtocolNote(`Thinking in transcript: ${after.expandHistoryThinking ? 'expanded' : 'compact (summary rows)'}`)
+    }
+  }, [toggleThinkingUiExpand, appendProtocolNote])
 
   const { columns, rows } = useWindowSize()
   const termWidth = columns ?? 80
@@ -121,6 +134,10 @@ export const App = ({
       bridge.cancel(thread)
       return
     }
+    if (isCtrlY(char, key) && status === 'hitl') {
+      fireThinkingHotkey()
+      return
+    }
     if (key.ctrl && char === 't') {
       useSessionStore.getState().toggleActiveTurnToolExpandBulk()
       appendProtocolNote('Tools: toggled expand/collapse for current turn (Ctrl+T)')
@@ -129,18 +146,6 @@ export const App = ({
     if (char === 't' && !key.ctrl && input === '' && !slashHelpOpen) {
       useSessionStore.getState().toggleActiveTurnToolExpandBulk()
       appendProtocolNote('Tools: toggled expand/collapse for current turn (t)')
-      return
-    }
-    if (isCtrlY(char, key)) {
-      const before = useSessionStore.getState()
-      toggleThinkingUiExpand()
-      const after = useSessionStore.getState()
-      const hadActive = before.activeTurn && before.activeTurn.thinkingSteps.length > 0
-      if (hadActive) {
-        appendProtocolNote(`Thinking (current turn): ${after.expandActiveThinking ? 'expanded' : 'compact (live summary line)'}`)
-      } else {
-        appendProtocolNote(`Thinking in transcript: ${after.expandHistoryThinking ? 'expanded' : 'compact (summary rows)'}`)
-      }
       return
     }
   })
@@ -514,17 +519,10 @@ export const App = ({
         )}
 
         {status === 'error' && errorMessage && (
-          <Box
-            borderStyle="round"
-            borderColor="red"
-            paddingX={1}
-            marginX={1}
-            marginBottom={0}
-          >
-            <Text color="red" bold>
-              ✗ Fatal:{' '}
-            </Text>
-            <Text color="red">{errorMessage}</Text>
+          <Box marginX={1} marginBottom={0}>
+            <Alert variant="error" title="Fatal">
+              {errorMessage}
+            </Alert>
           </Box>
         )}
 
@@ -577,6 +575,7 @@ export const App = ({
               onRecallNext={recallNext}
               suggestions={fuzzySuggestions}
               composerWidth={mainColumnWidth}
+              onThinkingHotkey={fireThinkingHotkey}
             />
           </Box>
         )}

@@ -84,7 +84,7 @@ Relative MCP paths resolve against the YAML file’s directory.
 
 ### Session marker (`.agloom/sessions/*.json`)
 
-Each session file includes an `effective_config` snapshot (no secrets). **`api_key_env`** and **`api_key_env_nonempty`** refer **only** to the optional **`--api-key-env`** remap. **`provider_primary_api_key_env`** is the first **canonical** provider API key env var that was non-empty at process start (e.g. `NVIDIA_API_KEY`) when you are not using `--api-key-env`. **`provider_credential_env`** lists each canonical env var for **`provider_resolved`** and whether it was non-empty at process start (empty list when the slug cannot be inferred yet). **`provider_primary_credential_present`** is `true` when any canonical var for the resolved slug was set, or — when **`provider_resolved`** is `null` (env auto-detect) — when **any** curated provider API key env var was set at process start.
+Each session file includes an `effective_config` snapshot that **normally embeds `api_key_secret`** (the API key value read from the resolved env var) so resume works without the shell env. Do not commit `.agloom/sessions/` to git. Set **`AGLOOM_OMIT_API_KEY_FROM_SESSION=1`** for a names-only snapshot (no `api_key_secret`). **`api_key_env`** / **`api_key_env_nonempty`** name the env var used for that secret (explicit **`--api-key-env`** remap, or the first non-empty canonical key for the provider). **`provider_primary_api_key_env`** is written only when it differs from **`api_key_env`** (e.g. remap layouts). **`provider_credential_env`** lists each canonical env var for **`provider_resolved`** and whether it was non-empty at process start. **`provider_primary_credential_present`** is `true` when any canonical var for the resolved slug was set, or — when **`provider_resolved`** is `null` — when any curated provider API key env var was set at process start.
 
 ## Environment variables
 
@@ -96,6 +96,7 @@ Each session file includes an `effective_config` snapshot (no secrets). **`api_k
 | `AGLOOM_MODEL`    | Default model id (wired where runtime honors env).                           |
 | `AGLOOM_PROVIDER` | Default provider slug for unprefixed / ambiguous ids (Python resolver).      |
 | `AGLOOM_BANNER`   | Set `0` / `false` to suppress the stderr startup banner.                     |
+| `AGLOOM_OMIT_API_KEY_FROM_SESSION` | When `1` / `true`, session JSON omits `api_key_secret` (names-only snapshot). |
 
 ### Per-provider API keys (curated)
 

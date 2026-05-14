@@ -1,6 +1,7 @@
 /** One tool call row (summary + optional expanded body). */
 import React from 'react'
 import { Box, Text } from 'ink'
+import { Badge } from '@inkjs/ui'
 import type { ToolCall } from '../store/session.js'
 import { fmtArgs, fmtDuration } from '../utils/format.js'
 
@@ -39,7 +40,7 @@ const STATUS_ICON: Record<ToolCall['status'], string> = {
   error: '✗',
 }
 
-const STATUS_COLOR: Record<ToolCall['status'], string> = {
+const STATUS_BADGE_COLOR: Record<ToolCall['status'], 'yellow' | 'green' | 'red'> = {
   pending: 'yellow',
   done: 'green',
   error: 'red',
@@ -53,21 +54,22 @@ interface Props {
 
 export const ToolCallLine = ({ tc, expanded }: Props): React.ReactElement => {
   const icon = STATUS_ICON[tc.status]
-  const color = STATUS_COLOR[tc.status]
+  const badgeColor = STATUS_BADGE_COLOR[tc.status]
   const argsStr = fmtArgs(tc.args, 72)
   const chevron = expanded ? '▼' : '▶'
   const nChars = tc.result?.length ?? tc.error?.length ?? 0
   const summary =
     tc.status === 'error'
-      ? `${chevron} ${tc.tool}(${argsStr}) · error`
+      ? `${chevron} ${tc.tool}(${argsStr})`
       : nChars > 0
         ? `${chevron} ${tc.tool}(${argsStr}) · ${nChars} chars`
         : `${chevron} ${tc.tool}(${argsStr})`
 
   return (
     <Box flexDirection="column" marginLeft={2}>
-      <Box>
-        <Text color={color as 'green' | 'yellow' | 'red'}>{icon} </Text>
+      <Box flexDirection="row" flexWrap="wrap" gap={1}>
+        <Text color={badgeColor}>{icon} </Text>
+        <Badge color={badgeColor}>{tc.status}</Badge>
         <Text dimColor>{summary}</Text>
         {tc.durationMs !== undefined && (
           <Text color="gray" dimColor>

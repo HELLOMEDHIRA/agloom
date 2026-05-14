@@ -3,8 +3,12 @@
 import React from 'react'
 import { renderToString } from 'ink'
 import { CompletedTurnCard } from '../../components/CompletedTurnCard.js'
+import { InkUiProvider } from '../../components/InkUiProvider.js'
 import type { CompletedTurn } from '../../store/session.js'
 import { useSessionStore } from '../../store/session.js'
+
+const renderCard = (el: React.ReactElement, columns = 100) =>
+  renderToString(<InkUiProvider>{el}</InkUiProvider>, { columns })
 
 describe('CompletedTurnCard (renderToString)', () => {
   beforeEach(() => {
@@ -26,7 +30,7 @@ describe('CompletedTurnCard (renderToString)', () => {
   }
 
   it('renders user message and assistant reply', () => {
-    const frame = renderToString(<CompletedTurnCard turn={baseTurn} thinkingExpanded={false} />, { columns: 100 })
+    const frame = renderCard(<CompletedTurnCard turn={baseTurn} thinkingExpanded={false} />)
     expect(frame).toContain('Say hello in one word.')
     expect(frame).toContain('Hello.')
     expect(frame).toContain('REACT')
@@ -38,7 +42,7 @@ describe('CompletedTurnCard (renderToString)', () => {
       ...baseTurn,
       thinkingSteps: [{ id: 's1', step: 'plan', label: 'Planning', detail: 'consider options' }],
     }
-    const frame = renderToString(<CompletedTurnCard turn={turn} thinkingExpanded={false} />, { columns: 100 })
+    const frame = renderCard(<CompletedTurnCard turn={turn} thinkingExpanded={false} />)
     expect(frame).toContain('Thought · 1 step')
     expect(frame).toContain('Ctrl+Y')
     expect(frame).toContain('/think')
@@ -50,7 +54,7 @@ describe('CompletedTurnCard (renderToString)', () => {
       ...baseTurn,
       thinkingSteps: [{ id: 's1', step: 'plan', label: 'Planning', detail: 'consider options' }],
     }
-    const frame = renderToString(<CompletedTurnCard turn={turn} thinkingExpanded />, { columns: 100 })
+    const frame = renderCard(<CompletedTurnCard turn={turn} thinkingExpanded />)
     expect(frame).toContain('Planning')
     expect(frame).toContain('consider options')
   })
@@ -70,7 +74,7 @@ describe('CompletedTurnCard (renderToString)', () => {
         },
       ],
     }
-    const frame = renderToString(<CompletedTurnCard turn={turn} thinkingExpanded={false} />, { columns: 100 })
+    const frame = renderCard(<CompletedTurnCard turn={turn} thinkingExpanded={false} />)
     expect(frame).toContain('line_a')
     expect(frame).toContain('line_b')
     expect(frame).toContain('line_c')

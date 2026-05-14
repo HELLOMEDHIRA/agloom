@@ -7,6 +7,8 @@ import { resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import React from 'react'
 import { render } from 'ink'
+import { InkUiProvider } from '../components/InkUiProvider.js'
+import { ThemeProvider } from '../themeContext.js'
 import { SessionsPickerApp } from './SessionsPickerApp.js'
 import { loadSessions, type SessionInfo } from './sessionsLoad.js'
 import { resetTerminalForShell } from '../utils/terminalReset.js'
@@ -62,11 +64,16 @@ export const runSessionsCli = async (): Promise<number> => {
   const cliEntry = resolveCliEntryForSpawn()
 
   const ink = render(
-    React.createElement(SessionsPickerApp, {
-      sessions,
-      onChosen: (row) => {
-        chosen = row
-      },
+    React.createElement(ThemeProvider, {
+      value: 'dark',
+      children: React.createElement(InkUiProvider, {
+        children: React.createElement(SessionsPickerApp, {
+          sessions,
+          onChosen: (row) => {
+            chosen = row
+          },
+        }),
+      }),
     }),
     {
       exitOnCtrlC: true,

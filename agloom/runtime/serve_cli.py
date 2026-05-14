@@ -134,8 +134,10 @@ def inject_api_key_secret_from_session_marker(args: Namespace, marker_path: Path
     Only runs when the target variable named in the marker is **unset or empty** so a live
     process environment always wins over stale JSON.
 
-    Pairs with :func:`session_started_snapshot_from_args` when
-    ``--persist-api-key-in-session-marker`` (or ``AGLOOM_PERSIST_API_KEY_IN_SESSION_MARKER``) is on.
+    Pairs with :func:`session_started_snapshot_from_args` when the marker contains
+    ``api_key_secret`` (default unless ``AGLOOM_OMIT_API_KEY_FROM_SESSION=1``). The
+    ``--persist-api-key-in-session-marker`` flag only adds
+    ``persist_api_key_in_session_marker: true`` to the snapshot for audit.
     """
     if marker_path is None or not marker_path.is_file():
         return
@@ -167,10 +169,11 @@ def inject_api_key_secret_from_session_marker(args: Namespace, marker_path: Path
 def merge_api_key_env_from_session_marker(args: Namespace, marker_path: Path | None) -> None:
     """When ``--api-key-env`` was not passed, copy ``effective_config.api_key_env`` from the marker.
 
-    Session JSON now records the same env var name as ``credential_env_var`` when you are not
-    remapping, so users can edit ``api_key_env`` and restart the same session id to switch
-    sources. Falls back to ``credential_env_var`` / ``provider_primary_api_key_env`` on older
-    markers. :func:`apply_api_key_env` then maps that var's value into the provider's canonical key.
+    Session JSON records the credential source as ``api_key_env`` (and may omit duplicate
+    ``credential_env_var`` / ``provider_primary_api_key_env`` when they match). Users can edit
+    ``api_key_env`` and restart the same session id to switch sources. Falls back to legacy
+    ``credential_env_var`` / ``provider_primary_api_key_env`` on older markers.
+    :func:`apply_api_key_env` then maps that var's value into the provider's canonical key.
 
     CLI ``--api-key-env`` always wins over the marker.
     """
@@ -190,7 +193,7 @@ def merge_api_key_env_from_session_marker(args: Namespace, marker_path: Path | N
     for key in ("api_key_env", "credential_env_var", "provider_primary_api_key_env"):
         v = eff.get(key)
         if isinstance(v, str) and v.strip():
-            setattr(args, "api_key_env", v.strip())
+            args.api_key_env = v.strip()
             return
 
 
@@ -354,10 +357,15 @@ def cli_tools_bundle_metrics_from_args(args: Namespace) -> tuple[bool, int]:
 
 
 def session_memory_mode_sidebar_from_args(args: Namespace) -> str:
-    """Short label for UIs: rolling session memory from CLI before agent bootstrap."""
+    """Short label for UIs: rolling session memory from CLI before agent bootstrap.
+
+    When ``--memory`` is omitted, :func:`agloom.unified_agent.create_agent` still attaches
+    ephemeral :class:`~agloom.memory.session.SessionMemory` (LangGraph in-memory store), so the
+    sidebar reports ``in-memory`` rather than ``off``.
+    """
     mt = (getattr(args, "memory_type", None) or "").strip().lower()
     if not mt or mt in ("default", "auto"):
-        return "off"
+        return "in-memory"
     if mt == "sqlite":
         return "sqlite"
     if mt == "in-memory":
@@ -551,47 +559,43 @@ def _llm_endpoint_snapshot(args: Namespace) -> dict[str, Any]:
     return out
 
 
+def _omit_api_key_secret_from_session_marker() -> bool:
+    v = (os.environ.get("AGLOOM_OMIT_API_KEY_FROM_SESSION") or "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
 def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     """Serializable effective-config snapshot for ``.agloom/sessions/<id>.json``.
 
-    By default only **names** of env vars and booleans are recorded (safe for git / shared disks).
+    By default ``effective_config`` includes ``api_key_secret`` (key material copied from the
+    resolved credential env var) so you can edit the session file and resume without the shell
+    env. **Treat session JSON as secret-bearing** — do not commit ``.agloom/sessions/`` to git.
+    Set ``AGLOOM_OMIT_API_KEY_FROM_SESSION=1`` to skip writing ``api_key_secret`` (names-only
+    snapshot).
 
     With ``--persist-api-key-in-session-marker`` or ``AGLOOM_PERSIST_API_KEY_IN_SESSION_MARKER=1``,
-    ``effective_config`` may also include ``api_key_secret`` (the resolved key material) and
-    ``persist_api_key_in_session_marker: true`` — **dangerous** (anyone who can read the file can
-    use the key). Resume then uses :func:`inject_api_key_secret_from_session_marker` when the
-    named env var is empty.
+    ``persist_api_key_in_session_marker: true`` is also set on the snapshot for explicit audit.
 
-    Records how the LLM was resolved (explicit ``--model`` vs env auto-detect), optional
-    ``--api-key-env`` name and whether that variable was non-empty at process start, plus
-    memory / summarization flags so edited YAML on the next launch diffs clearly from older
-    session markers.
+    Resume uses :func:`inject_api_key_secret_from_session_marker` when the named env var is
+    empty and the marker still carries ``api_key_secret``.
 
     ``effective_config`` always includes ``max_tokens``, ``frequency_penalty``, and
     ``presence_penalty`` (defaults when omitted on the CLI); users may override via flags or
-    by editing the session JSON. Those values are passed to the provider only when set on the
-    CLI (or WebSocket query); defaults are marker documentation unless explicitly overridden.
+    by editing the session JSON.
 
     ``provider`` is the explicit ``--provider`` CLI value only (often ``None``). Use
     ``provider_resolved`` for the slug inferred from ``--provider`` or ``provider:`` model
-    prefix (same basis as ``sampling.provider_slug``). ``provider_credential_env`` lists
-    canonical env vars for that slug and whether each was non-empty at process start (keys
-    only, never values).
+    prefix. ``provider_credential_env`` lists canonical env vars for that slug and whether
+    each was non-empty (names only in that list).
 
-    ``api_key_env`` / ``api_key_env_nonempty`` name the env var the runtime reads for key
-    material: the explicit ``--api-key-env`` target when set, otherwise the same var as
-    ``credential_env_var`` (first non-empty canonical key for the provider, or the remap
-    source). Edit ``api_key_env`` in the session JSON to point at another var; resume applies
-    it via :func:`merge_api_key_env_from_session_marker` then :func:`apply_api_key_env`.
+    ``api_key_env`` / ``api_key_env_nonempty`` identify the env var whose value is stored in
+    ``api_key_secret`` (``--api-key-env`` remap, else first non-empty canonical key for the
+    provider). ``credential_env_var`` / ``provider_primary_api_key_env`` are only written when
+    they differ from ``api_key_env`` (remap / older layouts).
 
-    ``credential_env_var`` / ``credential_env_var_nonempty`` mirror the resolved source for
-    older tooling. Secret values are omitted unless persistence is explicitly enabled.
-
-    ``provider_primary_api_key_env`` names the **first canonical** provider API key env var
-    that was non-empty at process start (e.g. ``NVIDIA_API_KEY``). ``provider_primary_credential_present`` is ``True`` when **any** listed canonical env
-    var for ``provider_resolved`` was non-empty at process start (typical ``OPENAI_API_KEY`` /
-    ``NVIDIA_API_KEY`` usage without ``--api-key-env``). When ``provider_resolved`` is
-    ``None`` (env auto-detect), this falls back to **any** curated provider API key being set.
+    ``provider_primary_credential_present`` is ``True`` when any canonical var for the resolved
+    slug was set, or when ``provider_resolved`` is ``None`` and any curated provider API key env
+    was set.
     """
     api_env = getattr(args, "api_key_env", None)
     api_present = False
@@ -631,9 +635,6 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
         "llm_resolution": "explicit_model" if model_out else "env_auto",
         "api_key_env": snapshot_api_key_env,
         "api_key_env_nonempty": snapshot_api_key_nonempty,
-        "credential_env_var": cred_var,
-        "credential_env_var_nonempty": cred_nonempty,
-        "provider_primary_api_key_env": primary,
         "provider_primary_credential_present": any_primary_cred,
         "provider_credential_env": cred_status,
         "session_max_turns": sm_turns,
@@ -642,6 +643,11 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
         "memory_type": getattr(args, "memory_type", None),
         "memory_path": getattr(args, "memory_path", None),
     }
+    if cred_var != snapshot_api_key_env or cred_nonempty != snapshot_api_key_nonempty:
+        eff["credential_env_var"] = cred_var
+        eff["credential_env_var_nonempty"] = cred_nonempty
+    if primary and primary != snapshot_api_key_env:
+        eff["provider_primary_api_key_env"] = primary
     endpoint = _llm_endpoint_snapshot(args)
     if endpoint:
         eff["llm_endpoint"] = endpoint
@@ -667,11 +673,12 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     eff["with_cli_tools"] = bool(getattr(args, "with_cli_tools", False))
     eff["require_tool_approval"] = bool(getattr(args, "require_tool_approval", True))
 
-    if _persist_api_key_marker_requested(args) and cred_var and cred_nonempty:
+    if not _omit_api_key_secret_from_session_marker() and cred_var and cred_nonempty:
         mat = os.environ.get(cred_var)
         if isinstance(mat, str) and mat.strip():
             eff["api_key_secret"] = mat.strip()
-            eff["persist_api_key_in_session_marker"] = True
+    if _persist_api_key_marker_requested(args):
+        eff["persist_api_key_in_session_marker"] = True
 
     return {
         "effective_config": eff,

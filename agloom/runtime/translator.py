@@ -110,10 +110,15 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
 
     if et == "done":
         # ``astream_events`` ends with ``{"result": ExecutionResult.model_dump()}`` — older tests
-        # used top-level ``output``. REACT streams ``token`` deltas first; repeating ``result.output``
-        # here would duplicate assistant prose on the wire, so suppress terminal text unless DIRECT.
+        # used top-level ``output``. REACT often streams prose via ``token`` first; a duplicate
+        # *top-level* ``output``/``content`` on ``done`` would replay the same text in
+        # ``message.assistant``. Suppress only that explicit echo — keep body recovered solely from
+        # ``result`` when there was no top-level terminal field (otherwise UIs see a blank reply).
+        # Tradeoff: if tokens already streamed the same prose as ``result.output``, the final
+        # ``message.assistant`` can duplicate once; we prefer that over an empty reply.
         res = data.get("result")
-        content = _str(data.get("output")) or _str(data.get("content")) or ""
+        from_explicit = _str(data.get("output")) or _str(data.get("content")) or ""
+        content = from_explicit
         if not content and isinstance(res, dict):
             content = _assistant_body_from_done_result(res) or ""
         patt = ""
@@ -121,7 +126,7 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
             patt = _pattern_tail_upper(res.get("pattern_used"))
             if not patt and isinstance(res.get("analysis"), dict):
                 patt = _pattern_tail_upper((res.get("analysis") or {}).get("pattern"))
-        if content and patt and patt != "DIRECT":
+        if from_explicit and patt and patt != "DIRECT":
             content = ""
         run_id = _str(data.get("run_id"))
         pattern = _str(data.get("pattern"))

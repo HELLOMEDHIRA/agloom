@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react'
 import { Box, Text } from 'ink'
+import { Badge } from '@inkjs/ui'
 import { useSessionStore, type MetricTokensSlice, type ToolCall } from '../store/session.js'
 import { fmtDuration, fmtTokens, fmtUsd, shortenMiddle, truncate } from '../utils/format.js'
 
@@ -34,10 +35,21 @@ const collectRecentTools = (
   return rows.slice(-max)
 }
 
-const STATUS_DOT: Record<ToolCall['status'], string> = {
-  pending: '○',
-  done: '●',
-  error: '✗',
+type RunStatus = 'idle' | 'running' | 'thinking' | 'hitl' | 'error' | 'exited'
+
+const RUN_STATUS_BADGE_COLOR: Record<RunStatus, 'green' | 'yellow' | 'magenta' | 'red' | 'gray'> = {
+  idle: 'green',
+  running: 'yellow',
+  thinking: 'magenta',
+  hitl: 'yellow',
+  error: 'red',
+  exited: 'gray',
+}
+
+const TOOL_STATUS_BADGE_COLOR: Record<ToolCall['status'], 'yellow' | 'green' | 'red'> = {
+  pending: 'yellow',
+  done: 'green',
+  error: 'red',
 }
 
 const fmtTime = (iso: string | null): string => {
@@ -108,6 +120,27 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
     [completedTurns, activeTurn?.toolCalls],
   )
 
+  const mcpRollup = useMemo(() => {
+    if (mcpServerRows.length > 0) {
+      const okRows = mcpServerRows.filter((r) => r.ok)
+      const toolSum = mcpServerRows.reduce((sum, r) => sum + (r.ok ? r.toolCount : 0), 0)
+      const okSrv = okRows.length
+      const totalSrv = mcpServerRows.length
+      return {
+        kind: 'live' as const,
+        okServers: okSrv,
+        totalServers: totalSrv,
+        tools: toolSum,
+        allServersOk: okSrv === totalSrv && totalSrv > 0,
+        hasFail: okSrv < totalSrv,
+      }
+    }
+    if (mcpServerNames.length > 0) {
+      return { kind: 'pending' as const, totalServers: mcpServerNames.length }
+    }
+    return { kind: 'none' as const }
+  }, [mcpServerRows, mcpServerNames])
+
   return (
     <Box
       flexDirection="column"
@@ -127,14 +160,20 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
       {/* ── Session Info ─────────────────────────────────────────── */}
       <Box marginTop={1} flexDirection="column" width={innerW}>
         <Text bold color="white">Identity</Text>
-        <Text color="gray">session </Text>
-        <Text color="white">{sid}</Text>
-        <Text color="gray">thread </Text>
-        <Text color="white">{th}</Text>
-        <Text color="gray">started </Text>
-        <Text color="white">{fmtTime(sessionStartedAt)}</Text>
-        <Text color="gray">updated </Text>
-        <Text color="white">{fmtTime(sessionUpdatedAt)}</Text>
+        <Text>
+          <Text color="gray">session </Text>
+          <Text color="white">{sid}</Text>
+        </Text>
+        <Text>
+          <Text color="gray">thread </Text>
+          <Text color="white">{th}</Text>
+        </Text>
+        <Text>
+          <Text color="gray">started </Text>
+          <Text color="white">{fmtTime(sessionStartedAt)}</Text>
+          <Text color="gray"> · updated </Text>
+          <Text color="white">{fmtTime(sessionUpdatedAt)}</Text>
+        </Text>
       </Box>
 
       {/* ── Status Toggles ────────────────────────────────────────── */}
@@ -144,18 +183,21 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
           <Text color="gray">memory </Text>
           <Text
             color={
-              sessionMemoryMode === 'sqlite' || sessionMemoryMode === 'in-memory' || memoryEnabled === true
+              sessionMemoryMode === 'sqlite' ||
+              sessionMemoryMode === 'in-memory' ||
+              sessionMemoryMode === 'off' ||
+              memoryEnabled === true
                 ? 'green'
-                : sessionMemoryMode === 'none' || sessionMemoryMode === 'off' || memoryEnabled === false
+                : sessionMemoryMode === 'none' || memoryEnabled === false
                   ? 'red'
                   : 'gray'
             }
           >
             {sessionMemoryMode != null && sessionMemoryMode !== ''
-              ? sessionMemoryMode === 'off'
-                ? 'off'
-                : sessionMemoryMode === 'none'
-                  ? '✗ none'
+              ? sessionMemoryMode === 'none'
+                ? '✗ none'
+                : sessionMemoryMode === 'off'
+                  ? '✓ in-memory'
                   : `✓ ${sessionMemoryMode}`
               : memoryEnabled === true
                 ? '✓ ON'
@@ -188,13 +230,39 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
             {harnessEnabled === true ? '✓ ON' : harnessEnabled === false ? '✗ OFF' : '—'}
           </Text>
         </Text>
+        <Text>
+          <Text color="gray">mcp </Text>
+          {mcpRollup.kind === 'live' ? (
+            <>
+              <Text color={mcpRollup.allServersOk ? 'green' : mcpRollup.hasFail ? 'yellow' : 'gray'}>
+                {mcpRollup.allServersOk ? '✓ ' : mcpRollup.hasFail ? '⚠ ' : '○ '}
+              </Text>
+              <Text color={mcpRollup.allServersOk ? 'green' : 'white'}>
+                {mcpRollup.okServers}/{mcpRollup.totalServers} ok · {mcpRollup.tools} tools
+              </Text>
+            </>
+          ) : mcpRollup.kind === 'pending' ? (
+            <>
+              <Text color="yellow">○ </Text>
+              <Text color="gray">{mcpRollup.totalServers} srv · tools after connect</Text>
+            </>
+          ) : (
+            <Text color="gray">— no servers</Text>
+          )}
+        </Text>
       </Box>
 
       {/* ── Activity ──────────────────────────────────────────────── */}
       <Box marginTop={1} flexDirection="column" width={innerW}>
         <Text bold color="white">Activity</Text>
-        <Text><Text color="gray">uptime </Text><Text color="yellow">{sessionOpenedAtMs ? fmtDuration(uptimeMs) : '—'}</Text></Text>
-        <Text><Text color="gray">turns </Text><Text color="yellow">{turnCount}</Text><Text color="gray"> · </Text><Text color="gray" dimColor>{status}</Text></Text>
+        <Text>
+          <Text color="gray">uptime </Text>
+          <Text color="yellow">{sessionOpenedAtMs ? fmtDuration(uptimeMs) : '—'}</Text>
+          <Text color="gray"> · turns </Text>
+          <Text color="yellow">{turnCount}</Text>
+          <Text color="gray"> · </Text>
+          <Badge color={RUN_STATUS_BADGE_COLOR[status as RunStatus] ?? 'gray'}>{status}</Badge>
+        </Text>
       </Box>
 
       {/* ── Tokens ────────────────────────────────────────────────── */}
@@ -298,9 +366,7 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
             <Box key={tc.id} flexDirection="column">
               <Text>
                 <Text color="gray">T{turnLabel} </Text>
-                <Text color={tc.status === 'error' ? 'red' : tc.status === 'pending' ? 'yellow' : 'green'}>
-                  {STATUS_DOT[tc.status]}
-                </Text>
+                <Badge color={TOOL_STATUS_BADGE_COLOR[tc.status]}>{tc.status}</Badge>
                 <Text bold> {truncate(tc.tool, 18)}</Text>
                 {tc.durationMs !== undefined ? (
                   <Text color="gray" dimColor> {fmtDuration(tc.durationMs)}</Text>

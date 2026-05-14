@@ -6,8 +6,8 @@
 
 import React, { useEffect, useState } from 'react'
 import { Box, Text } from 'ink'
+import { Spinner, StatusMessage } from '@inkjs/ui'
 import { App } from './App.js'
-import { useSpinner } from '../hooks/useSpinner.js'
 import { ensureAgloomCliWorkspace } from '../workspaceBootstrap.js'
 import { preflightProviderCredentials } from '../utils/preflightProviderCredentials.js'
 import type { AGPBridge } from '../runtime/bridge.js'
@@ -43,7 +43,6 @@ export const BootstrapGate = ({
   const [bootMessage, setBootMessage] = useState('Checking API credentials…')
   const [bootKind, setBootKind] = useState<'preflight' | 'workspace'>('preflight')
   const [errorText, setErrorText] = useState<string | null>(null)
-  const spin = useSpinner(90)
 
   useEffect(() => {
     let cancelled = false
@@ -84,9 +83,7 @@ export const BootstrapGate = ({
   if (phase === 'error' && errorText) {
     return (
       <Box flexDirection="column" paddingX={1} paddingY={1}>
-        <Text color="red" bold>
-          Cannot start agloom
-        </Text>
+        <StatusMessage variant="error">Cannot start agloom</StatusMessage>
         {errorText.split('\n').map((line, i) => (
           <Text key={i} color="red">
             {line}
@@ -102,9 +99,7 @@ export const BootstrapGate = ({
   if (phase !== 'ready') {
     return (
       <Box flexDirection="column" paddingX={1} paddingY={1}>
-        <Text color="cyan">
-          {spin} {bootMessage}
-        </Text>
+        <Spinner label={bootMessage} />
         <Box marginTop={1}>
           <Text dimColor>
             {bootKind === 'preflight'

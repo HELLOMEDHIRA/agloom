@@ -9,6 +9,7 @@ import { render } from 'ink'
 import React from 'react'
 import { Command, CommanderError } from 'commander'
 import { BootstrapGate } from './components/BootstrapGate.js'
+import { InkUiProvider } from './components/InkUiProvider.js'
 import { ThemeProvider, type AgloomTheme } from './themeContext.js'
 import { createAGPBridge } from './runtime/bridge.js'
 import { readStdinIfPiped } from './utils/readStdin.js'
@@ -532,21 +533,23 @@ if (!opts.noBanner && !bannerEnvDisabled()) {
 const { waitUntilExit, waitUntilRenderFlush } = render(
   React.createElement(ThemeProvider, {
     value: themeUi,
-    children: React.createElement(BootstrapGate, {
-      bridge,
-      cwd,
-      configPath: explicitAgloomYamlPath,
-      runtimeArgs,
-      modelForPreflight: (() => {
-        const m = typeof opts.model === 'string' ? opts.model.trim() : opts.model != null ? String(opts.model).trim() : ''
-        return m
-      })(),
-      providerForPreflight: opts.provider ?? null,
-      initialThread: thread,
-      showDiag: opts.diag,
-      multiline: opts.multiline ?? true,
-      historyFile: rawOpts.historyFile,
-      cliSessionId: opts.session ?? undefined,
+    children: React.createElement(InkUiProvider, {
+      children: React.createElement(BootstrapGate, {
+        bridge,
+        cwd,
+        configPath: explicitAgloomYamlPath,
+        runtimeArgs,
+        modelForPreflight: (() => {
+          const m = typeof opts.model === 'string' ? opts.model.trim() : opts.model != null ? String(opts.model).trim() : ''
+          return m
+        })(),
+        providerForPreflight: opts.provider ?? null,
+        initialThread: thread,
+        showDiag: opts.diag,
+        multiline: opts.multiline ?? true,
+        historyFile: rawOpts.historyFile,
+        cliSessionId: opts.session ?? undefined,
+      }),
     }),
   }),
   {

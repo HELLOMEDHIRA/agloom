@@ -1,10 +1,10 @@
 /** In-flight turn (streaming, tools, workers). */
 import React from 'react'
 import { Box, Text } from 'ink'
+import { Badge, Spinner } from '@inkjs/ui'
 import { useSessionStore, effectiveToolCallExpanded } from '../store/session.js'
 import { ToolCallLine } from './ToolCallLine.js'
 import { WorkerLine } from './WorkerLine.js'
-import { useSpinner } from '../hooks/useSpinner.js'
 import { truncate } from '../utils/format.js'
 
 export const ActiveTurn = (): React.ReactElement | null => {
@@ -12,7 +12,6 @@ export const ActiveTurn = (): React.ReactElement | null => {
   const status = useSessionStore((s) => s.status)
   const expandedMap = useSessionStore((s) => s.toolCallExpandedById)
   const expandActiveThinking = useSessionStore((s) => s.expandActiveThinking)
-  const spinner = useSpinner()
 
   if (!activeTurn) return null
 
@@ -30,7 +29,7 @@ export const ActiveTurn = (): React.ReactElement | null => {
 
       {pattern && (
         <Box marginLeft={2}>
-          <Text color="magenta">▸ {pattern}</Text>
+          <Badge color="magenta">{pattern}</Badge>
         </Box>
       )}
 
@@ -43,9 +42,9 @@ export const ActiveTurn = (): React.ReactElement | null => {
           borderColor="gray"
           paddingX={1}
         >
-          <Text bold dimColor color="magenta">
-            Thinking
-          </Text>
+          <Box marginBottom={0}>
+            <Badge color="magenta">Thinking</Badge>
+          </Box>
           {thinkingSteps.map((s) => (
             <Box key={s.id} flexDirection="column">
               <Text color="gray">▸ {truncate(s.label ?? s.step, Math.max(40, (process.stdout.columns ?? 80) - 14))}</Text>
@@ -96,10 +95,7 @@ export const ActiveTurn = (): React.ReactElement | null => {
 
       {isStreaming && !streamedTokens && (
         <Box marginLeft={2}>
-          <Text color="cyan">{spinner} </Text>
-          <Text color="gray" dimColor>
-            {status === 'thinking' ? 'thinking…' : 'working…'}
-          </Text>
+          <Spinner label={status === 'thinking' ? 'thinking…' : 'working…'} />
         </Box>
       )}
     </Box>

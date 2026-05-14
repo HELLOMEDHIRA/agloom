@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react'
 import { Box, Text, useWindowSize } from 'ink'
+import { ProgressBar, StatusMessage } from '@inkjs/ui'
 import { useSessionStore } from '../store/session.js'
 
 const STATUS_LABEL: Record<string, string> = {
@@ -153,6 +154,18 @@ export const StatusBar = ({ thread, layoutWidth }: Props): React.ReactElement =>
           </Text>
         ) : null}
       </Box>
+      {budgetUi !== 'ok' && (
+        <Box paddingX={1} width={termWidth} flexDirection="column">
+          <StatusMessage variant={budgetUi === 'exhausted' ? 'error' : 'warning'}>
+            {budgetUi === 'exhausted'
+              ? 'Token budget exhausted — use /budget raise if the runtime allows it'
+              : 'Token budget almost exhausted — consider /budget raise'}
+          </StatusMessage>
+          <Box width={Math.max(8, termWidth - 2)} marginTop={0}>
+            <ProgressBar value={budgetUi === 'exhausted' ? 100 : 85} />
+          </Box>
+        </Box>
+      )}
       <Box paddingX={1} width={termWidth}>
         <Text color="gray" dimColor>
           Ctrl+C exit · Ctrl+X cancel · Ctrl+T / t tools · /budget raise

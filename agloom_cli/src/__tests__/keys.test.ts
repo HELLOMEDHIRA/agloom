@@ -11,4 +11,9 @@ describe('isCtrlY', () => {
     expect(isCtrlY('\x19', { ctrl: true })).toBe(true)
     expect(isCtrlY('\u0019', { ctrl: true })).toBe(true)
   })
+
+  it('matches ASCII 25 without ctrl (Windows / some hosts)', () => {
+    expect(isCtrlY('\x19', { ctrl: false })).toBe(true)
+    expect(isCtrlY('\u0019', {})).toBe(true)
+  })
 })

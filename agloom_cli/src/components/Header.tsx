@@ -4,6 +4,7 @@
 
 import React from 'react'
 import { Box, Text, useWindowSize } from 'ink'
+import { Badge } from '@inkjs/ui'
 import { useSessionStore } from '../store/session.js'
 import { fmtTokens, truncate } from '../utils/format.js'
 
@@ -43,21 +44,17 @@ export const Header = ({ layoutWidth }: HeaderProps): React.ReactElement => {
       borderRight={false}
     >
       {/* Brand */}
-      <Text bold color="cyan">
-        agloom
-      </Text>
+      <Badge color="cyan">agloom</Badge>
       {runtimeVersion && (
         <Text color="gray"> v{runtimeVersion}</Text>
       )}
 
       <Text> </Text>
 
-      {/* Model badge */}
+      {/* Model id */}
       {modelLabel && (
         <Box marginRight={1}>
-          <Text color="blue" dimColor>
-            [{modelLabel}]
-          </Text>
+          <Badge color="blue">{modelLabel}</Badge>
         </Box>
       )}
 

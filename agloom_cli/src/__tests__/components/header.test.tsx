@@ -3,7 +3,11 @@
 import React from 'react'
 import { renderToString } from 'ink'
 import { Header } from '../../components/Header.js'
+import { InkUiProvider } from '../../components/InkUiProvider.js'
 import { useSessionStore } from '../../store/session.js'
+
+const renderHeader = (el: React.ReactElement, columns = 120) =>
+  renderToString(<InkUiProvider>{el}</InkUiProvider>, { columns })
 
 describe('Header (renderToString)', () => {
   beforeEach(() => {
@@ -32,10 +36,11 @@ describe('Header (renderToString)', () => {
       },
     })
 
-    const frame = renderToString(<Header layoutWidth={88} />, { columns: 120 })
-    expect(frame).toContain('agloom')
+    const frame = renderHeader(<Header layoutWidth={88} />)
+    const lower = frame.toLowerCase()
+    expect(lower).toContain('agloom')
     expect(frame).toContain('0.9.0')
-    expect(frame).toContain('gpt-4o-mini')
+    expect(lower).toContain('gpt-4o-mini')
     expect(frame).toContain('REACT')
     expect(frame).toMatch(/↑/)
     expect(frame).toMatch(/↓/)
@@ -49,8 +54,8 @@ describe('Header (renderToString)', () => {
       totalOutputTokens: 0,
       activeTurn: null,
     })
-    const frame = renderToString(<Header />, { columns: 100 })
-    expect(frame).toContain('agloom')
-    expect(frame).not.toContain('[')
+    const frame = renderHeader(<Header />, 100)
+    expect(frame.toLowerCase()).toContain('agloom')
+    expect(frame.toLowerCase()).not.toContain('gpt-4o')
   })
 })

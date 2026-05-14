@@ -220,7 +220,8 @@ def test_translate_done_nested_result_direct_emits_output() -> None:
     ]
 
 
-def test_translate_done_nested_result_react_suppresses_terminal_duplicate() -> None:
+def test_translate_done_nested_result_react_keeps_body_without_top_level_echo() -> None:
+    """Nested ``result.output`` must reach the client when there is no top-level duplicate echo."""
     em = _CaptureEmitter()
     translate(
         AgentEvent(
@@ -228,7 +229,7 @@ def test_translate_done_nested_result_react_suppresses_terminal_duplicate() -> N
             data={
                 "result": {
                     "pattern_used": "REACT",
-                    "output": "Already streamed in token deltas",
+                    "output": "Final reply only in result",
                     "run_id": "run_2",
                     "query": "q",
                     "steps_taken": 2,
@@ -242,12 +243,27 @@ def test_translate_done_nested_result_react_suppresses_terminal_duplicate() -> N
         (
             "emit_message_assistant",
             {
-                "content": "",
+                "content": "Final reply only in result",
                 "message_id": None,
                 "run_id": "run_2",
                 "pattern": "REACT",
             },
         ),
+    ]
+
+
+def test_translate_done_react_suppresses_top_level_duplicate_only() -> None:
+    """Top-level ``output`` on ``done`` is dropped for REACT when pattern is known (tokens carry prose)."""
+    em = _CaptureEmitter()
+    translate(
+        AgentEvent(
+            type="done",
+            data={"output": "Streamed already", "pattern": "REACT", "result": {"pattern_used": "REACT"}},
+        ),
+        em,  # type: ignore[arg-type]
+    )
+    assert em.calls == [
+        ("emit_message_assistant", {"content": "", "message_id": None, "run_id": None, "pattern": "REACT"}),
     ]
 
 

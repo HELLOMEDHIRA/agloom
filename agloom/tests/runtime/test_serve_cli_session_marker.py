@@ -1,4 +1,4 @@
-"""Session marker snapshot JSON and resume env wiring (secrets only when explicitly opted in)."""
+"""Session marker snapshot JSON and resume env wiring (``api_key_secret`` in marker by default)."""
 
 from __future__ import annotations
 
@@ -41,16 +41,15 @@ def test_session_started_snapshot_api_key_env_nonempty(monkeypatch) -> None:
     assert cred == [{"env": "OPENAI_API_KEY", "present": False}]
     assert snap["effective_config"]["api_key_env"] == "MY_SECRET_KEY"
     assert snap["effective_config"]["api_key_env_nonempty"] is True
-    assert snap["effective_config"]["credential_env_var"] == "MY_SECRET_KEY"
-    assert snap["effective_config"]["credential_env_var_nonempty"] is True
-    assert snap["effective_config"]["provider_primary_api_key_env"] is None
+    assert "credential_env_var" not in snap["effective_config"]
+    assert "provider_primary_api_key_env" not in snap["effective_config"]
     assert snap["effective_config"]["llm_resolution"] == "env_auto"
     ec = snap["effective_config"]
     assert ec["provider_primary_credential_present"] is False
     assert ec["max_tokens"] == SESSION_MARKER_DEFAULT_MAX_TOKENS
     assert ec["frequency_penalty"] == SESSION_MARKER_DEFAULT_FREQUENCY_PENALTY
     assert ec["presence_penalty"] == SESSION_MARKER_DEFAULT_PRESENCE_PENALTY
-    assert "api_key_secret" not in ec
+    assert ec["api_key_secret"] == "sk-test"
 
 
 def test_session_started_snapshot_persist_api_key_writes_secret(monkeypatch) -> None:
@@ -91,6 +90,26 @@ def test_session_started_snapshot_env_var_enables_persist(monkeypatch) -> None:
     )
     snap = session_started_snapshot_from_args(args)
     assert snap["effective_config"]["api_key_secret"] == "secret-from-env-flag"
+    assert snap["effective_config"]["persist_api_key_in_session_marker"] is True
+
+
+def test_session_started_snapshot_omit_env_skips_secret(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("AGLOOM_OMIT_API_KEY_FROM_SESSION", "1")
+    monkeypatch.setenv("MY_K", "secret-should-not-appear")
+    args = argparse.Namespace(
+        model="openai:gpt-4o-mini",
+        provider=None,
+        api_key_env="MY_K",
+        session_max_turns=50,
+        auto_summarize=True,
+        summarizer_model=None,
+        memory_type=None,
+        memory_path=None,
+        no_memory=False,
+    )
+    snap = session_started_snapshot_from_args(args)
+    assert "api_key_secret" not in snap["effective_config"]
 
 
 def test_inject_api_key_secret_from_session_marker_sets_env_when_empty(tmp_path, monkeypatch) -> None:
@@ -179,8 +198,8 @@ def test_inject_then_merge_then_apply_api_key_flow(tmp_path, monkeypatch) -> Non
     assert ec["llm_resolution"] == "explicit_model"
     assert ec["api_key_env"] == "MISSING_VAR"
     assert ec["api_key_env_nonempty"] is False
-    assert ec["credential_env_var"] == "MISSING_VAR"
-    assert ec["credential_env_var_nonempty"] is False
+    assert "credential_env_var" not in ec
+    assert "api_key_secret" not in ec
     assert ec["session_max_turns"] == 30
     assert ec["auto_summarize"] is False
     assert ec["summarizer_model"] == "anthropic:claude-3-5-haiku"
@@ -209,10 +228,10 @@ def test_session_started_snapshot_nvidia_prefix_and_canonical_key(monkeypatch) -
     assert ec["provider_resolved"] == "nvidia"
     assert ec["api_key_env"] == "NVIDIA_API_KEY"
     assert ec["api_key_env_nonempty"] is True
-    assert ec["credential_env_var"] == "NVIDIA_API_KEY"
-    assert ec["credential_env_var_nonempty"] is True
-    assert ec["provider_primary_api_key_env"] == "NVIDIA_API_KEY"
+    assert "credential_env_var" not in ec
+    assert "provider_primary_api_key_env" not in ec
     assert ec["provider_primary_credential_present"] is True
+    assert ec["api_key_secret"] == "nim-key"
     cred = ec["provider_credential_env"]
     assert cred == [{"env": "NVIDIA_API_KEY", "present": True}]
 
@@ -254,10 +273,10 @@ def test_session_started_snapshot_env_present_without_api_key_env(monkeypatch) -
     snap = session_started_snapshot_from_args(args)
     assert snap["effective_config"]["api_key_env"] == "OPENAI_API_KEY"
     assert snap["effective_config"]["api_key_env_nonempty"] is True
-    assert snap["effective_config"]["credential_env_var"] == "OPENAI_API_KEY"
-    assert snap["effective_config"]["credential_env_var_nonempty"] is True
-    assert snap["effective_config"]["provider_primary_api_key_env"] == "OPENAI_API_KEY"
+    assert "credential_env_var" not in snap["effective_config"]
+    assert "provider_primary_api_key_env" not in snap["effective_config"]
     assert snap["effective_config"]["provider_primary_credential_present"] is True
+    assert snap["effective_config"]["api_key_secret"] == "x"
     assert snap["effective_config"]["llm_resolution"] == "env_auto"
 
 

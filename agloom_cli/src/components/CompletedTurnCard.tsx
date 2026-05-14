@@ -2,6 +2,7 @@
 
 import React, { memo } from 'react'
 import { Box, Text } from 'ink'
+import { Badge, StatusMessage } from '@inkjs/ui'
 import type { CompletedTurn } from '../store/session.js'
 import { effectiveToolCallExpanded, useSessionStore } from '../store/session.js'
 import { ToolCallLine } from './ToolCallLine.js'
@@ -46,13 +47,13 @@ const CompletedTurnCardInner = ({ turn, thinkingExpanded }: Props): React.ReactE
           borderColor="gray"
           paddingX={1}
         >
-          <Text bold dimColor color="magenta">
-            Thinking
-          </Text>
+          <Box marginBottom={0}>
+            <Badge color="magenta">Thinking</Badge>
+          </Box>
           {turn.pattern && (
-            <Text color="magenta" dimColor>
-              ▸ {turn.pattern}
-            </Text>
+            <Box marginTop={0}>
+              <Badge color="cyan">{turn.pattern}</Badge>
+            </Box>
           )}
           {turn.thinkingSteps.map((s) => (
             <Box key={s.id} flexDirection="column">
@@ -87,18 +88,27 @@ const CompletedTurnCardInner = ({ turn, thinkingExpanded }: Props): React.ReactE
       )}
 
       <Box marginLeft={2} marginTop={0} flexDirection="column">
-        {mdResponse.split('\n').map((line, i) => (
-          <Text key={i}>{line}</Text>
-        ))}
+        {turn.assistantMessage.trim() ? (
+          mdResponse.split('\n').map((line, i) => (
+            <Text key={i}>{line}</Text>
+          ))
+        ) : (
+          <Box marginBottom={0}>
+            <StatusMessage variant="warning">
+              No assistant text on wire — check runtime / provider logs if this persists
+            </StatusMessage>
+          </Box>
+        )}
       </Box>
 
       {(turn.tokens !== undefined || turn.pattern) && (
-        <Box marginLeft={2}>
-          <Text color="gray" dimColor>
-            {[turn.pattern, turn.tokens !== undefined ? `${turn.tokens} tok` : '']
-              .filter(Boolean)
-              .join(' · ')}
-          </Text>
+        <Box marginLeft={2} flexDirection="row" flexWrap="wrap" gap={1}>
+          {turn.pattern ? <Badge color="magenta">{turn.pattern}</Badge> : null}
+          {turn.tokens !== undefined ? (
+            <Text color="gray" dimColor>
+              {turn.tokens} tok
+            </Text>
+          ) : null}
         </Box>
       )}
 

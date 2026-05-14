@@ -113,8 +113,10 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
     case 'runtime.ready': {
       const cli = evt.data.cli_tools_count != null ? ` · cli_tools=${evt.data.cli_tools_count}` : ''
       const harness = evt.data.harness_enabled != null ? ` · harness=${evt.data.harness_enabled ? 'on' : 'off'}` : ''
-      const memMode = evt.data.session_memory_mode
-      const memNote = memMode != null && memMode !== '' ? ` · session_memory=${memMode}` : ''
+      const wireMem = evt.data.session_memory_mode
+      // Older runtimes sent "off" for no sqlite path; same as default ephemeral SessionMemory today.
+      const memMode = wireMem === 'off' ? 'in-memory' : wireMem
+      const memNote = wireMem != null && wireMem !== '' ? ` · session_memory=${wireMem}` : ''
       const storeKind = evt.data.agent_store_kind
       const storeNote = storeKind != null && storeKind !== '' ? ` · lt_store=${storeKind}` : ''
       const mcpCfg = evt.data.mcp_servers_configured ?? []
@@ -130,7 +132,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
           : {}
       let memoryEnabled: boolean | null = s.memoryEnabled
       if (memMode === 'sqlite' || memMode === 'in-memory') memoryEnabled = true
-      else if (memMode === 'off' || memMode === 'none') memoryEnabled = false
+      else if (memMode === 'none') memoryEnabled = false
       const sk = (storeKind ?? 'sqlite').toLowerCase()
       const skillsEnabled = sk !== 'none'
       const mcpPatch =
