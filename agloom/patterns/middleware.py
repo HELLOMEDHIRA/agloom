@@ -135,7 +135,11 @@ class HumanApprovalMiddleware(AgentMiddleware):
                 f"Agent : {self.agent_name}\n"
                 f"Tool  : {tool_name}\n"
                 f"Args  : {tool_args}\n"
-                f"\nType 'continue' to proceed or 'abort' to cancel."
+                "\n"
+                "Each tool invocation is approved separately — approving an earlier call does not "
+                "auto-approve the next.\n"
+                "In the agloom TUI: press Y = Accept, N = Reject, A = Allowlist (this tool name "
+                "for the rest of the session). Esc defaults to Reject."
             ),
         }
 
@@ -149,9 +153,19 @@ class HumanApprovalMiddleware(AgentMiddleware):
             logger.error(f"{self.agent_name}[L2-HITL] user_callback raised {exc!r} — aborting tool (not auto-approving).")
             raise UserAbort(f"HITL prompt failed: {exc}") from exc
 
-        if str(decision).strip().lower() in ("abort", "no", "skip", "cancel", "stop"):
+        decision_norm = str(decision).strip().lower()
+        if decision_norm in ("abort", "no", "skip", "cancel", "stop"):
             logger.event(f"{self.agent_name}[L2-HITL] User aborted tool '{tool_name}'.")
             raise UserAbort(f"User aborted tool call: {tool_name}")
+
+        if decision_norm in ("allowlist", "a", "3"):
+            if self.tool_allowlist is not None and tool_name and tool_name != "unknown_tool":
+                self.tool_allowlist.add(tool_name)
+            logger.event(
+                f"{self.agent_name}[L2-HITL] Allowlisted — executing '{tool_name}' "
+                f"(future calls skip prompt while allowlist is in effect)."
+            )
+            return await handler(request)
 
         logger.event(f"{self.agent_name}[L2-HITL] Approved — executing '{tool_name}'.")
         return await handler(request)

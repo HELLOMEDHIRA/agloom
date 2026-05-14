@@ -76,8 +76,10 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
   const protocolNotes = useSessionStore((s) => s.protocolNotes)
   const toolNames = useSessionStore((s) => s.toolNames)
   const memoryEnabled = useSessionStore((s) => s.memoryEnabled)
+  const sessionMemoryMode = useSessionStore((s) => s.sessionMemoryMode)
   const skillsEnabled = useSessionStore((s) => s.skillsEnabled)
   const harnessEnabled = useSessionStore((s) => s.harnessEnabled)
+  const cliToolsEnabled = useSessionStore((s) => s.cliToolsEnabled)
   const cliToolsCount = useSessionStore((s) => s.cliToolsCount)
   const mcpServerNames = useSessionStore((s) => s.mcpServerNames)
   const mcpServerRows = useSessionStore((s) => s.mcpServerRows)
@@ -140,20 +142,44 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
         <Text bold color="white">Features</Text>
         <Text>
           <Text color="gray">memory </Text>
-          <Text color={memoryEnabled === true ? 'green' : memoryEnabled === false ? 'red' : 'gray'}>
-            {memoryEnabled === true ? '✓ ON' : memoryEnabled === false ? '✗ OFF' : '—'}
+          <Text
+            color={
+              sessionMemoryMode === 'sqlite' || sessionMemoryMode === 'in-memory' || memoryEnabled === true
+                ? 'green'
+                : sessionMemoryMode === 'none' || sessionMemoryMode === 'off' || memoryEnabled === false
+                  ? 'red'
+                  : 'gray'
+            }
+          >
+            {sessionMemoryMode != null && sessionMemoryMode !== ''
+              ? sessionMemoryMode === 'off'
+                ? 'off'
+                : sessionMemoryMode === 'none'
+                  ? '✗ none'
+                  : `✓ ${sessionMemoryMode}`
+              : memoryEnabled === true
+                ? '✓ ON'
+                : memoryEnabled === false
+                  ? '✗ OFF'
+                  : '—'}
           </Text>
         </Text>
         <Text>
           <Text color="gray">skills </Text>
           <Text color={skillsEnabled === true ? 'green' : skillsEnabled === false ? 'red' : 'gray'}>
-            {skillsEnabled === true ? '✓ ON' : skillsEnabled === false ? '✗ OFF' : '—'}
+            {skillsEnabled === true ? '✓ ON (LT store)' : skillsEnabled === false ? '✗ OFF' : '—'}
           </Text>
         </Text>
         <Text>
           <Text color="gray">cli tools </Text>
-          <Text color={cliToolsCount != null && cliToolsCount > 0 ? 'green' : 'gray'}>
-            {cliToolsCount != null ? `${cliToolsCount} tools` : '—'}
+          <Text color={cliToolsCount != null && cliToolsCount > 0 ? 'green' : cliToolsEnabled === false ? 'red' : 'gray'}>
+            {cliToolsCount != null && cliToolsCount > 0
+              ? `${cliToolsCount} tools`
+              : cliToolsEnabled === false
+                ? '✗ OFF'
+                : cliToolsCount === 0
+                  ? '0 tools'
+                  : '—'}
           </Text>
         </Text>
         <Text>
@@ -234,8 +260,10 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
             ))
           ) : (
             mcpServerNames.map((n, i) => (
-              <Text key={i} color="cyan" dimColor>
-                ◈ {truncate(n, innerW - 2)}
+              <Text key={i} wrap="truncate-end">
+                <Text color="yellow">○ </Text>
+                <Text color="cyan">{truncate(n, 18)}</Text>
+                <Text color="gray" dimColor> · pending (first message)</Text>
               </Text>
             ))
           )}

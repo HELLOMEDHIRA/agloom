@@ -23,6 +23,8 @@ env = event_adapter.validate_python(json.loads(line))
 
 - **`command_adapter`** — same idea for inbound **`Command`** variants (`command.invoke`, `command.session.resume`, …).
 
+When handling **`command.invoke`** with file attachments in your own transport, decode and stage files with **`agloom.runtime.attachment_stage.prepare_invoke_command`** (same logic as stdio/WebSocket serve).
+
 ## Replay and persistence
 
 - **`MemoryEventStore`** — in-process ring buffer for tests.

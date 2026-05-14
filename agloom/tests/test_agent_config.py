@@ -16,6 +16,11 @@ def test_valid_config_passes() -> None:
     assert cfg.model == "openai:gpt-4o"
 
 
+def test_agent_config_session_max_turns_default_matches_create_agent() -> None:
+    """``create_agent`` default is 50; ``AgentConfig`` alone should match for consistency."""
+    assert AgentConfig(model="openai:gpt-4o-mini").session_max_turns == 50
+
+
 def test_rejects_invalid_agent_config() -> None:
     with pytest.raises(ValidationError):
         AgentConfig(model=cast("Any", None))

@@ -41,6 +41,8 @@ agloom-runtime serve --obs --obs-db ./obs.sqlite --obs-port 8766
 | `--agent-store-path` | `.agloom/graph_store.sqlite` | SQLite file for agent store.                                                   |
 | `--no-harness`       | off                          | Disable harness tools (progress + git); skills/memory remain if store enabled. |
 
+With default **`--agent-store=sqlite`**, async SQLite needs **`aiosqlite`**. If it is missing or the DB cannot be opened, the runtime uses an in-memory LangGraph store instead, logs one line to **stderr**, and keeps serving (no LT/harness persistence across restarts until fixed).
+
 ### CLI tools (filesystem / shell / web)
 
 | Flag                      | Description                                             |

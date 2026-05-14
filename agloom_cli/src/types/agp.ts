@@ -359,6 +359,9 @@ export interface RuntimeReadyEvent extends Envelope {
     cli_tools_enabled?: boolean
     cli_tools_count?: number
     harness_enabled?: boolean
+    session_memory_mode?: string
+    agent_store_kind?: string
+    mcp_servers_configured?: string[]
   }
 }
 

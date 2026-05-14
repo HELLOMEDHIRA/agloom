@@ -136,6 +136,8 @@ export interface SessionStore {
   // ── Enhanced session info ────────────────────────────────────────────
   sessionStartedAt: string | null
   sessionUpdatedAt: string | null
+  /** From ``runtime.ready.session_memory_mode`` (before first ``memory.*`` event). */
+  sessionMemoryMode: string | null
   memoryEnabled: boolean | null
   skillsEnabled: boolean | null
   harnessEnabled: boolean | null
@@ -149,6 +151,8 @@ export interface SessionStore {
 
   /** When false, completed turns show a one-line thinking summary (Ctrl+Y expands). */
   expandHistoryThinking: boolean
+  /** When false, the in-flight turn shows one live-updating thinking line (Ctrl+Y expands). */
+  expandActiveThinking: boolean
 
   dispatch: (evt: AGPEvent) => void
   addDiagnostic: (line: string) => void
@@ -159,7 +163,21 @@ export interface SessionStore {
   /** Slash/UI helpers — append one line to the metrics sidebar wire notes. */
   appendProtocolNote: (line: string) => void
   toggleExpandHistoryThinking: () => void
+  /** Ctrl+Y / ``/think``: expand current turn thinking if any, else transcript thinking rows. */
+  toggleThinkingUiExpand: () => void
 }
+
+/** Read-oriented tools: show full result by default when done (still toggle with Ctrl+T / ``/tools``). */
+const TOOL_RESULTS_EXPAND_WHEN_DONE = new Set<string>([
+  'read_file',
+  'grep_files',
+  'glob_files',
+  'list_dir',
+  'notebook_read',
+  'fetch_url',
+  'read_url_markdown',
+  'which',
+])
 
 export const effectiveToolCallExpanded = (
   tc: ToolCall,
@@ -168,7 +186,9 @@ export const effectiveToolCallExpanded = (
   if (Object.prototype.hasOwnProperty.call(expandedById, tc.toolCallId)) {
     return expandedById[tc.toolCallId]!
   }
-  return tc.status === 'error' || tc.status === 'pending'
+  if (tc.status === 'error' || tc.status === 'pending') return true
+  if (tc.status === 'done' && TOOL_RESULTS_EXPAND_WHEN_DONE.has(tc.tool)) return true
+  return false
 }
 
 export const useSessionStore = create<SessionStore>((set) => ({
@@ -197,6 +217,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
   budgetUi: 'ok',
   sessionStartedAt: null,
   sessionUpdatedAt: null,
+  sessionMemoryMode: null,
   memoryEnabled: null,
   skillsEnabled: null,
   harnessEnabled: null,
@@ -207,6 +228,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
   autoApprovedTools: [],
   filesUpdated: [],
   expandHistoryThinking: false,
+  expandActiveThinking: true,
 
   dispatch: (evt: AGPEvent) => set((s) => dispatchAgpEvent(s, evt)),
 
@@ -228,6 +250,15 @@ export const useSessionStore = create<SessionStore>((set) => ({
 
   toggleExpandHistoryThinking: () =>
     set((s) => ({ ...s, expandHistoryThinking: !s.expandHistoryThinking })),
+
+  toggleThinkingUiExpand: () =>
+    set((s) => {
+      const at = s.activeTurn
+      if (at && at.thinkingSteps.length > 0) {
+        return { ...s, expandActiveThinking: !s.expandActiveThinking }
+      }
+      return { ...s, expandHistoryThinking: !s.expandHistoryThinking }
+    }),
 
   toggleActiveTurnToolExpandBulk: () =>
     set((s) => {
@@ -251,9 +282,8 @@ export const useSessionStore = create<SessionStore>((set) => ({
       capabilities: null,
       protocolNotes: [],
       todos: [],
-      mcpServerNames: [],
-      mcpServerRows: [],
       expandHistoryThinking: false,
+      expandActiveThinking: true,
       totalInputTokens: 0,
       totalOutputTokens: 0,
       turnInputTokens: 0,

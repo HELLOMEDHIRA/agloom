@@ -1,4 +1,4 @@
-/** Component tests: ``CompletedTurnCard`` (uses session store for thinking expand). */
+/** Component tests: ``CompletedTurnCard`` (thinking expand via prop for memo correctness). */
 
 import React from 'react'
 import { renderToString } from 'ink'
@@ -26,7 +26,7 @@ describe('CompletedTurnCard (renderToString)', () => {
   }
 
   it('renders user message and assistant reply', () => {
-    const frame = renderToString(<CompletedTurnCard turn={baseTurn} />, { columns: 100 })
+    const frame = renderToString(<CompletedTurnCard turn={baseTurn} thinkingExpanded={false} />, { columns: 100 })
     expect(frame).toContain('Say hello in one word.')
     expect(frame).toContain('Hello.')
     expect(frame).toContain('REACT')
@@ -38,20 +38,41 @@ describe('CompletedTurnCard (renderToString)', () => {
       ...baseTurn,
       thinkingSteps: [{ id: 's1', step: 'plan', label: 'Planning', detail: 'consider options' }],
     }
-    const frame = renderToString(<CompletedTurnCard turn={turn} />, { columns: 100 })
+    const frame = renderToString(<CompletedTurnCard turn={turn} thinkingExpanded={false} />, { columns: 100 })
     expect(frame).toContain('Thought · 1 step')
     expect(frame).toContain('Ctrl+Y')
+    expect(frame).toContain('/think')
     expect(frame).not.toContain('Planning')
   })
 
-  it('shows thinking steps when expandHistoryThinking is on', () => {
-    useSessionStore.setState({ expandHistoryThinking: true })
+  it('shows thinking steps when thinkingExpanded is true', () => {
     const turn: CompletedTurn = {
       ...baseTurn,
       thinkingSteps: [{ id: 's1', step: 'plan', label: 'Planning', detail: 'consider options' }],
     }
-    const frame = renderToString(<CompletedTurnCard turn={turn} />, { columns: 100 })
+    const frame = renderToString(<CompletedTurnCard turn={turn} thinkingExpanded />, { columns: 100 })
     expect(frame).toContain('Planning')
     expect(frame).toContain('consider options')
+  })
+
+  it('expands read_file tool output by default (preserve newlines)', () => {
+    useSessionStore.setState({ toolCallExpandedById: {} })
+    const turn: CompletedTurn = {
+      ...baseTurn,
+      toolCalls: [
+        {
+          id: 'tc1',
+          toolCallId: 'call_1',
+          tool: 'read_file',
+          args: { path: 'pyproject.toml' },
+          status: 'done',
+          result: 'line_a\nline_b\nline_c',
+        },
+      ],
+    }
+    const frame = renderToString(<CompletedTurnCard turn={turn} thinkingExpanded={false} />, { columns: 100 })
+    expect(frame).toContain('line_a')
+    expect(frame).toContain('line_b')
+    expect(frame).toContain('line_c')
   })
 })

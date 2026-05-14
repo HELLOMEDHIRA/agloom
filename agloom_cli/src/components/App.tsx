@@ -17,6 +17,7 @@ import { SLASH_HELP_LINES } from '../utils/slashCommands.js'
 import { appendHistory, defaultHistoryPath, loadHistory } from '../utils/promptHistory.js'
 import { suggestFromHistory } from '../utils/fuzzySuggest.js'
 import { splitPastedMultilineWhenSingleLineMode } from '../utils/pasteCompose.js'
+import { isCtrlY } from '../utils/keys.js'
 
 interface AppProps {
   bridge: AGPBridge
@@ -60,7 +61,8 @@ export const App = ({
   const reset = useSessionStore((s) => s.reset)
   const clearError = useSessionStore((s) => s.clearError)
   const appendProtocolNote = useSessionStore((s) => s.appendProtocolNote)
-  const toggleExpandHistoryThinking = useSessionStore((s) => s.toggleExpandHistoryThinking)
+  const toggleThinkingUiExpand = useSessionStore((s) => s.toggleThinkingUiExpand)
+  const expandHistoryThinking = useSessionStore((s) => s.expandHistoryThinking)
 
   const [thread] = useState(initialThread)
   const [input, setInput] = useState('')
@@ -129,10 +131,16 @@ export const App = ({
       appendProtocolNote('Tools: toggled expand/collapse for current turn (t)')
       return
     }
-    if (key.ctrl && char === 'y') {
-      toggleExpandHistoryThinking()
-      const on = useSessionStore.getState().expandHistoryThinking
-      appendProtocolNote(`Thinking in transcript: ${on ? 'expanded' : 'compact (summary rows)'}`)
+    if (isCtrlY(char, key)) {
+      const before = useSessionStore.getState()
+      toggleThinkingUiExpand()
+      const after = useSessionStore.getState()
+      const hadActive = before.activeTurn && before.activeTurn.thinkingSteps.length > 0
+      if (hadActive) {
+        appendProtocolNote(`Thinking (current turn): ${after.expandActiveThinking ? 'expanded' : 'compact (live summary line)'}`)
+      } else {
+        appendProtocolNote(`Thinking in transcript: ${after.expandHistoryThinking ? 'expanded' : 'compact (summary rows)'}`)
+      }
       return
     }
   })
@@ -341,6 +349,18 @@ export const App = ({
         break
       }
 
+      case '/think': {
+        toggleThinkingUiExpand()
+        const st = useSessionStore.getState()
+        const hadActive = st.activeTurn && st.activeTurn.thinkingSteps.length > 0
+        appendProtocolNote(
+          hadActive
+            ? `/think · current turn thinking ${st.expandActiveThinking ? 'expanded' : 'compact'}`
+            : `/think · transcript thinking ${st.expandHistoryThinking ? 'expanded' : 'compact'}`,
+        )
+        break
+      }
+
       case '/budget': {
         const sub = rest[0]?.toLowerCase()
         if (sub !== 'raise') {
@@ -483,7 +503,7 @@ export const App = ({
 
         <Box flexDirection="column" flexGrow={1} minHeight={0} marginX={1}>
           {completedTurns.map((turn) => (
-            <CompletedTurnCard key={turn.id} turn={turn} />
+            <CompletedTurnCard key={turn.id} turn={turn} thinkingExpanded={expandHistoryThinking} />
           ))}
         </Box>
 

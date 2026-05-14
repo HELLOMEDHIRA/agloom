@@ -40,6 +40,20 @@ def test_subscription_prefix_filters_wire_stream() -> None:
     assert types[-1] == "session.closed"
 
 
+def test_write_replay_dict_respects_subscription_filter() -> None:
+    buf = io.StringIO()
+    em = SessionEmitter(session="s", thread="t", writer=buf)
+    em.open()
+    em.set_subscription_prefixes(["thinking."])
+    before = buf.tell()
+    em.write_replay_dict({"type": "pattern.classified", "seq": 99, "data": {}})
+    em.write_replay_dict({"type": "thinking.step", "seq": 100, "data": {"step": "x"}})
+    after = buf.tell()
+    replay_tail = buf.getvalue()[before:after]
+    assert "pattern.classified" not in replay_tail
+    assert "thinking.step" in replay_tail
+
+
 def test_emitter_full_lifecycle_writes_seven_events() -> None:
     buf = io.StringIO()
     em = SessionEmitter(session="sess_a", thread="thread_b", writer=buf)
@@ -352,6 +366,32 @@ def test_async_emitter_drains_all_events() -> None:
 
     types = [json.loads(l.strip())["type"] for l in lines if l.strip()]
     assert types == ["session.opened", "thinking.step", "session.closed"]
+
+
+def test_async_emitter_write_replay_dict_respects_subscription() -> None:
+    import asyncio
+
+    from agloom.protocol import AsyncSessionEmitter
+
+    async def _run() -> str:
+        received: list[str] = []
+
+        async def writer(line: str) -> None:
+            received.append(line)
+
+        em = AsyncSessionEmitter(session="s_ar", thread="t_ar", writer=writer)
+        async with em:
+            em.open()
+            em.set_subscription_prefixes(["thinking."])
+            em.write_replay_dict({"type": "pattern.classified", "seq": 1, "data": {}})
+            em.write_replay_dict({"type": "thinking.step", "seq": 2, "data": {"step": "x"}})
+            em.close()
+            await asyncio.sleep(0.05)
+        return "".join(received)
+
+    joined = asyncio.run(_run())
+    assert "pattern.classified" not in joined
+    assert "thinking.step" in joined
 
 
 def test_async_emitter_fork_shares_drain_queue() -> None:

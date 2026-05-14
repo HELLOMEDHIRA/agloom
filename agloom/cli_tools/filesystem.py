@@ -82,7 +82,15 @@ def _grep_via_rg(pattern: str, root: Path, lim: int) -> str | None:
 def make_filesystem_tools(ctx: SafetyContext, *, max_read_bytes: int = _DEFAULT_READ_LIMIT) -> list:
     @tool
     def read_file(path: str, offset: int = 0, limit: int = 8000, line_numbers: bool = True) -> str:
-        """Read a text file (UTF-8). Optional ``line_numbers=True`` adds ``cat -n``-style prefixes."""
+        """Read a **byte slice** of a UTF-8 text file (not “N lines”).
+
+        ``offset`` is the start byte in the file; ``limit`` is the maximum number of **bytes**
+        to read (default ``8000`` ≈ one 8KiB chunk, not 8000 lines). Output may include a
+        ``[agloom:tool_result]`` footer with ``complete=`` and a ``next offset=`` hint when the
+        file continues — prefer **one** adequately sized read over many tiny reads unless you
+        are deliberately paging. Line numbers in the body are computed from the file start and
+        reflect logical lines inside the decoded slice.
+        """
         off = max(0, offset)
         lim = max(1, min(limit, max_read_bytes))
         ln = line_numbers

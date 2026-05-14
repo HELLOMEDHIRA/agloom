@@ -248,7 +248,11 @@ class SqliteEventStore(EventStore):
             self._conn = None
 
     def __del__(self) -> None:
-        self.close()
+        # GC may run after the event loop is gone; never let destructor failures escape.
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 __all__ = [

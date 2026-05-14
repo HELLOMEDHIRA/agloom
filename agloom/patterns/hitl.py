@@ -123,7 +123,7 @@ async def _run_parallel_workers(
                     signal=SignalType.FAILED,
                     error="HALT_ALL",
                 )
-            merged = extend_invoke_config_with_event_queue(invoke_config, agent.get("_event_queue"))
+            merged = extend_invoke_config_with_event_queue(invoke_config, agent.get("_event_queue"), agent=agent)
             return await worker_module.run_worker(cfg, llm, invoke_config=merged)
 
     tasks: dict[asyncio.Task, ResolvedWorkerConfig] = {asyncio.create_task(_run_one(cfg)): cfg for cfg in configs}

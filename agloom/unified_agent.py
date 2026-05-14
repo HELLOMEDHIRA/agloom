@@ -23,6 +23,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool, StructuredTool
 
 from .classifier import analyze_query
+from .compat import ensure_langchain_pending_deprecation_suppressed
 from .delegation import (
     BackgroundDelegationManager,
     HandoffTarget,
@@ -33,7 +34,6 @@ from .delegation import (
 )
 from .hitl_contract import HITLEvent, call_user_callback
 from .logging_utils import configure_package_logging, get_logger
-from .multimodal import merge_context_into_user_turn, text_from_user_turn
 from .mcp_support import MCPConnectionError, MCPServerConfig, aclose_mcp_client
 from .memory import (
     LongTermStore,
@@ -54,6 +54,7 @@ from .models import (
     _make_step,
     _merge_token_usage,
 )
+from .multimodal import merge_context_into_user_turn, text_from_user_turn
 from .patterns.blackboard import handle_blackboard
 from .patterns.hybrid_dag import handle_hybrid_dag
 from .patterns.pipeline import handle_pipeline
@@ -62,6 +63,7 @@ from .patterns.react import handle_react
 from .patterns.reflection import handle_reflection
 from .patterns.supervisor import handle_supervisor
 from .patterns.swarm import handle_swarm
+from .wire_execution_result import execution_result_wire_dict
 
 try:
     from .feedback.wireup import (
@@ -317,6 +319,40 @@ def _approx_char_tokens(text: str, *, cap_chars: int = 48_000) -> int:
     if len(text) > cap_chars:
         text = text[:cap_chars]
     return max(1, len(text) // 4)
+
+
+def _build_classifier_augmented_query(
+    memory_ctx: str, harness_ctx: str, processed_query: str
+) -> str:
+    """Merge memory / harness snippets ahead of the user query for ``analyze_query``."""
+    chunks: list[str] = []
+    mem = memory_ctx.strip()
+    har = harness_ctx.strip()
+    if mem:
+        chunks.append(mem)
+    if har:
+        chunks.append(f"CROSS-SESSION PROGRESS\n{har}")
+    if not chunks:
+        return processed_query
+    return "\n".join(chunks) + "\n" + processed_query
+
+
+async def _execute_analyze_query(
+    cfg: dict[str, Any],
+    *,
+    augmented_query: str,
+    skill_context: str,
+) -> QueryAnalysis:
+    """Invoke :func:`~agloom.classifier.analyze_query` using classifier fields from *cfg*."""
+    return await analyze_query(
+        llm=cfg["llm"],
+        query=augmented_query,
+        tools=list(cfg.get("tools") or []),
+        skill_context=skill_context,
+        classifier_timeout=float(cfg.get("classifier_timeout", 60.0)),
+        structured_max_retries=int(cfg.get("structured_max_retries", 2)),
+        fallback_pattern=cfg.get("fallback_pattern"),
+    )
 
 
 def _llm_label(llm: Any) -> str | None:
@@ -1346,7 +1382,9 @@ async def run_fresh(
 
         async def _bg_gen() -> None:
             try:
-                skill = await skill_generator.generate_for_query(query=query, tools=tools_for_gen, agent_name=name)
+                skill = await skill_generator.generate_for_query(
+                    query=processed_query, tools=tools_for_gen, agent_name=name
+                )
                 if skill and registry_for_gen:
                     await registry_for_gen.save_learned_skill(
                         name=skill.name,
@@ -1383,7 +1421,12 @@ async def run_fresh(
     if result.token_usage:
         _total_usage = _merge_token_usage(_total_usage, result.token_usage)
 
-    all_steps = _steps + [s for s in result.steps if s not in _steps]
+    # Many handlers mutate ``config["_steps"]`` in place and return the same list as ``result.steps``;
+    # avoid duplicating that list. Otherwise append handler-only steps not already in the pre-run list.
+    if result.steps is _steps:
+        all_steps = list(_steps)
+    else:
+        all_steps = _steps + [s for s in result.steps if s not in _steps]
 
     result = result.model_copy(
         update={
@@ -1444,9 +1487,12 @@ class UnifiedAgent:
 
     ``config["memory"]`` holds session turns; ``config["store"]`` is optional long-term
     storage (skills, feedback, LT memory namespaces).
+
+    ``__init__`` applies one-time LangChain deprecation filtering before LangGraph loads.
     """
 
     def __init__(self, config: dict) -> None:
+        ensure_langchain_pending_deprecation_suppressed()
         self.config = config
 
     async def __aenter__(self) -> UnifiedAgent:
@@ -1473,6 +1519,17 @@ class UnifiedAgent:
                 await handler.aclose()
             except Exception as exc:
                 logger.debug(f"[{self.name}] Feedback handler cleanup: {exc!r}")
+
+        mgr = self.config.get("_bg_delegation_manager")
+        if isinstance(mgr, BackgroundDelegationManager):
+            try:
+                await mgr.shutdown(cancel_pending=True)
+            except Exception as exc:
+                logger.debug(f"[{self.name}] background delegation shutdown: {exc!r}")
+            try:
+                mgr.cleanup(max_age_seconds=0)
+            except Exception as exc:
+                logger.debug(f"[{self.name}] background delegation cleanup: {exc!r}")
 
         _unregister_agent_name(self.name, self.config.get("store"))
         logger.debug(f"[{self.name}] aclose() complete — resources released")
@@ -1641,9 +1698,13 @@ class UnifiedAgent:
             yield result
             return
 
-        words = result.output.split(" ")
-        for i, word in enumerate(words):
-            yield word + ("" if i == len(words) - 1 else " ")
+        # Simulated streaming: preserve whitespace, tabs, and blank lines (``split(" ")`` does not).
+        out = result.output
+        if not out:
+            return
+        chunk = max(1, int(self.config.get("simulated_stream_chunk_chars", 12)))
+        for i in range(0, len(out), chunk):
+            yield out[i : i + chunk]
             await asyncio.sleep(0)
 
     async def _try_direct_stream(
@@ -1843,7 +1904,7 @@ class UnifiedAgent:
                 await event_queue.put(
                     AgentEvent(
                         type="done",
-                        data={"result": result.model_dump()},
+                        data={"result": execution_result_wire_dict(result)},
                     )
                 )
             except Exception as exc:

@@ -386,7 +386,7 @@ class StepType(str, Enum):
     REFLECTION = "reflection"
     FALLBACK = "fallback"
     INTERRUPT = "interrupt"
-    TOKEN = "token"  # noqa: S105
+    TOKEN = "token"  # noqa: S105 — StepType enum value (stream chunk), not a credential
 
 
 class AgentStep(BaseModel):
@@ -499,8 +499,24 @@ def _extract_token_usage(response: Any) -> dict[str, int]:
                     for field in ("input_tokens", "output_tokens", "total_tokens"):
                         val = getattr(meta, field, None)
                         if val is not None:
-                            usage[field] = int(val)
+                            try:
+                                usage[field] = int(val)
+                            except (TypeError, ValueError):
+                                continue
                 break
+    if not usage and isinstance(response, dict):
+        meta = response.get("usage_metadata")
+        if meta:
+            if isinstance(meta, dict):
+                usage = {k: v for k, v in meta.items() if isinstance(v, int)}
+            else:
+                for field in ("input_tokens", "output_tokens", "total_tokens"):
+                    val = getattr(meta, field, None)
+                    if val is not None:
+                        try:
+                            usage[field] = int(val)
+                        except (TypeError, ValueError):
+                            continue
     if not usage and hasattr(response, "usage_metadata") and response.usage_metadata:
         meta = response.usage_metadata
         if isinstance(meta, dict):
@@ -509,7 +525,10 @@ def _extract_token_usage(response: Any) -> dict[str, int]:
             for field in ("input_tokens", "output_tokens", "total_tokens"):
                 val = getattr(meta, field, None)
                 if val is not None:
-                    usage[field] = int(val)
+                    try:
+                        usage[field] = int(val)
+                    except (TypeError, ValueError):
+                        continue
     return usage
 
 
@@ -657,7 +676,7 @@ class AgentConfig(BaseModel):
     max_skills: int = Field(default=30, ge=1, description="Max active skills before forced review")
 
     user_id: str | None = None
-    session_max_turns: int = Field(default=20, ge=1)
+    session_max_turns: int = Field(default=50, ge=1)
     max_reflection_iterations: int = Field(default=3, ge=1)
     reflection_threshold: int = Field(default=7, ge=0, le=10)
 

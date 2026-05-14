@@ -32,6 +32,7 @@ type CliOpts = {
   model?: string
   provider?: string
   apiKeyEnv?: string
+  persistApiKeyInSessionMarker?: boolean
   temperature?: number
   topP?: number
   topK?: number
@@ -260,6 +261,11 @@ mainProgram
   .option('-m, --model <id>', 'LLM model id (e.g. openai:gpt-4o)')
   .option('--provider <name>', 'force provider when ambiguous')
   .option('--api-key-env <var>', 'read API key from this env var (with --provider or prefixed model)')
+  .option(
+    '--persist-api-key-in-session-marker',
+    'forward: store resolved API key in session JSON (dangerous; see agloom-runtime --help)',
+    false,
+  )
   .option('-T, --temperature <n>', 'sampling temperature', parseFloat)
   .option('--top-p <n>', 'nucleus sampling top_p when supported', parseFloat)
   .option('--top-k <n>', 'top-k sampling when supported', (v) => parseInt(v, 10))
@@ -423,6 +429,7 @@ const buildRuntimeArgs = (o: CliOpts, resolvedThread: string): string[] => {
   if (modelArg && modelArg.toLowerCase() !== 'auto') parts.push('--model', modelArg)
   if (o.provider) parts.push('--provider', o.provider)
   if (o.apiKeyEnv) parts.push('--api-key-env', o.apiKeyEnv)
+  if (o.persistApiKeyInSessionMarker) parts.push('--persist-api-key-in-session-marker')
   if (o.temperature !== undefined) parts.push('--temperature', String(o.temperature))
   if (o.topP !== undefined && !Number.isNaN(o.topP)) parts.push('--top-p', String(o.topP))
   if (o.topK !== undefined && !Number.isNaN(o.topK)) parts.push('--top-k', String(o.topK))

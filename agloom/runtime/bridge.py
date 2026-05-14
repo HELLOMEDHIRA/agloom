@@ -30,6 +30,10 @@ from .invocation_context import attach_invocation_context, reset_invocation_cont
 from .translator import translate
 
 
+# AgentEvent.type values that mean the user already saw final assistant text on the wire.
+_BRIDGE_TERMINAL_ASSISTANT_EVENTS: frozenset[str] = frozenset({"done", "answer", "message_assistant"})
+
+
 class _SupportsAStreamEvents(Protocol):
     """Structural protocol for an agent (only what the bridge actually uses).
 
@@ -86,7 +90,7 @@ async def run_invocation(
     try:
         try:
             async for event in agent.astream_events(prompt, thread_id=thread):
-                if event.type in ("done", "answer", "message_assistant"):
+                if event.type in _BRIDGE_TERMINAL_ASSISTANT_EVENTS:
                     saw_message = True
                 translate(event, emitter)
 

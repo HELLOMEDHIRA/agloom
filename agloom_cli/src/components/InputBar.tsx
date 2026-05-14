@@ -102,7 +102,7 @@ export const InputBar = ({
               {ln.length > 160 ? `${ln.slice(0, 157)}…` : ln}
             </Text>
           ))}
-          <Text dimColor>── blank line + Enter sends · Ctrl+P/N history · Ctrl+Y past thinking</Text>
+          <Text dimColor>── blank line + Enter sends · Ctrl+P/N history · Ctrl+Y or /think thinking</Text>
         </Box>
       )}
 

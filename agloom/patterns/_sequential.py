@@ -172,7 +172,7 @@ async def run_sequential_workers(
             f"step {idx + 1}/{len(sorted_configs)} "
             f"worker='{config.worker_id}' depends_on={config.depends_on}"
         )
-        merged = extend_invoke_config_with_event_queue(invoke_config, agent.get("_event_queue"))
+        merged = extend_invoke_config_with_event_queue(invoke_config, agent.get("_event_queue"), agent=agent)
         result = await worker_module.run_worker(config, llm, invoke_config=merged)
         results_map[config.worker_id] = result
         ordered_results.append(result)

@@ -736,6 +736,21 @@ class RuntimeReadyData(_DataBase):
     cli_tools_enabled: bool | None = None
     cli_tools_count: int | None = None
     harness_enabled: bool | None = None
+    session_memory_mode: str | None = Field(
+        default=None,
+        description=(
+            "Session rolling-memory backend from CLI/YAML before lazy agent bootstrap: "
+            "``sqlite`` | ``in-memory`` | ``none`` | ``off`` (unset → no SessionMemory bundle)."
+        ),
+    )
+    agent_store_kind: str | None = Field(
+        default=None,
+        description="LangGraph store kind (``sqlite`` / ``memory`` / ``none`` / …); skills LT stack when not ``none``.",
+    )
+    mcp_servers_configured: list[str] = Field(
+        default_factory=list,
+        description="MCP server names from ``--mcp`` / config (not yet connected until first invoke).",
+    )
 
 
 class RuntimeReady(Envelope):

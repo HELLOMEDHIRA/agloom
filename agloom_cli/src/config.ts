@@ -167,6 +167,7 @@ const AgloomYamlSchema = z.preprocess(
     .object({
       model: z.string().optional(),
       provider: z.string().optional(),
+      persist_api_key_in_session_marker: z.boolean().optional(),
       temperature: z.number().optional(),
       max_tokens: z.number().int().optional(),
       frequency_penalty: z.number().optional(),
@@ -312,6 +313,7 @@ export const mcpSpecsFromYaml = (
 export type CliOptsLike = {
   model?: string
   provider?: string
+  persistApiKeyInSessionMarker?: boolean
   temperature?: number
   maxTokens?: number
   frequencyPenalty?: number
@@ -392,6 +394,9 @@ export const applyAgloomConfigLayers = (
   if (fromDefault('provider')) {
     if (env.provider) next.provider = env.provider
     else if (y.provider) next.provider = y.provider
+  }
+  if (fromDefault('persistApiKeyInSessionMarker') && y.persist_api_key_in_session_marker === true) {
+    next.persistApiKeyInSessionMarker = true
   }
   if (fromDefault('temperature')) {
     if (env.temperature !== undefined) next.temperature = env.temperature

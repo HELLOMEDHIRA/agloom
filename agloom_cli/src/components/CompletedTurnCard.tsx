@@ -10,10 +10,12 @@ import { renderMarkdown } from '../utils/format.js'
 
 interface Props {
   turn: CompletedTurn
+  /** From parent so memo re-renders when Ctrl+Y toggles transcript thinking. */
+  thinkingExpanded: boolean
 }
 
-const CompletedTurnCardInner = ({ turn }: Props): React.ReactElement => {
-  const expandHistoryThinking = useSessionStore((s) => s.expandHistoryThinking)
+const CompletedTurnCardInner = ({ turn, thinkingExpanded }: Props): React.ReactElement => {
+  const toolCallExpandedById = useSessionStore((s) => s.toolCallExpandedById)
   const termWidth = process.stdout.columns ?? 80
   const mdResponse = renderMarkdown(turn.assistantMessage, termWidth - 4)
   const nThink = turn.thinkingSteps.length
@@ -27,15 +29,15 @@ const CompletedTurnCardInner = ({ turn }: Props): React.ReactElement => {
         <Text bold>{turn.userMessage}</Text>
       </Box>
 
-      {nThink > 0 && !expandHistoryThinking && (
+      {nThink > 0 && !thinkingExpanded && (
         <Box marginLeft={2} marginTop={0}>
           <Text color="gray" dimColor>
-            ▸ Thought · {nThink} step{nThink === 1 ? '' : 's'} (Ctrl+Y expand)
+            ▸ Thought · {nThink} step{nThink === 1 ? '' : 's'} (Ctrl+Y or /think expand)
           </Text>
         </Box>
       )}
 
-      {nThink > 0 && expandHistoryThinking && (
+      {nThink > 0 && thinkingExpanded && (
         <Box
           flexDirection="column"
           marginLeft={2}
@@ -79,7 +81,7 @@ const CompletedTurnCardInner = ({ turn }: Props): React.ReactElement => {
       {turn.toolCalls.length > 0 && (
         <Box flexDirection="column">
           {turn.toolCalls.map((tc) => (
-            <ToolCallLine key={tc.id} tc={tc} expanded={effectiveToolCallExpanded(tc, {})} />
+            <ToolCallLine key={tc.id} tc={tc} expanded={effectiveToolCallExpanded(tc, toolCallExpandedById)} />
           ))}
         </Box>
       )}
@@ -109,4 +111,7 @@ const CompletedTurnCardInner = ({ turn }: Props): React.ReactElement => {
   )
 }
 
-export const CompletedTurnCard = memo(CompletedTurnCardInner)
+export const CompletedTurnCard = memo(
+  CompletedTurnCardInner,
+  (a, b) => a.turn === b.turn && a.thinkingExpanded === b.thinkingExpanded,
+)

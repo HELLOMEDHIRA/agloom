@@ -49,12 +49,26 @@ FINAL REPLY
 _MEMORY_TOOLS = {"save_memory", "recall_memory"}
 
 
-def extend_invoke_config_with_event_queue(invoke_config: dict | None, event_queue: Any) -> dict | None:
-    """Attach parent ``_event_queue`` so workers can ``astream`` to the CLI (parallel + sequential)."""
+def extend_invoke_config_with_event_queue(
+    invoke_config: dict | None, event_queue: Any, *, agent: dict | None = None
+) -> dict | None:
+    """Attach parent ``_event_queue`` so workers can ``astream`` to the CLI (parallel + sequential).
+
+    When *invoke_config* omits ``configurable.signal_queue`` / ``clarification_queues`` (e.g. it was
+    ``None`` and only the event queue is being merged), copy those from *agent* so L4 tools and
+    the parallel HITL listener still share the parent's queues.
+    """
     if event_queue is None:
         return invoke_config
     base = dict(invoke_config or {})
     base["_event_queue"] = event_queue
+    if agent is not None:
+        conf = dict(base.get("configurable") or {})
+        if conf.get("signal_queue") is None and agent.get("signal_queue") is not None:
+            conf["signal_queue"] = agent["signal_queue"]
+        if conf.get("clarification_queues") is None and agent.get("clarification_queues") is not None:
+            conf["clarification_queues"] = agent["clarification_queues"]
+        base["configurable"] = conf
     return base
 
 

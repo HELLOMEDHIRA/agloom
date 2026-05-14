@@ -131,7 +131,7 @@ async def handle_blackboard(
             )
 
             logger.event(f"[Blackboard] Running KS '{ks_cfg.worker_id}' (round {round_num})")
-            merged = extend_invoke_config_with_event_queue(config, agent.get("_event_queue"))
+            merged = extend_invoke_config_with_event_queue(config, agent.get("_event_queue"), agent=agent)
             result = await worker_module.run_worker(enriched_cfg, llm, invoke_config=merged)
             worker_results.append(result)
             raw_messages.extend(getattr(result, "messages", []))

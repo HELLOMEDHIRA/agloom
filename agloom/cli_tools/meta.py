@@ -7,10 +7,12 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from ..runtime.invocation_context import get_invocation_emitter, get_invocation_hitl_bridge
-
 
 def make_meta_tools() -> list:
+    # Lazy import: ``import agloom`` re-exports ``get_cli_tools`` from ``cli_tools``; loading
+    # ``invocation_context`` here would drag AGP protocol + runtime HITL at package import time.
+    from ..runtime.invocation_context import get_invocation_emitter, get_invocation_hitl_bridge
+
     @tool
     async def ask_user(question: str, choices: str | None = None) -> str:
         """Ask the human a clarification question over the AGP HITL channel (async).

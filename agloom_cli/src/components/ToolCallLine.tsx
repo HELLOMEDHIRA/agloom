@@ -2,7 +2,14 @@
 import React from 'react'
 import { Box, Text } from 'ink'
 import type { ToolCall } from '../store/session.js'
-import { truncate, fmtArgs, fmtDuration } from '../utils/format.js'
+import { fmtArgs, fmtDuration } from '../utils/format.js'
+
+const MAX_PLAIN_RESULT_LINES = 200
+
+const clipLine = (line: string, maxCols: number): string => {
+  if (line.length <= maxCols) return line
+  return `${line.slice(0, Math.max(8, maxCols - 1))}…`
+}
 
 const looksLikeUnifiedDiff = (text: string): boolean => {
   if (text.length < 40) return false
@@ -83,18 +90,33 @@ export const ToolCallLine = ({ tc, expanded }: Props): React.ReactElement => {
           })}
         </Box>
       )}
-      {expanded && tc.status === 'done' && tc.result && !looksLikeUnifiedDiff(tc.result) && (
-        <Box marginLeft={3}>
-          <Text color="gray" dimColor>
-            {truncate(tc.result, 200)}
-          </Text>
-        </Box>
-      )}
+      {expanded && tc.status === 'done' && tc.result && !looksLikeUnifiedDiff(tc.result) && (() => {
+        const cols = Math.max(40, (process.stdout.columns ?? 80) - 4)
+        const lines = tc.result.split('\n')
+        const slice = lines.slice(0, MAX_PLAIN_RESULT_LINES)
+        const omitted = lines.length - slice.length
+        return (
+          <Box marginLeft={3} flexDirection="column">
+            {slice.map((line, i) => (
+              <Text key={i} color="gray" dimColor wrap="truncate-end">
+                {clipLine(line, cols)}
+              </Text>
+            ))}
+            {omitted > 0 ? (
+              <Text color="gray" dimColor>
+                … {omitted} more line{omitted === 1 ? '' : 's'} (Ctrl+T / /tools to collapse)
+              </Text>
+            ) : null}
+          </Box>
+        )
+      })()}
       {expanded && tc.status === 'error' && tc.error && (
-        <Box marginLeft={3}>
-          <Text color="red" dimColor>
-            {truncate(tc.error, 200)}
-          </Text>
+        <Box marginLeft={3} flexDirection="column">
+          {tc.error.split('\n').slice(0, 40).map((line, i) => (
+            <Text key={i} color="red" dimColor wrap="truncate-end">
+              {clipLine(line, Math.max(40, (process.stdout.columns ?? 80) - 4))}
+            </Text>
+          ))}
         </Box>
       )}
     </Box>

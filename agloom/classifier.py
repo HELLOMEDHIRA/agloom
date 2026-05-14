@@ -210,6 +210,21 @@ QUERY TO ANALYZE
 Query: {query}
 """
 
+_QUERY_SLOT_MARKER = "\ufeff\ufeffAGLOOM_CLASSIFIER_QUERY\ufeff\ufeff"
+
+
+def build_classifier_user_prompt(*, tools_desc: str, query: str) -> str:
+    """Fill :data:`CLASSIFIER_PROMPT` so user *query* and *tools_desc* cannot corrupt each other.
+
+    * A query that contains the literal substring ``{tools}`` stays intact.
+    * A tool description that contains ``{query}`` is not replaced by the real query text.
+    """
+    return (
+        CLASSIFIER_PROMPT.replace("{query}", _QUERY_SLOT_MARKER)
+        .replace("{tools}", tools_desc)
+        .replace(_QUERY_SLOT_MARKER, query)
+    )
+
 
 async def analyze_query(
     llm,
@@ -249,9 +264,7 @@ async def analyze_query(
     """
     tools_desc = "\n".join(f"  - {t.name}: {getattr(t, 'description', '')}" for t in tools) or "none"
 
-    # Replace longer / structured placeholders first so ``{tools}`` inside the user
-    # ``query`` string is not clobbered when substituting ``{tools}``.
-    prompt = CLASSIFIER_PROMPT.replace("{tools}", tools_desc).replace("{query}", query)
+    prompt = build_classifier_user_prompt(tools_desc=tools_desc, query=query)
 
     if skill_context:
         prompt = prompt.replace(

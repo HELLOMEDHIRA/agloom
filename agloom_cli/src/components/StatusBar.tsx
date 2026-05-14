@@ -16,11 +16,22 @@ const STATUS_LABEL: Record<string, string> = {
 /** Uppercase tag for color-blind / log-friendly reading. */
 const STATUS_TAG: Record<string, string> = {
   idle: 'IDLE',
-  running: 'BUSY',
+  /** Agent is executing tools / streaming — not waiting on you (unless another HITL opens). */
+  running: 'RUN',
   thinking: 'THINK',
   hitl: 'HITL',
   error: 'ERROR',
   exited: 'EXIT',
+}
+
+/** Short hint after the tag (replaces raw enum like ``running``). */
+const STATUS_HINT: Record<string, string> = {
+  idle: 'ready',
+  running: 'agent working',
+  thinking: 'thinking',
+  hitl: 'needs your input',
+  error: 'error',
+  exited: 'ended',
 }
 
 const STATUS_COLORS = {
@@ -99,7 +110,7 @@ export const StatusBar = ({ thread, layoutWidth }: Props): React.ReactElement =>
         </Text>
         <Text color="gray" dimColor>
           {' · '}
-          {status}
+          {STATUS_HINT[status] ?? status}
         </Text>
         <Text color="gray" dimColor>
           {' · '}

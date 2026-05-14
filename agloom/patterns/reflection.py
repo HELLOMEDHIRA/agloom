@@ -139,7 +139,7 @@ async def handle_reflection(
         gen_cfg = resolve_worker_configs(agent, [gen_plan])[0]
 
         logger.event(f"[Reflection] {agent_name} — iteration {iteration + 1}/{max_iterations}: generating...")
-        merged = extend_invoke_config_with_event_queue(config, agent.get("_event_queue"))
+        merged = extend_invoke_config_with_event_queue(config, agent.get("_event_queue"), agent=agent)
         gen_result = await worker_module.run_worker(gen_cfg, llm, invoke_config=merged)
         worker_results.append(gen_result)
         raw_messages.extend(getattr(gen_result, "messages", []))

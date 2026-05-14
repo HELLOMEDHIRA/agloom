@@ -21,6 +21,8 @@ See ``agloom/docs/protocol/agp.md`` for the full specification.
 
 from __future__ import annotations
 
+from typing import Any
+
 from .commands import (
     Command,
     CommandAttachFile,
@@ -37,7 +39,6 @@ from .commands import (
     CommandHITLRespondData,
     CommandInvoke,
     CommandInvokeData,
-    InvokeAttachment,
     CommandMemoryClear,
     CommandMemoryClearData,
     CommandMemoryPopLastTurn,
@@ -74,145 +75,62 @@ from .commands import (
     CommandUnsubscribeData,
     CommandWorkerAssign,
     CommandWorkerAssignData,
+    InvokeAttachment,
     command_adapter,
 )
-from .emitter import AsyncSessionEmitter, SessionEmitter, WriterLike, event_to_dict
-from .envelope import PROTOCOL_MODULE_VERSION, PROTOCOL_VERSION, Envelope, new_event_id, now_utc
-from .events import (
-    AgentBusy,
-    AgentBusyData,
-    AgentIdle,
-    AgentIdleData,
-    CheckpointRestored,
-    CheckpointRestoredData,
-    CheckpointSaved,
-    CheckpointSavedData,
-    ErrorData,
-    ErrorFatal,
-    ErrorSeverity,
-    ErrorTransient,
-    Event,
-    FeedbackScored,
-    FeedbackScoredData,
-    GraphNodeEnter,
-    GraphNodeEnterData,
-    GraphNodeExit,
-    GraphNodeExitData,
-    HITLAllowlisted,
-    HITLDecision,
-    HITLDecisionData,
-    HITLDenied,
-    HITLGranted,
-    HITLKind,
-    HITLRequest,
-    HITLRequestData,
-    MemoryLtRecall,
-    MemoryLtRecallData,
-    MemoryLtStore,
-    MemoryLtStoreData,
-    MemorySessionCleared,
-    MemorySessionClearedData,
-    MemorySessionTurnPopped,
-    MemorySessionTurnPoppedData,
-    MemorySessionWrite,
-    MemorySessionWriteData,
-    MessageAssistant,
-    MessageAssistantData,
-    MessageTool,
-    MessageToolData,
-    MessageUser,
-    MessageUserData,
-    MetricBudgetApproaching,
-    MetricBudgetApproachingData,
-    MetricBudgetExhausted,
-    MetricBudgetExhaustedData,
-    MetricCost,
-    MetricCostData,
-    MetricTokens,
-    MetricTokensData,
-    PatternClassified,
-    PatternClassifiedData,
-    PlanPreview,
-    PlanPreviewData,
-    PromptCancelled,
-    PromptCancelledData,
-    PromptCancelledReason,
-    PromptRequested,
-    PromptRequestedData,
-    PromptRequestedKind,
-    RuntimeConfig,
-    RuntimeConfigApplied,
-    RuntimeConfigAppliedData,
-    RuntimeConfigData,
-    RuntimeFileStaged,
-    RuntimeFileStagedData,
-    RuntimePong,
-    RuntimePongData,
-    RuntimeProviderEntry,
-    RuntimeProvidersPayload,
-    RuntimeProvidersPayloadData,
-    RuntimeReady,
-    RuntimeReadyData,
-    RuntimeSchemaPayload,
-    RuntimeSchemaPayloadData,
-    RuntimeSessionCreated,
-    RuntimeSessionCreatedData,
-    RuntimeSessionRenamed,
-    RuntimeSessionRenamedData,
-    RuntimeSessionsPayload,
-    RuntimeSessionsPayloadData,
-    RuntimeToolEntry,
-    RuntimeToolInvokeResult,
-    RuntimeToolInvokeResultData,
-    RuntimeToolsPayload,
-    RuntimeToolsPayloadData,
-    SessionClosed,
-    SessionClosedData,
-    SessionCloseReason,
-    SessionHeartbeat,
-    SessionHeartbeatData,
-    SessionOpened,
-    SessionOpenedData,
-    SessionResumed,
-    SessionResumedData,
-    SkillApplied,
-    SkillAppliedData,
-    SkillAppliedPhase,
-    SkillLearned,
-    SkillLearnedData,
-    SkillLearnedSource,
-    SkillLoaded,
-    SkillLoadedData,
-    SkillLoadedSource,
-    StreamHeartbeat,
-    StreamHeartbeatData,
-    ThinkingStep,
-    ThinkingStepData,
-    TodosUpdated,
-    TodosUpdatedData,
-    TokenDelta,
-    TokenDeltaData,
-    ToolCallError,
-    ToolCallErrorData,
-    ToolCallResult,
-    ToolCallResultData,
-    ToolCallStart,
-    ToolCallStartData,
-    WorkerCompleted,
-    WorkerCompletedData,
-    WorkerFailed,
-    WorkerFailedData,
-    WorkerSpawned,
-    WorkerSpawnedData,
-    event_adapter,
-)
-from .schema import build_schema, write_schema
-from .store import EventStore, MemoryEventStore, SqliteEventStore
 
-# Module version is decoupled from the agloom package version so the protocol can rev
-# independently. The wire-format ``v="1"`` changes only on breaking schema bumps (then a v2
-# module would coexist).
-__version__ = PROTOCOL_MODULE_VERSION
+
+def __getattr__(name: str) -> Any:
+    """Lazy-load heavy protocol submodules (use ``importlib.import_module`` to avoid recursion)."""
+    import importlib
+
+    if name == "__version__":
+        _envelope = importlib.import_module(f"{__name__}.envelope")
+        v = _envelope.PROTOCOL_MODULE_VERSION
+        globals()["__version__"] = v
+        return v
+
+    _envelope_names = frozenset(
+        {"PROTOCOL_MODULE_VERSION", "PROTOCOL_VERSION", "Envelope", "new_event_id", "now_utc"}
+    )
+    if name in _envelope_names:
+        _envelope = importlib.import_module(f"{__name__}.envelope")
+        obj = getattr(_envelope, name)
+        globals()[name] = obj
+        return obj
+
+    _emitter_names = frozenset({"AsyncSessionEmitter", "SessionEmitter", "WriterLike", "event_to_dict"})
+    if name in _emitter_names:
+        _emitter = importlib.import_module(f"{__name__}.emitter")
+        obj = getattr(_emitter, name)
+        globals()[name] = obj
+        return obj
+
+    _schema_names = frozenset({"build_schema", "write_schema"})
+    if name in _schema_names:
+        _schema = importlib.import_module(f"{__name__}.schema")
+        obj = getattr(_schema, name)
+        globals()[name] = obj
+        return obj
+
+    _store_names = frozenset({"EventStore", "MemoryEventStore", "SqliteEventStore"})
+    if name in _store_names:
+        _store = importlib.import_module(f"{__name__}.store")
+        obj = getattr(_store, name)
+        globals()[name] = obj
+        return obj
+
+    _events = importlib.import_module(f"{__name__}.events")
+    if hasattr(_events, name):
+        obj = getattr(_events, name)
+        globals()[name] = obj
+        return obj
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(__all__)
 
 __all__ = [
     # ── envelope ──

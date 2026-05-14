@@ -42,6 +42,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from ..compat import ensure_langchain_pending_deprecation_suppressed
+from ..mcp_support import MCPConnectionError
 from ..protocol import SessionEmitter
 from ..protocol.commands import (
     CommandAttachFile,
@@ -72,7 +74,6 @@ from ..protocol.commands import (
     command_adapter,
 )
 from ..protocol.envelope import Envelope
-from ..mcp_support import MCPConnectionError
 from .bridge import new_session_id, run_invocation
 from .hitl import HITLBridge
 
@@ -124,13 +125,13 @@ def _agent_lt_boot_suffix(args: argparse.Namespace) -> str:
 async def _open_runtime_langgraph_store(
     args: argparse.Namespace,
 ) -> tuple[Any | None, Callable[[], Awaitable[None]]]:
-    """Open the LangGraph BaseStore used by ``create_agent`` (skills, LT memory tools, harness).
+    """Open the LangGraph store for ``create_agent`` (LT memory, skills, harness).
 
-    Separate from ``--store`` (AGP EventStore / replay). Default **sqlite** uses LangGraph's
-    **AsyncSqliteStore** (aiosqlite) so reads/writes do not block the asyncio event loop.
-
-    ``sqlite-sync`` uses the blocking ``SqliteStore`` for niche tooling only.
+    Not the AGP ``--store`` (replay). Default ``sqlite`` uses async sqlite; ``sqlite-sync``
+    uses blocking SqliteStore. On missing ``aiosqlite`` or open failure, falls back to
+    in-memory with a stderr line.
     """
+    ensure_langchain_pending_deprecation_suppressed()
     kind = getattr(args, "agent_store", "sqlite")
     if kind == "none":
         return None, _noop_langgraph_store_cleanup
@@ -161,11 +162,31 @@ async def _open_runtime_langgraph_store(
 
         return store, _cleanup_sync_wrapper
 
-    from langgraph.store.sqlite import AsyncSqliteStore
+    try:
+        from langgraph.store.sqlite import AsyncSqliteStore
+    except ImportError as exc:
+        from langgraph.store.memory import InMemoryStore
+
+        _eprint(
+            f"[agloom-runtime] LangGraph AsyncSqliteStore unavailable ({exc!r}). "
+            "Install ``aiosqlite`` for async sqlite persistence. "
+            "Falling back to in-memory store (LT memory / harness state not persisted across restarts)."
+        )
+        return InMemoryStore(), _noop_langgraph_store_cleanup
 
     async_stack = AsyncExitStack()
-    store = await async_stack.enter_async_context(AsyncSqliteStore.from_conn_string(conn_str))
-    await store.setup()
+    try:
+        store = await async_stack.enter_async_context(AsyncSqliteStore.from_conn_string(conn_str))
+        await store.setup()
+    except Exception as exc:
+        await async_stack.aclose()
+        from langgraph.store.memory import InMemoryStore
+
+        _eprint(
+            f"[agloom-runtime] Could not open LangGraph sqlite store at {conn_str!r} ({exc!r}). "
+            "Falling back to in-memory store."
+        )
+        return InMemoryStore(), _noop_langgraph_store_cleanup
 
     async def _cleanup_async() -> None:
         await async_stack.aclose()
@@ -241,13 +262,40 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             apply_api_key_env,
             build_create_agent_kwargs,
             cli_tools_options_from_args,
+            inject_api_key_secret_from_session_marker,
+            merge_api_key_env_from_session_marker,
             open_sqlite_session_memory,
             resolve_llm_for_serve,
+            runtime_ready_sidebar_from_args,
             session_started_snapshot_from_args,
         )
     except ImportError as exc:
         _eprint(f"[agloom-runtime] failed to import CLI helpers: {exc!r}")
         return 2
+
+    from .hitl_allowlist import hitl_allowlist_paths_for_runtime
+    from .workspace_bootstrap import (
+        attach_session_memory_to_session_marker,
+        bootstrap_optional_agsuperbrain,
+        ensure_agloom_workspace,
+        session_marker_json_path,
+        write_session_started_json,
+    )
+
+    session_id = args.session or new_session_id()
+    initial_thread = (
+        str(args.thread).strip()
+        if getattr(args, "thread", None) and str(getattr(args, "thread", "")).strip()
+        else f"thread_{uuid4().hex[:16]}"
+    )
+    _cwd = Path.cwd()
+    _sd, yaml_created = ensure_agloom_workspace(_cwd, args=args)
+    if yaml_created:
+        _eprint("[agloom-runtime] wrote starter .agloom/agloom.yaml (no project config found).")
+    bootstrap_optional_agsuperbrain(_cwd, args=args)
+    _marker_json = session_marker_json_path(_sd, session_id) if _sd.is_dir() else None
+    inject_api_key_secret_from_session_marker(args, _marker_json)
+    merge_api_key_env_from_session_marker(args, _marker_json)
 
     try:
         apply_api_key_env(args)
@@ -265,15 +313,6 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             _eprint(f"[agloom-runtime] --otel requires optional deps: pip install 'agloom[otel]' ({exc})")
             return 2
 
-    from .hitl_allowlist import hitl_allowlist_paths_for_runtime
-    from .workspace_bootstrap import (
-        bootstrap_optional_agsuperbrain,
-        ensure_agloom_workspace,
-        session_marker_json_path,
-        write_session_started_json,
-        attach_session_memory_to_session_marker,
-    )
-
     store = None
     if args.store == "sqlite":
         from ..protocol.store import SqliteEventStore
@@ -282,18 +321,6 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         from ..protocol.store import MemoryEventStore
         store = MemoryEventStore()
 
-    session_id = args.session or new_session_id()
-    initial_thread = (
-        str(args.thread).strip()
-        if getattr(args, "thread", None) and str(getattr(args, "thread", "")).strip()
-        else f"thread_{uuid4().hex[:16]}"
-    )
-    _cwd = Path.cwd()
-    _sd, yaml_created = ensure_agloom_workspace(_cwd, args=args)
-    if yaml_created:
-        _eprint("[agloom-runtime] wrote starter .agloom/agloom.yaml (no project config found).")
-    bootstrap_optional_agsuperbrain(_cwd, args=args)
-    _marker_json = session_marker_json_path(_sd, session_id) if _sd.is_dir() else None
     _al_set, _al_leg, _al_sess = hitl_allowlist_paths_for_runtime(
         args,
         session_marker_json=_marker_json,
@@ -444,12 +471,15 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
     if is_resume:
         emitter.resume(resumed_from_thread=initial_thread)
         async for evt_dict in store.replay(session_id, from_seq=0):
-            json_line = json.dumps(evt_dict, ensure_ascii=False)
-            sys.stdout.write(json_line + "\n")
-            sys.stdout.flush()
+            emitter.write_replay_dict(evt_dict)
     else:
         emitter.open()
-    emitter.emit_runtime_ready(agent_name="agloom-runtime", harness_enabled=use_harness)
+    _ready_sidebar = runtime_ready_sidebar_from_args(args)
+    emitter.emit_runtime_ready(
+        agent_name="agloom-runtime",
+        harness_enabled=use_harness,
+        **_ready_sidebar,
+    )
 
     budget_tracker = None
     bt_n = getattr(args, "budget_tokens", None)
@@ -719,7 +749,7 @@ async def _dispatch_command(
                 stage="budget.blocked",
             )
             return
-        from ..multimodal import prepare_invoke_command
+        from .attachment_stage import prepare_invoke_command
 
         thread = cmd.data.thread or f"thread_{uuid4().hex[:16]}"
         wd = invoke_working_dir or Path.cwd().resolve()
@@ -818,9 +848,7 @@ async def _dispatch_command(
         if store is not None:
             emitter.resume(resumed_from_thread=cmd.data.thread, replayed_from_seq=from_seq if from_seq > 0 else None)
             async for evt_dict in store.replay(session_id, from_seq=from_seq):
-                json_line = json.dumps(evt_dict, ensure_ascii=False)
-                sys.stdout.write(json_line + "\n")
-                sys.stdout.flush()
+                emitter.write_replay_dict(evt_dict)
         else:
             emitter.resume(resumed_from_thread=cmd.data.thread)
         return
@@ -1508,6 +1536,17 @@ def _add_serve_agent_flags(serve: argparse.ArgumentParser) -> None:
         default=None,
         metavar="VAR",
         help="Read the API key from this env var and map it to the provider's standard key (use with --provider or prefixed --model).",
+    )
+    serve.add_argument(
+        "--persist-api-key-in-session-marker",
+        dest="persist_api_key_in_session_marker",
+        action="store_true",
+        default=False,
+        help=(
+            "Write resolved API key material into the session marker JSON and restore it on resume "
+            "when the target env var is empty (also AGLOOM_PERSIST_API_KEY_IN_SESSION_MARKER=1). "
+            "Dangerous: anyone who can read .agloom/sessions/*.json can use the key."
+        ),
     )
     serve.add_argument(
         "--base-url",

@@ -109,23 +109,24 @@ async def handle_supervisor(
         invoke_config=config,
     )
     for wr in worker_results:
-        if event_queue is not None:
-            for step in getattr(wr, "steps", []):
-                if step.type in (StepType.TOOL_CALL, StepType.TOOL_RESULT):
-                    event_type = "tool_call" if step.type == StepType.TOOL_CALL else "tool_result"
-                    await event_queue.put(
-                        AgentEvent(
-                            type=event_type,
-                            data={
-                                "worker_id": wr.worker_id,
-                                "name": step.name,
-                                "input": step.input,
-                                "output": step.output,
-                                **step.metadata,
-                            },
-                        )
+        for step in getattr(wr, "steps", []):
+            if step.type not in (StepType.TOOL_CALL, StepType.TOOL_RESULT):
+                continue
+            steps.append(step)
+            if event_queue is not None:
+                event_type = "tool_call" if step.type == StepType.TOOL_CALL else "tool_result"
+                await event_queue.put(
+                    AgentEvent(
+                        type=event_type,
+                        data={
+                            "worker_id": wr.worker_id,
+                            "name": step.name,
+                            "input": step.input,
+                            "output": step.output,
+                            **step.metadata,
+                        },
                     )
-                    steps.append(step)
+                )
 
         end_step = _make_step(
             StepType.WORKER_END,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import os
 import re
 from argparse import Namespace
@@ -120,6 +121,81 @@ def apply_api_key_env(args: Namespace) -> None:
     os.environ[keys[0]] = secret.strip()
 
 
+def _persist_api_key_marker_requested(args: Namespace) -> bool:
+    if getattr(args, "persist_api_key_in_session_marker", False):
+        return True
+    v = (os.environ.get("AGLOOM_PERSIST_API_KEY_IN_SESSION_MARKER") or "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
+def inject_api_key_secret_from_session_marker(args: Namespace, marker_path: Path | None) -> None:
+    """If the session marker contains ``effective_config.api_key_secret``, copy it into the env var.
+
+    Only runs when the target variable named in the marker is **unset or empty** so a live
+    process environment always wins over stale JSON.
+
+    Pairs with :func:`session_started_snapshot_from_args` when
+    ``--persist-api-key-in-session-marker`` (or ``AGLOOM_PERSIST_API_KEY_IN_SESSION_MARKER``) is on.
+    """
+    if marker_path is None or not marker_path.is_file():
+        return
+    try:
+        raw = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return
+    if not isinstance(raw, dict):
+        return
+    eff = raw.get("effective_config")
+    if not isinstance(eff, dict):
+        return
+    secret = eff.get("api_key_secret")
+    if not isinstance(secret, str) or not secret.strip():
+        return
+    target: str | None = None
+    for key in ("api_key_env", "credential_env_var", "provider_primary_api_key_env"):
+        v = eff.get(key)
+        if isinstance(v, str) and v.strip():
+            target = v.strip()
+            break
+    if not target:
+        return
+    if (os.environ.get(target) or "").strip():
+        return
+    os.environ[target] = secret.strip()
+
+
+def merge_api_key_env_from_session_marker(args: Namespace, marker_path: Path | None) -> None:
+    """If ``--api-key-env`` was not passed, read env var *name* from an existing session marker (resume).
+
+    Looks at ``.agloom/sessions/<session>.json`` → ``effective_config`` for env var **names** only.
+    Key material in ``api_key_secret`` is handled by :func:`inject_api_key_secret_from_session_marker`.
+
+    Priority: ``api_key_env`` (user-edited remap), then ``credential_env_var`` (snapshot), then
+    ``provider_primary_api_key_env`` (older markers). Sets ``args.api_key_env`` so
+    :func:`apply_api_key_env` can map the live process env into the provider's canonical key.
+
+    CLI ``--api-key-env`` always wins over the marker.
+    """
+    if getattr(args, "api_key_env", None):
+        return
+    if marker_path is None or not marker_path.is_file():
+        return
+    try:
+        raw = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return
+    if not isinstance(raw, dict):
+        return
+    eff = raw.get("effective_config")
+    if not isinstance(eff, dict):
+        return
+    for key in ("api_key_env", "credential_env_var", "provider_primary_api_key_env"):
+        v = eff.get(key)
+        if isinstance(v, str) and v.strip():
+            setattr(args, "api_key_env", v.strip())
+            return
+
+
 def resolve_llm_for_serve(args: Namespace) -> Any | None:
     model_id = getattr(args, "model", None)
     provider = getattr(args, "provider", None)
@@ -182,6 +258,73 @@ def mcp_configs_from_args(args: Namespace) -> list[MCPServerConfig]:
         merged.setdefault("name", name)
         out.append(MCPServerConfig.model_validate(merged))
     return out
+
+
+def mcp_server_names_configured_from_args(args: Namespace) -> list[str]:
+    """MCP server names from argv/YAML (for ``runtime.ready`` before lazy connect)."""
+    try:
+        cfgs = mcp_configs_from_args(args)
+    except Exception:
+        return []
+    names: list[str] = []
+    for c in cfgs:
+        n = str(getattr(c, "name", "") or "").strip()
+        if n:
+            names.append(n)
+    return names
+
+
+def cli_tools_bundle_metrics_from_args(args: Namespace) -> tuple[bool, int]:
+    """Bundled CLI tool count matching ``create_agent`` (includes ``task`` tool slot)."""
+    opts = cli_tools_options_from_args(args)
+    if opts is None:
+        return False, 0
+    from agloom.cli_tools import get_cli_tools
+
+    cell: list[Any | None] = [None]
+    tools = get_cli_tools(
+        working_dir=opts.get("working_dir", ".") or ".",
+        allow_shell=bool(opts.get("allow_shell", True)),
+        allow_network=bool(opts.get("allow_network", True)),
+        sandbox=bool(opts.get("sandbox", True)),
+        task_agent_cell=cell,
+    )
+    return True, len(tools)
+
+
+def session_memory_mode_sidebar_from_args(args: Namespace) -> str:
+    """Short label for UIs: rolling session memory from CLI before agent bootstrap."""
+    mt = (getattr(args, "memory_type", None) or "").strip().lower()
+    if not mt or mt in ("default", "auto"):
+        return "off"
+    if mt == "sqlite":
+        return "sqlite"
+    if mt == "in-memory":
+        return "in-memory"
+    if mt == "none":
+        return "none"
+    return mt
+
+
+def agent_store_kind_sidebar_from_args(args: Namespace) -> str:
+    """LangGraph LT store slug (skills / harness stack when not ``none``)."""
+    raw = getattr(args, "agent_store", None)
+    if raw is None:
+        return "sqlite"
+    s = str(raw).strip()
+    return s.lower() if s else "sqlite"
+
+
+def runtime_ready_sidebar_from_args(args: Namespace) -> dict[str, Any]:
+    """Kwargs fragment for :meth:`SessionEmitter.emit_runtime_ready` (stdio pre-bootstrap)."""
+    cli_en, cli_ct = cli_tools_bundle_metrics_from_args(args)
+    return {
+        "cli_tools_enabled": cli_en,
+        "cli_tools_count": cli_ct,
+        "session_memory_mode": session_memory_mode_sidebar_from_args(args),
+        "agent_store_kind": agent_store_kind_sidebar_from_args(args),
+        "mcp_servers_configured": mcp_server_names_configured_from_args(args),
+    }
 
 
 def summarizer_model_from_args(args: Namespace) -> Any | None:
@@ -348,7 +491,15 @@ def _llm_endpoint_snapshot(args: Namespace) -> dict[str, Any]:
 
 
 def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
-    """Serializable effective-config snapshot for ``.agloom/sessions/<id>.json`` (no secrets).
+    """Serializable effective-config snapshot for ``.agloom/sessions/<id>.json``.
+
+    By default only **names** of env vars and booleans are recorded (safe for git / shared disks).
+
+    With ``--persist-api-key-in-session-marker`` or ``AGLOOM_PERSIST_API_KEY_IN_SESSION_MARKER=1``,
+    ``effective_config`` may also include ``api_key_secret`` (the resolved key material) and
+    ``persist_api_key_in_session_marker: true`` — **dangerous** (anyone who can read the file can
+    use the key). Resume then uses :func:`inject_api_key_secret_from_session_marker` when the
+    named env var is empty.
 
     Records how the LLM was resolved (explicit ``--model`` vs env auto-detect), optional
     ``--api-key-env`` name and whether that variable was non-empty at process start, plus
@@ -364,8 +515,14 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     ``provider_resolved`` for the slug inferred from ``--provider`` or ``provider:`` model
     prefix (same basis as ``sampling.provider_slug``). ``provider_credential_env`` lists
     canonical env vars for that slug and whether each was non-empty at process start (keys
-    only, never values).     ``api_key_env`` / ``api_key_env_nonempty`` refer solely to
+    only, never values). ``api_key_env`` / ``api_key_env_nonempty`` refer solely to
     ``--api-key-env`` when you remap a custom var into the provider's standard key.
+    ``credential_env_var`` / ``credential_env_var_nonempty`` record which env var **actually
+    supplied** the key for this run: the explicit ``--api-key-env`` target when set, otherwise
+    the first non-empty canonical key for ``provider_resolved`` (same name as
+    ``provider_primary_api_key_env`` when that var is set). Use these for resume hints and
+    tooling; secret values are omitted unless persistence is explicitly enabled.
+
     ``provider_primary_api_key_env`` names the **first canonical** provider API key env var
     that was non-empty at process start (e.g. ``NVIDIA_API_KEY``) — use this when you are not
     using ``--api-key-env``. ``provider_primary_credential_present`` is ``True`` when **any** listed canonical env
@@ -392,6 +549,15 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
         any_primary_cred = bool(cred_status) and any(bool(x.get("present")) for x in cred_status)
     else:
         any_primary_cred = _any_curated_provider_api_key_present()
+    primary = _provider_primary_api_key_env_name(resolved_slug)
+    cred_var: str | None = None
+    cred_nonempty = False
+    if api_env:
+        cred_var = str(api_env).strip() or None
+        cred_nonempty = api_present
+    elif primary and (os.environ.get(primary) or "").strip():
+        cred_var = primary
+        cred_nonempty = True
     eff: dict[str, Any] = {
         "model": model_out,
         "provider": getattr(args, "provider", None),
@@ -399,7 +565,9 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
         "llm_resolution": "explicit_model" if model_out else "env_auto",
         "api_key_env": str(api_env) if api_env else None,
         "api_key_env_nonempty": api_present,
-        "provider_primary_api_key_env": _provider_primary_api_key_env_name(resolved_slug),
+        "credential_env_var": cred_var,
+        "credential_env_var_nonempty": cred_nonempty,
+        "provider_primary_api_key_env": primary,
         "provider_primary_credential_present": any_primary_cred,
         "provider_credential_env": cred_status,
         "session_max_turns": sm_turns,
@@ -432,6 +600,12 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     )
     eff["with_cli_tools"] = bool(getattr(args, "with_cli_tools", False))
     eff["require_tool_approval"] = bool(getattr(args, "require_tool_approval", True))
+
+    if _persist_api_key_marker_requested(args) and cred_var and cred_nonempty:
+        mat = os.environ.get(cred_var)
+        if isinstance(mat, str) and mat.strip():
+            eff["api_key_secret"] = mat.strip()
+            eff["persist_api_key_in_session_marker"] = True
 
     return {
         "effective_config": eff,

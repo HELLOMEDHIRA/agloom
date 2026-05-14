@@ -205,6 +205,7 @@ class SessionMemory:
         pattern: str = "",
         metadata: dict | None = None,
     ) -> None:
+        """Append one turn (async store). Summarize, trim, write, and hook — all under one lock."""
         async with self._turn_lock:
             ns = self._ns(thread_id)
             key = "turns"

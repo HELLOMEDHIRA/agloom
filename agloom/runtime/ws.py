@@ -154,7 +154,7 @@ async def _session_loop(
         CommandUnsubscribe,
         CommandWorkerAssign,
     )
-    from agloom.multimodal import prepare_invoke_command
+    from agloom.runtime.attachment_stage import prepare_invoke_command
     from agloom.runtime.bridge import new_session_id, run_invocation
     from agloom.runtime.hitl import HITLBridge
     from agloom.runtime.hitl_allowlist import hitl_allowlist_paths_for_runtime
@@ -395,7 +395,7 @@ async def _session_loop(
                             replayed_from_seq=from_seq if from_seq > 0 else None,
                         )
                         async for evt_dict in store.replay(session_id, from_seq=from_seq):
-                            await ws.send(json.dumps(evt_dict, ensure_ascii=False) + "\n")
+                            emitter.write_replay_dict(evt_dict)
                     else:
                         emitter.resume(resumed_from_thread=cmd.data.thread)
 

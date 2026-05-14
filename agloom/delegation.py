@@ -1,7 +1,8 @@
 """Delegation between agents: ``HandoffTarget``, background tasks, ``make_agent_tool``.
 
 Handoff targets feed classifier context; ``run_delegate`` / ``resolve_handoff`` execute
-or select a delegate. ``BackgroundDelegationManager`` lives on ``config["_bg_delegation_manager"]``.
+or select a delegate. ``BackgroundDelegationManager`` lives on ``config["_bg_delegation_manager"]``;
+call :meth:`BackgroundDelegationManager.shutdown` during agent teardown (see ``UnifiedAgent.aclose``).
 """
 
 from __future__ import annotations
@@ -276,6 +277,29 @@ class BackgroundDelegationManager:
         for tid in to_remove:
             del self._tasks[tid]
         return len(to_remove)
+
+    async def shutdown(self, *, cancel_pending: bool = True) -> None:
+        """Best-effort cancel of in-flight delegations (e.g. :meth:`UnifiedAgent.aclose`)."""
+        to_wait: list[asyncio.Task] = []
+        async with self._lock:
+            for bg in list(self._tasks.values()):
+                t = bg._async_task
+                if t is None or t.done():
+                    continue
+                if cancel_pending:
+                    t.cancel()
+                to_wait.append(t)
+        if to_wait:
+            await asyncio.gather(*to_wait, return_exceptions=True)
+        async with self._lock:
+            cutoff = time.time()
+            to_remove = [
+                tid
+                for tid, bg in self._tasks.items()
+                if bg.completed_at is not None and bg.completed_at < cutoff
+            ]
+            for tid in to_remove:
+                del self._tasks[tid]
 
 
 def make_agent_tool(

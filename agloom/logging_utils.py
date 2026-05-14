@@ -27,25 +27,27 @@ import os
 import time
 from typing import Any
 
-_FORMAT = os.getenv("LOG_FORMAT", "text").lower()
+_LOG_FORMAT_CACHE: str | None = None
 
-# Shared across package loggers; configure_package_logging() uses the most permissive level seen
+
+def _log_format() -> str:
+    """Return ``LOG_FORMAT`` env (default ``text``); read on first use, not at import."""
+    global _LOG_FORMAT_CACHE
+    if _LOG_FORMAT_CACHE is None:
+        _LOG_FORMAT_CACHE = os.getenv("LOG_FORMAT", "text").lower()
+    return _LOG_FORMAT_CACHE
+
+
 _package_level: int = logging.INFO
 _tracked_loggers: list[logging.Logger] = []
+_tracked_logger_ids: set[int] = set()
 _configured = False
 
 
 def configure_package_logging(debug: bool = False) -> None:
-    """
-    Set the log level for all agloom loggers.
+    """Set agloom logger levels; install a root StreamHandler once if missing.
 
-    Called automatically by create_agent(debug=True/False).
-    Safe to call multiple times — the most permissive level wins
-    when multiple agents coexist in the same process (one debug=True
-    agent opens the DEBUG gate for all loggers in the package).
-
-    Installs a StreamHandler on the root logger if none exists,
-    so output is visible without requiring user-side basicConfig().
+    Called from ``create_agent``. Most permissive level wins across agents.
     """
     global _package_level, _configured
     target = logging.DEBUG if debug else logging.INFO
@@ -59,7 +61,7 @@ def configure_package_logging(debug: bool = False) -> None:
         root = logging.getLogger()
         if not root.handlers:
             handler = logging.StreamHandler()
-            if _FORMAT == "json":
+            if _log_format() == "json":
                 handler.setFormatter(logging.Formatter("%(message)s"))
             else:
                 handler.setFormatter(
@@ -75,10 +77,7 @@ def configure_package_logging(debug: bool = False) -> None:
 
 
 class _AgentLogger:
-    """
-    Thin structured-logging wrapper.
-    Delegates to stdlib logger — no extra runtime deps.
-    """
+    """Structured events on top of a stdlib :class:`~logging.Logger`."""
 
     def __init__(self, stdlib_logger: logging.Logger) -> None:
         self._log = stdlib_logger
@@ -87,7 +86,7 @@ class _AgentLogger:
         if not self._log.isEnabledFor(level):
             return
 
-        if _FORMAT == "json":
+        if _log_format() == "json":
             payload = {"event": event, "ts": time.time(), **fields}
             self._log.log(level, json.dumps(payload, default=str))
         else:
@@ -119,13 +118,7 @@ class _AgentLogger:
         self._emit(level, name, **fields)
 
     def timed(self, name: str, **fields: Any):
-        """
-        Context manager that emits an INFO event with elapsed_ms on exit.
-
-        Usage:
-            with logger.timed("execute", agent="R1", pattern="SUPERVISOR"):
-                result = await handler(...)
-        """
+        """Context manager: emit *name* with ``elapsed_ms`` (and ``success``) on exit."""
         return _TimedEvent(self, name, fields)
 
 
@@ -154,5 +147,8 @@ def get_logger(name: str) -> _AgentLogger:
     """Drop-in replacement for logging.getLogger() across the package."""
     stdlib_logger = logging.getLogger(name)
     stdlib_logger.setLevel(_package_level)
-    _tracked_loggers.append(stdlib_logger)
+    sid = id(stdlib_logger)
+    if sid not in _tracked_logger_ids:
+        _tracked_logger_ids.add(sid)
+        _tracked_loggers.append(stdlib_logger)
     return _AgentLogger(stdlib_logger)

@@ -9,6 +9,13 @@ export const truncate = (s: string, max: number): string => {
   return clean.length <= max ? clean : `${clean.slice(0, max - 1)}…`
 }
 
+/** Truncate by character count but keep newlines (for ``read_file`` / tool dumps in the TUI). */
+export const clipText = (s: string, maxChars: number): string => {
+  if (!s || maxChars <= 0) return ''
+  if (s.length <= maxChars) return s
+  return `${s.slice(0, maxChars - 1)}…`
+}
+
 /** Render a duration in milliseconds as a human-friendly string. */
 export const fmtDuration = (ms: number | undefined): string => {
   if (ms === undefined) return ''

@@ -113,6 +113,12 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
     case 'runtime.ready': {
       const cli = evt.data.cli_tools_count != null ? ` · cli_tools=${evt.data.cli_tools_count}` : ''
       const harness = evt.data.harness_enabled != null ? ` · harness=${evt.data.harness_enabled ? 'on' : 'off'}` : ''
+      const memMode = evt.data.session_memory_mode
+      const memNote = memMode != null && memMode !== '' ? ` · session_memory=${memMode}` : ''
+      const storeKind = evt.data.agent_store_kind
+      const storeNote = storeKind != null && storeKind !== '' ? ` · lt_store=${storeKind}` : ''
+      const mcpCfg = evt.data.mcp_servers_configured ?? []
+      const mcpNote = mcpCfg.length > 0 ? ` · mcp=[${mcpCfg.join(', ')}]` : ''
       const nowIso = new Date().toISOString()
       const fillClock =
         s.sessionId != null && s.sessionId !== '' && (s.sessionOpenedAtMs == null || !s.sessionStartedAt)
@@ -122,15 +128,31 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
               sessionUpdatedAt: s.sessionUpdatedAt ?? nowIso,
             }
           : {}
+      let memoryEnabled: boolean | null = s.memoryEnabled
+      if (memMode === 'sqlite' || memMode === 'in-memory') memoryEnabled = true
+      else if (memMode === 'off' || memMode === 'none') memoryEnabled = false
+      const sk = (storeKind ?? 'sqlite').toLowerCase()
+      const skillsEnabled = sk !== 'none'
+      const mcpPatch =
+        mcpCfg.length > 0
+          ? {
+              mcpServerNames: mcpCfg,
+              mcpServerRows: [],
+            }
+          : {}
       return {
         ...s,
         ...fillClock,
+        ...mcpPatch,
+        sessionMemoryMode: memMode ?? s.sessionMemoryMode,
+        memoryEnabled,
+        skillsEnabled,
         cliToolsEnabled: evt.data.cli_tools_enabled ?? s.cliToolsEnabled,
         cliToolsCount: evt.data.cli_tools_count ?? s.cliToolsCount,
         harnessEnabled: evt.data.harness_enabled ?? s.harnessEnabled,
         protocolNotes: pushProtocolNotes(
           s.protocolNotes,
-          `Runtime ready (${evt.data.agent_name ?? 'agent'})${cli}${harness}`,
+          `Runtime ready (${evt.data.agent_name ?? 'agent'})${cli}${harness}${memNote}${storeNote}${mcpNote}`,
         ),
       }
     }
@@ -302,6 +324,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         turnOutputTokens: 0,
         toolCallExpandedById: {},
         budgetUi: 'ok',
+        expandActiveThinking: true,
       }
 
     case 'pattern.classified':

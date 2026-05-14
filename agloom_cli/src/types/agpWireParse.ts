@@ -119,6 +119,9 @@ const d = {
     cli_tools_enabled: z.boolean().optional(),
     cli_tools_count: z.number().optional(),
     harness_enabled: z.boolean().optional(),
+    session_memory_mode: z.string().optional(),
+    agent_store_kind: z.string().optional(),
+    mcp_servers_configured: z.array(z.string()).optional(),
   }),
   runtimeConfig: z.object({
     model_id: z.string().optional(),

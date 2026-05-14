@@ -32,35 +32,21 @@ Sync entry point::
 Use ``async with agent:`` or ``await agent.aclose()`` to release MCP clients and feedback handlers.
 """
 
-# Silence langgraph 1.1.x's *internal* pending-deprecation warning (it imports
-# ``JsonPlusSerializer`` without ``allowed_objects`` — third-party, not actionable from agloom).
-# Apply at import time so the agloom CLI, ``agloom-runtime``, and library callers all benefit without
-# duplicating this block. Remove once LangGraph drops the implicit default.
-import warnings as _warnings
 from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
 from importlib.metadata import version as _version
 
-try:
-    from langchain_core._api.deprecation import LangChainPendingDeprecationWarning as _LCWarn
-
-    _warnings.filterwarnings("ignore", category=_LCWarn)
-    del _LCWarn
-except ImportError:
-    pass
-del _warnings
-
-from .cli_tools import CLI_TOOL_NAMES, SafetyContext, get_cli_tools  # noqa: E402
-from .delegation import (  # noqa: E402 — must follow the warning suppression above
+from .cli_tools import CLI_TOOL_NAMES, SafetyContext, get_cli_tools
+from .delegation import (
     BackgroundDelegationManager,
     BackgroundTask,
     BackgroundTaskStatus,
     HandoffTarget,
 )
-from .hitl_contract import HITLEvent  # noqa: E402
-from .logging_utils import configure_package_logging  # noqa: E402
-from .memory.session import SessionMemory  # noqa: E402
-from .memory.store import LongTermStore  # noqa: E402
-from .models import (  # noqa: E402
+from .hitl_contract import HITLEvent
+from .logging_utils import configure_package_logging
+from .memory.session import SessionMemory
+from .memory.store import LongTermStore
+from .models import (
     AgentConfig,
     AgentEvent,
     AgentStep,
@@ -74,7 +60,7 @@ from .models import (  # noqa: E402
     WorkerPlan,
     WorkerResult,
 )
-from .unified_agent import UnifiedAgent, create_agent, create_agent_sync  # noqa: E402
+from .unified_agent import UnifiedAgent, create_agent, create_agent_sync
 
 try:
     from .harness import (

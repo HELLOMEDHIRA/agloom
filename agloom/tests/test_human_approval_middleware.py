@@ -118,6 +118,45 @@ def test_awrap_tool_call_pauses_on_wildcard() -> None:
     assert payload["args"] == {"path": "foo"}
 
 
+def test_awrap_tool_call_allowlist_decision_adds_tool_name() -> None:
+    allow: set[str] = set()
+
+    async def callback(event: str, payload: Any) -> str:
+        assert event == HITLEvent.TOOL_INTERRUPT_BEFORE
+        return "allowlist"
+
+    mw = HumanApprovalMiddleware(
+        interrupt_before_tools=["tools"],
+        user_callback=callback,
+        agent_name="t",
+        tool_allowlist=allow,
+    )
+
+    async def handler(req: Any) -> str:
+        return "ran"
+
+    req = _make_request_v1("read_file", {"path": "x"})
+    result = asyncio.run(mw.awrap_tool_call(req, handler))
+    assert result == "ran"
+    assert "read_file" in allow
+
+    calls: list[str] = []
+
+    async def callback2(event: str, payload: Any) -> str:
+        calls.append("cb")
+        return "continue"
+
+    mw2 = HumanApprovalMiddleware(
+        interrupt_before_tools=["tools"],
+        user_callback=callback2,
+        agent_name="t2",
+        tool_allowlist=allow,
+    )
+    req2 = _make_request_v1("read_file", {"path": "y"})
+    assert asyncio.run(mw2.awrap_tool_call(req2, handler)) == "ran"
+    assert calls == []
+
+
 def test_awrap_tool_call_skips_when_tool_allowlisted() -> None:
     calls: list[str] = []
 

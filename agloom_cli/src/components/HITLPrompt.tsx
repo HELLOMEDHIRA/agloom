@@ -140,12 +140,24 @@ export const HITLPrompt = ({ request, bridge }: Props): React.ReactElement => {
       {request.detail && <Box marginLeft={2} marginTop={1}><Text color="white">{truncate(request.detail, 300)}</Text></Box>}
       {request.question && <Box marginLeft={2} marginTop={1}><Text color="cyan" italic>{request.question}</Text></Box>}
 
+      {request.kind === 'tool_approval' && (
+        <Box marginLeft={2} marginTop={1}>
+          <Text color="gray" dimColor>
+            Keyboard (this is a terminal — no mouse): single key, not the word “continue”.
+          </Text>
+        </Box>
+      )}
+
       {/* Buttons */}
       <Box marginLeft={2} marginTop={1} gap={1}>
         {buttons.map((btn) => (
           <Box key={btn.key} borderStyle="round" borderColor={btn.color} paddingX={1}>
             <Text color={btn.color}>
-              <Text bold color="white">[{btn.key.toUpperCase()}]</Text> {btn.label}
+              <Text bold color="white">[{btn.key.toUpperCase()}]</Text>
+              <Text dimColor> press </Text>
+              <Text bold color="white">{btn.key}</Text>
+              <Text dimColor> · </Text>
+              <Text>{btn.label}</Text>
             </Text>
           </Box>
         ))}
@@ -159,7 +171,7 @@ export const HITLPrompt = ({ request, bridge }: Props): React.ReactElement => {
       {/* Esc hint */}
       <Box marginLeft={2} marginTop={1}>
         <Text color="gray" dimColor>
-          Esc = {hitlDefaultDecision(request.kind, request.default)}
+          Enter = default ({hitlDefaultDecision(request.kind, request.default)}) · Esc = reject / default
           {request.kind === 'clarification' ? ' · C = type your own answer' : ''}
         </Text>
       </Box>

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import threading
 import time
@@ -66,6 +67,12 @@ def _groq_allows_json_schema_first(llm: Any) -> bool:
     return tail in _GROQ_JSON_SCHEMA_MODEL_IDS
 
 
+def _env_skip_json_schema_first() -> bool:
+    """Opt-out of ``json_schema`` first attempt for any provider (debug / odd endpoints)."""
+    v = (os.environ.get("AGLOOM_SKIP_JSON_SCHEMA") or "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
 def _llm_skips_json_schema_mode(llm: Any) -> bool:
     """Skip ``json_schema`` when the provider+model rejects it (e.g. Groq Llama 3.3)."""
     if not _is_groq_chat_llm(llm):
@@ -118,10 +125,13 @@ async def robust_structured_call[T: BaseModel](
     rate_limiter: AsyncRateLimiter | None = None,
     caller: str = "",
 ) -> T | None:
-    """Parse ``schema`` from ``llm`` via json_schema → tool calling → raw JSON fallback; returns None if all fail."""
+    """Parse ``schema`` from ``llm`` via json_schema → tool calling → raw JSON fallback; returns None if all fail.
+
+    Set ``AGLOOM_SKIP_JSON_SCHEMA=1`` to skip the ``json_schema`` attempt for any provider (after Groq-specific skips).
+    """
     tag = f"[{caller}] " if caller else ""
     errors: list[str] = []
-    skip_json_schema = _llm_skips_json_schema_mode(llm)
+    skip_json_schema = _llm_skips_json_schema_mode(llm) or _env_skip_json_schema_first()
 
     if not skip_json_schema:
         structured = _build_structured(llm, schema, method="json_schema")

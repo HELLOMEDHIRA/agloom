@@ -258,6 +258,11 @@ checkpoint.restored ◄───────────────────
 
 Larger deployments may add PostgreSQL or columnar stores behind the same replay semantics.
 
+**LangGraph agent store** (``--agent-store`` on `serve`; not the AGP EventStore):
+
+- Default **`sqlite`** → LangGraph **AsyncSqliteStore** (requires **`aiosqlite`**).
+- Missing **`aiosqlite`** or DB open failure → **InMemoryStore**, one **stderr** line, serve continues; no persistence across restarts until fixed (same as ``--agent-store=memory``).
+
 ---
 
 ## 9. State Synchronisation

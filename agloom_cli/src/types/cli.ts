@@ -15,6 +15,8 @@ export interface CoreCliOpts {
   model?: string
   provider?: string
   apiKeyEnv?: string
+  /** Forward ``--persist-api-key-in-session-marker`` (dangerous: key on disk). */
+  persistApiKeyInSessionMarker?: boolean
   temperature?: number
   topP?: number
   topK?: number

@@ -12,6 +12,7 @@ transports replace the writer with their own queue.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sys
 import threading
@@ -1170,6 +1171,9 @@ class SessionEmitter:
         cli_tools_enabled: bool | None = None,
         cli_tools_count: int | None = None,
         harness_enabled: bool | None = None,
+        session_memory_mode: str | None = None,
+        agent_store_kind: str | None = None,
+        mcp_servers_configured: list[str] | None = None,
         parent: str | None = None,
     ) -> RuntimeReady:
         evt = RuntimeReady(
@@ -1182,6 +1186,9 @@ class SessionEmitter:
                 cli_tools_enabled=cli_tools_enabled,
                 cli_tools_count=cli_tools_count,
                 harness_enabled=harness_enabled,
+                session_memory_mode=session_memory_mode,
+                agent_store_kind=agent_store_kind,
+                mcp_servers_configured=list(mcp_servers_configured or []),
             ),
         )
         self._write(evt)
@@ -1564,6 +1571,22 @@ class SessionEmitter:
         """Clear any active subscription filter (same as ``set_subscription_prefixes(None)``)."""
         self._sub_filter.prefixes = None
 
+    def write_replay_dict(self, evt_dict: dict[str, Any]) -> None:
+        """Write one replayed NDJSON line if the subscription filter allows this ``type``.
+
+        Resume/replay paths use raw dicts from :class:`~agloom.protocol.store.EventStore`;
+        this applies the same ``command.subscribe`` filter as :meth:`_write` without touching
+        the store or ``on_emit`` (events were already persisted).
+        """
+        typ = str(evt_dict.get("type", ""))
+        if not self._subscription_allows_wire(typ):
+            return
+        if self._writer is not None:
+            line = json.dumps(evt_dict, ensure_ascii=False)
+            with self._write_lock:
+                self._writer.write(line + "\n")
+                self._writer.flush()
+
     def _subscription_allows_wire(self, typ: str) -> bool:
         prefs = self._sub_filter.prefixes
         if prefs is None:
@@ -1590,7 +1613,7 @@ class SessionEmitter:
                 self._on_emit(evt)
             except Exception:
                 # ``on_emit`` is observation-only; failures must not affect the wire.
-                pass
+                logger_emitter.debug("SessionEmitter on_emit callback failed (ignored)", exc_info=True)
         if self._store is not None:
             try:
                 d = event_to_dict(evt)
@@ -1603,7 +1626,7 @@ class SessionEmitter:
                     # rather than raising — the synchronous emitter is not async-safe.
                     pass
             except Exception:
-                pass
+                logger_emitter.debug("SessionEmitter store append scheduling failed (ignored)", exc_info=True)
 
 
 def event_to_dict(evt: Envelope) -> dict[str, Any]:
@@ -1700,14 +1723,22 @@ class AsyncSessionEmitter(SessionEmitter):
             try:
                 self._on_emit(evt)
             except Exception:
-                pass
+                logger_emitter.debug("AsyncSessionEmitter on_emit callback failed (ignored)", exc_info=True)
         if self._store is not None:
             try:
                 d = event_to_dict(evt)
                 t = asyncio.get_running_loop().create_task(self._store.append(self._session, d))
                 t.add_done_callback(_store_append_done)
             except Exception:
-                pass
+                logger_emitter.debug("AsyncSessionEmitter store append scheduling failed (ignored)", exc_info=True)
+
+    def write_replay_dict(self, evt_dict: dict[str, Any]) -> None:
+        """Enqueue one replayed NDJSON line when the subscription filter allows (see parent)."""
+        typ = str(evt_dict.get("type", ""))
+        if not self._subscription_allows_wire(typ):
+            return
+        line = json.dumps(evt_dict, ensure_ascii=False)
+        self._queue.put_nowait(line)
 
     # ── drain loop ───────────────────────────────────────────────────────────
 
