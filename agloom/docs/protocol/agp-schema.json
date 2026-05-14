@@ -2317,6 +2317,12 @@
           ],
           "default": null,
           "title": "Worker Id"
+        },
+        "estimated": {
+          "default": false,
+          "description": "True when ``cost`` is a client-side heuristic (provider did not bill on-wire).",
+          "title": "Estimated",
+          "type": "boolean"
         }
       },
       "required": [

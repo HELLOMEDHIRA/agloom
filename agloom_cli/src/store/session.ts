@@ -78,8 +78,15 @@ export interface MetricTokensSlice {
   output: number
 }
 
+export interface McpServerStatusRow {
+  name: string
+  ok: boolean
+  toolCount: number
+  error?: string | null
+}
+
 export interface SessionStore {
-  // Completed turns — append-only, rendered as <Static>
+  // Completed turns — append-only transcript (live tree; avoids Ink <Static> + flex layout gaps on resume)
   completedTurns: CompletedTurn[]
 
   // The currently in-flight turn (null when idle)
@@ -135,8 +142,13 @@ export interface SessionStore {
   cliToolsEnabled: boolean | null
   cliToolsCount: number | null
   mcpServerNames: string[]
+  /** Per-server MCP status from ``runtime.mcp.servers`` (tool counts, ok/err). */
+  mcpServerRows: McpServerStatusRow[]
   autoApprovedTools: string[]
   filesUpdated: string[]
+
+  /** When false, completed turns show a one-line thinking summary (Ctrl+Y expands). */
+  expandHistoryThinking: boolean
 
   dispatch: (evt: AGPEvent) => void
   addDiagnostic: (line: string) => void
@@ -146,6 +158,7 @@ export interface SessionStore {
   toggleActiveTurnToolExpandBulk: () => void
   /** Slash/UI helpers — append one line to the metrics sidebar wire notes. */
   appendProtocolNote: (line: string) => void
+  toggleExpandHistoryThinking: () => void
 }
 
 export const effectiveToolCallExpanded = (
@@ -190,8 +203,10 @@ export const useSessionStore = create<SessionStore>((set) => ({
   cliToolsEnabled: null,
   cliToolsCount: null,
   mcpServerNames: [],
+  mcpServerRows: [],
   autoApprovedTools: [],
   filesUpdated: [],
+  expandHistoryThinking: false,
 
   dispatch: (evt: AGPEvent) => set((s) => dispatchAgpEvent(s, evt)),
 
@@ -210,6 +225,9 @@ export const useSessionStore = create<SessionStore>((set) => ({
       ...s,
       protocolNotes: pushProtocolNotes(s.protocolNotes, line),
     })),
+
+  toggleExpandHistoryThinking: () =>
+    set((s) => ({ ...s, expandHistoryThinking: !s.expandHistoryThinking })),
 
   toggleActiveTurnToolExpandBulk: () =>
     set((s) => {
@@ -233,6 +251,9 @@ export const useSessionStore = create<SessionStore>((set) => ({
       capabilities: null,
       protocolNotes: [],
       todos: [],
+      mcpServerNames: [],
+      mcpServerRows: [],
+      expandHistoryThinking: false,
       totalInputTokens: 0,
       totalOutputTokens: 0,
       turnInputTokens: 0,

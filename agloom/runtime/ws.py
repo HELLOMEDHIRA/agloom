@@ -307,6 +307,16 @@ async def _session_loop(
             cli_tools_enabled=_ct_en,
             cli_tools_count=_ct_ct,
         )
+        if agent.config.get("_mcp_servers"):
+            from agloom.unified_agent import _ensure_mcp_connected
+
+            try:
+                await _ensure_mcp_connected(agent.config)
+            except Exception as exc:
+                await _send_error(f"MCP connection failed: {exc}")
+                if mem_cleanup is not None:
+                    await mem_cleanup()
+                return
 
         try:
             async for raw in ws:

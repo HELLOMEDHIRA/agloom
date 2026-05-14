@@ -50,6 +50,7 @@ export const SLASH_HELP_LINES: string[] = [
   '  /diag              Toggle Python stderr log pane',
   '  /stats             Toggle right-hand metrics sidebar',
   '  /tools             Toggle tool rows expand/collapse for the current turn (t / Ctrl+T)',
+  '  Ctrl+Y             Toggle full thinking trace on completed turns (summary vs expanded)',
   '  /budget raise …  Raise token/USD caps (command.config.set); e.g. --tokens 200000 --usd 10',
   '  /feedback <1-5>   Rate the last completed turn',
   '  /save <path>       Write transcript (Markdown) to disk',

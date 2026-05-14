@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from agloom.runtime.workspace_bootstrap import (
     ensure_agloom_workspace,
     merge_session_marker_thread_turns,
+    strip_deprecated_memory_skills_enabled_lines,
     write_session_started_json,
 )
 
@@ -160,3 +161,28 @@ def test_safe_filename_for_odd_session_id(tmp_path: Path) -> None:
 def test_session_marker_skips_when_sessions_dir_missing(tmp_path: Path) -> None:
     sd = tmp_path / ".agloom" / "sessions"
     assert write_session_started_json(sd, "sess_x", transport="stdio") is None
+
+
+def test_strip_deprecated_memory_skills_enabled_lines() -> None:
+    raw = "memory:\n  enabled: true\n  max_turns: 50\nskills:\n  enabled: false\n  max_skills: 3\n"
+    out, ch = strip_deprecated_memory_skills_enabled_lines(raw)
+    assert ch is True
+    assert "  enabled:" not in out
+    assert "max_turns: 50" in out
+    assert "max_skills: 3" in out
+
+
+def test_ensure_agloom_workspace_strips_memory_skills_enabled(tmp_path: Path) -> None:
+    dot = tmp_path / ".agloom"
+    dot.mkdir(parents=True)
+    y = dot / "agloom.yaml"
+    y.write_text(
+        "ai:\n  model: auto\nmemory:\n  enabled: true\n  max_turns: 50\nskills:\n  enabled: true\n  max_skills: 30\n",
+        encoding="utf-8",
+    )
+    _, created = ensure_agloom_workspace(tmp_path)
+    assert created is False
+    body = y.read_text(encoding="utf-8")
+    assert "max_turns: 50" in body
+    assert "memory:\n  enabled:" not in body
+    assert "skills:\n  enabled:" not in body

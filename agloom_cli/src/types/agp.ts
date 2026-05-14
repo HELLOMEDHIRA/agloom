@@ -280,7 +280,7 @@ export interface MetricTokensEvent extends Envelope {
 
 export interface MetricCostEvent extends Envelope {
   type: 'metric.cost'
-  data: { cost: number; currency?: string; model?: string; phase?: string; worker_id?: string }
+  data: { cost: number; currency?: string; model?: string; phase?: string; worker_id?: string; estimated?: boolean }
 }
 
 export interface MetricBudgetApproachingEvent extends Envelope {

@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { ensureAgloomCliWorkspace, ensureAgsuperbrainMcpInNestedYaml } from '../workspaceBootstrap.js'
+import { ensureAgloomCliWorkspace, ensureAgsuperbrainMcpInNestedYaml, stripMemorySkillsEnabledFromYamlText } from '../workspaceBootstrap.js'
 
 describe('ensureAgloomCliWorkspace', () => {
   it('creates .agloom dirs and starter .agloom/agloom.yaml when missing', async () => {
@@ -59,6 +59,38 @@ describe('ensureAgloomCliWorkspace', () => {
     expect(existsSync(join(dir, 'agloom.yaml'))).toBe(false)
     expect(readFileSync(ny, 'utf8')).toContain('legacy-only')
     rmSync(dir, { recursive: true })
+  })
+
+  it('strips deprecated memory.enabled / skills.enabled from nested yaml on ensure', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agloom-ws-strip-'))
+    mkdirSync(join(dir, '.agloom'), { recursive: true })
+    mkdirSync(join(dir, '.agsuperbrain'), { recursive: true })
+    const ny = join(dir, '.agloom', 'agloom.yaml')
+    writeFileSync(
+      ny,
+      'ai:\n  model: auto\nmemory:\n  enabled: true\n  max_turns: 50\nskills:\n  enabled: true\n  max_skills: 30\n',
+      'utf8',
+    )
+    const { wroteYaml } = await ensureAgloomCliWorkspace(dir, { configPath: ny })
+    expect(wroteYaml).toBe(false)
+    const body = readFileSync(ny, 'utf8')
+    expect(body).toContain('max_turns: 50')
+    expect(body).not.toContain('memory:\n  enabled:')
+    expect(body).not.toContain('skills:\n  enabled:')
+    rmSync(dir, { recursive: true })
+  })
+})
+
+describe('stripMemorySkillsEnabledFromYamlText', () => {
+  it('removes only memory/skills enabled keys', () => {
+    const raw =
+      '# c\nmemory:\n  enabled: true\n  max_turns: 50\nskills:\n  enabled: false\n  max_skills: 3\ntools:\n  cli_enabled: true\n'
+    const { text, changed } = stripMemorySkillsEnabledFromYamlText(raw)
+    expect(changed).toBe(true)
+    expect(text).not.toContain('memory:\n  enabled:')
+    expect(text).not.toContain('skills:\n  enabled:')
+    expect(text).toContain('cli_enabled: true')
+    expect(text).toContain('max_turns: 50')
   })
 })
 

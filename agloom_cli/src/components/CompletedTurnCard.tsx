@@ -1,11 +1,9 @@
-/** CompletedTurnCard — renders a finished conversation turn.
- * This component is always used inside a terminal `<Static>` wrapper: it is written to the screen once and not live-updated. Keep it pure / side-effect free. Do NOT use hooks that cause re-renders (timers, subscriptions, etc.).
- */
+/** CompletedTurnCard — renders a finished conversation turn in the live Ink tree (replay-safe). */
 
-import React from 'react'
+import React, { memo } from 'react'
 import { Box, Text } from 'ink'
 import type { CompletedTurn } from '../store/session.js'
-import { effectiveToolCallExpanded } from '../store/session.js'
+import { effectiveToolCallExpanded, useSessionStore } from '../store/session.js'
 import { ToolCallLine } from './ToolCallLine.js'
 import { WorkerLine } from './WorkerLine.js'
 import { renderMarkdown } from '../utils/format.js'
@@ -14,14 +12,14 @@ interface Props {
   turn: CompletedTurn
 }
 
-export const CompletedTurnCard = ({ turn }: Props): React.ReactElement => {
-  // <Static> renders outside the live tree; read terminal width directly.
+const CompletedTurnCardInner = ({ turn }: Props): React.ReactElement => {
+  const expandHistoryThinking = useSessionStore((s) => s.expandHistoryThinking)
   const termWidth = process.stdout.columns ?? 80
   const mdResponse = renderMarkdown(turn.assistantMessage, termWidth - 4)
+  const nThink = turn.thinkingSteps.length
 
   return (
     <Box flexDirection="column" marginBottom={1}>
-      {/* ── User message ── */}
       <Box>
         <Text bold color="cyan">
           ❯{' '}
@@ -29,28 +27,47 @@ export const CompletedTurnCard = ({ turn }: Props): React.ReactElement => {
         <Text bold>{turn.userMessage}</Text>
       </Box>
 
-      {/* ── Pattern + thinking steps (collapsed to first 3) ── */}
-      {turn.thinkingSteps.length > 0 && (
-        <Box flexDirection="column" marginLeft={2} marginTop={0}>
+      {nThink > 0 && !expandHistoryThinking && (
+        <Box marginLeft={2} marginTop={0}>
+          <Text color="gray" dimColor>
+            ▸ Thought · {nThink} step{nThink === 1 ? '' : 's'} (Ctrl+Y expand)
+          </Text>
+        </Box>
+      )}
+
+      {nThink > 0 && expandHistoryThinking && (
+        <Box
+          flexDirection="column"
+          marginLeft={2}
+          marginTop={0}
+          borderStyle="round"
+          borderColor="gray"
+          paddingX={1}
+        >
+          <Text bold dimColor color="magenta">
+            Thinking
+          </Text>
           {turn.pattern && (
             <Text color="magenta" dimColor>
               ▸ {turn.pattern}
             </Text>
           )}
-          {turn.thinkingSteps.slice(0, 3).map((s) => (
-            <Text key={s.id} color="gray" dimColor>
-              ▸ {s.label ?? s.step}
-            </Text>
+          {turn.thinkingSteps.map((s) => (
+            <Box key={s.id} flexDirection="column">
+              <Text color="gray" dimColor>
+                ▸ {s.label ?? s.step}
+                {s.elapsedMs != null ? ` · ${s.elapsedMs}ms` : ''}
+              </Text>
+              {s.detail ? (
+                <Text color="gray" dimColor wrap="truncate-end">
+                  {s.detail}
+                </Text>
+              ) : null}
+            </Box>
           ))}
-          {turn.thinkingSteps.length > 3 && (
-            <Text color="gray" dimColor>
-              ▸ +{turn.thinkingSteps.length - 3} more steps
-            </Text>
-          )}
         </Box>
       )}
 
-      {/* ── Workers ── */}
       {turn.workers.length > 0 && (
         <Box flexDirection="column">
           {turn.workers.map((w) => (
@@ -59,7 +76,6 @@ export const CompletedTurnCard = ({ turn }: Props): React.ReactElement => {
         </Box>
       )}
 
-      {/* ── Tool calls ── */}
       {turn.toolCalls.length > 0 && (
         <Box flexDirection="column">
           {turn.toolCalls.map((tc) => (
@@ -68,14 +84,12 @@ export const CompletedTurnCard = ({ turn }: Props): React.ReactElement => {
         </Box>
       )}
 
-      {/* ── Assistant response ── */}
       <Box marginLeft={2} marginTop={0} flexDirection="column">
         {mdResponse.split('\n').map((line, i) => (
           <Text key={i}>{line}</Text>
         ))}
       </Box>
 
-      {/* ── Token footer ── */}
       {(turn.tokens !== undefined || turn.pattern) && (
         <Box marginLeft={2}>
           <Text color="gray" dimColor>
@@ -86,7 +100,6 @@ export const CompletedTurnCard = ({ turn }: Props): React.ReactElement => {
         </Box>
       )}
 
-      {/* Divider */}
       <Box>
         <Text color="gray" dimColor>
           {'─'.repeat(Math.min(termWidth - 2, 60))}
@@ -95,3 +108,5 @@ export const CompletedTurnCard = ({ turn }: Props): React.ReactElement => {
     </Box>
   )
 }
+
+export const CompletedTurnCard = memo(CompletedTurnCardInner)

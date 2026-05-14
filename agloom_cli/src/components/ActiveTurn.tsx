@@ -33,11 +33,30 @@ export const ActiveTurn = (): React.ReactElement | null => {
         </Box>
       )}
 
-      {thinkingSteps.map((s) => (
-        <Box key={s.id} marginLeft={2}>
-          <Text color="gray">▸ {truncate(s.label ?? s.step, 60)}</Text>
+      {thinkingSteps.length > 0 && (
+        <Box
+          flexDirection="column"
+          marginLeft={2}
+          marginTop={0}
+          borderStyle="round"
+          borderColor="gray"
+          paddingX={1}
+        >
+          <Text bold dimColor color="magenta">
+            Thinking
+          </Text>
+          {thinkingSteps.map((s) => (
+            <Box key={s.id} flexDirection="column">
+              <Text color="gray">▸ {truncate(s.label ?? s.step, Math.max(40, (process.stdout.columns ?? 80) - 14))}</Text>
+              {s.detail ? (
+                <Text color="gray" dimColor wrap="truncate-end">
+                  {truncate(s.detail, (process.stdout.columns ?? 80) * 2)}
+                </Text>
+              ) : null}
+            </Box>
+          ))}
         </Box>
-      ))}
+      )}
 
       {workers.map((w) => (
         <WorkerLine key={w.id} worker={w} />

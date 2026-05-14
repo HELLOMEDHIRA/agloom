@@ -167,18 +167,34 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
 
     case 'runtime.mcp.servers': {
       const names = evt.data.server_names ?? []
-      const rows = evt.data.servers ?? []
-      const parts = rows.map((r) => {
-        if (r.ok) {
-          const n = r.tool_count ?? (r.tool_names?.length ?? 0)
-          return `${r.name}:ok(${n} tools)`
-        }
-        return `${r.name}:FAIL${r.error ? `(${String(r.error).slice(0, 120)})` : ''}`
+      const raw = evt.data.servers ?? []
+      const mcpServerRows = raw
+        .filter((r) => r != null && typeof r === 'object' && !Array.isArray(r))
+        .map((r) => {
+          const o = r as Record<string, unknown>
+          const tn = o.tool_names
+          const n =
+            typeof o.tool_count === 'number'
+              ? o.tool_count
+              : Array.isArray(tn)
+                ? tn.length
+                : 0
+          return {
+            name: String(o.name ?? '?'),
+            ok: Boolean(o.ok),
+            toolCount: Number(n) || 0,
+            error: o.error != null ? String(o.error) : undefined,
+          }
+        })
+      const parts = mcpServerRows.map((r) => {
+        if (r.ok) return `${r.name}:ok(${r.toolCount} tools)`
+        return `${r.name}:FAIL${r.error ? `(${r.error.slice(0, 120)})` : ''}`
       })
       const detail = parts.length ? ` · ${parts.join(' · ')}` : ''
       return {
         ...s,
         mcpServerNames: names,
+        mcpServerRows,
         protocolNotes: pushProtocolNotes(
           s.protocolNotes,
           `MCP servers: ${names.join(', ') || 'none'}${detail}`,

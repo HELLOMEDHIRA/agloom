@@ -23,10 +23,12 @@ export const fmtTokens = (n: number): string => {
   return `${(n / 1000).toFixed(1)}k`
 }
 
-/** Compact USD for telemetry sidebars. */
+/** Compact USD for telemetry sidebars (includes sub-cent estimates). */
 export const fmtUsd = (n: number): string => {
   if (!Number.isFinite(n) || n <= 0) return '$0'
-  if (n < 0.01) return `$${n.toFixed(4)}`
+  if (n < 0.0001) return `$${n.toFixed(6)}`
+  if (n < 0.01) return `$${n.toFixed(5)}`
+  if (n < 1) return `$${n.toFixed(4)}`
   return `$${n.toFixed(3)}`
 }
 

@@ -86,6 +86,27 @@ def test_translate_token_text_key_fallback() -> None:
     assert em.calls == [("emit_token_delta", {"text": "foo", "role": "assistant", "message_id": None})]
 
 
+def test_translate_llm_call_emits_estimated_metric_cost_when_usage_present() -> None:
+    em = _CaptureEmitter()
+    translate(
+        AgentEvent(
+            type="llm_call",
+            data={
+                "name": "direct_shortcircuit",
+                "model": "nvidia:meta/llama-4-maverick-17b-128e-instruct",
+                "usage": {"input_tokens": 1, "output_tokens": 16, "total_tokens": 17},
+            },
+        ),
+        em,  # type: ignore[arg-type]
+    )
+    names = [c[0] for c in em.calls]
+    assert "emit_metric_tokens" in names
+    assert "emit_metric_cost" in names
+    cost_call = next(c for c in em.calls if c[0] == "emit_metric_cost")
+    assert cost_call[1]["cost"] > 0.0
+    assert cost_call[1]["estimated"] is True
+
+
 def test_translate_done_emits_message_assistant() -> None:
     em = _CaptureEmitter()
     translate(

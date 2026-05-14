@@ -313,6 +313,7 @@ class MetricCostData(_DataBase):
     model: str | None = None
     phase: str | None = None
     worker_id: str | None = None
+    estimated: bool = False
 
 
 class MetricCost(Envelope):

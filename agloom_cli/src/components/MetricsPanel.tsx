@@ -80,13 +80,14 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
   const harnessEnabled = useSessionStore((s) => s.harnessEnabled)
   const cliToolsCount = useSessionStore((s) => s.cliToolsCount)
   const mcpServerNames = useSessionStore((s) => s.mcpServerNames)
+  const mcpServerRows = useSessionStore((s) => s.mcpServerRows)
   const autoApprovedTools = useSessionStore((s) => s.autoApprovedTools)
   const filesUpdated = useSessionStore((s) => s.filesUpdated)
 
   const uptimeMsRaw = sessionOpenedAtMs ? nowMs - sessionOpenedAtMs : 0
   const uptimeMs = sessionOpenedAtMs ? Math.max(0, uptimeMsRaw) : 0
   const turnCount = completedTurns.length + (activeTurn ? 1 : 0)
-  const innerW = Math.max(22, width - 2)
+  const innerW = Math.max(18, width - 4)
   const sid = sessionId ? shortenMiddle(sessionId, Math.min(28, width - 2)) : '—'
   const th = shortenMiddle(thread, Math.min(24, width - 2))
 
@@ -106,7 +107,15 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
   )
 
   return (
-    <Box flexDirection="column" width={width} borderStyle="round" borderColor="cyan" paddingX={1}>
+    <Box
+      flexDirection="column"
+      width={width}
+      flexShrink={0}
+      borderStyle="round"
+      borderColor="cyan"
+      paddingX={1}
+      paddingY={1}
+    >
       <Text bold color="cyan">Session</Text>
       <Text color="gray" dimColor>
         {runtimeVersion ? `rt ${runtimeVersion}` : ' '}
@@ -114,27 +123,29 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
       </Text>
 
       {/* ── Session Info ─────────────────────────────────────────── */}
-      <Box marginTop={1} flexDirection="column">
+      <Box marginTop={1} flexDirection="column" width={innerW}>
         <Text bold color="white">Identity</Text>
-        <Text color="gray">session</Text>
+        <Text color="gray">session </Text>
         <Text color="white">{sid}</Text>
-        <Text color="gray">thread</Text>
+        <Text color="gray">thread </Text>
         <Text color="white">{th}</Text>
-        <Text color="gray">started</Text>
+        <Text color="gray">started </Text>
         <Text color="white">{fmtTime(sessionStartedAt)}</Text>
-        <Text color="gray">updated</Text>
+        <Text color="gray">updated </Text>
         <Text color="white">{fmtTime(sessionUpdatedAt)}</Text>
       </Box>
 
       {/* ── Status Toggles ────────────────────────────────────────── */}
-      <Box marginTop={1} flexDirection="column">
+      <Box marginTop={1} flexDirection="column" width={innerW}>
         <Text bold color="white">Features</Text>
         <Text>
           <Text color="gray">memory </Text>
           <Text color={memoryEnabled === true ? 'green' : memoryEnabled === false ? 'red' : 'gray'}>
             {memoryEnabled === true ? '✓ ON' : memoryEnabled === false ? '✗ OFF' : '—'}
           </Text>
-          <Text color="gray">  skills </Text>
+        </Text>
+        <Text>
+          <Text color="gray">skills </Text>
           <Text color={skillsEnabled === true ? 'green' : skillsEnabled === false ? 'red' : 'gray'}>
             {skillsEnabled === true ? '✓ ON' : skillsEnabled === false ? '✗ OFF' : '—'}
           </Text>
@@ -154,14 +165,14 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
       </Box>
 
       {/* ── Activity ──────────────────────────────────────────────── */}
-      <Box marginTop={1} flexDirection="column">
+      <Box marginTop={1} flexDirection="column" width={innerW}>
         <Text bold color="white">Activity</Text>
         <Text><Text color="gray">uptime </Text><Text color="yellow">{sessionOpenedAtMs ? fmtDuration(uptimeMs) : '—'}</Text></Text>
         <Text><Text color="gray">turns </Text><Text color="yellow">{turnCount}</Text><Text color="gray"> · </Text><Text color="gray" dimColor>{status}</Text></Text>
       </Box>
 
       {/* ── Tokens ────────────────────────────────────────────────── */}
-      <Box marginTop={1} flexDirection="column">
+      <Box marginTop={1} flexDirection="column" width={innerW}>
         <Text bold color="white">Tokens</Text>
         <Text>
           <Text color="gray">session </Text>
@@ -185,17 +196,17 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
         )}
       </Box>
 
-      {/* ── Cost ──────────────────────────────────────────────────── */}
-      {totalCostUsd > 0 && (
-        <Box marginTop={1} flexDirection="column">
-          <Text bold color="white">Cost</Text>
-          <Text color="yellow">{fmtUsd(totalCostUsd)} est.</Text>
-        </Box>
-      )}
+      <Box marginTop={1} flexDirection="column" width={innerW}>
+        <Text bold color="white">Cost</Text>
+        <Text color={totalCostUsd > 0 ? 'yellow' : 'gray'} dimColor={totalCostUsd <= 0}>
+          {fmtUsd(totalCostUsd)}
+          {totalCostUsd > 0 ? ' (session)' : ''}
+        </Text>
+      </Box>
 
       {/* ── By Phase ──────────────────────────────────────────────── */}
       {phaseRows.length > 0 && (
-        <Box marginTop={1} flexDirection="column">
+        <Box marginTop={1} flexDirection="column" width={innerW}>
           <Text bold color="white">By phase</Text>
           {phaseRows.map(([phase, v]) => (
             <Text key={phase}>
@@ -208,19 +219,32 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
         </Box>
       )}
 
-      {/* ── MCP Servers ────────────────────────────────────────────── */}
-      {mcpServerNames.length > 0 && (
-        <Box marginTop={1} flexDirection="column">
-          <Text bold color="white">MCP servers</Text>
-          {mcpServerNames.map((n, i) => (
-            <Text key={i} color="cyan" dimColor>◈ {n}</Text>
-          ))}
+      {(mcpServerRows.length > 0 || mcpServerNames.length > 0) && (
+        <Box marginTop={1} flexDirection="column" width={innerW}>
+          <Text bold color="white">MCP</Text>
+          {mcpServerRows.length > 0 ? (
+            mcpServerRows.map((r, i) => (
+              <Text key={`${r.name}-${i}`} wrap="truncate-end">
+                <Text color={r.ok ? 'green' : 'red'}>{r.ok ? '● ' : '○ '}</Text>
+                <Text color="cyan">{truncate(r.name, 18)}</Text>
+                <Text color="gray">
+                  {r.ok ? ` · ${r.toolCount} tools` : ` · ${truncate(String(r.error ?? 'error'), innerW - 22)}`}
+                </Text>
+              </Text>
+            ))
+          ) : (
+            mcpServerNames.map((n, i) => (
+              <Text key={i} color="cyan" dimColor>
+                ◈ {truncate(n, innerW - 2)}
+              </Text>
+            ))
+          )}
         </Box>
       )}
 
       {/* ── Files Updated ─────────────────────────────────────────── */}
       {filesUpdated.length > 0 && (
-        <Box marginTop={1} flexDirection="column">
+        <Box marginTop={1} flexDirection="column" width={innerW}>
           <Text bold color="white">Files updated</Text>
           {filesUpdated.slice(-6).map((f, i) => (
             <Text key={i} color="green" dimColor>✓ {truncate(f, innerW - 2)}</Text>
@@ -230,14 +254,14 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
 
       {/* ── Auto-Approved Tools ────────────────────────────────────── */}
       {autoApprovedTools.length > 0 && (
-        <Box marginTop={1} flexDirection="column">
+        <Box marginTop={1} flexDirection="column" width={innerW}>
           <Text bold color="white">Auto-approved</Text>
           <Text color="gray" dimColor>{autoApprovedTools.join(', ')}</Text>
         </Box>
       )}
 
       {/* ── Recent Tools ──────────────────────────────────────────── */}
-      <Box marginTop={1} flexDirection="column">
+      <Box marginTop={1} flexDirection="column" width={innerW}>
         <Text bold color="white">Tools (recent)</Text>
         {toolRows.length === 0 ? (
           <Text color="gray" dimColor>—</Text>
@@ -263,10 +287,10 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
 
       {/* ── Wire Notes ────────────────────────────────────────────── */}
       {protocolNotes.length > 0 && (
-        <Box marginTop={1} flexDirection="column">
+        <Box marginTop={1} flexDirection="column" width={innerW}>
           <Text bold color="white">Wire notes</Text>
           {protocolNotes.slice(-8).map((line, i) => (
-            <Text key={`${i}-${line.slice(0, 20)}`} color="gray" dimColor>
+            <Text key={`${i}-${line.slice(0, 20)}`} color="gray" dimColor wrap="truncate-end">
               {truncate(line, innerW)}
             </Text>
           ))}

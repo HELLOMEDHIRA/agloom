@@ -1,8 +1,8 @@
-/** Root terminal UI layout: AGP-driven state via `useSessionStore.dispatch`; completed turns use `<Static>`. */
+/** Root terminal UI layout: AGP-driven state via `useSessionStore.dispatch`; completed turns render in the live tree (replay-safe). */
 
 import React, { useEffect, useMemo, useState } from 'react'
 import { dirname, resolve } from 'node:path'
-import { Box, Text, Static, useApp, useInput, useWindowSize } from 'ink'
+import { Box, Text, useApp, useInput, useWindowSize } from 'ink'
 import { Header } from './Header.js'
 import { CompletedTurnCard } from './CompletedTurnCard.js'
 import { ActiveTurn } from './ActiveTurn.js'
@@ -60,6 +60,7 @@ export const App = ({
   const reset = useSessionStore((s) => s.reset)
   const clearError = useSessionStore((s) => s.clearError)
   const appendProtocolNote = useSessionStore((s) => s.appendProtocolNote)
+  const toggleExpandHistoryThinking = useSessionStore((s) => s.toggleExpandHistoryThinking)
 
   const [thread] = useState(initialThread)
   const [input, setInput] = useState('')
@@ -92,9 +93,9 @@ export const App = ({
     typeof process.stdout.rows === 'number' && process.stdout.rows > 4 ? process.stdout.rows : 24
   const termHeight = rows != null && rows > 6 ? rows : ttyRows
 
-  const SIDEBAR_WIDTH = 38
-  /** Minimum terminal width before we split chat + metrics (≈44 cols chat + sidebar + gap). */
-  const SPLIT_MIN_TERM_WIDTH = 83
+  const SIDEBAR_WIDTH = 44
+  /** Minimum terminal width before we split chat + metrics (main ≈48 + sidebar + gap). */
+  const SPLIT_MIN_TERM_WIDTH = 92
   const showMetricsSidebar = metricsSidebarOpen && termWidth >= SPLIT_MIN_TERM_WIDTH
   const mainColumnWidth = showMetricsSidebar ? termWidth - SIDEBAR_WIDTH - 1 : termWidth
 
@@ -126,6 +127,12 @@ export const App = ({
     if (char === 't' && !key.ctrl && input === '' && !slashHelpOpen) {
       useSessionStore.getState().toggleActiveTurnToolExpandBulk()
       appendProtocolNote('Tools: toggled expand/collapse for current turn (t)')
+      return
+    }
+    if (key.ctrl && char === 'y') {
+      toggleExpandHistoryThinking()
+      const on = useSessionStore.getState().expandHistoryThinking
+      appendProtocolNote(`Thinking in transcript: ${on ? 'expanded' : 'compact (summary rows)'}`)
       return
     }
   })
@@ -447,11 +454,13 @@ export const App = ({
   }
 
   return (
-    <Box flexDirection="row" width={termWidth} height={termHeight}>
-      <Box flexDirection="column" width={mainColumnWidth} height={termHeight}>
-        <Header layoutWidth={mainColumnWidth} />
+    <Box flexDirection="column" width={termWidth} height={termHeight}>
+      <Box flexShrink={0} width={termWidth}>
+        <Header layoutWidth={termWidth} />
+      </Box>
 
-        <Box flexDirection="column" flexGrow={1} minHeight={0} width={mainColumnWidth}>
+      <Box flexDirection="row" flexGrow={1} minHeight={0} width={termWidth}>
+        <Box flexDirection="column" width={mainColumnWidth} flexGrow={1} minHeight={0}>
         {slashHelpOpen && (
           <Box
             flexDirection="column"
@@ -472,9 +481,11 @@ export const App = ({
           </Box>
         )}
 
-        <Static items={completedTurns}>
-          {(turn) => <CompletedTurnCard key={turn.id} turn={turn} />}
-        </Static>
+        <Box flexDirection="column" flexGrow={1} minHeight={0} marginX={1}>
+          {completedTurns.map((turn) => (
+            <CompletedTurnCard key={turn.id} turn={turn} />
+          ))}
+        </Box>
 
         <ActiveTurn />
 
@@ -516,10 +527,9 @@ export const App = ({
             ))}
           </Box>
         )}
-        </Box>
 
         {outboundPrompt && !activeTurn && (
-          <Box paddingX={1} flexDirection="row" flexWrap="wrap">
+          <Box paddingX={1} flexDirection="row" flexWrap="wrap" flexShrink={0}>
             <Text>
               <Text color="cyan" bold>
                 You
@@ -550,13 +560,14 @@ export const App = ({
             />
           </Box>
         )}
-      </Box>
+        </Box>
 
       {showMetricsSidebar && (
-        <Box marginLeft={1} flexDirection="column" width={SIDEBAR_WIDTH} height={termHeight}>
+        <Box marginLeft={1} flexDirection="column" width={SIDEBAR_WIDTH} flexShrink={0}>
           <MetricsPanel thread={thread} width={SIDEBAR_WIDTH} />
         </Box>
       )}
+      </Box>
     </Box>
   )
 }

@@ -318,6 +318,7 @@ const d = {
     model: z.string().optional(),
     phase: z.string().optional(),
     worker_id: z.string().optional(),
+    estimated: z.boolean().optional(),
   }),
   metricBudgetApproaching: z.object({
     dimension: z.string(),

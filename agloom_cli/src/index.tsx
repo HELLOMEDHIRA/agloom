@@ -409,7 +409,7 @@ if (themeRaw !== 'dark' && themeRaw !== 'light') {
 }
 const themeUi: AgloomTheme = themeRaw === 'light' ? 'light' : 'dark'
 
-const buildRuntimeArgs = (o: CliOpts): string[] => {
+const buildRuntimeArgs = (o: CliOpts, resolvedThread: string): string[] => {
   const turns = o.maxTurns ?? o.sessionMaxTurns
   const parts: string[] = []
   parts.push('--store', o.store)
@@ -417,6 +417,8 @@ const buildRuntimeArgs = (o: CliOpts): string[] => {
     parts.push('--store-path', o.storePath ?? '.agloom/agp_events.db')
   }
   if (o.session) parts.push('--session', o.session)
+  const tid = resolvedThread.trim()
+  if (tid) parts.push('--thread', tid)
   const modelArg = typeof o.model === 'string' ? o.model.trim() : o.model != null ? String(o.model).trim() : ''
   if (modelArg && modelArg.toLowerCase() !== 'auto') parts.push('--model', modelArg)
   if (o.provider) parts.push('--provider', o.provider)
@@ -468,7 +470,7 @@ const directPrompt = explicitPrompt ?? (stdinPrompt || undefined)
 const directExec = Boolean(directPrompt && directPrompt.length > 0)
 
 const thread = opts.thread ?? `t_${Date.now().toString(36)}`
-const runtimeArgs = buildRuntimeArgs(opts)
+const runtimeArgs = buildRuntimeArgs(opts, thread)
 
 if (directExec) {
   const bridge = createAGPBridge()

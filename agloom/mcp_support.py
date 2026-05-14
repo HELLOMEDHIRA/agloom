@@ -17,6 +17,10 @@ from .logging_utils import get_logger
 logger = get_logger(__name__)
 
 
+class MCPConnectionError(Exception):
+    """Raised when one or more configured MCP servers fail to connect (strict mode)."""
+
+
 class MCPServerConfig(BaseModel):
     """
     One MCP server endpoint.
@@ -287,7 +291,7 @@ async def connect_mcp_servers(
     servers: list[MCPServerConfig],
     agent: dict,
     agent_name: str = "Agent",
-) -> tuple[Any | None, list[dict[str, Any]]]:
+) -> tuple[Any, list[dict[str, Any]]]:
     """
     Connect to all MCP servers and inject capabilities into agent config.
 
@@ -296,26 +300,33 @@ async def connect_mcp_servers(
         agent["mcp_prompts"]  = {server_name: [prompt_name, ...]}
         agent["mcp_uris"]     = {server_name: [uri, ...]}
 
-    Returns ``(client, server_rows)`` where *client* is the open MCP client (or ``None`` if
-    setup failed entirely) and *server_rows* is a per-server summary for AGP / logging.
+    Returns ``(client, server_rows)`` where *client* is the open MCP client and *server_rows*
+    summarises each server for AGP / logging.
+
+    Raises:
+        MCPConnectionError: if the adapter is missing, the multi-server client cannot start,
+        or any configured server fails its primary tool load (``get_tools``).
     """
     if not servers:
         return None, []
 
     try:
         caps, client = await load_mcp_capabilities(servers)
+    except ImportError as e:
+        raise MCPConnectionError(str(e)) from e
     except Exception as e:
         logger.error(f"[{agent_name}] MCP connect failed: {e}")
-        return None, [
-            {
-                "name": "__connect__",
-                "ok": False,
-                "error": str(e),
-                "tool_count": 0,
-                "tool_names": [],
-                "tool_names_truncated": False,
-            }
-        ]
+        raise MCPConnectionError(
+            f"MCP: could not initialize client for {len(servers)} configured server(s): {e}"
+        ) from e
+
+    failed = [cap for cap in caps if cap.last_error is not None]
+    if failed:
+        detail = "; ".join(f"{c.server_name}: {c.last_error}" for c in failed)
+        await aclose_mcp_client(client, log_name=agent_name)
+        raise MCPConnectionError(
+            f"MCP: {len(failed)} of {len(caps)} server(s) failed to connect — {detail}"
+        )
 
     existing_names = {t.name for t in agent.get("tools", [])}
     new_tools: list[BaseTool] = []
@@ -349,8 +360,8 @@ async def connect_mcp_servers(
         server_rows.append(
             {
                 "name": cap.server_name,
-                "ok": cap.last_error is None,
-                "error": cap.last_error,
+                "ok": True,
+                "error": None,
                 "tool_count": len(tools),
                 "tool_names": names[:80],
                 "tool_names_truncated": len(names) > 80,

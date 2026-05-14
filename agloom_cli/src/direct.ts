@@ -81,6 +81,7 @@ export const runDirect = async(options: {
   let inputTok = 0
   let outputTok = 0
   let costUsd: number = 0
+  let costHasEstimate = false
   const t0 = Date.now()
   let gotModelOutput = false
   let sawFatalOnWire = false
@@ -127,6 +128,7 @@ export const runDirect = async(options: {
     }
     if (evt.type === 'metric.cost') {
       costUsd += evt.data.cost ?? 0
+      if (evt.data.estimated) costHasEstimate = true
     }
     if (evt.type === 'token.delta' && !opts.noStream) {
       if (evt.data.text) gotModelOutput = true
@@ -176,8 +178,16 @@ export const runDirect = async(options: {
       sessionEnded = true
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
       if (!opts.quiet && !opts.json) {
+        const costLabel =
+          costUsd === 0
+            ? '0.0000'
+            : costUsd > 0 && costUsd < 0.0001
+              ? costUsd.toFixed(6)
+              : costUsd > 0 && costUsd < 0.01
+                ? costUsd.toFixed(5)
+                : costUsd.toFixed(4)
         process.stderr.write(
-          `\n[agloom] done in ${elapsed}s · ${inputTok}↑ + ${outputTok}↓ tokens · $${costUsd.toFixed(4)} · session=${evt.data.reason}\n`,
+          `\n[agloom] done in ${elapsed}s · ${inputTok}↑ + ${outputTok}↓ tokens · $${costLabel}${costHasEstimate ? ' (est.)' : ''} · session=${evt.data.reason}\n`,
         )
         if (evt.data.error) {
           process.stderr.write(`[agloom] session error: ${evt.data.error}\n`)
@@ -189,7 +199,7 @@ export const runDirect = async(options: {
             mi >= 0 && runtimeArgs[mi + 1] != null ? String(runtimeArgs[mi + 1]) : ''
           if (mid.startsWith('nvidia:')) {
             extra =
-              '[agloom] nvidia:… install `agloom[nvidia]` if imports fail. Empty stdout with a key set usually means a blank model reply or routing short-circuit — run `--json` and check `message.assistant` / `error.*`. Session JSON: `api_key_env*` is only for `--api-key-env`; see `provider_credential_env` + `provider_primary_credential_present` for standard env detection.\n'
+              '[agloom] nvidia:… install `agloom[nvidia]` if imports fail. Empty stdout with a key set usually means a blank model reply or routing short-circuit — run `--json` and check `message.assistant` / `error.*`. Session JSON: `api_key_env*` is only for `--api-key-env`; see `provider_primary_api_key_env`, `provider_credential_env`, and `provider_primary_credential_present` for standard env detection.\n'
           } else if (!runtimeArgs.includes('--model')) {
             extra =
               '[agloom] no `--model` was sent (e.g. yaml `model: auto` with no override). Set a provider API key, `AGLOOM_MODEL`, or run `agloom -m provider:model-id`.\n'

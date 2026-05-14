@@ -1096,6 +1096,7 @@ class SessionEmitter:
         model: str | None = None,
         phase: str | None = None,
         worker_id: str | None = None,
+        estimated: bool = False,
         parent: str | None = None,
     ) -> MetricCost:
         """Per-billable-unit cost delta. Currency defaults to USD."""
@@ -1110,6 +1111,7 @@ class SessionEmitter:
                 model=model,
                 phase=phase,
                 worker_id=worker_id,
+                estimated=estimated,
             ),
         )
         self._write(evt)

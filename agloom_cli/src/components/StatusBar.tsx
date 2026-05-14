@@ -82,106 +82,71 @@ export const StatusBar = ({ thread, layoutWidth }: Props): React.ReactElement =>
     openedAt != null ? (Math.max(0, nowMs - openedAt) / 1000).toFixed(1) : null
 
   return (
-    <Box
-      width={termWidth}
-      paddingX={1}
-      borderStyle="single"
-      borderTop={true}
-      borderBottom={false}
-      borderLeft={false}
-      borderRight={false}
-    >
-      {/* Status: icon + color + uppercase tag (E2 color-blind aid) */}
-      <Text color={color} bold>
-        {icon}{' '}
-        {tag}
-      </Text>
-      <Text color="gray" dimColor>
-        {' '}
-        {status}
-      </Text>
-
-      <Text color="gray" dimColor>
-        {'  ·  '}
-      </Text>
-
-      {/* Thread */}
-      <Text color="gray" dimColor>
-        thread:{threadShort}
-      </Text>
-
-      {sessionId && (
-        <>
+    <Box flexDirection="column" width={termWidth} flexShrink={0}>
+      <Box
+        width={termWidth}
+        paddingX={1}
+        borderStyle="single"
+        borderTop={true}
+        borderBottom={false}
+        borderLeft={false}
+        borderRight={false}
+        flexDirection="row"
+        flexWrap="wrap"
+      >
+        <Text color={color} bold>
+          {icon} {tag}
+        </Text>
+        <Text color="gray" dimColor>
+          {' · '}
+          {status}
+        </Text>
+        <Text color="gray" dimColor>
+          {' · '}
+          thread:{threadShort}
+        </Text>
+        {sessionId ? (
           <Text color="gray" dimColor>
-            {'  ·  '}
-          </Text>
-          <Text color="gray" dimColor>
+            {' · '}
             session:{sessionShort}
           </Text>
-        </>
-      )}
-
-      {toolsHint && (
-        <>
+        ) : null}
+        {toolsHint ? (
           <Text color="gray" dimColor>
-            {'  ·  '}
-          </Text>
-          <Text color="gray" dimColor>
+            {' · '}
             {toolsHint}
           </Text>
-        </>
-      )}
-
-      {(totalIn > 0 || totalOut > 0) && (
-        <>
+        ) : null}
+        {(totalIn > 0 || totalOut > 0) && (
           <Text color="gray" dimColor>
-            {'  ·  '}
-          </Text>
-          <Text color="gray" dimColor>
+            {' · '}
             ↑{totalIn} ↓{totalOut}
           </Text>
-        </>
-      )}
-
-      {totalCost > 0 && (
-        <>
+        )}
+        {totalCost > 1e-12 && (
           <Text color="gray" dimColor>
-            {'  ·  '}
+            {' · '}
+            {totalCost < 0.0001 ? `$${totalCost.toFixed(6)}` : `$${totalCost.toFixed(4)}`}
           </Text>
+        )}
+        {uptimeSec != null && (
           <Text color="gray" dimColor>
-            ${totalCost.toFixed(4)}
-          </Text>
-        </>
-      )}
-
-      {uptimeSec != null && (
-        <>
-          <Text color="gray" dimColor>
-            {'  ·  '}
-          </Text>
-          <Text color="gray" dimColor>
+            {' · '}
             {uptimeSec}s
           </Text>
-        </>
-      )}
-
-      {modelName && (
-        <>
+        )}
+        {modelName ? (
           <Text color="gray" dimColor>
-            {'  ·  '}
+            {' · '}
+            model={modelName.length > 20 ? `${modelName.slice(0, 20)}…` : modelName}
           </Text>
-          <Text color="gray" dimColor>
-            model={modelName.length > 24 ? `${modelName.slice(0, 24)}…` : modelName}
-          </Text>
-        </>
-      )}
-
-      <Box flexGrow={1} />
-
-      {/* Keyboard hints */}
-      <Text color="gray" dimColor>
-        Ctrl+C exit  Ctrl+X cancel  Ctrl+T / t tools  /budget raise
-      </Text>
+        ) : null}
+      </Box>
+      <Box paddingX={1} width={termWidth}>
+        <Text color="gray" dimColor>
+          Ctrl+C exit · Ctrl+X cancel · Ctrl+T / t tools · /budget raise
+        </Text>
+      </Box>
     </Box>
   )
 }

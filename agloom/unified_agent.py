@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import sys
 import time
 import uuid
 from collections import OrderedDict
@@ -33,7 +34,7 @@ from .delegation import (
 from .hitl_contract import HITLEvent, call_user_callback
 from .logging_utils import configure_package_logging, get_logger
 from .multimodal import merge_context_into_user_turn, text_from_user_turn
-from .mcp_support import MCPServerConfig, aclose_mcp_client
+from .mcp_support import MCPConnectionError, MCPServerConfig, aclose_mcp_client
 from .memory import (
     LongTermStore,
     SessionMemory,
@@ -626,7 +627,11 @@ async def _save_checkpoint(
 
 
 async def _ensure_mcp_connected(config: dict) -> None:
-    """Connect to MCP servers once per agent lifecycle; emit diagnostics (AGP + logs)."""
+    """Connect to MCP servers once per agent lifecycle; emit diagnostics (AGP + logs).
+
+    Raises :class:`~agloom.mcp_support.MCPConnectionError` if any configured server fails
+    (caller should surface as fatal to the user).
+    """
     if not config.get("_mcp_servers"):
         return
     if config.get("_mcp_session_attempted"):
@@ -634,7 +639,6 @@ async def _ensure_mcp_connected(config: dict) -> None:
     async with config["_mcp_lock"]:
         if config.get("_mcp_session_attempted"):
             return
-        config["_mcp_session_attempted"] = True
         from .mcp_support import connect_mcp_servers
 
         client, server_rows = await connect_mcp_servers(
@@ -642,6 +646,7 @@ async def _ensure_mcp_connected(config: dict) -> None:
             agent=config,
             agent_name=config.get("name", "Agent"),
         )
+        config["_mcp_session_attempted"] = True
         config["_mcp_client"] = client
         if client is not None:
             config["_mcp_connected"] = True
@@ -664,7 +669,13 @@ async def _ensure_mcp_connected(config: dict) -> None:
                 preview = ", ".join(str(n) for n in tnames[:12])
                 if row.get("tool_names_truncated") or tcount > len(tnames):
                     preview = f"{preview}, …" if preview else f"{tcount} tool(s) (names truncated)"
-                logger.event(f"MCP [{sname}] ok · {tcount} tool(s)" + (f": {preview}" if preview else ""))
+                logger.event(f"MCP [{sname}] connected · {tcount} tool(s)" + (f": {preview}" if preview else ""))
+                print(
+                    f"[agloom-runtime] MCP [{sname}] connected · {tcount} tool(s)"
+                    + (f": {preview}" if preview else ""),
+                    file=sys.stderr,
+                    flush=True,
+                )
             else:
                 logger.warning(f"MCP [{sname}] unavailable: {row.get('error') or 'unknown error'}")
 
@@ -1736,6 +1747,8 @@ class UnifiedAgent:
 
             return _stream_direct()
         except Exception as exc:
+            if isinstance(exc, MCPConnectionError):
+                raise
             logger.debug(f"[astream] direct stream attempt failed: {exc!r} — falling back to ainvoke")
             return None
 

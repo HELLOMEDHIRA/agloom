@@ -72,6 +72,7 @@ from ..protocol.commands import (
     command_adapter,
 )
 from ..protocol.envelope import Envelope
+from ..mcp_support import MCPConnectionError
 from .bridge import new_session_id, run_invocation
 from .hitl import HITLBridge
 
@@ -282,7 +283,11 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         store = MemoryEventStore()
 
     session_id = args.session or new_session_id()
-    initial_thread = f"thread_{uuid4().hex[:16]}"
+    initial_thread = (
+        str(args.thread).strip()
+        if getattr(args, "thread", None) and str(getattr(args, "thread", "")).strip()
+        else f"thread_{uuid4().hex[:16]}"
+    )
     _cwd = Path.cwd()
     _sd, yaml_created = ensure_agloom_workspace(_cwd, args=args)
     if yaml_created:
@@ -413,8 +418,24 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             cli_tools_enabled=_ct_en,
             cli_tools_count=_ct_ct,
         )
-        # MCP status is emitted lazily as ``runtime.mcp.servers`` when the client connects
-        # (see ``_ensure_mcp_connected``) so rows include tool names and per-server errors.
+        if agent.config.get("_mcp_servers"):
+            from agloom.unified_agent import _ensure_mcp_connected
+
+            try:
+                await _ensure_mcp_connected(agent.config)
+            except Exception as exc:
+                msg = str(exc).strip() or repr(exc)
+                _eprint(f"[agloom-runtime] {msg}")
+                emitter.emit_error(
+                    severity="fatal",
+                    message=msg,
+                    stage="mcp.bootstrap",
+                    error_class=type(exc).__name__,
+                )
+                agent_holder["agent"] = None
+                for fn in mem_cleanup_acc:
+                    await fn()
+                raise MCPConnectionError(msg) from exc
         # Update session marker with resolved model info
         _rewrite_session_marker(model_id=str(model_id_guess) if model_id_guess else None)
         return agent
@@ -520,6 +541,8 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
                     budget_tracker=budget_tracker,
                     invoke_working_dir=Path(getattr(args, "cli_tools_working_dir", None) or ".").resolve(),
                 )
+            except MCPConnectionError as exc:
+                _eprint(f"[agloom-runtime] {exc}")
             except RuntimeError:
                 pass
     finally:
@@ -660,7 +683,11 @@ async def _dispatch_command(
         if ensure_agent is not None:
             try:
                 return await ensure_agent()
-            except (ImportError, RuntimeError):
+            except ImportError:
+                return None
+            except MCPConnectionError:
+                raise
+            except RuntimeError:
                 return None
         emitter.emit_error(severity="transient", message="agent not available — no model configured", stage="invoke")
         return None
@@ -1231,6 +1258,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--session",
         default=None,
         help="Override the session id (otherwise minted automatically).",
+    )
+    serve.add_argument(
+        "--thread",
+        default=None,
+        help=(
+            "Initial LangGraph thread id for AGP envelopes (default: random). "
+            "Pass the session marker's thread when resuming so invoke/checkpoints align."
+        ),
     )
     serve.add_argument(
         "--store",

@@ -75,6 +75,55 @@ def _ensure_agsuperbrain_mcp_in_nested_yaml(path: Path) -> None:
         )
 
 
+_ENABLED_UNDER_MEMORY_OR_SKILLS = re.compile(r"^[ \t]+enabled:\s*(true|false)\s*(#.*)?$")
+
+
+def strip_deprecated_memory_skills_enabled_lines(text: str) -> tuple[str, bool]:
+    """Remove legacy ``memory.enabled`` / ``skills.enabled`` lines; keep comments and other keys."""
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    section: str | None = None
+    changed = False
+    for line in lines:
+        s = line.strip()
+        if s and not s.startswith("#") and not line[:1].isspace():
+            m = re.match(r"^([A-Za-z0-9_.-]+)\s*:\s*", line)
+            if m:
+                key = m.group(1)
+                section = key if key in ("memory", "skills") else "__other__"
+        if section in ("memory", "skills"):
+            core = line.rstrip("\r\n")
+            if _ENABLED_UNDER_MEMORY_OR_SKILLS.match(core):
+                changed = True
+                continue
+        out.append(line)
+    return "".join(out), changed
+
+
+def rewrite_agloom_yaml_strip_memory_skills_enabled(path: Path) -> bool:
+    """Rewrite ``.agloom/agloom.yaml`` when deprecated ``enabled`` keys appear under memory/skills."""
+    if not path.is_file():
+        return False
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    new, changed = strip_deprecated_memory_skills_enabled_lines(raw)
+    if not changed:
+        return False
+    try:
+        path.write_text(new, encoding="utf-8")
+    except OSError:
+        return False
+    print(
+        "[agloom-runtime] removed deprecated memory.enabled / skills.enabled from .agloom/agloom.yaml "
+        "(memory/skills are not user-toggleable here)",
+        file=sys.stderr,
+        flush=True,
+    )
+    return True
+
+
 DEFAULT_AGLOOM_YAML = """# Agloom — https://github.com/HELLOMEDHIRA/agloom
 # CLI merges layers (see agloom_cli/docs/config.md): ~/.agloom → walk-up → --config → flags.
 #
@@ -290,6 +339,7 @@ def ensure_agloom_workspace(cwd: Path | None = None, *, args: Any | None = None)
 
     if nested_yaml.is_file():
         _ensure_agsuperbrain_mcp_in_nested_yaml(nested_yaml)
+        rewrite_agloom_yaml_strip_memory_skills_enabled(nested_yaml)
 
     return sessions_dir, created
 

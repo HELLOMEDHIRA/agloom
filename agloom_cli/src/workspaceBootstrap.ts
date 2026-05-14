@@ -78,6 +78,48 @@ const yamlForTemplate = (template?: string): string => {
   return DEFAULT_AGLOOM_YAML
 }
 
+const ENABLED_UNDER_MEMORY_OR_SKILLS = /^[ \t]+enabled:\s*(true|false)\s*(#.*)?$/
+
+/** Strip deprecated ``memory.enabled`` / ``skills.enabled`` (line-based; preserves comments). */
+export const stripMemorySkillsEnabledFromYamlText = (raw: string): { text: string; changed: boolean } => {
+  const nl = raw.includes('\r\n') ? '\r\n' : '\n'
+  const lines = raw.split(/\r?\n/)
+  let section: string | null = null
+  const out: string[] = []
+  let changed = false
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (trimmed && !trimmed.startsWith('#') && !/^\s/.test(line)) {
+      const m = /^([A-Za-z0-9_.-]+)\s*:/.exec(line)
+      if (m) {
+        const key = m[1]
+        section = key === 'memory' || key === 'skills' ? key : '__other__'
+      }
+    }
+    if ((section === 'memory' || section === 'skills') && ENABLED_UNDER_MEMORY_OR_SKILLS.test(line)) {
+      changed = true
+      continue
+    }
+    out.push(line)
+  }
+  return { text: out.join(nl), changed }
+}
+
+const rewriteNestedAgloomYamlStripMemorySkills = (nestedYamlPath: string): void => {
+  if (!existsSync(nestedYamlPath)) return
+  try {
+    const raw = readFileSync(nestedYamlPath, 'utf8')
+    const { text, changed } = stripMemorySkillsEnabledFromYamlText(raw)
+    if (!changed) return
+    writeFileSync(nestedYamlPath, text, 'utf8')
+    process.stderr.write(
+      '[agloom] removed deprecated memory.enabled / skills.enabled from `.agloom/agloom.yaml`.\n',
+    )
+  } catch {
+    /* ignore */
+  }
+}
+
 const hasAgsuperbrainServerEntry = (servers: unknown[]): boolean =>
   servers.some((s) => {
     if (typeof s === 'string') return s.split(':')[0]?.trim().toLowerCase() === 'agsuperbrain'
@@ -157,6 +199,7 @@ export const ensureAgloomCliWorkspace = async(
 
   if (existsSync(nestedYaml)) {
     ensureAgsuperbrainMcpInNestedYaml(nestedYaml)
+    rewriteNestedAgloomYamlStripMemorySkills(nestedYaml)
   }
 
   // Bootstrap agsuperbrain knowledge graph if not already initialized (same root Python uses).

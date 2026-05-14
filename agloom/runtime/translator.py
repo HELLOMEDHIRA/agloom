@@ -374,13 +374,32 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
                     model=_str(data.get("model")) or _str(usage.get("model")),
                     phase=_str(data.get("phase")) or _str(data.get("name")),
                 )
-        cost = _float(data.get("cost"))
-        if cost is not None:
+        if total_t is not None and not input_t and not output_t:
+            tt = total_t
+            input_t = tt // 2
+            output_t = tt - input_t
+        raw_cost = data.get("cost")
+        cost = _float(raw_cost) if raw_cost is not None else None
+        cost_estimated = False
+        if cost is None or cost <= 0.0:
+            if input_t or output_t:
+                from agloom.llm.rough_cost import estimate_llm_cost_usd
+
+                est = estimate_llm_cost_usd(
+                    model=_str(data.get("model")),
+                    input_tokens=input_t,
+                    output_tokens=output_t,
+                )
+                if est > 0.0:
+                    cost = est
+                    cost_estimated = True
+        if cost is not None and cost > 0.0:
             emitter.emit_metric_cost(
                 cost=cost,
                 currency=_str(data.get("currency")) or "USD",
                 model=_str(data.get("model")),
                 phase=_str(data.get("phase")) or _str(data.get("name")),
+                estimated=cost_estimated,
             )
         budget = getattr(emitter, "budget_tracker", None)
         if budget is not None:

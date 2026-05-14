@@ -309,6 +309,25 @@ def _any_curated_provider_api_key_present() -> bool:
     return False
 
 
+def _provider_primary_api_key_env_name(resolved_slug: str | None) -> str | None:
+    """First canonical provider env var that is non-empty (name only; never the secret value)."""
+    from agloom.llm.provider_registry import PROVIDERS
+
+    if resolved_slug and isinstance(resolved_slug, str):
+        slug = resolved_slug.strip().lower()
+        p = PROVIDERS.get(slug)
+        if p:
+            for k in p.resolver_env_keys:
+                if (os.environ.get(k) or "").strip():
+                    return k
+            return None
+    for p in PROVIDERS.values():
+        for k in p.resolver_env_keys:
+            if (os.environ.get(k) or "").strip():
+                return k
+    return None
+
+
 def _llm_endpoint_snapshot(args: Namespace) -> dict[str, Any]:
     """Non-secret HTTP hints matching :mod:`agloom.llm.model_resolver` env conventions."""
     out: dict[str, Any] = {}
@@ -345,9 +364,11 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     ``provider_resolved`` for the slug inferred from ``--provider`` or ``provider:`` model
     prefix (same basis as ``sampling.provider_slug``). ``provider_credential_env`` lists
     canonical env vars for that slug and whether each was non-empty at process start (keys
-    only, never values). ``api_key_env`` / ``api_key_env_nonempty`` refer solely to
+    only, never values).     ``api_key_env`` / ``api_key_env_nonempty`` refer solely to
     ``--api-key-env`` when you remap a custom var into the provider's standard key.
-    ``provider_primary_credential_present`` is ``True`` when **any** listed canonical env
+    ``provider_primary_api_key_env`` names the **first canonical** provider API key env var
+    that was non-empty at process start (e.g. ``NVIDIA_API_KEY``) — use this when you are not
+    using ``--api-key-env``. ``provider_primary_credential_present`` is ``True`` when **any** listed canonical env
     var for ``provider_resolved`` was non-empty at process start (typical ``OPENAI_API_KEY`` /
     ``NVIDIA_API_KEY`` usage without ``--api-key-env``). When ``provider_resolved`` is
     ``None`` (env auto-detect), this falls back to **any** curated provider API key being set.
@@ -378,6 +399,7 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
         "llm_resolution": "explicit_model" if model_out else "env_auto",
         "api_key_env": str(api_env) if api_env else None,
         "api_key_env_nonempty": api_present,
+        "provider_primary_api_key_env": _provider_primary_api_key_env_name(resolved_slug),
         "provider_primary_credential_present": any_primary_cred,
         "provider_credential_env": cred_status,
         "session_max_turns": sm_turns,

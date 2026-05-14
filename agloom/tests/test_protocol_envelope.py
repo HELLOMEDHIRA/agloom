@@ -560,6 +560,18 @@ def test_metric_cost_round_trip_default_currency() -> None:
     assert d["type"] == "metric.cost"
     assert d["data"]["currency"] == "USD"  # default
     assert d["data"]["cost"] == 0.0042
+    assert d["data"].get("estimated") in (False, None)
+
+
+def test_metric_cost_round_trip_estimated_flag() -> None:
+    evt = MetricCost(
+        session="s",
+        thread="t",
+        seq=52,
+        data=MetricCostData(cost=0.000001, model="nvidia:x", phase="p", estimated=True),
+    )
+    d = _round_trip(evt)
+    assert d["data"]["estimated"] is True
 
 
 def test_event_adapter_dispatches_worker_and_metric() -> None:
