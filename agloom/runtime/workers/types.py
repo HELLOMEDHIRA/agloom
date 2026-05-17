@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 # ── Enumerations ──────────────────────────────────────────────────────────────
@@ -106,7 +106,7 @@ class WorkerTask:
     status: TaskStatus = TaskStatus.QUEUED
     attempt: int = 0
     assigned_worker_id: str | None = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     finished_at: datetime | None = None
 

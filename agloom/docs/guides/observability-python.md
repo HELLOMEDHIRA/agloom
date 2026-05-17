@@ -47,6 +47,10 @@ Endpoints include session listing, paginated events, per-session metrics/graph/w
 
 **Dependency:** FastAPI/Starlette are required only when you import **`make_obs_router`** / run the HTTP surface — keep ingest-only paths lightweight if you prefer not to mount HTTP.
 
+## Estimated cost on the wire
+
+When a provider omits dollar amounts, the AGP translator fills **`metric.cost`** with a coarse heuristic (`estimated: true` on the wire). Not suitable for billing.
+
 ## See also
 
 - [Observability architecture](../observability/architecture.md)

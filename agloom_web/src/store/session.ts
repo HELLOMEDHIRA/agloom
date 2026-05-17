@@ -1,7 +1,8 @@
 /** Web session store: AGP `dispatch` reducer + trace/artifacts/graph panels. */
 
 import { create } from 'zustand'
-import type { AGPEvent } from '../lib/agp/types.js'
+import type { AGPEvent, AGPKnownEvent } from '../lib/agp/types.js'
+import { isAgpKnownEvent } from '../lib/agp/agpEventGuards.js'
 
 export interface ThinkingStep {
   id: string; step: string; label?: string; detail?: string; elapsedMs?: number
@@ -18,7 +19,7 @@ export interface ToolCall {
 
 export interface Worker {
   id: string; workerId: string; name?: string; pattern?: string; task?: string
-  status: 'running' | 'done' | 'failed'
+  status: 'running' | 'done' | 'failed' | 'halted'
   outputPreview?: string; error?: string
 }
 
@@ -88,6 +89,8 @@ export interface SessionStore {
   protocolNotes: string[]
   totalInputTokens: number
   totalOutputTokens: number
+  /** Last ``metric.tokens`` seq applied — ignore duplicate/out-of-order replays. */
+  lastMetricTokensSeq: number
   /** Token deltas attributed to the in-flight turn only (reset each `message.user`). */
   turnInputTokens: number
   turnOutputTokens: number
@@ -166,7 +169,7 @@ export const effectiveToolCallExpanded = (
   return tc.status === 'error' || tc.status === 'pending'
 }
 
-const summarise = (evt: AGPEvent): string => {
+const summarise = (evt: AGPKnownEvent): string => {
   switch (evt.type) {
     case 'session.opened':
       return `session opened (v${evt.data.runtime_version})`
@@ -191,6 +194,10 @@ const summarise = (evt: AGPEvent): string => {
       return `runtime.config · model=${evt.data.model_id ?? '—'} · ${(evt.data.tool_names ?? []).length} tools`
     case 'runtime.config.applied':
       return `config applied · model=${evt.data.model_id ?? 'ok'}`
+    case 'runtime.mcp.servers': {
+      const names = evt.data.server_names ?? []
+      return `MCP servers · ${names.join(', ') || 'none'}`
+    }
     case 'runtime.pong':
       return `pong${evt.data.ping_id ? ` · ${evt.data.ping_id}` : ''}`
     case 'runtime.schema': {
@@ -242,6 +249,8 @@ const summarise = (evt: AGPEvent): string => {
       return `worker done: ${evt.data.worker_id}`
     case 'worker.failed':
       return `worker failed: ${evt.data.worker_id}`
+    case 'worker.halted':
+      return `worker halted: ${evt.data.worker_id} (${evt.data.reason ?? 'HALT_ALL'})`
     case 'hitl.request':
       return `HITL gate: ${evt.data.kind}`
     case 'hitl.granted':
@@ -252,6 +261,10 @@ const summarise = (evt: AGPEvent): string => {
       return `graph: enter ${evt.data.node}`
     case 'graph.node.exit':
       return `graph: exit ${evt.data.node} (${evt.data.duration_ms ?? 0}ms)`
+    case 'orchestration.step': {
+      const d = evt.data
+      return `orchestration · d${d.depth ?? 0} ${d.pattern} · ${d.action}`
+    }
     case 'memory.session.write':
       return `memory.session.write · ${evt.data.thread}${evt.data.turn_count != null ? ` · turns ${evt.data.turn_count}` : ''}`
     case 'memory.session.cleared':
@@ -343,6 +356,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
   protocolNotes: [],
   totalInputTokens: 0,
   totalOutputTokens: 0,
+  lastMetricTokensSeq: 0,
   turnInputTokens: 0,
   turnOutputTokens: 0,
   metricsHistory: [],
@@ -359,6 +373,27 @@ export const useSessionStore = create<SessionStore>((set) => ({
   sessionCatalogIds: [],
 
   dispatch: (evt) => set((s) => {
+    if (!isAgpKnownEvent(evt)) {
+      const trace: TraceEvent[] = [
+        ...s.executionTrace,
+        {
+          seq: evt.seq,
+          type: evt.type,
+          ts: evt.ts,
+          summary: `unknown: ${evt.type}`,
+          raw: evt,
+        },
+      ]
+      return {
+        ...s,
+        executionTrace: trace,
+        protocolNotes: pushProtocolNotes(
+          s.protocolNotes,
+          `Unknown / unhandled AGP event · ${evt.type}`,
+        ),
+      }
+    }
+
     const trace = evt.type === 'token.delta' ? s.executionTrace : [
       ...s.executionTrace,
       { seq: evt.seq, type: evt.type, ts: evt.ts, summary: summarise(evt), raw: evt } satisfies TraceEvent,
@@ -376,6 +411,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
           toolCallExpandedById: {},
           budgetUi: 'ok',
           budgetLast: null,
+          lastMetricTokensSeq: 0,
         }
 
       case 'session.resumed':
@@ -467,6 +503,27 @@ export const useSessionStore = create<SessionStore>((set) => ({
           protocolNotes: pushProtocolNotes(
             s.protocolNotes,
             `Config applied · model=${evt.data.model_id ?? 'ok'}${cli}`,
+          ),
+        }
+      }
+
+      case 'runtime.mcp.servers': {
+        const names = evt.data.server_names ?? []
+        const raw = evt.data.servers ?? []
+        const parts = raw.map((r) => {
+          if (r.ok) {
+            const n = r.tool_count ?? r.tool_names?.length ?? 0
+            return `${r.name}:ok(${n} tools)`
+          }
+          return `${r.name}:FAIL${r.error ? `(${String(r.error).slice(0, 120)})` : ''}`
+        })
+        const detail = parts.length ? ` · ${parts.join(' · ')}` : ''
+        return {
+          ...s,
+          executionTrace: trace,
+          protocolNotes: pushProtocolNotes(
+            s.protocolNotes,
+            `MCP servers: ${names.join(', ') || 'none'}${detail}`,
           ),
         }
       }
@@ -675,6 +732,26 @@ export const useSessionStore = create<SessionStore>((set) => ({
         if (!s.activeTurn) return { ...s, executionTrace: trace }
         return { ...s, executionTrace: trace, activeTurn: { ...s.activeTurn, workers: s.activeTurn.workers.map((w) => w.workerId === evt.data.worker_id ? { ...w, status: 'failed', error: evt.data.error } : w) } }
 
+      case 'worker.halted':
+        if (!s.activeTurn) return { ...s, executionTrace: trace }
+        return {
+          ...s,
+          executionTrace: trace,
+          activeTurn: {
+            ...s.activeTurn,
+            workers: s.activeTurn.workers.map((w) =>
+              w.workerId === evt.data.worker_id
+                ? {
+                    ...w,
+                    status: 'halted',
+                    error: evt.data.reason,
+                    outputPreview: evt.data.output_preview,
+                  }
+                : w,
+            ),
+          },
+        }
+
       case 'graph.node.enter': {
         if (!s.activeTurn) return { ...s, executionTrace: trace }
         const gn: GraphNode = { nodeId: evt.data.node, pattern: evt.data.pattern, enterAt: evt.ts }
@@ -695,6 +772,34 @@ export const useSessionStore = create<SessionStore>((set) => ({
           executionTrace: trace,
           protocolNotes: pushProtocolNotes(s.protocolNotes, noteLine),
           activeTurn: next,
+        }
+      }
+
+      case 'orchestration.step': {
+        if (!s.activeTurn) {
+          return {
+            ...s,
+            executionTrace: trace,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `Orchestration · d${evt.data.depth ?? 0} ${evt.data.pattern} · ${evt.data.action}`,
+            ),
+          }
+        }
+        const d = evt.data
+        const label = `d${d.depth ?? 0} ${d.pattern} · ${d.action}`
+        const step: ThinkingStep = {
+          id: uid(),
+          step: 'orchestration',
+          label,
+          detail: d.reason ?? d.output_preview ?? d.input_preview,
+          elapsedMs: d.duration_ms,
+        }
+        return {
+          ...s,
+          executionTrace: trace,
+          protocolNotes: pushProtocolNotes(s.protocolNotes, `Orchestration · ${label}`),
+          activeTurn: { ...s.activeTurn, thinkingSteps: [...s.activeTurn.thinkingSteps, step] },
         }
       }
 
@@ -754,6 +859,9 @@ export const useSessionStore = create<SessionStore>((set) => ({
       }
 
       case 'metric.tokens': {
+        if (evt.seq <= s.lastMetricTokensSeq) {
+          return { ...s, executionTrace: trace }
+        }
         const slice: MetricTokensSlice = {
           id: uid(),
           phase: evt.data.phase,
@@ -770,6 +878,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
           executionTrace: trace,
           totalInputTokens: s.totalInputTokens + inTok,
           totalOutputTokens: s.totalOutputTokens + outTok,
+          lastMetricTokensSeq: evt.seq,
           turnInputTokens: s.activeTurn ? s.turnInputTokens + inTok : s.turnInputTokens,
           turnOutputTokens: s.activeTurn ? s.turnOutputTokens + outTok : s.turnOutputTokens,
           model: s.model ?? evt.data.model,
@@ -989,6 +1098,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
     capabilities: null,
     totalInputTokens: 0,
     totalOutputTokens: 0,
+    lastMetricTokensSeq: 0,
     turnInputTokens: 0,
     turnOutputTokens: 0,
     metricsHistory: [],

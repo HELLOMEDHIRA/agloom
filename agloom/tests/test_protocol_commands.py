@@ -119,6 +119,31 @@ def test_hitl_respond_with_text():
     assert cmd.data.text == "yes please"  # narrowed by isinstance above
 
 
+def test_hitl_respond_runtime_only_decision_normalizes_to_reject():
+    cmd = _parse({"type": "command.hitl.respond", "data": {"request_id": "hr_x", "decision": "timeout"}})
+    assert isinstance(cmd, CommandHITLRespond)
+    assert cmd.data.decision == "reject"
+
+
+def test_hitl_respond_unknown_decision_normalizes_to_reject():
+    cmd = _parse({"type": "command.hitl.respond", "data": {"request_id": "hr_y", "decision": "admin-approve-all"}})
+    assert isinstance(cmd, CommandHITLRespond)
+    assert cmd.data.decision == "reject"
+
+
+def test_hitl_respond_approve_typo_normalizes_to_accept():
+    cmd = _parse({"type": "command.hitl.respond", "data": {"request_id": "hr_z", "decision": "aprove"}})
+    assert isinstance(cmd, CommandHITLRespond)
+    assert cmd.data.decision == "accept"
+
+
+def test_invoke_empty_prompt_rejected():
+    import pytest
+
+    with pytest.raises(Exception):
+        _parse({"type": "command.invoke", "data": {"prompt": "   "}})
+
+
 # CommandWorkerAssign
 
 

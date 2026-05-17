@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import UTC, datetime
 
 from ...protocol import AsyncSessionEmitter
 from .types import RetryPolicy, WorkerHealth, WorkerStatus, WorkerTask, WorkerType
@@ -65,7 +65,7 @@ class BaseWorker(ABC):
         worker receives any tasks.  Default implementation is a no-op.
         """
         self._status = WorkerStatus.IDLE
-        self._started_at = datetime.utcnow()
+        self._started_at = datetime.now(UTC)
         logger.debug("Worker %s started (%s)", self.worker_id, self.worker_type.value)
 
     async def stop(self) -> None:
@@ -137,7 +137,7 @@ class BaseWorker(ABC):
 
     def _uptime_s(self) -> float:
         if self._started_at:
-            return (datetime.utcnow() - self._started_at).total_seconds()
+            return (datetime.now(UTC) - self._started_at).total_seconds()
         return 0.0
 
     def __repr__(self) -> str:

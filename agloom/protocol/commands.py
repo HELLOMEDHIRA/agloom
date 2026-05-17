@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 
 class _CmdBase(BaseModel):
@@ -50,6 +50,14 @@ class CommandInvokeData(_CmdBase):
     user_id: str | None = None
     context: dict[str, Any] | None = None
     attachments: list[InvokeAttachment] | None = None
+
+    @field_validator("prompt", mode="before")
+    @classmethod
+    def _strip_prompt(cls, v: Any) -> str:
+        s = str(v or "").strip()
+        if not s:
+            raise ValueError("command.invoke: prompt must be non-empty")
+        return s
 
 
 class CommandInvoke(_CmdBase):
@@ -78,13 +86,16 @@ class CommandCancel(_CmdBase):
 
 # ── command.hitl.respond ───────────────────────────────────────────────────────
 
+_HITL_COMMAND_DECISIONS = frozenset({"accept", "reject", "allowlist", "retry", "stop"})
+# Common misspellings only — explicit ``yes``/``ok`` must be sent as ``accept`` by clients.
+_HITL_APPROVE_TYPOS = frozenset({"aprove", "approv"})
+
 
 class CommandHITLRespondData(_CmdBase):
     """Resolve a pending ``hitl.request``.
 
-    ``decision`` must match the options listed in the original ``hitl.request``
-    (e.g. ``accept``/``reject``/``allowlist`` for tool gates).  Unknown values
-    normalise to ``reject`` — the runtime never auto-approves on bad input.
+    ``decision`` is one of the user-facing gate outcomes (runtime-emitted ``timeout`` /
+    ``cancelled`` are not valid command inputs). Unknown values normalise to ``reject``.
     ``text`` carries a free-text answer for ``clarification`` kind gates.
     """
 
@@ -92,6 +103,24 @@ class CommandHITLRespondData(_CmdBase):
     decision: str = "reject"
     text: str | None = None
     actor: str = "user"
+
+    @field_validator("decision", mode="before")
+    @classmethod
+    def _normalize_hitl_decision(cls, v: Any) -> str:
+        s = "reject" if v is None else str(v).strip().lower()
+        if s in _HITL_COMMAND_DECISIONS:
+            return s
+        if s in _HITL_APPROVE_TYPOS:
+            return "accept"
+        return "reject"
+
+    @field_validator("request_id", mode="before")
+    @classmethod
+    def _strip_request_id(cls, v: Any) -> str:
+        s = str(v or "").strip()
+        if not s:
+            raise ValueError("command.hitl.respond: request_id must be non-empty")
+        return s
 
 
 class CommandHITLRespond(_CmdBase):
@@ -177,6 +206,22 @@ class CommandFeedbackData(_CmdBase):
 
     run_id: str
     rating: str
+
+    @field_validator("run_id", mode="before")
+    @classmethod
+    def _strip_run_id(cls, v: Any) -> str:
+        s = str(v or "").strip()
+        if not s:
+            raise ValueError("command.feedback: run_id must be non-empty")
+        return s
+
+    @field_validator("rating", mode="before")
+    @classmethod
+    def _strip_rating(cls, v: Any) -> str:
+        s = str(v or "").strip()
+        if not s:
+            raise ValueError("command.feedback: rating must be non-empty")
+        return s
     comment: str = ""
     correct: str = ""
     metadata: dict[str, Any] | None = None
@@ -465,6 +510,14 @@ class CommandPlanPreviewData(_CmdBase):
     """Run classifier only; emits ``plan.preview`` (no agent execution)."""
 
     prompt: str
+
+    @field_validator("prompt", mode="before")
+    @classmethod
+    def _strip_plan_prompt(cls, v: Any) -> str:
+        s = str(v or "").strip()
+        if not s:
+            raise ValueError("command.plan.preview: prompt must be non-empty")
+        return s
 
 
 class CommandPlanPreview(_CmdBase):

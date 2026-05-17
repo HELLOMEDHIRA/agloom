@@ -98,6 +98,7 @@ nav:
       - Observability API: _packages/agloom/guides/observability-python.md
       - LLM resolution: _packages/agloom/guides/llm-resolution.md
   - Core Concepts:
+      - Glossary: _packages/agloom/concepts/glossary.md
       - How It Works: _packages/agloom/concepts/how-it-works.md
       - Execution Patterns: _packages/agloom/concepts/patterns.md
       - The create_agent API: _packages/agloom/concepts/create-agent.md
@@ -115,8 +116,10 @@ nav:
       - Frozen Agents: _packages/agloom/features/frozen-agents.md
       - Task Delegation: _packages/agloom/features/delegation.md
       - Reflection pattern: _packages/agloom/features/reflection.md
+      - Recursive orchestration: _packages/agloom/features/orchestration.md
       - Long-running harness: _packages/agloom/features/harness.md
       - Observability & LangSmith: _packages/agloom/features/observability.md
+      - Wire tokens & metric.tokens: _packages/agloom/features/wire-tokens.md
   - Configuration:
       - All Parameters: _packages/agloom/configuration/parameters.md
       - Timeouts & Retries: _packages/agloom/configuration/reliability.md

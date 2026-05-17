@@ -1,9 +1,19 @@
 """Pipeline pattern — strictly sequential transformation chain (A→B→C), stops on first failure."""
 
 from ..logging_utils import get_logger
-from ..models import ExecutionResult, PatternType, QueryAnalysis, StepType, WorkerPlan, _make_step, _merge_token_usage
+from ..models import (
+    ExecutionResult,
+    PatternType,
+    QueryAnalysis,
+    SignalType,
+    StepType,
+    WorkerPlan,
+    _make_step,
+    _merge_token_usage,
+)
 from ._resolve import resolve_worker_configs
 from ._sequential import run_sequential_workers
+from ._steps_accounting import steps_taken_from_audit
 
 logger = get_logger(__name__)
 
@@ -20,6 +30,12 @@ You are the first step in a data processing pipeline.
 Your job: process the initial input and produce output for the next step.
 Output ONLY the processed result — no meta-commentary.\
 """
+
+_GENERIC_WORKER_PROMPTS = frozenset(
+    {
+        "You are a helpful AI assistant.",
+    }
+)
 
 
 async def handle_pipeline(
@@ -66,14 +82,13 @@ async def handle_pipeline(
     worker_configs = resolve_worker_configs(agent, plans)
 
     enhanced_configs = []
+    _asp = agent.get("system_prompt")
+    agent_default_sp = _asp.strip() if isinstance(_asp, str) else ""
+    _generic = _GENERIC_WORKER_PROMPTS | ({agent_default_sp} if agent_default_sp else set())
+
     for i, wcfg in enumerate(worker_configs):
-        prompt = wcfg.system_prompt
-        _asp = agent.get("system_prompt")
-        agent_default_sp = _asp.strip() if isinstance(_asp, str) else ""
-        if not prompt or prompt in (
-            agent_default_sp,
-            "You are a helpful AI assistant.",
-        ):
+        prompt = (wcfg.system_prompt or "").strip()
+        if not prompt or prompt in _generic:
             prompt = PIPELINE_FIRST_WORKER_PROMPT if i == 0 else PIPELINE_SYSTEM_PROMPT
         enhanced_configs.append(wcfg.model_copy(update={"system_prompt": prompt}, deep=True))
 
@@ -103,7 +118,7 @@ async def handle_pipeline(
     for wr in worker_results:
         raw_messages.extend(getattr(wr, "messages", []))
 
-    successful = [r for r in worker_results if r.signal.value == "SUCCESS"]
+    successful = [r for r in worker_results if r.signal is SignalType.SUCCESS]
     if successful:
         final_output = successful[-1].output
         success = True
@@ -124,7 +139,7 @@ async def handle_pipeline(
         pattern_used=PatternType.PIPELINE,
         query=query,
         output=final_output,
-        steps_taken=len(worker_results),
+        steps_taken=steps_taken_from_audit(steps),
         success=success,
         analysis=analysis,
         worker_results=worker_results,

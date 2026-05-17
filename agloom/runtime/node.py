@@ -27,7 +27,7 @@ from ..protocol.store import EventStore
 from .pool import WorkerPool
 from .registry import InMemoryRegistry, WorkerRegistry
 from .scheduler import InProcessScheduler, Scheduler
-from .workers.local import LocalAIWorker
+from .workers.local import LocalAIWorker, _SupportsAStreamEvents
 from .workers.types import WorkerTask
 
 logger = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ class RuntimeNode:
     @classmethod
     def create_local(
         cls,
-        agent: object,
+        agent: _SupportsAStreamEvents,
         emitter: AsyncSessionEmitter,
         store: EventStore | None = None,
         worker_id: str | None = None,
@@ -113,7 +113,7 @@ class RuntimeNode:
         wid = worker_id or f"w_local_{uuid4().hex[:8]}"
         worker = LocalAIWorker(worker_id=wid, agent=agent)
         # Workers are registered on start() — store them for deferred registration
-        pool._pending_workers = [worker]  # type: ignore[attr-defined]
+        pool._pending_workers = [worker]
 
         return cls(pool=pool, scheduler=scheduler, registry=registry, store=store)
 
@@ -122,10 +122,10 @@ class RuntimeNode:
     async def start(self) -> None:
         """Start the scheduler and worker pool (including pending workers)."""
         # Register any workers that were queued before start()
-        pending = getattr(self.pool, "_pending_workers", [])
+        pending = list(self.pool._pending_workers)
+        self.pool._pending_workers.clear()
         for worker in pending:
             await self.pool.register_worker(worker)
-        self.pool.__dict__.pop("_pending_workers", None)
 
         await self.pool.start()
         if isinstance(self.scheduler, InProcessScheduler):

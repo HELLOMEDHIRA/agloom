@@ -8,8 +8,14 @@ from __future__ import annotations
 
 import os
 
+_otel_configured = False
+
 
 def configure_runtime_otel(*, service_name: str = "agloom-runtime") -> None:
+    global _otel_configured
+    if _otel_configured:
+        return
+
     from opentelemetry import trace
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
@@ -27,3 +33,4 @@ def configure_runtime_otel(*, service_name: str = "agloom-runtime") -> None:
     else:
         provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
     trace.set_tracer_provider(provider)
+    _otel_configured = True

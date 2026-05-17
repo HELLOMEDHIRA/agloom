@@ -2,20 +2,21 @@
 LangGraph StateGraph: START → classify → conditional edge → pattern node → END.
 
 run_fresh() short-circuits DIRECT before invoking the graph (latency), but a
-direct node remains so the graph stays testable in isolation and HITL resume
-covers every pattern. Each registered handler gets a node so routing never
-dead-ends.
+direct node remains so the graph stays testable in isolation. HITL ``resume()``
+can preload ``analysis`` into state so classify does not re-run after an interrupt.
+Each registered handler gets a node so routing never dead-ends.
 
 Do not pass interrupt_before/after to compile(): run_fresh() handles interrupts
 via user_callback. Native compile() interrupts would conflict and block the
 pattern node from running.
 """
 
+from typing import Any, cast
+
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
-from .classifier import analyze_query
 from .logging_utils import get_logger
 from .models import ExecutionResult, PatternType, QueryAnalysis
 
@@ -53,9 +54,11 @@ def _get_handlers() -> dict[PatternType, object]:
 
 
 def _make_classify_node(agent: dict):
-    """
-    If analysis is already in state (e.g. pre-classified path), skip the LLM;
-    otherwise run analyze_query and write the result to state.
+    """Classify node: skip when ``analysis`` is already in state.
+
+    State may be preloaded before ``resume()`` (checkpoint or in-process cache) so the
+    pattern is not re-selected mid-interrupt. Otherwise runs the same classifier path
+    as a normal ``ainvoke`` turn.
     """
 
     async def classify_node(
@@ -68,10 +71,22 @@ def _make_classify_node(agent: dict):
             )
             return {}
 
-        analysis = await analyze_query(
-            agent["llm"],
-            state["query"],
-            agent.get("tools", []),
+        from .unified_agent import _execute_analyze_query
+
+        skill_ctx = ""
+        skill_injector = agent.get("skill_injector")
+        if skill_injector is not None:
+            try:
+                skill_ctx = await skill_injector.get_context(state["query"])
+            except Exception as exc:
+                logger.warning(
+                    f"[Graph:classify] {agent.get('name')} skill_injector failed ({exc!r}) — proceeding without."
+                )
+
+        analysis = await _execute_analyze_query(
+            agent,
+            augmented_query=state["query"],
+            skill_context=skill_ctx,
         )
         logger.event(
             f"[Graph:classify] {agent.get('name')} → "
@@ -92,7 +107,7 @@ def _make_pattern_node(agent: dict, pattern: PatternType, handlers: dict):
         state: AgentGraphState,
         config: RunnableConfig,
     ) -> dict:
-        result = await handler(  # type: ignore[call-arg]
+        result = await cast(Any, handler)(
             agent=agent,
             query=state["query"],
             analysis=state["analysis"],
@@ -108,8 +123,8 @@ def _router(state: AgentGraphState) -> str:
     """Route to the pattern node name (``pattern.value.lower()``)."""
     analysis = state.get("analysis")
     if analysis is None:
-        logger.error("[Graph:router] analysis is None — routing to __end__")
-        return "__end__"
+        logger.error("[Graph:router] analysis is None — routing to END")
+        return END
     return analysis.pattern.value.lower()
 
 
@@ -126,7 +141,7 @@ def build_agent_graph(agent: dict):
 
     handlers = _get_handlers()
 
-    builder = StateGraph(AgentGraphState)  # type: ignore[arg-type]
+    builder = StateGraph(cast(Any, AgentGraphState))
 
     builder.add_node("classify", _make_classify_node(agent))
 

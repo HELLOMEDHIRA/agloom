@@ -11,12 +11,21 @@ from typing import Any
 
 from .models import ExecutionResult
 
+# Align string and JSON wire previews so one path cannot blow the client payload.
+_WIRE_CONTENT_MAX_CHARS = 4000
+
+
+def _clip_wire_text(s: str) -> str:
+    if len(s) <= _WIRE_CONTENT_MAX_CHARS:
+        return s
+    return s[:_WIRE_CONTENT_MAX_CHARS]
+
 
 def _content_to_str(content: Any) -> str:
     if content is None:
         return ""
     if isinstance(content, str):
-        return content
+        return _clip_wire_text(content)
     if isinstance(content, list):
         parts: list[str] = []
         for block in content:
@@ -33,13 +42,13 @@ def _content_to_str(content: Any) -> str:
                         parts.append(str(block)[:500])
             else:
                 parts.append(str(block))
-        return "\n".join(parts)
+        return _clip_wire_text("\n".join(parts))
     if isinstance(content, dict):
         try:
-            return json.dumps(content, default=str)[:4000]
+            return _clip_wire_text(json.dumps(content, default=str))
         except (TypeError, ValueError):
-            return str(content)[:4000]
-    return str(content)
+            return _clip_wire_text(str(content))
+    return _clip_wire_text(str(content))
 
 
 def _tool_calls_summary(tool_calls: Any) -> list[dict[str, Any]] | None:

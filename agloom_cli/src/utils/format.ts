@@ -63,6 +63,29 @@ export const trimLines = (s: string): string => {
   return s.replace(/^\n+/, '').replace(/\n+$/, '')
 }
 
+const AGLOOM_TOOL_RESULT_RE = /^\[agloom:tool_result\]\s*complete=(?:true|false)\s*\n?/i
+
+/** Remove agloom filesystem tool envelopes accidentally echoed in assistant text. */
+export const stripAgloomToolResultEnvelope = (s: string): string => {
+  let t = s
+  while (AGLOOM_TOOL_RESULT_RE.test(t)) {
+    t = t.replace(AGLOOM_TOOL_RESULT_RE, '')
+  }
+  return t.trim()
+}
+
+/** Pick the best assistant body from wire ``message.assistant`` vs streamed token deltas. */
+export const finalizeAssistantMessage = (wireContent: string, streamed: string): string => {
+  const wire = stripAgloomToolResultEnvelope(wireContent)
+  const stream = stripAgloomToolResultEnvelope(streamed)
+  if (wire && stream) {
+    if (wire.includes(stream)) return wire
+    if (stream.includes(wire)) return stream
+    return wire.length >= stream.length ? wire : stream
+  }
+  return wire || stream
+}
+
 /** Light markdown line transforms for non-fence prose (headings, lists, inline). */
 const renderProseLines = (md: string, termWidth: number): string => {
   return md
@@ -91,19 +114,13 @@ const renderProseLines = (md: string, termWidth: number): string => {
     .join('\n')
 }
 
-const FENCE_RE = /```([\w+-]*)\n?([\s\S]*?)```/g
-
-/**
- * Markdown-ish → terminal text. Fenced ``` blocks use cli-highlight (language-aware).
- * Inline prose uses the previous lightweight line rules.
- * Unmatched ``` fences fall through as normal prose (no fatal loop).
- */
 export const renderMarkdown = (md: string, termWidth = 80): string => {
   let last = 0
   let out = ''
   let m: RegExpExecArray | null
   const s = md
-  while ((m = FENCE_RE.exec(s)) !== null) {
+  const fenceRe = /```([\w+-]*)\n?([\s\S]*?)```/g
+  while ((m = fenceRe.exec(s)) !== null) {
     const before = s.slice(last, m.index)
     out += renderProseLines(before, termWidth)
     const lang = (m[1] || '').trim() || undefined
@@ -114,7 +131,7 @@ export const renderMarkdown = (md: string, termWidth = 80): string => {
     } catch {
       out += `\x1b[90m${code}\x1b[0m\n`
     }
-    last = FENCE_RE.lastIndex
+    last = fenceRe.lastIndex
   }
   out += renderProseLines(s.slice(last), termWidth)
   return out

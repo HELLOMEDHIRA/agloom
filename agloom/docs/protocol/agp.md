@@ -66,9 +66,28 @@ Emitted once at the start of every **new** session.
   } }
 ```
 
+### `runtime.ready`
+
+Emitted once per runtime attachment after workspace/bootstrap checks and **before** the first `command.invoke`. Carries control-plane hints so clients can render capability badges before the agent graph is fully warm.
+
+```jsonc
+{ "type": "runtime.ready",
+  "data": {
+    "agent_name": "default",
+    "cli_tools_enabled": true,
+    "cli_tools_count": 25,
+    "harness_enabled": false,
+    "session_memory_mode": "sqlite",
+    "agent_store_kind": "sqlite",
+    "mcp_servers_configured": ["filesystem"]
+  } }
+```
+
+`session_memory_mode` is `sqlite` | `in-memory` | `none` (ephemeral in-process session memory when omitted on the CLI). `mcp_servers_configured` lists names from argv/YAML — servers connect lazily on first invoke.
+
 ### `runtime.config`
 
-Emitted after `runtime.ready` (same startup bundle). Carries **`model_id`**, **`tool_names`**, and canonical **`capabilities`** (see **Capabilities** above).
+Emitted in the same startup bundle as `runtime.ready` (immediately after). Carries **`model_id`**, **`tool_names`**, and canonical **`capabilities`** (see **Capabilities** above). May repeat **`cli_tools_enabled`** / **`cli_tools_count`** when CLI tools are on.
 
 ```jsonc
 { "type": "runtime.config",
@@ -116,6 +135,31 @@ Execution DAG events emitted at the boundary of every major execution node — i
     "error": null
   } }
 ```
+
+### `orchestration.step`
+
+Emitted when **recursive orchestration** is enabled (`max_pattern_depth > 0`). One event per orchestration trace step: pattern enter, escalate, or complete. Frontends may show `confidence` / `quality_score` as `conf=XX%` on the CLI.
+
+Only emitted when orchestration runs; omitted for legacy single-pass agents (`max_pattern_depth=0`).
+
+```jsonc
+{ "type": "orchestration.step",
+  "data": {
+    "depth": 1,
+    "pattern": "REFLECTION",
+    "action": "enter",
+    "worker_id": "root",
+    "reason": "react_failure_recovery",
+    "input_preview": "search arxiv",
+    "output_preview": null,
+    "duration_ms": null,
+    "error": null,
+    "confidence": 0.82,
+    "quality_score": 0.79
+  } }
+```
+
+`action` is typically `enter`, `escalate`, or `complete`. See [Recursive orchestration](../features/orchestration.md).
 
 ### `pattern.classified`
 
@@ -301,9 +345,11 @@ Runtime emits the outcome **after** `command.hitl.respond` is received and appli
   "data": { "request_id": "hr_abc123", "decision": "accept", "actor": "user" } }
 ```
 
-### `worker.spawned` / `worker.completed` / `worker.failed`
+### `worker.spawned` / `worker.completed` / `worker.failed` / `worker.halted`
 
 Emitted by SUPERVISOR / SWARM / BLACKBOARD / HYBRID_DAG patterns so frontends can render an agent tree. Result events SHOULD set `parent` to the `worker.spawned.id` for correlation. Nested supervisors set `parent_worker_id` on `worker.spawned`.
+
+`worker.halted` is emitted when a worker stops cooperatively (e.g. user `HALT_ALL`) — **not** a retryable failure. Patterns set `WorkerResult.signal` to `HALTED`; the runtime bridge maps that to `worker.halted` instead of `worker.failed`.
 
 ```jsonc
 { "type": "worker.spawned",
@@ -322,6 +368,10 @@ Emitted by SUPERVISOR / SWARM / BLACKBOARD / HYBRID_DAG patterns so frontends ca
 { "type": "worker.failed",
   "parent": "evt_spawn_id",
   "data": { "worker_id": "w_1", "error": "rate limited", "error_class": "RateLimitError", "duration_ms": 1500 } }
+
+{ "type": "worker.halted",
+  "parent": "evt_spawn_id",
+  "data": { "worker_id": "w_1", "reason": "HALT_ALL", "output_preview": "Stopped by user.", "duration_ms": 800 } }
 ```
 
 ### `metric.tokens` / `metric.cost`
@@ -340,8 +390,16 @@ Per-LLM-call **delta** updates. Frontends sum across the session for the sidebar
   } }
 
 { "type": "metric.cost",
-  "data": { "cost": 0.0042, "currency": "USD", "model": "groq:llama-3.3-70b", "phase": "react" } }
+  "data": {
+    "cost": 0.0042,
+    "currency": "USD",
+    "model": "groq:llama-3.3-70b",
+    "phase": "react",
+    "estimated": true
+  } }
 ```
+
+Set **`estimated": true`** when the runtime computed an approximate cost (provider omitted dollar metadata). Clients should label rollups as approximate.
 
 ### `memory.session.write`
 
@@ -356,6 +414,15 @@ Emitted after each turn is persisted into session (short-term) memory.
     "output_preview": "The file contains...",
     "turn_count": 3
   } }
+```
+
+### `memory.session.turn_popped`
+
+Emitted after **`command.memory.pop_last_turn`** removes the most recent turn from session memory (e.g. CLI **`/undo`**).
+
+```jsonc
+{ "type": "memory.session.turn_popped",
+  "data": { "thread": "thread_xyz", "remaining_turns": 2 } }
 ```
 
 ### `memory.lt.recall`
@@ -383,7 +450,7 @@ Emitted when the `save_memory` tool writes a fact to long-term storage.
 
 ### `checkpoint.saved`
 
-Emitted after `_save_checkpoint` successfully persists a LangGraph checkpoint.
+Emitted after the agent successfully persists a LangGraph checkpoint (typically after each completed turn). Payload includes query, output, steps, and classifier **`analysis`** when available — so **`resume()`** can continue an interrupted run without re-classifying.
 
 ```jsonc
 { "type": "checkpoint.saved",
@@ -441,15 +508,17 @@ Emitted exactly once at the end. `reason` is `completed | user_aborted | error |
 
 ## Versioning & namespace reservation
 
-Already shipped (**v1**): `session.*`, `graph.*`, `pattern.*`, `thinking.*`, `token.*`, `message.*`, **`prompt.*`**, **`skill.*`**, `tool.*`, `hitl.*`, `worker.*`, `memory.*`, `checkpoint.*`, `feedback.*`, `metric.*`, `error.*`.
+Already shipped (**v1**): `session.*`, `runtime.*`, `graph.*`, `pattern.*`, `thinking.*`, `token.*`, `message.*`, **`prompt.*`**, **`skill.*`**, `tool.*`, `hitl.*`, `worker.*`, `memory.*`, `checkpoint.*`, `feedback.*`, `metric.*`, `error.*`.
 
 Additional event types may appear under existing namespaces without bumping **`v`** — follow the same dotted `type` convention and additive payload rules. Names not listed above remain available for new envelopes under those namespaces.
 
 ### Machine-readable schemas
 
-`python -m agloom.protocol.schema --out agp-schema.json` exports **events** (`oneOf` at the root) plus an auxiliary **`agp_commands`** object describing inbound **`command.*`** payloads (merged into the same file’s `$defs`).
+`python -m agloom.protocol.schema --out agp-schema.json` exports **events** (`oneOf` at the root) plus an auxiliary **`agp_commands`** object describing inbound **`command.*`** payloads (merged into the same file’s `$defs`). Maintainers: see [AGP from Python](../guides/agp-python.md) for contract-test layout.
 
 ---
+
+<a id="agp-inbound-commands"></a>
 
 ## Inbound commands (frontend → runtime)
 
@@ -506,7 +575,7 @@ Submit user feedback for a completed turn. The runtime calls the agent's `feedba
 
 ### `command.worker.assign`
 
-Dispatch a task to a named worker. The runtime starts an in-process worker task and streams lifecycle events; routing to remote nodes would use the same command shape as an optional future extension. The supervisor sees a `worker.spawned` event immediately, then `worker.completed` or `worker.failed` when the task ends.
+Dispatch a task to a named worker. The runtime starts an in-process worker task and streams lifecycle events; routing to remote nodes would use the same command shape as an optional future extension. The supervisor sees a `worker.spawned` event immediately, then `worker.completed`, `worker.halted`, or `worker.failed` when the task ends.
 
 `parent_thread` correlates the worker's events to the originating supervisor invocation.
 
@@ -524,7 +593,7 @@ Dispatch a task to a named worker. The runtime starts an in-process worker task 
 
 ### `command.session.resume`
 
-Reconnect to an existing session. The runtime emits `session.resumed` and, when an `EventStore` is configured, replays all events with `seq >= from_seq` so the client catches up.
+Reconnect to an existing **AGP session** and replay buffered envelopes. The runtime emits `session.resumed` and, when an `EventStore` is configured, replays all events with `seq >= from_seq` so the client catches up. This is **not** the same as **`agent.resume()`** in the Python library (graph interrupt continuation after HITL).
 
 ```jsonc
 { "type": "command.session.resume",
@@ -541,6 +610,17 @@ Request a **manual LangGraph checkpoint**; the runtime emits `checkpoint.saved` 
 ```
 
 `thread` and `label` are optional (`label` is stored as checkpoint metadata when supported).
+
+### `command.memory.pop_last_turn`
+
+Remove the **most recent** session-memory turn for a thread (does not rewind LangGraph checkpoints). The runtime emits **`memory.session.turn_popped`** with **`remaining_turns`**, or **`error.transient`** when the thread is empty or memory is disabled.
+
+```jsonc
+{ "type": "command.memory.pop_last_turn",
+  "data": { "thread": "thread_xyz" } }
+```
+
+`thread` is optional — when omitted, the runtime uses the active invocation thread.
 
 ### `command.runtime.shutdown`
 
@@ -596,7 +676,9 @@ Each connecting client gets its own AGP session. The same inbound NDJSON command
 
 ---
 
-## Inbound commands (frontend → runtime)
+## Python API reference (emitters, stores, runtime)
+
+Pointers to the code that implements AGP on the Python side (this is **not** a second list of inbound commands; see [Inbound commands (frontend → runtime)](#agp-inbound-commands) above for `command.*` shapes).
 
 - Python emitter: `agloom.protocol.SessionEmitter` (`agloom/protocol/emitter.py`)
 - Async emitter: `agloom.protocol.AsyncSessionEmitter` (WebSocket / non-blocking)

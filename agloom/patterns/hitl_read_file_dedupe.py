@@ -1,4 +1,4 @@
-"""``read_file``-only coalescer: skip L2 HITL when a second read is the same path/offset with ``limit`` ≤ a recent approval.
+"""``read_file``-only coalescer: skip L2 HITL when a second read is the same path/offset with ``limit`` ≤ a recent **allowlist** grant.
 
 Registered via ``CompositeToolHitlCoalescer`` in L2 middleware — do not generalize this logic to other
 tools without a separate, reviewed strategy (writes/shell/network are not subset-safe by args alone).
@@ -6,17 +6,36 @@ tools without a separate, reviewed strategy (writes/shell/network are not subset
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from time import monotonic
 from typing import Any
 
 READ_FILE_HITL_COALESCE_SEC = 35.0
 
 
+def _canonical_read_path(path: str) -> str:
+    """Best-effort stable path key (symlinks, ``.``, case on case-insensitive FS)."""
+    raw = path.strip()
+    if not raw:
+        return ""
+    try:
+        p = Path(raw)
+        resolved = p.resolve(strict=False)
+        if sys.platform == "win32":
+            return str(resolved).lower()
+        return str(resolved)
+    except (OSError, RuntimeError, ValueError):
+        if sys.platform == "win32":
+            return Path(raw).as_posix().lower()
+        return Path(raw).as_posix()
+
+
 def parse_read_file_path_offset_limit(tool_args: dict[str, Any]) -> tuple[str, int, int] | None:
     raw = tool_args.get("path")
     if not isinstance(raw, str):
         return None
-    path = raw.strip()
+    path = _canonical_read_path(raw)
     if not path:
         return None
     try:

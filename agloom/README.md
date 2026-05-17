@@ -24,4 +24,4 @@ For **AGP-shaped streams inside Python** without NDJSON I/O, use **`UnifiedAgent
 
 Examples and tests under this tree ship in the **git** repo; the PyPI wheel contents are controlled by `pyproject.toml`. Browse runnable samples under `agloom/examples/` in GitHub.
 
-The interactive **agloom** shell in **`agloom_cli/`** is a **Node.js** client that speaks AGP over stdio/WebSocket — it is documented separately under **agloom CLI** on Read the Docs, not inside this wheel.
+The interactive terminal is the **agloom-cli** npm package (`agloom_cli/` in this repo), not the PyPI console script `agloom`. This wheel provides `create_agent`, `agloom-runtime`, and embedding APIs only.

@@ -2,7 +2,8 @@
 import React from 'react'
 import type { ActiveTurnState } from '../../store/session.js'
 import { cn, fmtDuration } from '../../lib/utils/cn.js'
-import { Loader2, Users, Brain } from 'lucide-react'
+import { workerLineClass } from '../../lib/workerStatus.js'
+import { Loader2, Users, Brain, Octagon } from 'lucide-react'
 import { ToolCallRow } from './ToolCallRow.js'
 
 interface Props { turn: ActiveTurnState }
@@ -13,7 +14,7 @@ export const StreamingTurn = ({ turn }: Props): React.ReactElement => {
   return (
     <article className="flex flex-col gap-4">
       <div className="flex gap-3 justify-end">
-        <div className="max-w-[80%] px-4 py-2.5 rounded-2xl rounded-br-sm bg-indigo-600 text-white text-sm">
+        <div className="max-w-4/5 px-4 py-2.5 rounded-2xl rounded-br-sm bg-indigo-600 text-white text-sm">
           {userMessage}
         </div>
       </div>
@@ -31,10 +32,15 @@ export const StreamingTurn = ({ turn }: Props): React.ReactElement => {
           ))}
 
           {workers.map((w) => (
-            <div key={w.id} className={cn('flex items-center gap-1.5 text-xs', w.status === 'running' ? 'text-yellow-400' : w.status === 'done' ? 'text-emerald-400' : 'text-red-400')}>
-              <Users size={9} />
+            <div key={w.id} className={cn('flex items-center gap-1.5 text-xs', workerLineClass(w.status))}>
+              {w.status === 'halted'
+                ? <Octagon size={9} className="text-cyan-400 shrink-0" />
+                : <Users size={9} className="shrink-0" />}
               {w.name} {w.pattern && `[${w.pattern}]`}
               {w.status === 'running' && <Loader2 size={9} className="animate-spin" />}
+              {w.status === 'halted' && w.outputPreview && (
+                <span className="text-cyan-500/80 truncate max-w-48">{w.outputPreview}</span>
+              )}
             </div>
           ))}
 

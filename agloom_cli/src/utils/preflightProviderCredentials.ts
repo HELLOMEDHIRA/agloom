@@ -71,8 +71,22 @@ export const preflightProviderCredentials = (
   if (p) {
     args.push('--provider', p)
   }
-  const r = spawnSync(run, args, { encoding: 'utf8', shell: false, maxBuffer: 96_000 })
+  const r = spawnSync(run, args, {
+    encoding: 'utf8',
+    shell: false,
+    maxBuffer: 2_000_000,
+    timeout: 30_000,
+  })
   const out = `${r.stdout ?? ''}${r.stderr ?? ''}`
+  if (r.error) {
+    const code = (r.error as NodeJS.ErrnoException).code
+    if (code === 'ETIMEDOUT' || code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') {
+      return {
+        ok: false,
+        message: `Model check timed out after 30s (${run} providers resolve).`,
+      }
+    }
+  }
   if (r.error && (r.error as NodeJS.ErrnoException).code === 'ENOENT') {
     return {
       ok: false,

@@ -26,8 +26,10 @@ def model_id_supports_vision(model_id: str | None) -> bool:
             "claude-3",
             "claude-sonnet-4",
             "gemini",
-            "llama-3.2",
-            "llama3.2",
+            "llama-3.2-90b",
+            "llama-3.2-11b",
+            "llama3.2-90b",
+            "llama3.2-11b",
             "qwen-vl",
             "pixtral",
         )
@@ -36,6 +38,29 @@ def model_id_supports_vision(model_id: str | None) -> bool:
     if re.search(r"gpt-4[\w.-]*vision|vision-preview|image[_-]input|multimodal", m):
         return True
     return False
+
+
+def content_blocks_to_text(content: Any) -> str:
+    """Normalize ``AIMessage.content`` (str, None, or provider content blocks) to plain text."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                btype = block.get("type")
+                if btype in ("image", "image_url", "input_audio", "video", "file"):
+                    continue
+                if btype == "text" and "text" in block:
+                    parts.append(str(block.get("text", "")))
+                elif isinstance(block.get("text"), str):
+                    parts.append(block["text"])
+        return "".join(parts)
+    return str(content)
 
 
 def text_from_user_turn(user_turn: str | list[dict[str, Any]]) -> str:
@@ -56,7 +81,15 @@ def text_from_user_turn(user_turn: str | list[dict[str, Any]]) -> str:
 def merge_context_into_user_turn(augmented_text: str, original_user: Any) -> str | list[dict[str, Any]]:
     """Merge classifier/memory text with the original turn, preserving ``image_url`` blocks."""
     if isinstance(original_user, dict):
-        return augmented_text
+        images: list[dict[str, Any]] = []
+        if original_user.get("type") == "image_url":
+            images.append(original_user)
+        for b in original_user.get("content") or []:
+            if isinstance(b, dict) and b.get("type") == "image_url":
+                images.append(b)
+        if not images:
+            return augmented_text
+        return [{"type": "text", "text": augmented_text}, *images]
     if isinstance(original_user, str):
         return augmented_text
     images: list[dict[str, Any]] = []

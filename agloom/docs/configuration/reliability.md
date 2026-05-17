@@ -9,7 +9,7 @@ agloom includes production-grade reliability features that would normally take w
 | Parameter            | Default  | Controls                          |
 | -------------------- | -------- | --------------------------------- |
 | `llm_timeout`        | `120.0s` | Max time for a single LLM call    |
-| `classifier_timeout` | `30.0s`  | Max time for query classification |
+| `classifier_timeout` | `60.0s`  | Max time for query classification |
 
 ```python
 async def main():

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import random
 import sys
 from pathlib import Path
 
@@ -20,12 +21,18 @@ async def _run_async(args: argparse.Namespace, path: Path) -> int:
         print("eval YAML must contain a non-empty list: cases:", file=sys.stderr)
         return 2
 
+    seed = getattr(args, "eval_seed", None)
+    if seed is not None:
+        random.seed(seed)
+
     llm = resolve_llm_for_serve(args)
     if llm is None:
         print("No LLM resolved: set API keys or pass --model.", file=sys.stderr)
         return 1
 
     agent = await create_agent(model=llm, name="agloom-eval")
+    keep_going = bool(getattr(args, "eval_keep_going", False))
+    exit_code = 0
 
     for i, case in enumerate(cases):
         if not isinstance(case, dict):
@@ -37,16 +44,31 @@ async def _run_async(args: argparse.Namespace, path: Path) -> int:
             print(f"{cid}: missing string prompt/query", file=sys.stderr)
             return 2
         expect = case.get("expect_substring") or case.get("expect")
-        res = await agent.ainvoke(prompt.strip())
+        try:
+            res = await agent.ainvoke(prompt.strip())
+        except Exception as exc:
+            print(f"FAIL {cid}: raised {type(exc).__name__}: {exc}", file=sys.stderr)
+            exit_code = 1
+            if not keep_going:
+                await agent.aclose()
+                return exit_code
+            continue
         out = (res.output or "").strip()
         if expect is not None:
             if not isinstance(expect, str) or expect not in out:
-                print(f"FAIL {cid}: expected substring {expect!r} in output (got {out[:200]!r}…)", file=sys.stderr)
-                return 1
+                print(
+                    f"FAIL {cid}: expected substring {expect!r} in output (got {out[:200]!r}…)",
+                    file=sys.stderr,
+                )
+                exit_code = 1
+                if not keep_going:
+                    await agent.aclose()
+                    return exit_code
+                continue
         print(f"ok  {cid}")
 
     await agent.aclose()
-    return 0
+    return exit_code
 
 
 def run_eval_cli(args: argparse.Namespace) -> int:

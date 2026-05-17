@@ -42,7 +42,6 @@ def test_migrate_root_only_yaml_into_dot_agloom(tmp_path: Path) -> None:
     nested = tmp_path / ".agloom" / "agloom.yaml"
     assert nested.is_file()
     assert "root-only" in nested.read_text(encoding="utf-8")
-    assert "agsuperbrain:mcp/agsuperbrain.yaml" in nested.read_text(encoding="utf-8")
     assert sessions_dir == tmp_path / ".agloom" / "sessions"
     _, created2 = ensure_agloom_workspace(tmp_path)
     assert created2 is False
@@ -55,7 +54,8 @@ def test_ensure_adds_agsuperbrain_mcp_when_nested_yaml_has_none(tmp_path: Path) 
     dot.mkdir(parents=True)
     y = dot / "agloom.yaml"
     y.write_text("ai:\n  name: t\n  model: auto\n", encoding="utf-8")
-    sessions_dir, created = ensure_agloom_workspace(tmp_path)
+    args = SimpleNamespace(rewrite_workspace_yaml=True)
+    sessions_dir, created = ensure_agloom_workspace(tmp_path, args=args)
     assert created is False
     data = pyyaml.safe_load(y.read_text(encoding="utf-8"))
     servers = (data.get("mcp") or {}).get("servers") or []
@@ -125,6 +125,7 @@ def test_session_json_roundtrip(tmp_path: Path) -> None:
     assert p.name == "sess_abc123.json"
     data = json.loads(p.read_text(encoding="utf-8"))
     assert data["session_id"] == "sess_abc123"
+    assert data["schema_version"] == 1
     assert data["transport"] == "stdio"
     assert data["initial_thread"] == "thread_x"
     assert data["cwd"] == str(tmp_path.resolve())
@@ -180,7 +181,8 @@ def test_ensure_agloom_workspace_strips_memory_skills_enabled(tmp_path: Path) ->
         "ai:\n  model: auto\nmemory:\n  enabled: true\n  max_turns: 50\nskills:\n  enabled: true\n  max_skills: 30\n",
         encoding="utf-8",
     )
-    _, created = ensure_agloom_workspace(tmp_path)
+    args = SimpleNamespace(rewrite_workspace_yaml=True)
+    _, created = ensure_agloom_workspace(tmp_path, args=args)
     assert created is False
     body = y.read_text(encoding="utf-8")
     assert "max_turns: 50" in body

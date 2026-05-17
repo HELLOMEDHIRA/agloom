@@ -9,6 +9,7 @@ import asyncio
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from .logging_utils import get_logger
+from .llm_utils import robust_structured_call
 from .models import (
     PatternType,
     QueryAnalysis,
@@ -17,6 +18,12 @@ from .models import (
 )
 
 logger = get_logger(__name__)
+
+_CLASSIFIER_FALLBACK_SYSTEM = """\
+You are a helpful assistant. A structured classifier step failed upstream.
+Reply with a concise, direct answer to the user only—plain text, no JSON wrapper, \
+no mention of classifiers or errors unless the user asked about them.\
+"""
 
 CLASSIFIER_PROMPT = """\
 You are a Query Analyzer AND Responder for an adaptive AI agent system.
@@ -196,6 +203,36 @@ STRICT FIELD RULES
   use string values (e.g. "5", "1", "false", "true") so strict tool JSON Schema
   validation succeeds across providers; the runtime maps them to proper types.
 
+═══════════════════════════════════════════════════════════
+ORCHESTRATION PLAN (per-turn budgets; omit or "" to use defaults)
+═══════════════════════════════════════════════════════════
+
+  When the deployment allows recursive orchestration, also set:
+
+  orchestration_depth (string int, 0–20)
+    Suggested max recursive pattern depth for THIS query.
+    0 = no sub-pattern recursion (simple / DIRECT-class queries).
+    1–2 = light recovery spawns; 3–4 = deep multi-pattern work.
+    Must not exceed the agent ceiling configured by the operator.
+
+  orchestration_token_budget (string int)
+    Suggested total orchestration token budget for this turn (e.g. "8000", "50000").
+    Use "" when unsure.
+
+  orchestration_llm_call_budget (string int)
+    Suggested max orchestration LLM calls (classifier + spawns + eval), e.g. "15", "50".
+
+  orchestration_auto_escalation ("true" / "false" / "")
+    "true" only for hard queries (complexity ≥ 7) where follow-up patterns may help.
+    "" = let runtime derive from complexity.
+
+  Guidelines:
+    complexity 0–2  → depth "0", auto_escalation "false"
+    complexity 3–4  → depth "1", auto_escalation "false"
+    complexity 5–6  → depth "2", auto_escalation "false"
+    complexity 7–8  → depth "3", auto_escalation "true"
+    complexity 9–10 → depth "4", auto_escalation "true"
+
   system_instruction MUST be a non-empty string for every subtask.
   It defines the worker's role and persona. Be specific and role-appropriate.
   BAD:  "You are a helpful AI assistant."
@@ -210,19 +247,22 @@ QUERY TO ANALYZE
 Query: {query}
 """
 
-_QUERY_SLOT_MARKER = "\ufeff\ufeffAGLOOM_CLASSIFIER_QUERY\ufeff\ufeff"
+_QUERY_SLOT_MARKER_PREFIX = "\ufeffAGLOOM_CLASSIFIER_QUERY_"
 
 
 def build_classifier_user_prompt(*, tools_desc: str, query: str) -> str:
     """Fill :data:`CLASSIFIER_PROMPT` so user *query* and *tools_desc* cannot corrupt each other.
 
-    * A query that contains the literal substring ``{tools}`` stays intact.
-    * A tool description that contains ``{query}`` is not replaced by the real query text.
+    Uses a per-call random slot marker so a user query cannot collide with the placeholder.
+    Only the dedicated ``Query: …`` slot is substituted (``replace(..., 1)``).
     """
+    import secrets
+
+    marker = f"{_QUERY_SLOT_MARKER_PREFIX}{secrets.token_hex(8)}\ufeff"
     return (
-        CLASSIFIER_PROMPT.replace("{query}", _QUERY_SLOT_MARKER)
-        .replace("{tools}", tools_desc)
-        .replace(_QUERY_SLOT_MARKER, query)
+        CLASSIFIER_PROMPT.replace("{query}", marker, 1)
+        .replace("{tools}", tools_desc, 1)
+        .replace(marker, query, 1)
     )
 
 
@@ -274,8 +314,6 @@ async def analyze_query(
         )
 
     has_tools = bool(tools)
-
-    from .llm_utils import robust_structured_call
 
     try:
         raw = await robust_structured_call(
@@ -332,10 +370,17 @@ async def analyze_query(
 
         try:
             raw_resp = await asyncio.wait_for(
-                llm.ainvoke([HumanMessage(content=query)]),
+                llm.ainvoke(
+                    [
+                        SystemMessage(content=_CLASSIFIER_FALLBACK_SYSTEM),
+                        HumanMessage(content=query),
+                    ]
+                ),
                 timeout=classifier_timeout,
             )
-            fallback_answer = raw_resp.content
+            from .multimodal import content_blocks_to_text
+
+            fallback_answer = content_blocks_to_text(raw_resp.content)
         except Exception:
             fallback_answer = "Unable to process query."
 

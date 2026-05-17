@@ -22,7 +22,7 @@ class WorkerMetric:
     name: str
     pattern: str | None
     duration_ms: float | None
-    status: str   # done | failed
+    status: str   # done | failed | halted
 
 @dataclass
 class NodeMetric:
@@ -89,8 +89,23 @@ class MetricsAggregator:
     def __init__(self, store: SQLiteObservabilityStore) -> None:
         self._store = store
 
+    async def _all_session_events(self, session_id: str, *, page_size: int = 5000) -> list:
+        """Page through all events so long sessions are fully aggregated."""
+        out: list = []
+        offset = 0
+        while True:
+            batch = await self._store.get_events(session_id, limit=page_size, offset=offset)
+            if not batch:
+                break
+            out.extend(batch)
+            if len(batch) < page_size:
+                break
+            offset += page_size
+        return out
+
     async def compute(self, session_id: str) -> SessionMetrics:
-        events = await self._store.get_events(session_id, limit=10_000)
+        total_ev = await self._store.get_event_count(session_id)
+        events = await self._all_session_events(session_id)
         summary = await self._store.get_session(session_id)
 
         # ── Pass 1: raw aggregation ──────────────────────────────────────────
@@ -176,16 +191,21 @@ class MetricsAggregator:
                 if current_turn:
                     current_turn["workers"] += 1
 
-            elif ev.event_type in ("worker.completed", "worker.failed"):
+            elif ev.event_type in ("worker.completed", "worker.failed", "worker.halted"):
                 wname = d.get("name")
                 if wname is None or wname == "":
                     wname = d.get("worker_id") or ""
+                status_by_type = {
+                    "worker.completed": "done",
+                    "worker.failed": "failed",
+                    "worker.halted": "halted",
+                }
                 workers.append(WorkerMetric(
                     worker_id=d.get("worker_id", ""),
                     name=str(wname),
                     pattern=d.get("pattern"),
                     duration_ms=d.get("duration_ms"),
-                    status="done" if ev.event_type == "worker.completed" else "failed",
+                    status=status_by_type[ev.event_type],
                 ))
 
             # ── Graph nodes ──────────────────────────────────────────────────
@@ -233,10 +253,13 @@ class MetricsAggregator:
             for n, info in nodes.items()
         ]
 
+        db_turns = summary.total_turns if summary is not None else turn_idx
+        # ``turn_idx`` counts ``message.user`` opens; ``len(turns)`` counts completed user/assistant
+        # pairs. The sessions summary row is authoritative for turn count when present.
         return SessionMetrics(
             session_id=session_id,
-            total_events=len(events),
-            total_turns=summary.total_turns if summary else turn_idx,
+            total_events=total_ev,
+            total_turns=db_turns,
             total_input_tokens=summary.input_tokens if summary else 0,
             total_output_tokens=summary.output_tokens if summary else 0,
             session_duration_ms=summary.duration_ms if summary else None,
@@ -293,6 +316,9 @@ def _timeline_label(event_type: str, data: dict) -> str | None:
             return f"worker done: {data.get('worker_id', '?')}"
         case "worker.failed":
             return f"worker failed: {data.get('worker_id', '?')}"
+        case "worker.halted":
+            reason = data.get("reason", "HALT_ALL")
+            return f"worker halted: {data.get('worker_id', '?')} ({reason})"
         case "graph.node.enter":
             return f"node enter: {data.get('node', '?')}"
         case "graph.node.exit":

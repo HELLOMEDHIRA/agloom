@@ -40,12 +40,19 @@ agloom accepts tools in multiple formats:
 | Dict with function         | `{"name": "my_tool", "func": my_fn}`       |
 
 ```python
+@tool
+def echo_text(x: str) -> str:
+    """Return x as string (use @tool or a def with ``__name__`` — plain lambdas become ``callable_tool_<id>``)."""
+
+    return str(x)
+
+
 async def main():
     # All of these work:
     agent = await create_agent(model=llm, tools=[
         search_web,              # @tool decorated
         MyCustomTool(),          # BaseTool subclass
-        lambda x: str(x),       # plain callable (auto-wrapped)
+        echo_text,               # plain callable (auto-wrapped; name from __name__)
     ])
 ```
 

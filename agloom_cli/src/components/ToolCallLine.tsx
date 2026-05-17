@@ -3,7 +3,8 @@ import React from 'react'
 import { Box, Text } from 'ink'
 import { Badge } from '@inkjs/ui'
 import type { ToolCall } from '../store/session.js'
-import { fmtArgs, fmtDuration } from '../utils/format.js'
+import { useSessionStore } from '../store/session.js'
+import { fmtArgs, fmtDuration, stripAgloomToolResultEnvelope } from '../utils/format.js'
 
 const MAX_PLAIN_RESULT_LINES = 200
 
@@ -53,11 +54,13 @@ interface Props {
 }
 
 export const ToolCallLine = ({ tc, expanded }: Props): React.ReactElement => {
+  const mainColumnWidth = useSessionStore((s) => s.mainColumnWidth)
   const icon = STATUS_ICON[tc.status]
   const badgeColor = STATUS_BADGE_COLOR[tc.status]
+  const displayResult = tc.result ? stripAgloomToolResultEnvelope(tc.result) : tc.result
   const argsStr = fmtArgs(tc.args, 72)
   const chevron = expanded ? '▼' : '▶'
-  const nChars = tc.result?.length ?? tc.error?.length ?? 0
+  const nChars = displayResult?.length ?? tc.error?.length ?? 0
   const summary =
     tc.status === 'error'
       ? `${chevron} ${tc.tool}(${argsStr})`
@@ -79,9 +82,9 @@ export const ToolCallLine = ({ tc, expanded }: Props): React.ReactElement => {
         )}
       </Box>
 
-      {expanded && tc.status === 'done' && tc.result && looksLikeUnifiedDiff(tc.result) && (
+      {expanded && tc.status === 'done' && displayResult && looksLikeUnifiedDiff(displayResult) && (
         <Box marginLeft={3} flexDirection="column">
-          {tc.result.split('\n').slice(0, 120).map((line, i) => {
+          {displayResult.split('\n').slice(0, 120).map((line, i) => {
             const c = diffLineColor(line)
             const shown = line.length > 200 ? `${line.slice(0, 197)}…` : line
             return (
@@ -92,9 +95,9 @@ export const ToolCallLine = ({ tc, expanded }: Props): React.ReactElement => {
           })}
         </Box>
       )}
-      {expanded && tc.status === 'done' && tc.result && !looksLikeUnifiedDiff(tc.result) && (() => {
-        const cols = Math.max(40, (process.stdout.columns ?? 80) - 4)
-        const lines = tc.result.split('\n')
+      {expanded && tc.status === 'done' && displayResult && !looksLikeUnifiedDiff(displayResult) && (() => {
+        const cols = Math.max(40, mainColumnWidth - 4)
+        const lines = displayResult.split('\n')
         const slice = lines.slice(0, MAX_PLAIN_RESULT_LINES)
         const omitted = lines.length - slice.length
         return (
@@ -116,7 +119,7 @@ export const ToolCallLine = ({ tc, expanded }: Props): React.ReactElement => {
         <Box marginLeft={3} flexDirection="column">
           {tc.error.split('\n').slice(0, 40).map((line, i) => (
             <Text key={i} color="red" dimColor wrap="truncate-end">
-              {clipLine(line, Math.max(40, (process.stdout.columns ?? 80) - 4))}
+              {clipLine(line, Math.max(40, mainColumnWidth - 4))}
             </Text>
           ))}
         </Box>

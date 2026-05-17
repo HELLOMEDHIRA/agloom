@@ -8,6 +8,7 @@ call :meth:`BackgroundDelegationManager.shutdown` during agent teardown (see ``U
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 import uuid
 from collections.abc import Callable
@@ -82,9 +83,11 @@ async def _check_filter(target: HandoffTarget, query: str) -> bool:
     if target.filter_fn is None:
         return True
     result = target.filter_fn(query)
-    if asyncio.iscoroutine(result):
+    if asyncio.iscoroutine(result) or asyncio.isfuture(result):
         result = await result
-    return bool(result)
+    elif inspect.isawaitable(result):
+        result = await result
+    return result
 
 
 async def _transform_query(target: HandoffTarget, query: str) -> str:
@@ -92,7 +95,9 @@ async def _transform_query(target: HandoffTarget, query: str) -> str:
     if target.input_transform is None:
         return query
     result = target.input_transform(query)
-    if asyncio.iscoroutine(result):
+    if asyncio.iscoroutine(result) or asyncio.isfuture(result):
+        result = await result
+    elif inspect.isawaitable(result):
         result = await result
     return str(result)
 
@@ -169,8 +174,11 @@ class BackgroundTask:
     result: ExecutionResult | None = None
     error: str | None = None
     created_at: float = field(default_factory=time.time)
+    created_at_mono: float = field(default_factory=time.monotonic)
     completed_at: float | None = None
+    completed_at_mono: float | None = None
     _async_task: asyncio.Task | None = field(default=None, repr=False)
+    _done: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
 
 class BackgroundDelegationManager:
@@ -219,11 +227,13 @@ class BackgroundDelegationManager:
                 logger.warning(f"[BG-Delegation] task {task_id} failed: {exc!r}")
             finally:
                 bg.completed_at = time.time()
+                bg.completed_at_mono = time.monotonic()
+                bg._done.set()
 
         async with self._lock:
+            self._tasks[task_id] = bg
             async_task = asyncio.create_task(_run(), name=f"bg-delegate-{task_id}")
             bg._async_task = async_task
-            self._tasks[task_id] = bg
 
         logger.event(f"[BG-Delegation] submitted task_id={task_id}… → {target.name}")
         return task_id
@@ -243,8 +253,20 @@ class BackgroundDelegationManager:
         if bg is None:
             return None
 
+        if bg.status in (
+            BackgroundTaskStatus.COMPLETED,
+            BackgroundTaskStatus.FAILED,
+            BackgroundTaskStatus.CANCELLED,
+        ):
+            return bg.result
+
         if bg._async_task is not None and not bg._async_task.done():
             await asyncio.wait_for(asyncio.shield(bg._async_task), timeout=timeout)
+        elif not bg._done.is_set():
+            try:
+                await asyncio.wait_for(bg._done.wait(), timeout=timeout)
+            except TimeoutError:
+                return None
 
         return bg.result
 
@@ -262,6 +284,7 @@ class BackgroundDelegationManager:
                 pass
             bg.status = BackgroundTaskStatus.CANCELLED
             bg.completed_at = time.time()
+            bg.completed_at_mono = time.monotonic()
             return True
 
         return False
@@ -292,14 +315,9 @@ class BackgroundDelegationManager:
         if to_wait:
             await asyncio.gather(*to_wait, return_exceptions=True)
         async with self._lock:
-            cutoff = time.time()
-            to_remove = [
-                tid
-                for tid, bg in self._tasks.items()
-                if bg.completed_at is not None and bg.completed_at < cutoff
-            ]
-            for tid in to_remove:
-                del self._tasks[tid]
+            # Drop all tracked tasks after cancel/gather — time-based cutoff races with
+            # completions setting ``completed_at`` vs. this snapshot.
+            self._tasks.clear()
 
 
 def make_agent_tool(
@@ -307,8 +325,12 @@ def make_agent_tool(
     *,
     name: str | None = None,
     description: str | None = None,
+    thread_id: str | None = None,
+    user_id: str | None = None,
+    lt_namespace: tuple | None = None,
+    context: dict | None = None,
 ) -> Any:
-    """Return a ``StructuredTool`` that calls ``agent.ainvoke``."""
+    """Return a ``StructuredTool`` that calls ``agent.ainvoke`` with optional session context."""
     from langchain_core.tools import StructuredTool
 
     tool_name = name or f"ask_{agent.name}"
@@ -317,7 +339,16 @@ def make_agent_tool(
     )
 
     async def _invoke(query: str) -> str:
-        result = await agent.ainvoke(query)
+        kwargs: dict[str, Any] = {}
+        if thread_id is not None:
+            kwargs["thread_id"] = thread_id
+        if user_id is not None:
+            kwargs["user_id"] = user_id
+        if lt_namespace is not None:
+            kwargs["lt_namespace"] = lt_namespace
+        if context is not None:
+            kwargs["context"] = context
+        result = await agent.ainvoke(query, **kwargs)
         return result.output
 
     return StructuredTool.from_function(

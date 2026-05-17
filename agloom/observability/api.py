@@ -34,12 +34,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import threading
 from collections.abc import AsyncIterator
 from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from .metrics import MetricsAggregator
 from .replay import ReplayEngine
@@ -50,15 +52,24 @@ from .store import SQLiteObservabilityStore
 # Envelopes pushed via `push_live_event()` are delivered to all /live SSE clients.
 
 _live_subscribers: list[asyncio.Queue[dict | None]] = []
+_live_subscribers_lock = threading.Lock()
+_obs_api_logger = logging.getLogger(__name__)
 
 
 def push_live_event(envelope: dict) -> None:
     """Call from the runtime after every emit to deliver to /live SSE clients."""
-    for q in _live_subscribers:
+    with _live_subscribers_lock:
+        subscribers = list(_live_subscribers)
+    for q in subscribers:
         try:
             q.put_nowait(envelope)
         except asyncio.QueueFull:
-            pass  # slow consumer — drop rather than block runtime
+            _obs_api_logger.warning(
+                "observability live.drop: queue full (maxsize=%s) session=%s type=%s",
+                q.maxsize,
+                envelope.get("session"),
+                envelope.get("type"),
+            )
 
 
 # ── Router factory ─────────────────────────────────────────────────────────────
@@ -90,7 +101,8 @@ def make_obs_router(store: SQLiteObservabilityStore) -> APIRouter:
             sessions_n = await store.session_count()
         except Exception:
             pass
-        live_n = len(_live_subscribers)
+        with _live_subscribers_lock:
+            live_n = len(_live_subscribers)
         lines = [
             "# HELP agloom_up Process is serving observability routes.",
             "# TYPE agloom_up gauge",
@@ -138,7 +150,7 @@ def make_obs_router(store: SQLiteObservabilityStore) -> APIRouter:
         offset:     int = Query(0,   ge=0),
         after_seq:  int | None = Query(None),
         types:      str | None = Query(None, description="Comma-separated event types"),
-    ) -> list[dict]:
+    ) -> JSONResponse:
         event_types = [t.strip() for t in types.split(",")] if types else None
         rows = await store.get_events(
             session_id,
@@ -146,7 +158,15 @@ def make_obs_router(store: SQLiteObservabilityStore) -> APIRouter:
             after_seq=after_seq,
             event_types=event_types,
         )
-        return [{"seq": r.seq, "type": r.event_type, "ts": r.ts, "data": r.payload.get("data", {}), "run_id": r.run_id} for r in rows]
+        payload = [
+            {"seq": r.seq, "type": r.event_type, "ts": r.ts, "data": r.payload.get("data", {}), "run_id": r.run_id}
+            for r in rows
+        ]
+        headers: dict[str, str] = {}
+        if len(rows) >= limit and rows:
+            headers["X-Has-More"] = "true"
+            headers["X-Next-After-Seq"] = str(rows[-1].seq)
+        return JSONResponse(content=payload, headers=headers)
 
     # ── Metrics ────────────────────────────────────────────────────────────────
 
@@ -175,7 +195,7 @@ def make_obs_router(store: SQLiteObservabilityStore) -> APIRouter:
     async def get_worker_traces(session_id: str) -> list[dict]:
         rows = await store.get_events(
             session_id,
-            event_types=["worker.spawned", "worker.completed", "worker.failed"],
+            event_types=["worker.spawned", "worker.completed", "worker.failed", "worker.halted"],
             limit=5000,
         )
         return [{"seq": r.seq, "type": r.event_type, "ts": r.ts, **r.payload.get("data", {})} for r in rows]
@@ -203,7 +223,8 @@ def make_obs_router(store: SQLiteObservabilityStore) -> APIRouter:
     @router.get("/live")
     async def sse_live(request: Request) -> StreamingResponse:
         q: asyncio.Queue[dict | None] = asyncio.Queue(maxsize=500)
-        _live_subscribers.append(q)
+        with _live_subscribers_lock:
+            _live_subscribers.append(q)
 
         async def stream() -> AsyncIterator[str]:
             try:
@@ -218,7 +239,11 @@ def make_obs_router(store: SQLiteObservabilityStore) -> APIRouter:
                     except TimeoutError:
                         yield ": heartbeat\n\n"
             finally:
-                _live_subscribers.remove(q)
+                with _live_subscribers_lock:
+                    try:
+                        _live_subscribers.remove(q)
+                    except ValueError:
+                        pass
 
         return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 

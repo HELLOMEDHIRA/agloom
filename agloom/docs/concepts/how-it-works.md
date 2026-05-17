@@ -1,5 +1,7 @@
 # How agloom Works
 
+For **turn** vs **run** vs **call** and related terms, see the [Glossary](glossary.md).
+
 ## The Pipeline
 
 Every call to `agent.ainvoke(query)` flows through this pipeline:
@@ -46,10 +48,13 @@ An LLM-powered classifier analyzes the query and determines:
 - **Subtasks** — for multi-agent patterns, the decomposition plan
 - **Tools needed** — whether the query requires tool calling
 - **Parallelizable** — whether subtasks can run concurrently
+- **Orchestration plan** (optional) — when `max_pattern_depth > 0`, suggested per-turn depth, token/LLM budgets, and escalation hint (clamped to agent ceilings). See [Recursive orchestration](../features/orchestration.md).
+
+The classifier output is available on **`ExecutionResult.analysis`**. If you use a **`checkpointer`**, that result is also persisted so **`resume()`** can continue an interrupted run without picking a different pattern.
 
 ### 3. Cache Check
 
-If `query_cache=` is set (via `create_cache()`), agloom checks for semantically similar previous queries using a **vector cache** (**Qdrant** by default; pluggable). On a cache hit, the cached result is returned immediately (saving an LLM call). See [Query Cache](../features/memory.md#query-cache) for setup.
+By default, `create_agent()` uses an in-memory semantic cache (`default_query_cache()`). Pass **`query_cache=False`** to opt out, or pass a dict from `create_cache()` for custom embeddings / Qdrant. When caching is active, agloom checks for semantically similar previous queries using a **vector cache** (**Qdrant** by default; pluggable). On a cache hit, the cached result is returned immediately (saving an LLM call). See [Query Cache](../features/memory.md#query-cache) for setup.
 
 ### 4. HITL Interrupts (if configured)
 
@@ -58,6 +63,8 @@ If `interrupt_before=` includes the selected pattern, execution pauses and calls
 ### 5. Pattern Execution
 
 The selected pattern handler runs the query. Each pattern is optimized for different query types (see [Execution Patterns](patterns.md)).
+
+When **`max_pattern_depth > 0`**, execution goes through **`dispatch_pattern`**: the root pattern runs with optional bounded sub-spawns (recovery, escalation, dynamic DAG nodes). When depth is `0` for that turn (simple classifier plan), behavior matches the legacy single-pass path.
 
 ### 6. Skill Learning
 
@@ -73,6 +80,7 @@ The result is cached (if `query_cache=` is set) and returned as an `ExecutionRes
 
 - `output` — the response text
 - `pattern_used` — which pattern was selected
+- `analysis` — full classifier output (pattern, complexity, subtasks, orchestration hints)
 - `steps` — step-by-step execution trace
 - `token_usage` — aggregated token counts
 - `run_id` — unique identifier for feedback/tracing

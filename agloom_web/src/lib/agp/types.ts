@@ -205,6 +205,11 @@ export interface WorkerFailedEvent extends Envelope {
   data: { worker_id: string; error: string; error_class?: string; duration_ms?: number }
 }
 
+export interface WorkerHaltedEvent extends Envelope {
+  type: 'worker.halted'
+  data: { worker_id: string; reason?: string; output_preview?: string; duration_ms?: number }
+}
+
 // graph.*
 
 export interface GraphNodeEnterEvent extends Envelope {
@@ -215,6 +220,23 @@ export interface GraphNodeEnterEvent extends Envelope {
 export interface GraphNodeExitEvent extends Envelope {
   type: 'graph.node.exit'
   data: { node: string; pattern?: string; duration_ms?: number; output_preview?: string; error?: string }
+}
+
+export interface OrchestrationStepEvent extends Envelope {
+  type: 'orchestration.step'
+  data: {
+    depth?: number
+    pattern: string
+    action: string
+    worker_id?: string
+    reason?: string
+    input_preview?: string
+    output_preview?: string
+    duration_ms?: number
+    error?: string
+    confidence?: number
+    quality_score?: number
+  }
 }
 
 // memory.*
@@ -280,7 +302,7 @@ export interface MetricTokensEvent extends Envelope {
 
 export interface MetricCostEvent extends Envelope {
   type: 'metric.cost'
-  data: { cost: number; currency?: string; model?: string; phase?: string; worker_id?: string }
+  data: { cost: number; currency?: string; model?: string; phase?: string; worker_id?: string; estimated?: boolean }
 }
 
 export interface MetricBudgetApproachingEvent extends Envelope {
@@ -358,6 +380,10 @@ export interface RuntimeReadyEvent extends Envelope {
     agent_name?: string
     cli_tools_enabled?: boolean
     cli_tools_count?: number
+    harness_enabled?: boolean
+    session_memory_mode?: string
+    agent_store_kind?: string
+    mcp_servers_configured?: string[]
   }
 }
 
@@ -438,6 +464,21 @@ export interface RuntimeConfigAppliedEvent extends Envelope {
   }
 }
 
+export interface RuntimeMCPServersEvent extends Envelope {
+  type: 'runtime.mcp.servers'
+  data: {
+    server_names: string[]
+    servers?: Array<{
+      name: string
+      ok: boolean
+      error?: string | null
+      tool_count?: number
+      tool_names?: string[]
+      tool_names_truncated?: boolean
+    }>
+  }
+}
+
 export interface TodosUpdatedEvent extends Envelope {
   type: 'todos.updated'
   data: { items?: Array<Record<string, unknown>> }
@@ -492,6 +533,7 @@ export type AGPKnownEvent =
   | RuntimeFileStagedEvent
   | RuntimeToolResultEvent
   | RuntimeConfigAppliedEvent
+  | RuntimeMCPServersEvent
   | TodosUpdatedEvent
   | ToolCallStartEvent
   | ToolCallResultEvent
@@ -503,8 +545,10 @@ export type AGPKnownEvent =
   | WorkerSpawnedEvent
   | WorkerCompletedEvent
   | WorkerFailedEvent
+  | WorkerHaltedEvent
   | GraphNodeEnterEvent
   | GraphNodeExitEvent
+  | OrchestrationStepEvent
   | SkillLoadedEvent
   | SkillAppliedEvent
   | SkillLearnedEvent
@@ -525,10 +569,16 @@ export type AGPKnownEvent =
   | ErrorTransientEvent
   | ErrorFatalEvent
 
-/** Known AGP v1 catalogue + additive types above. Wire may carry other `type` strings — the runtime ``dispatch`` default branch must tolerate them (forward-compat). */
-export type AGPEvent = AGPKnownEvent
+/** Forward-compatible wire event: valid envelope + object ``data``, ``type`` not in the known catalogue. */
+export interface UnknownAgpEvent extends Envelope {
+  type: string
+  data: Record<string, unknown>
+}
 
-/** Parse and validate one NDJSON / WebSocket frame after ``JSON.parse`` (Zod; see ``agpWireParse.ts``). */
+/** Known AGP v1 catalogue + additive types above, plus forward-compatible unknown ``type`` strings. */
+export type AGPEvent = AGPKnownEvent | UnknownAgpEvent
+
+/** Parse and validate one NDJSON / WebSocket frame (Zod envelope + per-type ``data`` when catalogued). */
 export const parseInboundAGPEventJSON = (parsed: unknown): AGPEvent =>
   parseInboundAGPEventJSONWire(parsed) as unknown as AGPEvent
 
@@ -661,6 +711,11 @@ export interface CommandMemoryClearCmd {
   data?: { thread?: string }
 }
 
+export interface CommandMemoryPopLastTurnCmd {
+  type: 'command.memory.pop_last_turn'
+  data?: { thread?: string }
+}
+
 export interface CommandAttachFileCmd {
   type: 'command.attach.file'
   data: { filename: string; content_base64: string; thread?: string }
@@ -704,10 +759,11 @@ export type AGPCommand =
   | CommandToolInvokeCmd
   | CommandConfigSetCmd
   | CommandMemoryClearCmd
+  | CommandMemoryPopLastTurnCmd
   | CommandAttachFileCmd
   | CommandHarnessGitCmd
   | CommandPlanPreviewCmd
 
-// Utility types
+// Utility types (WebSocket `createAGPClient` — keep in sync with agloom_cli `types/agp.ts`)
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed' | 'error'

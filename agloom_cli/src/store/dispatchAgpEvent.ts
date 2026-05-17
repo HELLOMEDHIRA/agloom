@@ -11,6 +11,10 @@ import type {
   Worker,
 } from './session.js'
 import type { AGPEvent } from '../types/agp.js'
+import { isAgpKnownEvent } from '../types/agpEventGuards.js'
+import { finalizeAssistantMessage, stripAgloomToolResultEnvelope } from '../utils/format.js'
+
+export { isAgpKnownEvent } from '../types/agpEventGuards.js'
 
 const PROTOCOL_NOTES_CAP = 28
 const COMPLETED_TURNS_CAP = 200
@@ -21,6 +25,17 @@ const uid = (): string => `${Date.now().toString(36)}_${(++_seq).toString(36)}_$
 export const pushProtocolNotes = (notes: string[], line: string): string[] => {
   if (notes.length < PROTOCOL_NOTES_CAP) return [...notes, line]
   return [...notes.slice(notes.length - (PROTOCOL_NOTES_CAP - 1)), line]
+}
+
+/** Resolve filesystem path arguments from tool calls (wire uses `path`, `file_path`, etc.). */
+const toolCallTargetPath = (args: Record<string, unknown> | undefined): string => {
+  if (!args) return ''
+  const keys = ['path', 'file_path', 'target_file', 'filepath', 'filename'] as const
+  for (const k of keys) {
+    const v = args[k]
+    if (typeof v === 'string' && v.trim()) return v.trim()
+  }
+  return ''
 }
 
 const stringifyWireResultPreview = (v: unknown, max = 520): string => {
@@ -47,12 +62,19 @@ const newActiveTurn = (userMessage: string): ActiveTurnState => ({
 
 /** Apply one inbound AGP event to the current store snapshot. */
 export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore => {
+  if (!isAgpKnownEvent(evt)) {
+    return {
+      ...s,
+      protocolNotes: pushProtocolNotes(s.protocolNotes, `Unknown / unhandled AGP event · ${evt.type}`),
+    }
+  }
   switch (evt.type) {
     case 'session.opened': {
       const now = new Date().toISOString()
       return {
         ...s,
         sessionId: evt.session,
+        activeThreadId: evt.thread ?? s.activeThreadId,
         runtimeVersion: evt.data.runtime_version,
         sessionOpenedAtMs: Date.now(),
         sessionStartedAt: now,
@@ -62,6 +84,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         toolCallExpandedById: {},
         budgetUi: 'ok',
         filesUpdated: [],
+        lastMetricTokensSeq: 0,
       }
     }
 
@@ -70,6 +93,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
       return {
         ...s,
         sessionId: evt.session,
+        activeThreadId: evt.thread ?? s.activeThreadId,
         runtimeVersion: evt.data.runtime_version,
         sessionOpenedAtMs: Date.now(),
         sessionStartedAt: s.sessionStartedAt ?? now,
@@ -258,10 +282,54 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
     }
 
     case 'runtime.tools': {
-      const names = evt.data.tools.map((t) => t.name).join(', ')
+      const toolList = evt.data.tools ?? []
+      const extracted = toolList.map((t) => t.name).filter((n) => n && n.trim())
+      const names = extracted.join(', ')
       return {
         ...s,
-        protocolNotes: pushProtocolNotes(s.protocolNotes, `Tools (${evt.data.tools.length}): ${names || '—'}`),
+        toolNames: extracted.length ? extracted : s.toolNames,
+        protocolNotes: pushProtocolNotes(s.protocolNotes, `Tools (${toolList.length}): ${names || '—'}`),
+      }
+    }
+
+    case 'runtime.providers': {
+      const rows = evt.data.providers ?? []
+      const slugs = rows.map((p) => p.slug).join(', ')
+      return {
+        ...s,
+        providerRows: rows.map((p) => ({
+          slug: p.slug,
+          label: p.label,
+          default_model: p.default_model,
+          primary_env_key: p.primary_env_key ?? null,
+        })),
+        protocolNotes: pushProtocolNotes(
+          s.protocolNotes,
+          `Providers (${rows.length}): ${slugs || '—'}`,
+        ),
+      }
+    }
+
+    case 'runtime.session.renamed': {
+      const { from_session_id, to_session_id } = evt.data
+      const nextSession = s.sessionId === from_session_id ? to_session_id : s.sessionId
+      return {
+        ...s,
+        sessionId: nextSession,
+        protocolNotes: pushProtocolNotes(
+          s.protocolNotes,
+          `Session renamed · ${from_session_id} → ${to_session_id}`,
+        ),
+      }
+    }
+
+    case 'runtime.file.staged': {
+      const p = evt.data.path ?? '—'
+      const b = evt.data.bytes
+      const sz = b != null ? ` · ${b} B` : ''
+      return {
+        ...s,
+        protocolNotes: pushProtocolNotes(s.protocolNotes, `File staged · ${p}${sz}`),
       }
     }
 
@@ -326,7 +394,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         turnOutputTokens: 0,
         toolCallExpandedById: {},
         budgetUi: 'ok',
-        expandActiveThinking: true,
+        hideThinkingTrace: false,
       }
 
     case 'pattern.classified':
@@ -370,7 +438,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         status: 'running',
         activeTurn: {
           ...s.activeTurn,
-          streamedTokens: s.activeTurn.streamedTokens + evt.data.text,
+          streamedTokens: s.activeTurn.streamedTokens + (evt.data.text ?? ''),
         },
       }
 
@@ -398,7 +466,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
       let filesUpdated = s.filesUpdated
       if (isFileWrite) {
         const match = s.activeTurn.toolCalls.find((tc) => tc.toolCallId === evt.data.tool_call_id)
-        const fname = match ? String(match.args?.path ?? '') : ''
+        const fname = match ? toolCallTargetPath(match.args) : ''
         if (fname && !filesUpdated.includes(fname)) filesUpdated = [...filesUpdated, fname]
       }
       return {
@@ -472,6 +540,25 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         },
       }
 
+    case 'worker.halted':
+      if (!s.activeTurn) return s
+      return {
+        ...s,
+        activeTurn: {
+          ...s.activeTurn,
+          workers: s.activeTurn.workers.map((w) =>
+            w.workerId === evt.data.worker_id
+              ? {
+                  ...w,
+                  status: 'halted',
+                  error: evt.data.reason,
+                  outputPreview: evt.data.output_preview,
+                }
+              : w,
+          ),
+        },
+      }
+
     case 'graph.node.enter':
       if (!s.activeTurn) return s
       return {
@@ -486,6 +573,34 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
       const ms = evt.data.duration_ms != null ? `${evt.data.duration_ms}ms` : '?'
       const line = `Graph exit · ${evt.data.node} · ${ms}`
       return { ...s, protocolNotes: pushProtocolNotes(s.protocolNotes, line) }
+    }
+
+    case 'orchestration.step': {
+      if (!s.activeTurn) return s
+      const d = evt.data
+      const score =
+        d.confidence != null
+          ? ` conf=${(d.confidence * 100).toFixed(0)}%`
+          : d.quality_score != null
+            ? ` qual=${(d.quality_score * 100).toFixed(0)}%`
+            : ''
+      const label = `d${d.depth ?? 0} ${d.pattern} · ${d.action}${score}`
+      const step: ThinkingStep = {
+        id: uid(),
+        step: 'orchestration',
+        label,
+        detail: d.reason ?? d.output_preview ?? d.input_preview,
+        elapsedMs: d.duration_ms,
+      }
+      const note = `Orchestration · ${label}${d.reason ? ` · ${d.reason}` : ''}`
+      return {
+        ...s,
+        activeTurn: {
+          ...s.activeTurn,
+          thinkingSteps: [...s.activeTurn.thinkingSteps, step],
+        },
+        protocolNotes: pushProtocolNotes(s.protocolNotes, note),
+      }
     }
 
     case 'message.tool':
@@ -543,7 +658,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
       const completed: CompletedTurn = {
         id: active.id,
         userMessage: active.userMessage,
-        assistantMessage: evt.data.content || active.streamedTokens,
+        assistantMessage: finalizeAssistantMessage(evt.data.content ?? '', active.streamedTokens),
         thinkingSteps: [...active.thinkingSteps],
         toolCalls: [...active.toolCalls],
         workers: [...active.workers],
@@ -565,6 +680,9 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
     }
 
     case 'metric.tokens': {
+      if (evt.seq <= s.lastMetricTokensSeq) {
+        return s
+      }
       const slice: MetricTokensSlice = {
         id: uid(),
         phase: evt.data.phase,
@@ -582,6 +700,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         ...s,
         totalInputTokens: s.totalInputTokens + inTok,
         totalOutputTokens: s.totalOutputTokens + outTok,
+        lastMetricTokensSeq: evt.seq,
         turnInputTokens: s.activeTurn ? s.turnInputTokens + inTok : s.turnInputTokens,
         turnOutputTokens: s.activeTurn ? s.turnOutputTokens + outTok : s.turnOutputTokens,
         model: sessionModel,
@@ -726,8 +845,5 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
 
     case 'error.transient':
       return { ...s, errorMessage: evt.data.message, outboundPrompt: null }
-
-    default:
-      return s
   }
 }

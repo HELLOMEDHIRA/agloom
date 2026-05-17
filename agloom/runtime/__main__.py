@@ -34,6 +34,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
+import signal
 import sys
 import time
 from collections.abc import Awaitable, Callable
@@ -45,51 +47,18 @@ from uuid import uuid4
 from ..compat import ensure_langchain_pending_deprecation_suppressed
 from ..mcp_support import MCPConnectionError
 from ..protocol import SessionEmitter
-from ..protocol.commands import (
-    CommandAttachFile,
-    CommandCancel,
-    CommandConfigSet,
-    CommandFeedback,
-    CommandHarnessGit,
-    CommandHITLRespond,
-    CommandInvoke,
-    CommandMemoryClear,
-    CommandMemoryPopLastTurn,
-    CommandPing,
-    CommandPlanPreview,
-    CommandProvidersList,
-    CommandRuntimeShutdown,
-    CommandSchemaRequest,
-    CommandSessionCreate,
-    CommandSessionDelete,
-    CommandSessionList,
-    CommandSessionRename,
-    CommandSessionResume,
-    CommandSnapshotRequest,
-    CommandSubscribe,
-    CommandToolInvoke,
-    CommandToolList,
-    CommandUnsubscribe,
-    CommandWorkerAssign,
-    command_adapter,
-)
+from ..protocol.commands import command_adapter
 from ..protocol.envelope import Envelope
-from .bridge import new_session_id, run_invocation
+from .bridge import new_session_id
+from .command_dispatch import DispatchResult, dispatch_command, runtime_cli_tool_metrics, runtime_log
 from .hitl import HITLBridge
+
+_logger = logging.getLogger(__name__)
 
 
 def _eprint(msg: str) -> None:
     """Print to stderr — never to stdout (stdout is AGP only)."""
-    print(msg, file=sys.stderr, flush=True)
-
-
-def _runtime_cli_tool_metrics(agent: Any) -> tuple[bool, int]:
-    from ..cli_tools import CLI_TOOL_NAMES
-
-    tool_objs = getattr(agent, "config", {}).get("tools", []) or []
-    names = {getattr(t, "name", None) for t in tool_objs}
-    count = sum(1 for n in names if n in CLI_TOOL_NAMES)
-    return count > 0, count
+    runtime_log(msg)
 
 
 async def _noop_langgraph_store_cleanup() -> None:
@@ -109,7 +78,7 @@ def _agent_lt_boot_suffix(args: argparse.Namespace) -> str:
     kind = getattr(args, "agent_store", "sqlite")
     parts = [
         "skills + LT memory",
-        "harness optional (on by default when an LT store is enabled; use --no-harness to disable)",
+        "harness on when an LT store is open unless --no-harness (progress + git tools)",
     ]
     raw_path = getattr(args, "agent_store_path", ".agloom/graph_store.sqlite")
     path_disp = str(Path(raw_path).expanduser())
@@ -194,7 +163,21 @@ async def _open_runtime_langgraph_store(
     return store, _cleanup_async
 
 
-async def _read_stdin_lines(queue: asyncio.Queue[str | None]) -> None:
+def _strip_utf8_bom(line: str) -> str:
+    if line.startswith("\ufeff"):
+        return line[1:]
+    return line
+
+
+def _stdin_line_too_long(raw: bytes, *, max_line_bytes: int) -> bool:
+    return max_line_bytes > 0 and len(raw) > max_line_bytes
+
+
+async def _read_stdin_lines(
+    queue: asyncio.Queue[str | None],
+    *,
+    max_line_bytes: int = 4 * 1024 * 1024,
+) -> None:
     """Read stdin line-by-line; push each non-empty line onto *queue*. ``None`` signals EOF.
 
     Prefer :meth:`asyncio.loop.connect_read_pipe` so stdin uses asyncio stream I/O (Unix / fewer
@@ -227,7 +210,11 @@ async def _read_stdin_lines(queue: asyncio.Queue[str | None]) -> None:
                 _eprint("[agloom-runtime] stdin closed (EOF); exiting serve loop")
                 await queue.put(None)
                 return
-            stripped = line.strip()
+            raw = line.encode("utf-8", errors="replace")
+            if _stdin_line_too_long(raw, max_line_bytes=max_line_bytes):
+                _eprint(f"[agloom-runtime] stdin line exceeds {max_line_bytes} bytes; dropped")
+                continue
+            stripped = _strip_utf8_bom(line.strip())
             if stripped:
                 await queue.put(stripped)
 
@@ -245,8 +232,13 @@ async def _read_stdin_lines(queue: asyncio.Queue[str | None]) -> None:
                 _eprint("[agloom-runtime] stdin closed (EOF); exiting serve loop")
                 await queue.put(None)
                 return
+            if line_bytes.startswith(b"\xef\xbb\xbf"):
+                line_bytes = line_bytes[3:]
+            if _stdin_line_too_long(line_bytes, max_line_bytes=max_line_bytes):
+                _eprint(f"[agloom-runtime] stdin line exceeds {max_line_bytes} bytes; dropped")
+                continue
             line = line_bytes.decode("utf-8", errors="replace")
-            stripped = line.strip()
+            stripped = _strip_utf8_bom(line.strip())
             if stripped:
                 await queue.put(stripped)
     finally:
@@ -262,9 +254,7 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             apply_api_key_env,
             build_create_agent_kwargs,
             cli_tools_options_from_args,
-            inject_api_key_secret_from_session_marker,
-            merge_api_key_env_from_session_marker,
-            open_sqlite_session_memory,
+            open_isolated_session_memory,
             resolve_llm_for_serve,
             runtime_ready_sidebar_from_args,
             session_started_snapshot_from_args,
@@ -273,29 +263,37 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         _eprint(f"[agloom-runtime] failed to import CLI helpers: {exc!r}")
         return 2
 
-    from .hitl_allowlist import hitl_allowlist_paths_for_runtime
+    from .session_bootstrap import (
+        make_hitl_bridge,
+        open_event_store_from_args,
+        prepare_runtime_session,
+        teardown_runtime_session,
+    )
     from .workspace_bootstrap import (
         attach_session_memory_to_session_marker,
-        bootstrap_optional_agsuperbrain,
-        ensure_agloom_workspace,
-        session_marker_json_path,
         write_session_started_json,
     )
 
-    session_id = args.session or new_session_id()
-    initial_thread = (
-        str(args.thread).strip()
-        if getattr(args, "thread", None) and str(getattr(args, "thread", "")).strip()
-        else f"thread_{uuid4().hex[:16]}"
-    )
     _cwd = Path.cwd()
-    _sd, yaml_created = ensure_agloom_workspace(_cwd, args=args)
-    if yaml_created:
+    _session_arg = getattr(args, "session", None)
+    _session_arg = str(_session_arg).strip() if _session_arg else None
+    _thread_arg = getattr(args, "thread", None)
+    _thread_arg = str(_thread_arg).strip() if _thread_arg else None
+    prepared = prepare_runtime_session(
+        args,
+        transport="stdio",
+        session_id=_session_arg,
+        initial_thread=_thread_arg,
+        cwd=_cwd,
+    )
+    session_id = prepared.session_id
+    initial_thread = prepared.initial_thread
+    _sd = prepared.sessions_dir
+    _marker_json = prepared.marker_path
+    _al_set = prepared.allowlist
+    args = prepared.working_args
+    if prepared.yaml_created:
         _eprint("[agloom-runtime] wrote starter .agloom/agloom.yaml (no project config found).")
-    bootstrap_optional_agsuperbrain(_cwd, args=args)
-    _marker_json = session_marker_json_path(_sd, session_id) if _sd.is_dir() else None
-    inject_api_key_secret_from_session_marker(args, _marker_json)
-    merge_api_key_env_from_session_marker(args, _marker_json)
 
     try:
         apply_api_key_env(args)
@@ -313,29 +311,7 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             _eprint(f"[agloom-runtime] --otel requires optional deps: pip install 'agloom[otel]' ({exc})")
             return 2
 
-    store = None
-    if args.store == "sqlite":
-        from ..protocol.store import SqliteEventStore
-        store = SqliteEventStore(args.store_path or ".agloom/agp_events.db")
-    elif args.store == "memory":
-        from ..protocol.store import MemoryEventStore
-        store = MemoryEventStore()
-
-    _al_set, _al_leg, _al_sess = hitl_allowlist_paths_for_runtime(
-        args,
-        session_marker_json=_marker_json,
-        session_scoped=_marker_json is not None,
-        cwd=_cwd,
-    )
-    write_session_started_json(
-        _sd,
-        session_id,
-        transport="stdio",
-        thread=initial_thread,
-        record_cwd=_cwd,
-        hitl_tool_allowlist=sorted(_al_set),
-        extra=session_started_snapshot_from_args(args),
-    )
+    store = await open_event_store_from_args(args)
 
     emitter = SessionEmitter(
         session=session_id,
@@ -344,12 +320,7 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         capabilities=[],
         store=store,
     )
-    hitl_bridge = HITLBridge(
-        emitter,
-        tool_allowlist=_al_set,
-        allowlist_persist_path=_al_leg,
-        allowlist_session_marker=_al_sess,
-    )
+    hitl_bridge = make_hitl_bridge(emitter, prepared)
 
     lg_store, lg_store_cleanup = await _open_runtime_langgraph_store(args)
     use_harness = lg_store is not None and not getattr(args, "no_harness", False)
@@ -404,9 +375,13 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         ca_kw = build_create_agent_kwargs(args)
         mem_cleanup_acc: list[Any] = []
         try:
-            sm_mem, sm_cleanup = await open_sqlite_session_memory(args)
+            sm_mem, sm_cleanup = await open_isolated_session_memory(
+                args,
+                agp_session_id=session_id,
+            )
             if sm_mem is not None:
                 ca_kw["memory"] = sm_mem
+            if sm_cleanup is not None:
                 mem_cleanup_acc.append(sm_cleanup)
         except Exception as exc:
             _eprint(f"[agloom-runtime] session memory init failed: {exc!r}")
@@ -431,7 +406,7 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         agent.config["_hitl_tool_allowlist"] = _al_set
         agent_holder["agent"] = agent
         attach_session_memory_to_session_marker(agent.config.get("memory"), _sd, session_id)
-        _ct_en, _ct_ct = _runtime_cli_tool_metrics(agent)
+        _ct_en, _ct_ct = runtime_cli_tool_metrics(agent)
         llm_obj = agent.config.get("llm")
         model_id_guess = None
         if llm_obj is not None:
@@ -497,10 +472,11 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             token_limit=int(bt_n) if bt_n is not None and int(bt_n) > 0 else None,
             cost_limit_usd=float(bt_c) if bt_c is not None and float(bt_c) > 0 else None,
         )
-        emitter.budget_tracker = budget_tracker  # type: ignore[attr-defined]
+        emitter.budget_tracker = budget_tracker
 
     obs_store = None
     obs_server_task: asyncio.Task | None = None
+    obs_ingest_tasks: set[asyncio.Task[None]] = set()
     if getattr(args, "obs", False):
         try:
             from ..observability import ObservabilityStore, make_obs_router, push_live_event
@@ -509,13 +485,25 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
 
             # Persist and fan-out via ``on_emit`` because ``SessionEmitter._write`` is sync
             # (an async hook would yield an un-awaited coroutine).
+            async def _ingest_envelope(payload: dict[str, Any]) -> None:
+                try:
+                    await obs_store.ingest(payload)
+                except Exception:
+                    _logger.exception("observability ingest failed")
+
             def _obs_on_emit(envelope: Envelope) -> None:
                 loop = asyncio.get_running_loop()
                 d = envelope.model_dump(mode="json")
-                loop.create_task(obs_store.ingest(d))  # noqa: RUF006
+                task = loop.create_task(_ingest_envelope(d), name="agp-obs-ingest")
+                obs_ingest_tasks.add(task)
+
+                def _done(t: asyncio.Task[None]) -> None:
+                    obs_ingest_tasks.discard(t)
+
+                task.add_done_callback(_done)
                 push_live_event(d)
 
-            emitter.on_emit = _obs_on_emit  # type: ignore[attr-defined]
+            emitter.on_emit = _obs_on_emit
 
             import uvicorn
             from fastapi import FastAPI
@@ -530,11 +518,28 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             _eprint(f"[agloom-runtime] observability startup failed: {exc!r}")
 
     cmd_queue: asyncio.Queue[str | None] = asyncio.Queue()
-    stdin_task = asyncio.create_task(_read_stdin_lines(cmd_queue), name="agp-stdin-reader")
+    stdio_max_line = int(getattr(args, "stdio_max_line_bytes", 4 * 1024 * 1024) or 0)
+    stdin_task = asyncio.create_task(
+        _read_stdin_lines(cmd_queue, max_line_bytes=stdio_max_line),
+        name="agp-stdin-reader",
+    )
     invocation_tasks: set[asyncio.Task[None]] = set()
     # Explicit full-thread-id → task mapping for O(1) targeted cancellation
     thread_tasks: dict[str, asyncio.Task[None]] = {}
     shutdown = asyncio.Event()
+
+    def _request_shutdown() -> None:
+        shutdown.set()
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _request_shutdown)
+        except (NotImplementedError, OSError, ValueError):
+            try:
+                signal.signal(sig, lambda _s, _f, _sig=sig: _request_shutdown())
+            except (OSError, ValueError):
+                pass
 
     hb_interval = float(getattr(args, "heartbeat_interval", 30.0) or 0.0)
     hb_task: asyncio.Task[None] | None = None
@@ -559,10 +564,15 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
                 payload = json.loads(line)
                 cmd = command_adapter.validate_python(payload)
             except (json.JSONDecodeError, Exception) as exc:
-                _eprint(f"[agloom-runtime] dropping malformed inbound line: {exc!r}")
+                emitter.emit_error(
+                    severity="transient",
+                    message=f"malformed or invalid AGP command line: {exc}",
+                    stage="io.command",
+                )
+                _eprint(f"[agloom-runtime] malformed inbound line: {exc!r}")
                 continue
             try:
-                await _dispatch_command(
+                result = await dispatch_command(
                     cmd,
                     agent=agent_holder.get("agent"),
                     emitter=emitter,
@@ -577,39 +587,42 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
                     budget_tracker=budget_tracker,
                     invoke_working_dir=Path(getattr(args, "cli_tools_working_dir", None) or ".").resolve(),
                 )
+                if result is DispatchResult.SHUTDOWN:
+                    break
             except MCPConnectionError as exc:
                 _eprint(f"[agloom-runtime] {exc}")
             except RuntimeError:
                 pass
     finally:
         shutdown.set()
-        if hb_task is not None:
-            hb_task.cancel()
-            try:
-                await hb_task
-            except (asyncio.CancelledError, Exception):
-                pass
-        for t in invocation_tasks:
-            if not t.done():
-                hitl_bridge.prepare_invocation_cancel(t, reason="shutdown")
-                t.cancel()
-        if invocation_tasks:
-            await asyncio.gather(*invocation_tasks, return_exceptions=True)
-        hitl_bridge.cancel_all()
+        await teardown_runtime_session(
+            agent=agent_holder.get("agent"),
+            emitter=emitter,
+            hitl_bridge=hitl_bridge,
+            thread_tasks=thread_tasks,
+            invocation_tasks=invocation_tasks,
+            mem_cleanups=agent_holder.get("_mem_cleanup"),
+            stop_heartbeat=shutdown,
+            heartbeat_task=hb_task,
+            close_reason="shutdown",
+            lg_store_cleanup=lg_store_cleanup,
+        )
         stdin_task.cancel()
         try:
             await stdin_task
         except (asyncio.CancelledError, Exception):
             pass
-        emitter.close(reason="shutdown")
-        a = agent_holder.get("agent")
-        if a is not None:
-            await a.aclose()
-        await lg_store_cleanup()
-        for fn in agent_holder.get("_mem_cleanup", []):
-            await fn()
+        if obs_ingest_tasks:
+            for t in list(obs_ingest_tasks):
+                if not t.done():
+                    t.cancel()
+            await asyncio.gather(*obs_ingest_tasks, return_exceptions=True)
         if obs_server_task and not obs_server_task.done():
             obs_server_task.cancel()
+            try:
+                await obs_server_task
+            except (asyncio.CancelledError, Exception):
+                pass
         if obs_store:
             await obs_store.close()
     return 0
@@ -679,588 +692,6 @@ async def _serve_ws(args: argparse.Namespace) -> int:
         await lg_store_cleanup()
     return 0
 
-
-async def _dispatch_command(
-    cmd: Any,
-    *,
-    agent: Any,
-    emitter: SessionEmitter,
-    hitl_bridge: HITLBridge,
-    ensure_agent: Any = None,
-    rewrite_session_marker: Any = None,
-    invocation_tasks: set[asyncio.Task[None]],
-    thread_tasks: dict[str, asyncio.Task[None]],
-    shutdown: asyncio.Event,
-    store: Any = None,
-    session_id: str = "",
-    budget_tracker: Any | None = None,
-    invoke_working_dir: Path | None = None,
-) -> None:
-    """Route one typed command to its handler."""
-
-    if isinstance(cmd, CommandRuntimeShutdown):
-        shutdown.set()
-        return
-
-    if isinstance(cmd, CommandHITLRespond):
-        ok = hitl_bridge.respond(
-            cmd.data.request_id,
-            cmd.data.decision,
-            text=cmd.data.text,
-            actor=cmd.data.actor,
-        )
-        if not ok:
-            _eprint(f"[agloom-runtime] no pending HITL request for id={cmd.data.request_id!r}")
-        return
-
-    async def _agent_or_skip() -> Any | None:
-        if agent is not None:
-            return agent
-        if ensure_agent is not None:
-            try:
-                return await ensure_agent()
-            except ImportError:
-                return None
-            except MCPConnectionError:
-                raise
-            except RuntimeError:
-                return None
-        emitter.emit_error(severity="transient", message="agent not available — no model configured", stage="invoke")
-        return None
-
-    if isinstance(cmd, CommandInvoke):
-        resolved = await _agent_or_skip()
-        if resolved is None:
-            _eprint(
-                "[agloom-runtime] command.invoke skipped — agent did not start. "
-                "Typical causes: missing provider API key (e.g. NVIDIA_API_KEY for nvidia:… models), "
-                "invalid or unresolved --model, or missing optional extras. "
-                "See stderr for earlier bootstrap errors; use an up-to-date agloom-cli so direct mode "
-                "prints AGP error.* lines on stderr."
-            )
-            emitter.emit_error(
-                severity="transient",
-                message=(
-                    "Invoke skipped — the agent never started (missing API keys, unresolved model, or extras). "
-                    "Check this terminal for [agloom-runtime] lines."
-                ),
-                stage="invoke.skipped",
-            )
-            return
-        agent = resolved
-        if budget_tracker is not None and budget_tracker.is_invoke_blocked():
-            emitter.emit_error(
-                severity="transient",
-                message="Session budget exhausted (tokens or cost). Raise limits via command.config.set.",
-                stage="budget.blocked",
-            )
-            return
-        from .attachment_stage import prepare_invoke_command
-
-        thread = cmd.data.thread or f"thread_{uuid4().hex[:16]}"
-        wd = invoke_working_dir or Path.cwd().resolve()
-        try:
-            prompt, summaries = prepare_invoke_command(cmd, agent=agent, thread=thread, working_dir=wd)
-        except ValueError as exc:
-            emitter.emit_error(severity="transient", message=str(exc), stage="invoke.attachments")
-            return
-        inv_emitter = emitter.fork_for_thread(thread)
-        task = asyncio.create_task(
-            run_invocation(
-                agent=agent,
-                prompt=prompt,
-                thread=thread,
-                emitter=inv_emitter,
-                hitl_bridge=hitl_bridge,
-                user_attachments=summaries or None,
-            ),
-            name=f"agp-invocation-{thread[:8]}",
-        )
-        hitl_bridge.bind_task_emitter(task, inv_emitter, thread=thread)
-        invocation_tasks.add(task)
-        thread_tasks[thread] = task
-
-        def _on_done_invocation(t: asyncio.Task[None]) -> None:
-            invocation_tasks.discard(t)
-            thread_tasks.pop(thread, None)
-
-        task.add_done_callback(_on_done_invocation)
-        return
-
-    if isinstance(cmd, CommandCancel):
-        target_thread = cmd.data.thread
-        cancelled_n = 0
-        if target_thread is not None:
-            # O(1) exact match via the explicit mapping
-            task = thread_tasks.get(target_thread)
-            if task and not task.done():
-                hitl_bridge.prepare_invocation_cancel(task, reason="user_aborted")
-                task.cancel()
-                cancelled_n = 1
-                # Cancel only HITL requests bound to this specific thread
-                hitl_bridge.cancel_for_thread(target_thread)
-        else:
-            # No specific thread — cancel everything
-            for t in list(invocation_tasks):
-                if not t.done():
-                    hitl_bridge.prepare_invocation_cancel(t, reason="user_aborted")
-                    t.cancel()
-                    cancelled_n += 1
-            hitl_bridge.cancel_all()
-        if not cancelled_n:
-            _eprint(
-                f"[agloom-runtime] command.cancel matched no invocations"
-                f"{f' (thread={target_thread!r})' if target_thread else ''}"
-            )
-        return
-
-    if isinstance(cmd, CommandWorkerAssign):
-        agent = await _agent_or_skip()
-        if agent is None:
-            return
-        wthread = cmd.data.thread or f"wt_{uuid4().hex[:12]}"
-        w_emitter = emitter.fork_for_thread(wthread)
-        # Emit worker.spawned so the supervisor sees the task has been dispatched.
-        w_emitter.emit_worker_spawned(
-            worker_id=cmd.data.worker_id,
-            name=cmd.data.worker_id,
-            pattern=cmd.data.pattern,
-            task=cmd.data.task,
-        )
-        wtask = asyncio.create_task(
-            run_invocation(
-                agent=agent,
-                prompt=cmd.data.task,
-                thread=wthread,
-                emitter=w_emitter,
-                hitl_bridge=hitl_bridge,
-            ),
-            name=f"agp-worker-{cmd.data.worker_id[:8]}",
-        )
-        hitl_bridge.bind_task_emitter(wtask, w_emitter, thread=wthread)
-        invocation_tasks.add(wtask)
-        thread_tasks[wthread] = wtask
-
-        def _on_done_worker(t: asyncio.Task[None]) -> None:
-            invocation_tasks.discard(t)
-            thread_tasks.pop(wthread, None)
-
-        wtask.add_done_callback(_on_done_worker)
-        _eprint(f"[agloom-runtime] worker {cmd.data.worker_id!r} dispatched on thread={wthread!r}")
-        return
-
-    if isinstance(cmd, CommandSessionResume):
-        from_seq = cmd.data.from_seq or 0
-        if store is not None:
-            emitter.resume(resumed_from_thread=cmd.data.thread, replayed_from_seq=from_seq if from_seq > 0 else None)
-            async for evt_dict in store.replay(session_id, from_seq=from_seq):
-                emitter.write_replay_dict(evt_dict)
-        else:
-            emitter.resume(resumed_from_thread=cmd.data.thread)
-        return
-
-    if isinstance(cmd, CommandFeedback):
-        agent = await _agent_or_skip()
-        if agent is None:
-            return
-        feedback_handler = getattr(agent, "config", {}).get("feedback_handler")
-        if feedback_handler is None:
-            _eprint("[agloom-runtime] command.feedback received but no feedback_handler configured")
-        else:
-            try:
-                await feedback_handler.on_feedback(
-                    run_id=cmd.data.run_id,
-                    rating=cmd.data.rating,
-                    comment=cmd.data.comment,
-                    correct=cmd.data.correct,
-                    metadata=cmd.data.metadata,
-                )
-            except Exception as exc:
-                _eprint(f"[agloom-runtime] feedback handler error: {exc!r}")
-        # Always emit the wire event so frontends can track it regardless.
-        emitter.emit_feedback_scored(
-            run_id=cmd.data.run_id,
-            rating=cmd.data.rating,
-            comment=cmd.data.comment,
-            correct=cmd.data.correct,
-            metadata=cmd.data.metadata,
-        )
-        return
-
-    if isinstance(cmd, CommandSnapshotRequest):
-        agent = await _agent_or_skip()
-        if agent is None:
-            return
-        checkpointer = getattr(agent, "config", {}).get("checkpointer")
-        label = cmd.data.label
-        thread = cmd.data.thread or session_id
-        if checkpointer is None:
-            _eprint("[agloom-runtime] command.snapshot.request: no checkpointer configured")
-        else:
-            try:
-                from ..models import ExecutionResult, PatternType
-                from ..unified_agent import _save_checkpoint
-                dummy_result = ExecutionResult(
-                    pattern_used=PatternType.DIRECT,
-                    query="",
-                    output="",
-                    steps_taken=0,
-                    success=True,
-                    run_id=f"snap_{uuid4().hex[:8]}",
-                )
-                await _save_checkpoint(checkpointer, thread, dummy_result, "snapshot")
-                emitter.emit_checkpoint_saved(thread=thread, label=label)
-            except Exception as exc:
-                _eprint(f"[agloom-runtime] snapshot failed: {exc!r}")
-        return
-
-    if isinstance(cmd, CommandPing):
-        emitter.emit_runtime_pong(ping_id=cmd.data.ping_id)
-        return
-
-    if isinstance(cmd, CommandSchemaRequest):
-        from ..protocol.schema import build_schema
-
-        emitter.emit_runtime_schema(json_schema=build_schema())
-        return
-
-    if isinstance(cmd, CommandProvidersList):
-        from agloom.llm.provider_registry import provider_catalog
-
-        emitter.emit_runtime_providers(providers=provider_catalog())
-        return
-
-    if isinstance(cmd, CommandToolList):
-        agent = await _agent_or_skip()
-        if agent is None:
-            return
-        tools = getattr(agent, "config", {}).get("tools", []) or []
-        rows: list[tuple[str, str | None]] = []
-        for t in tools:
-            nm = getattr(t, "name", "?")
-            desc = getattr(t, "description", None)
-            rows.append((nm, str(desc) if desc else None))
-        emitter.emit_runtime_tools(tools=rows)
-        return
-
-    if isinstance(cmd, CommandSubscribe):
-        emitter.set_subscription_prefixes(cmd.data.prefixes if cmd.data.prefixes else None)
-        return
-
-    if isinstance(cmd, CommandUnsubscribe):
-        emitter.clear_subscription()
-        return
-
-    if isinstance(cmd, CommandSessionList):
-        if store is None:
-            emitter.emit_error(
-                severity="transient",
-                message="command.session.list requires --store",
-                stage="session.list",
-            )
-            emitter.emit_runtime_sessions(sessions=[])
-        else:
-            ids = await store.list_session_ids()
-            emitter.emit_runtime_sessions(sessions=ids)
-        return
-
-    if isinstance(cmd, CommandSessionCreate):
-        sid = cmd.data.session_id or new_session_id()
-        emitter.emit_runtime_session_created(session_id=sid)
-        return
-
-    if isinstance(cmd, CommandSessionDelete):
-        if store is None:
-            emitter.emit_error(
-                severity="transient",
-                message="command.session.delete requires --store",
-                stage="session.delete",
-            )
-        else:
-            await store.clear(cmd.data.session_id)
-        return
-
-    if isinstance(cmd, CommandSessionRename):
-        if store is None:
-            emitter.emit_error(
-                severity="transient",
-                message="command.session.rename requires --store",
-                stage="session.rename",
-            )
-        else:
-            fr, to = cmd.data.from_session_id.strip(), cmd.data.to_session_id.strip()
-            if fr and to and fr != to:
-                await store.rename_session(fr, to)
-                emitter.emit_runtime_session_renamed(from_session_id=fr, to_session_id=to)
-                ids = await store.list_session_ids()
-                emitter.emit_runtime_sessions(sessions=ids)
-        return
-
-    if isinstance(cmd, CommandAttachFile):
-        agent = await _agent_or_skip()
-        if agent is None:
-            return
-        import base64
-
-        from .upload import stage_attached_bytes
-
-        try:
-            raw = base64.b64decode(cmd.data.content_base64.strip())
-        except Exception as exc:
-            emitter.emit_error(
-                severity="transient",
-                message=f"invalid base64 attachment: {exc}",
-                stage="attach.file",
-            )
-            return
-        try:
-            rel, nbytes = stage_attached_bytes(agent, filename=cmd.data.filename, raw=raw)
-        except Exception as exc:
-            emitter.emit_error(severity="transient", message=str(exc), stage="attach.file")
-            return
-        emitter.emit_runtime_file_staged(path=rel, nbytes=nbytes, thread=cmd.data.thread)
-        return
-
-    if isinstance(cmd, CommandToolInvoke):
-        agent = await _agent_or_skip()
-        if agent is None:
-            return
-        raw_sz = len(json.dumps(cmd.data.arguments, ensure_ascii=False))
-        if raw_sz > 32_000:
-            emitter.emit_runtime_tool_result(ok=False, error="arguments too large")
-            return
-        tools = getattr(agent, "config", {}).get("tools", []) or []
-        tool = next((x for x in tools if getattr(x, "name", None) == cmd.data.name), None)
-        if tool is None:
-            emitter.emit_runtime_tool_result(ok=False, error="unknown_tool")
-            return
-        try:
-            out = await tool.ainvoke(cmd.data.arguments)
-            emitter.emit_runtime_tool_result(ok=True, result=out)
-        except Exception as exc:
-            emitter.emit_runtime_tool_result(ok=False, error=str(exc))
-        return
-
-    if isinstance(cmd, CommandConfigSet):
-        agent = await _agent_or_skip()
-        if agent is None:
-            return
-        try:
-            from agloom.unified_agent import resolve_model, resolve_system_prompt
-
-            data = cmd.data
-            if data.model_id:
-                agent.config["llm"] = resolve_model(data.model_id)
-            bind_kw: dict[str, Any] = {}
-            if data.temperature is not None:
-                bind_kw["temperature"] = data.temperature
-            if data.top_p is not None:
-                bind_kw["top_p"] = data.top_p
-            if bind_kw:
-                llm = agent.config.get("llm")
-                if llm is not None and hasattr(llm, "bind"):
-                    agent.config["llm"] = llm.bind(**bind_kw)
-            if data.system_prompt is not None:
-                agent.config["system_prompt"] = resolve_system_prompt(data.system_prompt)
-        except Exception as exc:
-            emitter.emit_error(severity="transient", message=str(exc), stage="config.set")
-            return
-        if budget_tracker is not None:
-            fs = cmd.data.model_fields_set
-            if "budget_token_limit" in fs or "budget_cost_usd_limit" in fs:
-                from ..runtime.budget_tracker import _UNSET
-
-                tok = (
-                    cmd.data.budget_token_limit
-                    if "budget_token_limit" in fs
-                    and cmd.data.budget_token_limit is not None
-                    and cmd.data.budget_token_limit > 0
-                    else (None if "budget_token_limit" in fs else _UNSET)
-                )
-                cst = (
-                    cmd.data.budget_cost_usd_limit
-                    if "budget_cost_usd_limit" in fs
-                    and cmd.data.budget_cost_usd_limit is not None
-                    and cmd.data.budget_cost_usd_limit > 0
-                    else (None if "budget_cost_usd_limit" in fs else _UNSET)
-                )
-                budget_tracker.patch_limits(token_limit=tok, cost_usd=cst)
-        _cta, _ctb = _runtime_cli_tool_metrics(agent)
-        llm_after = agent.config.get("llm")
-        mid_guess = getattr(llm_after, "model_name", None) or getattr(llm_after, "model", None)
-        if mid_guess is None and llm_after is not None:
-            mid_guess = type(llm_after).__name__
-        emitter.emit_runtime_config_applied(
-            model_id=str(mid_guess) if mid_guess else (cmd.data.model_id or None),
-            cli_tools_enabled=_cta,
-            cli_tools_count=_ctb,
-        )
-        tools_after = agent.config.get("tools", []) or []
-        emitter.emit_runtime_config(
-            model_id=str(mid_guess) if mid_guess else (cmd.data.model_id or ""),
-            tool_names=[getattr(t, "name", str(t)) for t in tools_after],
-            cli_tools_enabled=_cta,
-            cli_tools_count=_ctb,
-        )
-        # Update session marker when model changes mid-session
-        if cmd.data.model_id is not None and rewrite_session_marker is not None:
-            rewrite_session_marker(str(mid_guess) if mid_guess else cmd.data.model_id)
-        return
-
-    if isinstance(cmd, CommandMemoryClear):
-        agent = await _agent_or_skip()
-        if agent is None:
-            return
-        mem = agent.config.get("memory")
-        if mem is None:
-            emitter.emit_error(
-                severity="transient",
-                message="agent has no session memory configured",
-                stage="memory.clear",
-            )
-            return
-        target = cmd.data.thread or getattr(emitter, "_thread", None)
-        if not target:
-            emitter.emit_error(
-                severity="transient",
-                message="command.memory.clear requires data.thread",
-                stage="memory.clear",
-            )
-            return
-        try:
-            await mem.aclear_thread(str(target))
-        except Exception as exc:
-            emitter.emit_error(severity="transient", message=str(exc), stage="memory.clear")
-            return
-        fork = emitter.fork_for_thread(str(target))
-        fork.emit_memory_session_cleared(thread=str(target))
-        return
-
-    if isinstance(cmd, CommandMemoryPopLastTurn):
-        agent = await _agent_or_skip()
-        if agent is None:
-            return
-        mem = agent.config.get("memory")
-        if mem is None:
-            emitter.emit_error(
-                severity="transient",
-                message="agent has no session memory configured",
-                stage="memory.pop_last_turn",
-            )
-            return
-        target = cmd.data.thread or getattr(emitter, "_thread", None)
-        if not target:
-            emitter.emit_error(
-                severity="transient",
-                message="command.memory.pop_last_turn requires data.thread",
-                stage="memory.pop_last_turn",
-            )
-            return
-        try:
-            remaining = await mem.apop_last_turn(str(target))
-        except Exception as exc:
-            emitter.emit_error(severity="transient", message=str(exc), stage="memory.pop_last_turn")
-            return
-        if remaining is None:
-            emitter.emit_error(
-                severity="transient",
-                message="nothing to undo (no session turns for this thread)",
-                stage="memory.pop_last_turn",
-            )
-            return
-        fork = emitter.fork_for_thread(str(target))
-        fork.emit_memory_session_turn_popped(thread=str(target), remaining_turns=remaining)
-        return
-
-    if isinstance(cmd, CommandHarnessGit):
-        agent = await _agent_or_skip()
-        if agent is None:
-            return
-        gs = agent.config.get("_git_session")
-        if gs is None:
-            emitter.emit_runtime_tool_result(
-                ok=False,
-                error="harness/git unavailable (requires agent store + harness — omit --no-harness)",
-            )
-            return
-        op = cmd.data.op
-        try:
-            if op == "checkpoint":
-                sid = str(getattr(emitter, "_session", "") or "")
-                tag_name = await gs.checkpoint(cmd.data.name or "cli", cmd.data.description or "", sid)
-                text = f"Checkpoint tag: {tag_name}" if tag_name else "Checkpoint failed"
-                emitter.emit_runtime_tool_result(ok=bool(tag_name), result=text)
-            elif op == "diff":
-                diff_text = await gs.diff_unified(path=cmd.data.path or "", cached=cmd.data.cached)
-                emitter.emit_runtime_tool_result(ok=True, result=diff_text)
-            elif op == "status":
-                st = await gs.status()
-                if not st.is_repo:
-                    emitter.emit_runtime_tool_result(ok=True, result="Not a git repository.")
-                else:
-                    parts = [
-                        f"branch={st.branch}",
-                        f"clean={st.clean}",
-                        f"staged={len(st.staged)}",
-                        f"unstaged={len(st.unstaged)}",
-                        f"untracked={len(st.untracked)}",
-                    ]
-                    emitter.emit_runtime_tool_result(ok=True, result="\n".join(parts))
-            elif op == "checkpoints":
-                cps = await gs.list_checkpoints()
-                lines = [f"{c.name} @ {c.commit_hash[:7]} — {c.description[:120]}" for c in cps[:30]]
-                emitter.emit_runtime_tool_result(ok=True, result="\n".join(lines) if lines else "(no checkpoints)")
-            elif op == "revert_hint":
-                hint = await gs.get_revert_hint()
-                emitter.emit_runtime_tool_result(ok=True, result=hint or "(no hint)")
-            else:
-                emitter.emit_runtime_tool_result(ok=False, error=f"unknown harness git op: {op!r}")
-        except Exception as exc:
-            emitter.emit_runtime_tool_result(ok=False, error=str(exc))
-        return
-
-    if isinstance(cmd, CommandPlanPreview):
-        prompt = (cmd.data.prompt or "").strip()
-        if not prompt:
-            emitter.emit_error(
-                severity="transient",
-                message="command.plan.preview requires a non-empty prompt",
-                stage="plan.preview",
-            )
-            return
-        cfg = agent.config
-        llm = cfg.get("llm")
-        if llm is None:
-            emitter.emit_error(severity="transient", message="no LLM configured", stage="plan.preview")
-            return
-        from agloom.classifier import analyze_query
-
-        try:
-            analysis = await analyze_query(
-                llm,
-                prompt,
-                cfg.get("tools") or [],
-                skill_context="",
-                classifier_timeout=float(cfg.get("classifier_timeout", 60.0)),
-                structured_max_retries=int(cfg.get("structured_max_retries", 2)),
-                fallback_pattern=cfg.get("fallback_pattern"),
-            )
-            steps: list[str] = []
-            for i, st in enumerate(analysis.subtasks):
-                steps.append(f"{i + 1}. [{st.worker_id}] {st.task}")
-            if not steps:
-                steps.append(f"1. Run as {analysis.pattern.value} (no worker subtasks returned).")
-            emitter.emit_plan_preview(
-                pattern=analysis.pattern.value,
-                complexity=analysis.complexity,
-                reasoning=(analysis.reasoning or ""),
-                steps=steps,
-            )
-        except Exception as exc:
-            emitter.emit_error(severity="transient", message=str(exc), stage="plan.preview")
-        return
-
-    _eprint(f"[agloom-runtime] unsupported command type: {type(cmd).__name__!r}")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -1442,6 +873,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Emit session.heartbeat every N seconds on stdio (0 disables). Default: 30",
     )
     serve.add_argument(
+        "--stdio-max-line-bytes",
+        dest="stdio_max_line_bytes",
+        type=int,
+        default=4 * 1024 * 1024,
+        help="Drop stdin NDJSON lines larger than this many bytes. Default: 4194304",
+    )
+    serve.add_argument(
+        "--rewrite-workspace-yaml",
+        dest="rewrite_workspace_yaml",
+        action="store_true",
+        default=False,
+        help="Allow automatic edits to .agloom/agloom.yaml (MCP shim, deprecated key stripping).",
+    )
+    serve.add_argument(
         "--ws-token",
         dest="ws_token",
         default=None,
@@ -1508,6 +953,20 @@ def _build_parser() -> argparse.ArgumentParser:
         default="eval.yaml",
         metavar="FILE",
         help="YAML with top-level key ``cases`` (list of {id, prompt, expect_substring?}). Default: eval.yaml",
+    )
+    eval_p.add_argument(
+        "--seed",
+        dest="eval_seed",
+        type=int,
+        default=None,
+        metavar="N",
+        help="If set, seeds Python's ``random`` module before running cases (does not fix LLM sampling).",
+    )
+    eval_p.add_argument(
+        "--keep-going",
+        dest="eval_keep_going",
+        action="store_true",
+        help="Run all cases after failures (exit non-zero if any case failed).",
     )
     _add_serve_agent_flags(eval_p)
 

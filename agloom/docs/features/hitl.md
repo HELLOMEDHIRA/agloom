@@ -59,6 +59,17 @@ async def main():
 
 Read operations proceed automatically; destructive operations require approval.
 
+### Wildcards (L2 and L3)
+
+| List | Match all | Match one id |
+|------|-----------|----------------|
+| `interrupt_before_tools` / `interrupt_after_tools` | Include the literal token `tools` (every registered tool name) | List individual tool names, e.g. `delete_file` |
+| `interrupt_before_workers` / `interrupt_after_workers` | `*` or `__all__` | List a worker id, e.g. `deployer` |
+
+The string `workers` in a worker interrupt list is **not** a wildcard — it only matches a worker whose id is literally `workers`. Use `*` or `__all__` to gate every worker.
+
+At L3-before, responding with `skip` / `abort` / `no` / `cancel` skips that worker; the pattern run is still treated as a **successful** user decline (not `AllPatternWorkersFailed`), with `metadata.user_skipped_workers` when applicable.
+
 ## L3: Worker Interrupts
 
 For multi-agent patterns (SUPERVISOR, PIPELINE, etc.), pause before or after specific workers:
@@ -76,29 +87,41 @@ async def main():
 
 ## L4: Signal Queue
 
-For programmatic control during execution. Each `ainvoke()` call creates an isolated `signal_queue` via the internal config. To send signals, access the queue from a concurrent task:
+For programmatic control during execution. Each `ainvoke()` normally allocates a fresh
+`signal_queue`. To **inject a queue you hold** (e.g. from a sibling task), pass it under
+``context["configurable"]`` — it overrides the auto-created queue for that call only:
 
 ```python
 import asyncio
 from agloom import SignalType
 from agloom.models import Signal
 
-async def run_with_halt():
-    # Launch ainvoke in a background task
-    task = asyncio.create_task(agent.ainvoke("Long research query"))
+async def run_with_halt(agent):
+    signal_queue = asyncio.Queue()
 
-    # Wait a bit, then halt all workers
-    await asyncio.sleep(5)
+    async def halter():
+        await asyncio.sleep(5)
+        await signal_queue.put(Signal(signal_type=SignalType.HALT_ALL))
 
-    # Access the per-run signal queue from the agent's config
-    signal_queue = agent.config["configurable"]["signal_queue"]
-    await signal_queue.put(Signal(signal_type=SignalType.HALT_ALL))
-
-    result = await task  # will complete early due to HALT_ALL
+    bg = asyncio.create_task(halter())
+    try:
+        result = await agent.ainvoke(
+            "Long research query",
+            thread_id="research-session",
+            context={"configurable": {"signal_queue": signal_queue}},
+        )
+    finally:
+        bg.cancel()
+        try:
+            await bg
+        except asyncio.CancelledError:
+            pass
+    return result
 ```
 
 !!! note "Per-run isolation"
-    Each `ainvoke()` call gets its own fresh `signal_queue`. Two concurrent `ainvoke()` calls cannot interfere with each other's signals.
+    Omitting ``signal_queue`` in ``context`` keeps the default: each `ainvoke()` gets its own queue.
+    Two concurrent `ainvoke()` calls still cannot interfere unless you incorrectly share one queue across both.
 
 ## The user_callback Function
 
@@ -147,6 +170,12 @@ async def main():
 
 Workers time out after **300 seconds** if no answer is received, and continue with a fallback message.
 
+### HALT_ALL worker signal
+
+When ``HALT_ALL`` cancels or skips workers, their ``WorkerResult.signal`` is ``HALTED`` (not ``FAILED``).
+Patterns treat ``HALTED`` as a deliberate user stop — not ``AllPatternWorkersFailed`` and not an upstream
+failure for sequential chains.
+
 ## Step Tracing
 
 HITL interrupts appear in the step trace:
@@ -158,6 +187,10 @@ for step in result.steps:
     if step.type.value == "interrupt":
         print(f"Interrupted: {step.name}")
 ```
+
+## Graph interrupt resume (library)
+
+For graph interrupts (not AGP **`command.session.resume`** replay), use **`await agent.resume(value, thread_id=…)`** with a **`checkpointer`**. The agent continues with the same pattern it chose before the pause. See [Production — Resuming interrupted runs](../guides/production.md#resuming-interrupted-runs) and [All parameters — `resume()`](../configuration/parameters.md#graph-resume).
 
 ## Persistent tool allowlist (runtime)
 

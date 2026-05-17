@@ -109,19 +109,29 @@ async def run_invocation(
             emitter.close(reason=cancel_reason, duration_ms=elapsed)
             raise  # propagate so the runtime task stays cancelled (asyncio invariant)
         except Exception as exc:
-            emitter.emit_agent_idle(thread=thread)
-            # Two-event close path: emit ``error.fatal`` first (carries class + retryable hints) then
-            # ``session.closed(reason="error")`` so consumers that subscribed only to ``error.*``
-            # still get a complete failure record.
+            try:
+                emitter.emit_agent_idle(thread=thread)
+            except Exception:
+                pass
             elapsed = int((time.perf_counter() - started) * 1000)
-            emitter.emit_error(
-                severity="fatal",
-                message=str(exc).strip() or repr(exc),
-                error_class=type(exc).__name__,
-                stage="invocation",
-                retryable=False,
-            )
-            emitter.close(reason="error", duration_ms=elapsed, error=repr(exc))
+            try:
+                emitter.emit_error(
+                    severity="fatal",
+                    message=str(exc).strip() or repr(exc),
+                    error_class=type(exc).__name__,
+                    stage="invocation",
+                    retryable=False,
+                )
+                emitter.close(reason="error", duration_ms=elapsed, error=repr(exc))
+            except Exception:
+                try:
+                    emitter.emit_agent_idle(thread=thread)
+                except Exception:
+                    pass
+                try:
+                    emitter.close(reason="error", duration_ms=elapsed, error="invocation_emit_failure")
+                except Exception:
+                    pass
             return
 
         emitter.emit_agent_idle(thread=thread)

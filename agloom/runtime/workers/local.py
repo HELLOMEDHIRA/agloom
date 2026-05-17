@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from typing import Any, Protocol
 
 from ...protocol.emitter import AsyncSessionEmitter
 from ..translator import translate
@@ -22,6 +24,10 @@ from .types import TaskStatus, WorkerHealth, WorkerTask, WorkerType
 logger = logging.getLogger(__name__)
 
 _DEFAULT_AI_CAPS = ["agent:local", "agent:react", "agent:cot"]
+
+
+class _SupportsAStreamEvents(Protocol):
+    def astream_events(self, prompt: str, *, thread_id: str) -> AsyncIterator[Any]: ...
 
 
 class LocalAIWorker(BaseWorker):
@@ -36,24 +42,28 @@ class LocalAIWorker(BaseWorker):
     def __init__(
         self,
         worker_id: str,
-        agent: object,  # UnifiedAgent — avoid hard import at module level
+        agent: _SupportsAStreamEvents,
         extra_capabilities: list[str] | None = None,
         max_concurrency: int = 1,
     ) -> None:
         caps = list(_DEFAULT_AI_CAPS) + (extra_capabilities or [])
         super().__init__(worker_id=worker_id, capabilities=caps, max_concurrency=max_concurrency)
-        self._agent = agent
+        self._agent: _SupportsAStreamEvents = agent
 
     # ── BaseWorker protocol ───────────────────────────────────────────────────
 
-    async def execute(self, task: WorkerTask, emitter: AsyncSessionEmitter) -> None:  # type: ignore[override]
+    async def execute(self, task: WorkerTask, emitter: AsyncSessionEmitter) -> None:
         task.status = TaskStatus.RUNNING
         task.started_at = datetime.now(UTC)
         task.attempt += 1
+        cur = asyncio.current_task()
+        if cur is not None:
+            self._active_tasks[task.task_id] = cur
         self._mark_busy()
 
         prompt: str = task.payload.get("prompt", "")
         thread: str = task.thread
+        output_bytes = 0
 
         # Announce this worker on the AGP wire
         emitter.emit_worker_spawned(
@@ -64,13 +74,21 @@ class LocalAIWorker(BaseWorker):
         )
 
         try:
-            async for agent_event in self._agent.astream_events(  # type: ignore[union-attr]
+            async for agent_event in self._agent.astream_events(
                 prompt, thread_id=thread
             ):
-                envelope = translate(agent_event, emitter)
-                if envelope is not None:
-                    # translate() already called emitter._write(); this is a no-op path
-                    pass
+                if agent_event.type in ("token", "done", "answer", "message_assistant"):
+                    data = agent_event.data or {}
+                    for key in ("output", "text", "content"):
+                        chunk = data.get(key)
+                        if isinstance(chunk, str):
+                            output_bytes += len(chunk.encode("utf-8"))
+                            break
+                    if agent_event.type == "done" and isinstance(data.get("result"), dict):
+                        out = data["result"].get("output")
+                        if isinstance(out, str) and out:
+                            output_bytes = max(output_bytes, len(out.encode("utf-8")))
+                translate(agent_event, emitter)
 
             task.status = TaskStatus.COMPLETED
             task.finished_at = datetime.now(UTC)
@@ -78,7 +96,7 @@ class LocalAIWorker(BaseWorker):
 
             emitter.emit_worker_completed(
                 worker_id=self.worker_id,
-                output_bytes=0,
+                output_bytes=output_bytes,
                 duration_ms=task.duration_ms() or 0,
             )
 

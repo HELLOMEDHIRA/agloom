@@ -146,10 +146,6 @@ agloom/
 └── .github/workflows/   # CI/CD
 ```
 
-## Security
-
-See [SECURITY.md](SECURITY.md) for vulnerability reporting and tooling risk notes.
-
 ## agloom-cli: AGP bridge (maintainers)
 
 The terminal client (`agloom_cli/`, npm package **`agloom-cli`**) spawns **`agloom-runtime serve --transport=stdio`** and parses AGP on stdout. Use this section when changing protocol handling or UI wiring.

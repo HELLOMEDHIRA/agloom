@@ -1,4 +1,9 @@
-"""LTS-backed persistence for run feedback records and skill failure signals."""
+"""LTS-backed persistence for run feedback records and skill failure signals.
+
+Corrections default to namespace ``("memory", agent_name, user_id|"shared")`` so
+multi-tenant deployments should ensure ``RunRecord.user_id`` (via invoke-time
+``user_id``) is set; otherwise all corrections share the ``"shared"`` bucket.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +23,11 @@ logger = get_logger(__name__)
 FEEDBACK_NS_PREFIX = "feedback"
 
 SkillFailureCallback = Callable[[str, str], Awaitable[None]]
+
+
+def _run_record_time_key(meta: dict) -> str:
+    """Lexicographic sort works for ISO-8601 ``created_at`` / ``rated_at``."""
+    return str(meta.get("created_at") or meta.get("rated_at") or "")
 
 
 class FeedbackStore:
@@ -58,19 +68,23 @@ class FeedbackStore:
             return None
 
     async def get_recent(self, n: int = 100) -> list[dict]:
-        """Return last N records as raw dicts (not RunRecord) for speed."""
+        """Return the *n* most recent run records by wall time (``created_at``), not embedding rank.
+
+        Semantic search is used only as a wide retrieval pass; results are re-sorted chronologically.
+        """
+        fetch_k = max(n * 4, n + 80, 200)
         results = await self._store.asearch(
             namespace=self._ns,
-            query="query pattern score",
-            top_k=n,
+            query="feedback run evaluation score query pattern",
+            top_k=fetch_k,
         )
-        records = []
+        records: list[dict] = []
         for r in results:
             meta = getattr(r, "value", {}) or {}
-            # asearch can return non-run rows; only keep dicts that look like RunRecord metadata
             if meta.get("run_id"):
                 records.append(meta)
-        return records
+        records.sort(key=_run_record_time_key, reverse=True)
+        return records[:n]
 
     async def apply_user_feedback(
         self,
@@ -88,6 +102,15 @@ class FeedbackStore:
             return False
 
         raw = getattr(existing, "value", {}) or {}
+        meta_in = metadata or {}
+        if (
+            raw.get("user_rating") == rating
+            and raw.get("user_comment") == comment
+            and raw.get("user_correction") == correct
+            and all(raw.get(k) == v for k, v in meta_in.items())
+        ):
+            logger.debug(f"FeedbackStore [{self._agent}]: idempotent skip for run {run_id}")
+            return True
 
         raw.update(
             {
@@ -107,10 +130,12 @@ class FeedbackStore:
         )
 
         if correct:
+            uid = str(raw.get("user_id") or "").strip() or "shared"
             await self._save_correction_memory(
                 run_id=run_id,
                 original_query=raw.get("query", ""),
                 correction=correct,
+                user_id=uid,
             )
 
         if rating in ("negative", "wrong", "bad", "incorrect"):
@@ -126,11 +151,14 @@ class FeedbackStore:
         run_id: str,
         original_query: str,
         correction: str,
+        *,
+        user_id: str = "shared",
     ) -> None:
         """Store correction as a memory fact retrievable by future similar queries."""
+        uid = user_id.strip() or "shared"
         try:
             await self._store.asave(
-                namespace=("memory", self._agent),
+                namespace=("memory", self._agent, uid),
                 key=f"correction_{run_id}",
                 value=(f"user correction: for query '{original_query[:80]}' the correct answer is: {correction[:200]}"),
                 metadata={

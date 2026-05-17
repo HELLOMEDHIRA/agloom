@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import json
 import threading
+from typing import IO, cast
 from concurrent.futures import ThreadPoolExecutor
 
 from agloom.protocol.emitter import SessionEmitter, _SharedSeq
@@ -112,15 +113,15 @@ def test_concurrent_emit_no_duplicate_seq() -> None:
     lock = threading.Lock()
 
     class _ThreadSafeIO:
-        def write(self, s: str) -> None:
+        def write(self, s: str) -> int:
             with lock:
-                buf.write(s)
+                return buf.write(s)
 
         def flush(self) -> None:
             pass
 
     safe_buf = _ThreadSafeIO()
-    emitter = SessionEmitter(session="s_concurrent", thread="t_main", writer=safe_buf)  # type: ignore[arg-type]
+    emitter = SessionEmitter(session="s_concurrent", thread="t_main", writer=cast(IO[str], safe_buf))
     emitter.open()
     fork_a = emitter.fork_for_thread("t_a")
     fork_b = emitter.fork_for_thread("t_b")

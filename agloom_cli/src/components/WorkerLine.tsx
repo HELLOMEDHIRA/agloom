@@ -10,12 +10,19 @@ const WORKER_ICON: Record<Worker['status'], string> = {
   running: '◈',
   done: '◉',
   failed: '✗',
+  halted: '⊘',
 }
 
-const WORKER_BADGE_COLOR: Record<Worker['status'], 'yellow' | 'green' | 'red'> = {
+const WORKER_BADGE_COLOR: Record<Worker['status'], 'yellow' | 'green' | 'red' | 'cyan'> = {
   running: 'yellow',
   done: 'green',
   failed: 'red',
+  halted: 'cyan',
+}
+
+const haltedReasonLabel = (reason?: string | null): string => {
+  if (!reason || reason === 'HALT_ALL') return 'Stopped (all workers halted)'
+  return reason
 }
 
 interface Props {
@@ -51,6 +58,14 @@ export const WorkerLine = ({ worker }: Props): React.ReactElement => {
         <Box marginLeft={3}>
           <Text color="red" dimColor>
             {truncate(worker.error, 100)}
+          </Text>
+        </Box>
+      )}
+      {worker.status === 'halted' && (
+        <Box marginLeft={3}>
+          <Text color="cyan" dimColor>
+            {truncate(haltedReasonLabel(worker.error), 100)}
+            {worker.outputPreview ? ` — ${truncate(worker.outputPreview, 80)}` : ''}
           </Text>
         </Box>
       )}

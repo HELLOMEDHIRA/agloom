@@ -3,15 +3,16 @@ import React from 'react'
 import { Box, Text } from 'ink'
 import { Badge, Spinner } from '@inkjs/ui'
 import { useSessionStore, effectiveToolCallExpanded } from '../store/session.js'
+import { ThinkingTrace } from './ThinkingTrace.js'
 import { ToolCallLine } from './ToolCallLine.js'
 import { WorkerLine } from './WorkerLine.js'
-import { truncate } from '../utils/format.js'
 
 export const ActiveTurn = (): React.ReactElement | null => {
   const activeTurn = useSessionStore((s) => s.activeTurn)
   const status = useSessionStore((s) => s.status)
   const expandedMap = useSessionStore((s) => s.toolCallExpandedById)
-  const expandActiveThinking = useSessionStore((s) => s.expandActiveThinking)
+  const hideThinkingTrace = useSessionStore((s) => s.hideThinkingTrace)
+  const mainColumnWidth = useSessionStore((s) => s.mainColumnWidth)
 
   if (!activeTurn) return null
 
@@ -24,7 +25,9 @@ export const ActiveTurn = (): React.ReactElement | null => {
         <Text bold color="cyan">
           ❯{' '}
         </Text>
-        <Text bold>{userMessage}</Text>
+        <Text bold wrap="wrap">
+          {userMessage}
+        </Text>
       </Box>
 
       {pattern && (
@@ -33,44 +36,8 @@ export const ActiveTurn = (): React.ReactElement | null => {
         </Box>
       )}
 
-      {thinkingSteps.length > 0 && expandActiveThinking && (
-        <Box
-          flexDirection="column"
-          marginLeft={2}
-          marginTop={0}
-          borderStyle="round"
-          borderColor="gray"
-          paddingX={1}
-        >
-          <Box marginBottom={0}>
-            <Badge color="magenta">Thinking</Badge>
-          </Box>
-          {thinkingSteps.map((s) => (
-            <Box key={s.id} flexDirection="column">
-              <Text color="gray">▸ {truncate(s.label ?? s.step, Math.max(40, (process.stdout.columns ?? 80) - 14))}</Text>
-              {s.detail ? (
-                <Text color="gray" dimColor wrap="truncate-end">
-                  {truncate(s.detail, (process.stdout.columns ?? 80) * 2)}
-                </Text>
-              ) : null}
-            </Box>
-          ))}
-          <Text dimColor color="gray">
-            Ctrl+Y or /think — collapse
-          </Text>
-        </Box>
-      )}
-
-      {thinkingSteps.length > 0 && !expandActiveThinking && (
-        <Box marginLeft={2} marginTop={0} flexDirection="column">
-          <Text color="gray" dimColor>
-            ▸ {truncate(thinkingSteps.at(-1)?.label ?? thinkingSteps.at(-1)?.step ?? '…', Math.max(36, (process.stdout.columns ?? 80) - 28))}
-            {' · '}
-            step {thinkingSteps.length}
-            {' · '}
-            Ctrl+Y or /think expand
-          </Text>
-        </Box>
+      {!hideThinkingTrace && (
+        <ThinkingTrace steps={thinkingSteps} maxDetailChars={Math.max(120, mainColumnWidth * 2)} />
       )}
 
       {workers.map((w) => (
@@ -86,9 +53,11 @@ export const ActiveTurn = (): React.ReactElement | null => {
       ))}
 
       {streamedTokens && (
-        <Box marginLeft={2} flexDirection="column">
+        <Box marginLeft={2} marginTop={1} flexDirection="column">
           {streamedTokens.split('\n').slice(-20).map((line, i) => (
-            <Text key={i}>{line}</Text>
+            <Text key={i} wrap="wrap">
+              {line}
+            </Text>
           ))}
         </Box>
       )}

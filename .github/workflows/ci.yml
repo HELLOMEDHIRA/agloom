@@ -32,6 +32,9 @@ jobs:
       - name: Type check (pyrefly)
         run: uv run pyrefly check agloom
 
+      - name: Markdown lint
+        run: npx --yes markdownlint-cli2
+
   test:
     needs: lint
     runs-on: ubuntu-latest
@@ -55,3 +58,24 @@ jobs:
 
       - name: Run tests
         run: uv run pytest -q
+
+  # TypeScript AGP clients — catalog sync and wire-parse tests (no lockfiles; npm install).
+  frontend:
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: [agloom_cli, agloom_web]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install and test ${{ matrix.package }}
+        working-directory: ${{ matrix.package }}
+        run: |
+          npm install
+          npm test

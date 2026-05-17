@@ -114,7 +114,6 @@ Shows resolved model, store, MCP specs, and which YAML files contributed.
 | `agloom sessions` | Open an **interactive picker** (arrow keys, Enter) to choose a past session and resume it. |
 | `--list-sessions` | Same picker from the default command: `agloom --list-sessions` (also accepts legacy `--sessions`). |
 | `agloom clean` | Remove `.agloom/`, `.agsuperbrain/`, `agloom-progress.json`, and prune related lines from `.gitignore` (does **not** delete `agloom.yaml`). |
-| `agloom upgrade` | Compare installed versions against npm/PyPI latest. |
 | `agloom eval` | Forward to `agloom-runtime eval` for evaluation runs. |
 
 ## Pass-through (`--`)

@@ -27,6 +27,7 @@ class SkillManifest:
     source: str = "static"
     status: str = "active"
     version: int = 1
+    schema_version: int = 1
 
     def classifier_line(self) -> str:
         tag_hint = f" [{', '.join(self.tags)}]" if self.tags else ""
@@ -42,6 +43,7 @@ class SkillManifest:
             "source": self.source,
             "status": self.status,
             "version": self.version,
+            "schema_version": self.schema_version,
         }
 
     @classmethod
@@ -59,6 +61,7 @@ class SkillManifest:
             source=meta.get("source", "static"),
             status=meta.get("status", "active"),
             version=meta.get("version", 1),
+            schema_version=meta.get("schema_version", 1),
         )
 
 

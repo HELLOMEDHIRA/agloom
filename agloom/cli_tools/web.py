@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
+import socket
 from typing import Any
+from urllib.parse import urlparse
 
 from langchain_core.tools import tool
 
@@ -32,6 +35,50 @@ def _looks_like_html(body: bytes) -> bool:
     return head.startswith(b"<")
 
 
+def _ip_is_blocked(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_multicast
+        or addr.is_reserved
+        or addr.is_unspecified
+    )
+
+
+def _host_resolves_to_blocked(host: str) -> bool:
+    lowered = host.strip().lower().rstrip(".")
+    if lowered in ("localhost", "localhost.localdomain"):
+        return True
+    try:
+        parsed = ipaddress.ip_address(lowered)
+        return _ip_is_blocked(parsed)
+    except ValueError:
+        pass
+    try:
+        for info in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM):
+            ip = info[4][0]
+            parsed = ipaddress.ip_address(ip)
+            if _ip_is_blocked(parsed):
+                return True
+    except OSError:
+        return True
+    return False
+
+
+def _ssrf_check_url(url: str) -> str | None:
+    """Return an error message when *url* targets a private/local address."""
+    parsed = urlparse((url or "").strip())
+    if parsed.scheme not in ("http", "https"):
+        return "fetch_url: only http/https URLs are allowed"
+    host = parsed.hostname
+    if not host:
+        return "fetch_url: URL has no host"
+    if _host_resolves_to_blocked(host):
+        return "fetch_url: blocked — private or local network addresses are not allowed"
+    return None
+
+
 async def _http_get_text_async(
     *,
     url: str,
@@ -45,6 +92,9 @@ async def _http_get_text_async(
     raw = (url or "").strip()
     if not raw:
         return "fetch_url: empty url"
+    blocked = _ssrf_check_url(raw)
+    if blocked:
+        return blocked
     cap = max(1024, min(max_bytes, 2_000_000))
     try:
         import httpx

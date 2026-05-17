@@ -11,13 +11,13 @@ import asyncio
 import time
 from typing import Any, cast
 
-from langchain.agents import create_agent
+from langchain.agents import create_agent as lc_create_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 
-from .llm_streaming import astream_llm_to_event_queue
+from .llm_streaming import stream_or_invoke_llm
 from .logging_utils import get_logger
 from .models import (
     AgentEvent,
@@ -49,6 +49,28 @@ FINAL REPLY
 _MEMORY_TOOLS = {"save_memory", "recall_memory"}
 
 
+def _step_trunc_len(invoke_config: dict | None) -> int:
+    """Per-run cap for tool step snippets (``max_step_output_length`` from agent, via invoke metadata)."""
+    if not invoke_config:
+        return 0
+    md = invoke_config.get("metadata") or {}
+    v = md.get("max_step_output_length", 0)
+    if isinstance(v, int) and v >= 0:
+        return v
+    return 0
+
+
+def resolve_event_queue(agent: dict | None, config: dict | None = None) -> Any:
+    """Single precedence: explicit *config* queue, then *agent* queue."""
+    if config is not None:
+        eq = config.get("_event_queue")
+        if eq is not None:
+            return eq
+    if agent is not None:
+        return agent.get("_event_queue")
+    return None
+
+
 def extend_invoke_config_with_event_queue(
     invoke_config: dict | None, event_queue: Any, *, agent: dict | None = None
 ) -> dict | None:
@@ -62,6 +84,11 @@ def extend_invoke_config_with_event_queue(
         return invoke_config
     base = dict(invoke_config or {})
     base["_event_queue"] = event_queue
+    if agent is not None:
+        from .wire_tokens import _WIRE_EMITTED_KEY
+
+        if _WIRE_EMITTED_KEY in agent:
+            base[_WIRE_EMITTED_KEY] = agent[_WIRE_EMITTED_KEY]
     if agent is not None:
         conf = dict(base.get("configurable") or {})
         if conf.get("signal_queue") is None and agent.get("signal_queue") is not None:
@@ -267,7 +294,7 @@ async def _run_react(
                     f"with the text to process, then reply with the final answer as plain text."
                 )
 
-            agent = create_agent(
+            agent = lc_create_agent(
                 model=llm,
                 tools=config.tools,
                 system_prompt=config.system_prompt.rstrip() + "\n" + REACT_DISCIPLINE + single_tool_hint,
@@ -282,23 +309,36 @@ async def _run_react(
 
             graph_config = _build_graph_config(config, invoke_config, "ReAct", attempt)
             eq = (invoke_config or {}).get("_event_queue")
-            if eq is not None:
-                result = await asyncio.wait_for(
-                    _react_graph_astream_to_result(
+            from .llm_utils import DEFAULT_LLM_SEMAPHORE, _circuit_breaker_for
+
+            async def _invoke_react() -> dict:
+                if eq is not None:
+                    return await _react_graph_astream_to_result(
                         config, agent, task_content, graph_config, eq
-                    ),
-                    timeout=config.llm_timeout,
+                    )
+                return await cast(Any, agent).ainvoke(
+                    {"messages": [HumanMessage(content=task_content)]},
+                    config=graph_config,
                 )
-            else:
-                result = await asyncio.wait_for(
-                    agent.ainvoke(  # type: ignore[no-matching-overload]
-                        {"messages": [HumanMessage(content=task_content)]},
-                        config=graph_config,
-                    ),
-                    timeout=config.llm_timeout,
-                )
+
+            async with _circuit_breaker_for(llm), DEFAULT_LLM_SEMAPHORE:
+                result = await asyncio.wait_for(_invoke_react(), timeout=config.llm_timeout)
             output, usage = _extract_output(result)
-            tool_steps = _extract_tool_steps(result)
+            if usage and invoke_config is not None:
+                from .wire_tokens import emit_llm_call_usage, llm_label_from_run_config
+
+                await emit_llm_call_usage(
+                    invoke_config,
+                    usage,
+                    phase=config.worker_id,
+                    model=llm_label_from_run_config(invoke_config),
+                    name=config.worker_id,
+                )
+            tool_steps = _extract_tool_steps(
+                result,
+                max_length=_step_trunc_len(invoke_config),
+                wire_emitted=eq is not None,
+            )
 
             attempt_ms = round((time.perf_counter() - t_attempt) * 1000, 1)
             logger.info(
@@ -329,15 +369,8 @@ async def _run_react(
             )
 
         except asyncio.CancelledError:
-            logger.warning(f"[{config.worker_id}] cancelled by HALT_ALL.")
-            return WorkerResult(
-                worker_id=config.worker_id,
-                task=config.task,
-                output="Worker cancelled by HALT_ALL signal.",
-                signal=SignalType.FAILED,
-                error="CancelledError",
-                attempt=attempt,
-            )
+            logger.warning(f"[{config.worker_id}] cancelled.")
+            raise
 
         except GraphRecursionError as e:
             logger.error(f"[{config.worker_id}] recursion limit {WORKER_RECURSION_LIMIT} — not retrying. {e}")
@@ -411,25 +444,19 @@ async def _run_llm_only(
                 SystemMessage(content=config.system_prompt),
                 HumanMessage(content=task_content),
             ]
-            eq = (invoke_config or {}).get("_event_queue")
-            if eq is not None:
-                output, last_chunk = await astream_llm_to_event_queue(
-                    named_llm,
-                    input_msgs,
-                    eq,
-                    timeout=config.llm_timeout,
-                    worker_id=config.worker_id,
-                )
-                usage = _extract_token_usage(last_chunk) if last_chunk else {}
-                tail = last_chunk if last_chunk is not None else AIMessage(content=output)
-            else:
-                resp = await asyncio.wait_for(
-                    named_llm.ainvoke(input_msgs),
-                    timeout=config.llm_timeout,
-                )
-                output = resp.content
-                usage = _extract_token_usage(resp)
-                tail = resp
+            base_cfg = invoke_config or {}
+            configurable = dict(base_cfg.get("configurable") or {})
+            stream_agent = {**base_cfg, "configurable": configurable, "llm": llm}
+            output, _tail_msgs, last_chunk = await stream_or_invoke_llm(
+                named_llm,
+                input_msgs,
+                stream_agent,
+                timeout=config.llm_timeout,
+                worker_id=config.worker_id,
+                phase=config.worker_id,
+            )
+            usage = _extract_token_usage(last_chunk) if last_chunk else {}
+            tail = last_chunk if last_chunk is not None else AIMessage(content=output)
 
             attempt_ms = round((time.perf_counter() - t_attempt) * 1000, 1)
             logger.info(
@@ -458,15 +485,8 @@ async def _run_llm_only(
             )
 
         except asyncio.CancelledError:
-            logger.warning(f"[{config.worker_id}] cancelled by HALT_ALL.")
-            return WorkerResult(
-                worker_id=config.worker_id,
-                task=config.task,
-                output="Worker cancelled by HALT_ALL signal.",
-                signal=SignalType.FAILED,
-                error="CancelledError",
-                attempt=attempt,
-            )
+            logger.warning(f"[{config.worker_id}] cancelled.")
+            raise
 
         except Exception as e:
             if attempt > config.max_retries:
@@ -492,7 +512,9 @@ async def _run_llm_only(
     )
 
 
-def _extract_tool_steps(result: Any, *, max_length: int = 0) -> list[AgentStep]:
+def _extract_tool_steps(
+    result: Any, *, max_length: int = 0, wire_emitted: bool = False
+) -> list[AgentStep]:
     """Extract tool_call/tool_result steps from a LangGraph ainvoke response."""
     if not isinstance(result, dict):
         return []
@@ -509,6 +531,7 @@ def _extract_tool_steps(result: Any, *, max_length: int = 0) -> list[AgentStep]:
                         input=str(tc.get("args", "")),
                         id=tc.get("id", ""),
                         max_length=max_length,
+                        wire_emitted=wire_emitted,
                     )
                 )
         elif isinstance(msg, ToolMessage):
@@ -519,6 +542,7 @@ def _extract_tool_steps(result: Any, *, max_length: int = 0) -> list[AgentStep]:
                     output=str(msg.content),
                     id=getattr(msg, "tool_call_id", "") or "",
                     max_length=max_length,
+                    wire_emitted=wire_emitted,
                 )
             )
     return steps

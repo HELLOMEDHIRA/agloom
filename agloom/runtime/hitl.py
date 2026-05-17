@@ -29,13 +29,18 @@ from __future__ import annotations
 
 import asyncio
 import re
+import threading
+import weakref
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from ..hitl_contract import HITLEvent
+from ..logging_utils import get_logger
 from ..protocol import HITLDecision, HITLKind, SessionEmitter
 from .hitl_allowlist import save_allowlist_to_session_marker, save_tool_allowlist
+
+logger = get_logger(__name__)
 
 # Map agloom HITLEvent.* strings → AGP ``hitl.request.kind`` values. Keep the agloom contract
 # stable: when a new HITLEvent type appears, add a row here (and a translator branch in
@@ -54,6 +59,12 @@ _KIND_BY_HITL_EVENT: dict[str, HITLKind] = {
 _VALID_DECISIONS: frozenset[str] = frozenset(
     {"accept", "reject", "allowlist", "retry", "stop", "timeout", "cancelled"}
 )
+
+
+def _normalize_hitl_decision(value: object) -> HITLDecision:
+    if isinstance(value, str) and value in _VALID_DECISIONS:
+        return cast(HITLDecision, value)
+    return "reject"
 
 # How HITL decisions translate back into the value the agloom callback contract expects.
 # See ``agloom.hitl_contract`` for the per-event-type return-value rules.
@@ -114,10 +125,15 @@ class HITLBridge:
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._kinds: dict[str, HITLKind] = {}  # request_id → kind
         self._req_task: dict[str, asyncio.Task[Any]] = {}  # request_id → owning task
-        self._task_emitters: dict[asyncio.Task[Any], SessionEmitter] = {}
-        self._task_thread: dict[asyncio.Task[Any], str] = {}  # task → thread_id
-        self._task_cancel_reason: dict[asyncio.Task[Any], InvocationCancelReason] = {}
+        self._task_emitters: weakref.WeakKeyDictionary[asyncio.Task[Any], SessionEmitter] = (
+            weakref.WeakKeyDictionary()
+        )
+        self._task_thread: weakref.WeakKeyDictionary[asyncio.Task[Any], str] = weakref.WeakKeyDictionary()
+        self._task_cancel_reason: weakref.WeakKeyDictionary[asyncio.Task[Any], InvocationCancelReason] = (
+            weakref.WeakKeyDictionary()
+        )
         self._lock = asyncio.Lock()
+        self._respond_lock = threading.Lock()
 
     # ── emitter routing ───────────────────────────────────────────────────
 
@@ -240,7 +256,7 @@ class HITLBridge:
                 self._kinds.pop(request_id, None)
                 self._req_task.pop(request_id, None)
 
-        decision: HITLDecision = response.get("decision", "reject")  # type: ignore[assignment]
+        decision = _normalize_hitl_decision(response.get("decision", "reject"))
         text: str | None = response.get("text")
 
         emitter.emit_hitl_decision(
@@ -259,11 +275,21 @@ class HITLBridge:
                         save_allowlist_to_session_marker(self._allowlist_session_marker, self._tool_allowlist)
                     except OSError:
                         pass
+                    except Exception as exc:
+                        logger.warning(
+                            "hitl_allowlist_session_marker_save_failed",
+                            error=str(exc),
+                        )
                 elif self._allowlist_persist_path is not None:
                     try:
                         save_tool_allowlist(self._allowlist_persist_path, self._tool_allowlist)
                     except OSError:
                         pass
+                    except Exception as exc:
+                        logger.warning(
+                            "hitl_allowlist_file_save_failed",
+                            error=str(exc),
+                        )
         return _decision_to_callback_value(kind, decision, text)
 
     # ── inbound from the wire (command.hitl.respond) ────────────────────────
@@ -271,12 +297,13 @@ class HITLBridge:
     def respond(self, request_id: str, decision: str, *, text: str | None = None, actor: str = "user") -> bool:
         """Resolve the pending future for *request_id*. Returns False if no such request is
         outstanding (stale/double response — emit nothing in that case)."""
-        fut = self._pending.get(request_id)
-        if fut is None or fut.done():
-            return False
-        normalized: HITLDecision = decision if decision in _VALID_DECISIONS else "reject"  # type: ignore[assignment]
-        fut.set_result({"decision": normalized, "text": text, "actor": actor})
-        return True
+        with self._respond_lock:
+            fut = self._pending.get(request_id)
+            if fut is None or fut.done():
+                return False
+            normalized = _normalize_hitl_decision(decision)
+            fut.set_result({"decision": normalized, "text": text, "actor": actor})
+            return True
 
     def cancel_all(self) -> int:
         """Resolve every outstanding request as ``cancelled``. Returns count cancelled.

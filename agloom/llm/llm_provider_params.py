@@ -457,6 +457,7 @@ _PROVIDER_ALIASES: dict[str, tuple[_AliasRule, ...]] = {
     "cohere": (("timeout", "timeout_seconds", None),),
     "anthropic": (
         ("timeout", "default_request_timeout", None),
+        ("max_completion_tokens", "max_tokens", None),
         ("stop", "stop_sequences", _coerce_stop_sequences),
     ),
     "bedrock": (

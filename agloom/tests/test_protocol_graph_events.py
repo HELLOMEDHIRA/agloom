@@ -134,29 +134,29 @@ def test_resumed_event_round_trip():
 @pytest.mark.asyncio
 async def test_memory_store_append_and_replay():
     store = MemoryEventStore()
-    events = [{"type": "session.opened", "seq": i} for i in range(5)]
+    events = [{"type": "session.opened", "seq": i} for i in range(1, 6)]
     for evt in events:
         await store.append("s_1", evt)
     replayed = [e async for e in store.replay("s_1")]
     assert len(replayed) == 5
-    assert replayed[0]["seq"] == 0
+    assert replayed[0]["seq"] == 1
 
 
 @pytest.mark.asyncio
 async def test_memory_store_replay_from_seq():
     store = MemoryEventStore()
-    for i in range(10):
+    for i in range(1, 11):
         await store.append("s_1", {"seq": i, "type": "t"})
-    replayed = [e async for e in store.replay("s_1", from_seq=5)]
-    assert all(e["seq"] >= 5 for e in replayed)
+    replayed = [e async for e in store.replay("s_1", from_seq=6)]
+    assert all(e["seq"] >= 6 for e in replayed)
     assert len(replayed) == 5
 
 
 @pytest.mark.asyncio
 async def test_memory_store_count_and_clear():
     store = MemoryEventStore()
-    for i in range(3):
-        await store.append("s_1", {"seq": i})
+    for i in range(1, 4):
+        await store.append("s_1", {"seq": i, "type": "evt"})
     assert await store.count("s_1") == 3
     await store.clear("s_1")
     assert await store.count("s_1") == 0
@@ -172,8 +172,8 @@ async def test_memory_store_empty_replay():
 @pytest.mark.asyncio
 async def test_memory_store_multiple_sessions():
     store = MemoryEventStore()
-    await store.append("s_a", {"seq": 1})
-    await store.append("s_b", {"seq": 1})
+    await store.append("s_a", {"seq": 1, "type": "x"})
+    await store.append("s_b", {"seq": 1, "type": "x"})
     a = [e async for e in store.replay("s_a")]
     b = [e async for e in store.replay("s_b")]
     assert len(a) == 1
@@ -184,8 +184,8 @@ async def test_memory_store_multiple_sessions():
 async def test_memory_store_list_session_ids():
     store = MemoryEventStore()
     assert await store.list_session_ids() == []
-    await store.append("z_sess", {"seq": 1})
-    await store.append("a_sess", {"seq": 1})
+    await store.append("z_sess", {"seq": 1, "type": "x"})
+    await store.append("a_sess", {"seq": 1, "type": "x"})
     assert await store.list_session_ids() == ["a_sess", "z_sess"]
 
 
@@ -195,7 +195,7 @@ async def test_memory_store_list_session_ids():
 @pytest.mark.asyncio
 async def test_sqlite_store_append_and_replay():
     store = SqliteEventStore(":memory:")
-    for i in range(4):
+    for i in range(1, 5):
         await store.append("s_1", {"seq": i, "type": "token.delta"})
     replayed = [e async for e in store.replay("s_1")]
     assert len(replayed) == 4
@@ -205,10 +205,10 @@ async def test_sqlite_store_append_and_replay():
 @pytest.mark.asyncio
 async def test_sqlite_store_replay_from_seq():
     store = SqliteEventStore(":memory:")
-    for i in range(6):
+    for i in range(1, 7):
         await store.append("s_1", {"seq": i, "type": "t"})
-    replayed = [e async for e in store.replay("s_1", from_seq=3)]
-    assert all(e["seq"] >= 3 for e in replayed)
+    replayed = [e async for e in store.replay("s_1", from_seq=4)]
+    assert all(e["seq"] >= 4 for e in replayed)
     assert len(replayed) == 3
     store.close()
 
@@ -216,8 +216,8 @@ async def test_sqlite_store_replay_from_seq():
 @pytest.mark.asyncio
 async def test_sqlite_store_count_and_clear():
     store = SqliteEventStore(":memory:")
-    for i in range(5):
-        await store.append("s_1", {"seq": i})
+    for i in range(1, 6):
+        await store.append("s_1", {"seq": i, "type": "e"})
     assert await store.count("s_1") == 5
     await store.clear("s_1")
     assert await store.count("s_1") == 0
@@ -235,6 +235,36 @@ async def test_sqlite_store_list_session_ids():
 
 
 @pytest.mark.asyncio
+async def test_memory_store_replay_negative_from_seq_clamped():
+    store = MemoryEventStore()
+    for i in range(1, 4):
+        await store.append("s_1", {"seq": i, "type": "t"})
+    replayed = [e async for e in store.replay("s_1", from_seq=-5)]
+    assert len(replayed) == 3
+
+
+@pytest.mark.asyncio
+async def test_event_store_rejects_invalid_envelope():
+    mem = MemoryEventStore()
+    with pytest.raises(ValueError, match="seq"):
+        await mem.append("s", {"seq": 0, "type": "x"})
+    with pytest.raises(ValueError, match="type"):
+        await mem.append("s", {"seq": 1, "type": ""})
+    with pytest.raises(ValueError, match="session_id"):
+        await mem.append("", {"seq": 1, "type": "x"})
+
+    sql = SqliteEventStore(":memory:")
+    try:
+        with pytest.raises(ValueError, match="seq"):
+            await sql.append("s", {"seq": -1, "type": "x"})
+    finally:
+        sql.close()
+
+
+# SessionEmitter + store
+
+
+@pytest.mark.asyncio
 async def test_store_wired_into_emitter():
     """Events emitted via SessionEmitter should be persisted in the store."""
     store = MemoryEventStore()
@@ -244,8 +274,7 @@ async def test_store_wired_into_emitter():
     em.emit_graph_node_enter(node="classify")
     em.close()
 
-    # Give asyncio ensure_future a chance to run
-    await asyncio.sleep(0.05)
+    await em.drain_store_appends()
 
     count = await store.count("s_1")
     assert count >= 2  # at minimum: session.opened + graph.node.enter

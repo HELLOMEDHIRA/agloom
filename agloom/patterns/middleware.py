@@ -16,9 +16,19 @@ from .hitl_tool_coalesce import CompositeToolHitlCoalescer
 
 logger = get_logger(__name__)
 
+# Tool names reserved / missing — never allowlist coalescer keys for these.
+_L2_INVALID_ALLOWLIST_NAMES = frozenset({"", "unknown_tool", "unknown"})
+
 
 class UserAbort(Exception):
-    """Raised when user aborts a tool call. Not a failure — treated as success=True."""
+    """Raised when user declines a gated tool call (e.g. skip/no).
+
+    Mirrors L3 ``interrupt_before_workers`` skip: deliberate user gesture, not an
+    agent/runtime failure — patterns return ``success=True`` with explanatory output/metadata.
+
+    L2 skip decisions (``skip`` / ``no`` / ``abort`` / ``cancel``) align with L3 worker skip:
+    the tool does not run, but the turn is not a hard execution failure.
+    """
 
 
 class ReactUserTurnToolChoiceMiddleware(AgentMiddleware):
@@ -64,12 +74,14 @@ class HumanApprovalMiddleware(AgentMiddleware):
         user_callback: Callable,
         agent_name: str,
         tool_allowlist: MutableSet[str] | None = None,
+        *,
+        hitl_coalescer: CompositeToolHitlCoalescer | None = None,
     ) -> None:
         self.interrupt_before_tools = interrupt_before_tools
         self.user_callback = user_callback
         self.agent_name = agent_name
         self.tool_allowlist = tool_allowlist
-        self._hitl_coalescer = CompositeToolHitlCoalescer([ReadFileHitlDeduper()])
+        self._hitl_coalescer = hitl_coalescer or CompositeToolHitlCoalescer([ReadFileHitlDeduper()])
 
     @staticmethod
     def _extract_tool_call(request: Any) -> tuple[str, dict[str, Any], str | None]:
@@ -136,9 +148,10 @@ class HumanApprovalMiddleware(AgentMiddleware):
                 f"Tool  : {tool_name}\n"
                 f"Args  : {tool_args}\n"
                 "\n"
-                "Each tool invocation is approved on its own unless the runtime detects a safe "
-                "duplicate of a call you already approved (logged when it happens).\n"
-                "In the agloom TUI: press Y = Accept, N = Reject, A = Allowlist (this tool name "
+                "Each tool invocation requires approval unless the tool is on your session "
+                "allowlist, or you allowlisted this tool and the runtime detects a safe subset "
+                "duplicate (e.g. a smaller read_file limit on the same path — logged when it happens).\n"
+                "In the agloom TUI: press Y = Accept once, N = Reject, A = Allowlist (this tool name "
                 "for the rest of the session). Esc defaults to Reject."
             ),
         }
@@ -159,7 +172,7 @@ class HumanApprovalMiddleware(AgentMiddleware):
             raise UserAbort(f"User aborted tool call: {tool_name}")
 
         if decision_norm in ("allowlist", "a", "3"):
-            if self.tool_allowlist is not None and tool_name and tool_name != "unknown_tool":
+            if self.tool_allowlist is not None and tool_name and tool_name not in _L2_INVALID_ALLOWLIST_NAMES:
                 self.tool_allowlist.add(tool_name)
             self._hitl_coalescer.record_approval(tool_name, tool_args)
             logger.event(
@@ -168,6 +181,5 @@ class HumanApprovalMiddleware(AgentMiddleware):
             )
             return await handler(request)
 
-        self._hitl_coalescer.record_approval(tool_name, tool_args)
         logger.event(f"{self.agent_name}[L2-HITL] Approved — executing '{tool_name}'.")
         return await handler(request)

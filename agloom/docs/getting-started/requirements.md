@@ -4,36 +4,47 @@
 
 | Requirement       | Version | Notes                                                                                    |
 | ----------------- | ------- | ---------------------------------------------------------------------------------------- |
-| **Python**        | 3.12.x  | Required by `agsuperbrain`; install resolves NumPy 1.x for Super-Brain + `qdrant-client` |
-| **pip**           | 21.0+   | For installing from PyPI                                                                 |
-| **uv** (optional) | 0.4+    | Recommended for faster installs and dev workflow                                         |
+| **Python**                | 3.12.x  | Required by `agsuperbrain`; install resolves NumPy 1.x for Super-Brain + `qdrant-client` |
+| **pip**                   | 21.0+   | For installing from PyPI                                                                 |
+| **uv** (optional)         | 0.4+    | Recommended for faster installs and dev workflow                                         |
 
 ## Runtime Dependencies
 
 These are installed automatically with `pip install agloom` (see `[project] dependencies` in `pyproject.toml` for exact minimum versions):
 
-| Package                  | Purpose                                                                                  |
-| ------------------------ | ---------------------------------------------------------------------------------------- |
-| `langchain`, `langgraph` | Core agent graphs and LLM abstractions                                                   |
-| `langchain-mcp-adapters` | MCP server integration                                                                   |
-| `langchain-huggingface`  | HuggingFace Inference API chat models                                                    |
-| `qdrant-client`          | Semantic query cache (`create_cache()`), vector similarity                               |
-| `sentence-transformers`  | Embeddings for smart context / skill matching                                            |
-| `pyyaml`, `tomli`        | Config and project metadata                                                              |
-| `httpx`                  | Async HTTP (tools, webhook feedback handler)                                             |
-| `tiktoken`               | Token counting when available (`session` memory helpers)                                 |
-| `agsuperbrain`           | Super-Brain local graph + MCP for the CLI ([docs](https://agsuperbrain.readthedocs.io/)) |
+| Package                       | Purpose                                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ |
+| `langchain`, `langgraph`      | Core agent graphs and LLM abstractions                                                           |
+| `langchain-mcp-adapters`      | MCP server integration                                                                           |
+| `langgraph-checkpoint-sqlite` | SQLite checkpointer dependency (LangGraph persistence)                                           |
+| `fastapi`, `uvicorn[standard]`, `sse-starlette` | HTTP + SSE stack for the observability API and related serving paths            |
+| `qdrant-client`               | Semantic query cache (`create_cache()`), vector similarity                                       |
+| `pyyaml`, `tomli`             | Config and project metadata                                                                      |
+| `httpx`                       | Async HTTP (tools, webhook feedback handler)                                                     |
+| `tiktoken`                    | Token counting when available (`session` memory helpers)                                         |
+| `agsuperbrain`                | Super-Brain local graph + MCP for the CLI ([docs](https://agsuperbrain.readthedocs.io/))         |
 
-## Optional Dependencies
+## Optional Dependencies — provider & feature extras
 
-Installed via extras (e.g., `pip install agloom[groq]`):
+Installed via **named extras** only (e.g. `pip install 'agloom[openai,groq]'`). There is **no `agloom[all]`** extra: resolving every `langchain-*` provider in one install forces incompatible pins; combine the extras you need instead (see the comment in `pyproject.toml`).
 
-| Extra    | Adds                            | Purpose                                                 |
-| -------- | ------------------------------- | ------------------------------------------------------- |
-| `groq`   | `langchain-groq`                | Groq Cloud (Llama, Mixtral, …)                          |
-| `nvidia` | `langchain-nvidia-ai-endpoints` | NVIDIA NIM                                              |
-| `all`    | both of the above               | Convenience meta-extra                                  |
-| `docs`   | MkDocs stack                    | Local documentation builds (`pip install agloom[docs]`) |
+| Extra          | Adds (typical)           | Purpose                                      |
+| -------------- | ------------------------ | -------------------------------------------- |
+| `openai`       | `langchain-openai`       | OpenAI chat models                           |
+| `anthropic`    | `langchain-anthropic`    | Anthropic Claude                             |
+| `huggingface`  | `langchain-huggingface`  | Hugging Face Inference / chat integrations   |
+| `memory`       | `sentence-transformers`, `langchain-huggingface` | Embeddings for smart context / skill matching (`agloom[memory]`) |
+| `groq`         | `langchain-groq`        | Groq Cloud (Llama, Mixtral, …)               |
+| `nvidia`       | `langchain-nvidia-ai-endpoints` | NVIDIA NIM                             |
+| `ws`           | `websockets`             | WebSocket transport for `agloom-runtime`     |
+| `docs`         | MkDocs stack             | Local documentation builds                   |
+
+Combine extras when needed, for example:
+
+```bash
+pip install 'agloom[openai,memory]'
+pip install 'agloom[groq,nvidia]'
+```
 
 ## Development Dependencies
 
@@ -51,6 +62,8 @@ Install dev dependencies (from the repo, using the lockfile):
 ```bash
 uv sync --group dev
 ```
+
+**TypeScript clients (repo contributors):** CI also runs `npm test` in **`agloom_cli/`** and **`agloom_web/`** (Node **22+**). Install dependencies per package (`npm install`) before pushing UI or wire-parser changes.
 
 ## Operating System Support
 

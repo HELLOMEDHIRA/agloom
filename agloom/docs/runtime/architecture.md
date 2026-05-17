@@ -232,12 +232,12 @@ Heartbeat + capability refresh every 30s.
 
 ## 8. Checkpoint / Recovery Architecture
 
-LangGraph checkpoints remain entirely inside `agloom-core`. The runtime's role is:
+LangGraph checkpoints remain inside the Python agent library. Saved state includes classifier output when a turn was classified, so **`agent.resume()`** can continue without re-picking a pattern. The runtime's role is:
 
-1. **Trigger**: `command.snapshot.request` → calls `agent._save_checkpoint()` in core
+1. **Trigger**: `command.snapshot.request` → asks the agent to persist a checkpoint
 2. **Observe**: `checkpoint.saved` / `checkpoint.restored` events on the AGP wire
-3. **Resume**: `command.session.resume {thread, from_seq}` → replay EventStore →
-   LangGraph restores from checkpoint → AGP stream continues
+3. **Reconnect**: `command.session.resume {thread, from_seq}` → replay **EventStore** (AGP envelopes) for disconnected clients
+4. **Graph resume**: Python callers use **`agent.resume(value, thread_id=…)`** with a checkpointer (separate from step 3 — this is not an AGP command)
 
 ```text
                 Runtime                              Core

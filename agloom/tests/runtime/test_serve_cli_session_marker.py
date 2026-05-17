@@ -1,4 +1,4 @@
-"""Session marker snapshot JSON and resume env wiring (``api_key_secret`` in marker by default)."""
+"""Session marker snapshot JSON and resume env wiring (``api_key_secret`` opt-in persistence)."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from agloom.runtime.serve_cli import (
     SESSION_MARKER_DEFAULT_PRESENCE_PENALTY,
     inject_api_key_secret_from_session_marker,
     merge_api_key_env_from_session_marker,
+    merge_base_url_from_session_marker,
     session_started_snapshot_from_args,
 )
 
@@ -49,7 +50,8 @@ def test_session_started_snapshot_api_key_env_nonempty(monkeypatch) -> None:
     assert ec["max_tokens"] == SESSION_MARKER_DEFAULT_MAX_TOKENS
     assert ec["frequency_penalty"] == SESSION_MARKER_DEFAULT_FREQUENCY_PENALTY
     assert ec["presence_penalty"] == SESSION_MARKER_DEFAULT_PRESENCE_PENALTY
-    assert ec["api_key_secret"] == "sk-test"
+    assert "api_key_secret" not in ec
+    assert "persist_api_key_in_session_marker" not in ec
 
 
 def test_session_started_snapshot_persist_api_key_writes_secret(monkeypatch) -> None:
@@ -107,12 +109,16 @@ def test_session_started_snapshot_omit_env_skips_secret(monkeypatch) -> None:
         memory_type=None,
         memory_path=None,
         no_memory=False,
+        persist_api_key_in_session_marker=True,
     )
     snap = session_started_snapshot_from_args(args)
-    assert "api_key_secret" not in snap["effective_config"]
+    ec = snap["effective_config"]
+    assert "api_key_secret" not in ec
+    assert "persist_api_key_in_session_marker" not in ec
 
 
 def test_inject_api_key_secret_from_session_marker_sets_env_when_empty(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AGLOOM_ALLOW_INJECT_API_KEY_FROM_SESSION_MARKER", "1")
     monkeypatch.delenv("RESUME_KEY_VAR", raising=False)
     sessions = tmp_path / ".agloom" / "sessions"
     sessions.mkdir(parents=True)
@@ -134,6 +140,7 @@ def test_inject_api_key_secret_from_session_marker_sets_env_when_empty(tmp_path,
 
 
 def test_inject_api_key_secret_does_not_override_nonempty_env(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AGLOOM_ALLOW_INJECT_API_KEY_FROM_SESSION_MARKER", "1")
     monkeypatch.setenv("RESUME_KEY_VAR", "live-wins")
     sessions = tmp_path / ".agloom" / "sessions"
     sessions.mkdir(parents=True)
@@ -157,6 +164,7 @@ def test_inject_api_key_secret_does_not_override_nonempty_env(tmp_path, monkeypa
 def test_inject_then_merge_then_apply_api_key_flow(tmp_path, monkeypatch) -> None:
     from agloom.runtime.serve_cli import apply_api_key_env
 
+    monkeypatch.setenv("AGLOOM_ALLOW_INJECT_API_KEY_FROM_SESSION_MARKER", "1")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("MY_CUSTOM", raising=False)
     sessions = tmp_path / ".agloom" / "sessions"
@@ -208,6 +216,28 @@ def test_inject_then_merge_then_apply_api_key_flow(tmp_path, monkeypatch) -> Non
     assert ec["provider"] is None
 
 
+def test_inject_api_key_secret_skipped_without_allow_env(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("AGLOOM_ALLOW_INJECT_API_KEY_FROM_SESSION_MARKER", raising=False)
+    monkeypatch.delenv("RESUME_KEY_VAR", raising=False)
+    sessions = tmp_path / ".agloom" / "sessions"
+    sessions.mkdir(parents=True)
+    marker = sessions / "sess_no_allow.json"
+    marker.write_text(
+        json.dumps(
+            {
+                "effective_config": {
+                    "api_key_env": "RESUME_KEY_VAR",
+                    "api_key_secret": "sk-should-not-load",
+                },
+            },
+        ),
+        encoding="utf-8",
+    )
+    args = argparse.Namespace()
+    inject_api_key_secret_from_session_marker(args, marker)
+    assert os.environ.get("RESUME_KEY_VAR") is None
+
+
 def test_session_started_snapshot_nvidia_prefix_and_canonical_key(monkeypatch) -> None:
     monkeypatch.setenv("NVIDIA_API_KEY", "nim-key")
     args = argparse.Namespace(
@@ -221,6 +251,7 @@ def test_session_started_snapshot_nvidia_prefix_and_canonical_key(monkeypatch) -
         memory_path=None,
         no_memory=False,
         base_url=None,
+        persist_api_key_in_session_marker=True,
     )
     snap = session_started_snapshot_from_args(args)
     ec = snap["effective_config"]
@@ -232,8 +263,15 @@ def test_session_started_snapshot_nvidia_prefix_and_canonical_key(monkeypatch) -
     assert "provider_primary_api_key_env" not in ec
     assert ec["provider_primary_credential_present"] is True
     assert ec["api_key_secret"] == "nim-key"
+    assert ec["persist_api_key_in_session_marker"] is True
     cred = ec["provider_credential_env"]
     assert cred == [{"env": "NVIDIA_API_KEY", "present": True}]
+    assert ec["base_url"] is None
+    assert ec["llm_endpoint"] == {
+        "base_url": None,
+        "ollama_base_url_from_env": None,
+        "openai_compatible_base_url_from_env": None,
+    }
 
 
 def test_session_started_snapshot_llm_endpoint_from_env(monkeypatch) -> None:
@@ -253,8 +291,59 @@ def test_session_started_snapshot_llm_endpoint_from_env(monkeypatch) -> None:
         base_url=None,
     )
     snap = session_started_snapshot_from_args(args)
-    ep = snap["effective_config"]["llm_endpoint"]
+    ec = snap["effective_config"]
+    assert ec["base_url"] is None
+    ep = ec["llm_endpoint"]
     assert ep["openai_compatible_base_url_from_env"] == "http://127.0.0.1:4000/v1"
+    assert ep["base_url"] is None
+    assert ep["ollama_base_url_from_env"] is None
+
+
+def test_session_started_snapshot_explicit_base_url() -> None:
+    args = argparse.Namespace(
+        model="litellm:gpt-4o-mini",
+        provider=None,
+        api_key_env=None,
+        session_max_turns=50,
+        auto_summarize=True,
+        summarizer_model=None,
+        memory_type=None,
+        memory_path=None,
+        no_memory=False,
+        base_url="http://127.0.0.1:4000/v1",
+    )
+    ec = session_started_snapshot_from_args(args)["effective_config"]
+    assert ec["base_url"] == "http://127.0.0.1:4000/v1"
+    assert ec["llm_endpoint"]["base_url"] == "http://127.0.0.1:4000/v1"
+
+
+def test_merge_base_url_from_session_marker(tmp_path: Path) -> None:
+    marker = tmp_path / "sess.json"
+    marker.write_text(
+        json.dumps(
+            {
+                "effective_config": {
+                    "base_url": "http://localhost:11434",
+                    "llm_endpoint": {"base_url": "http://localhost:11434"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    args = argparse.Namespace(model="ollama:llama3.2", base_url=None)
+    merge_base_url_from_session_marker(args, marker)
+    assert args.base_url == "http://localhost:11434"
+
+
+def test_merge_base_url_cli_wins_over_marker(tmp_path: Path) -> None:
+    marker = tmp_path / "sess.json"
+    marker.write_text(
+        json.dumps({"effective_config": {"base_url": "http://marker:8000/v1"}}),
+        encoding="utf-8",
+    )
+    args = argparse.Namespace(model="openai:gpt-4o-mini", base_url="http://cli:9000/v1")
+    merge_base_url_from_session_marker(args, marker)
+    assert args.base_url == "http://cli:9000/v1"
 
 
 def test_session_started_snapshot_env_present_without_api_key_env(monkeypatch) -> None:
@@ -269,6 +358,7 @@ def test_session_started_snapshot_env_present_without_api_key_env(monkeypatch) -
         memory_type=None,
         memory_path=None,
         no_memory=False,
+        persist_api_key_in_session_marker=True,
     )
     snap = session_started_snapshot_from_args(args)
     assert snap["effective_config"]["api_key_env"] == "OPENAI_API_KEY"
@@ -277,6 +367,7 @@ def test_session_started_snapshot_env_present_without_api_key_env(monkeypatch) -
     assert "provider_primary_api_key_env" not in snap["effective_config"]
     assert snap["effective_config"]["provider_primary_credential_present"] is True
     assert snap["effective_config"]["api_key_secret"] == "x"
+    assert snap["effective_config"]["persist_api_key_in_session_marker"] is True
     assert snap["effective_config"]["llm_resolution"] == "env_auto"
 
 

@@ -205,6 +205,11 @@ export interface WorkerFailedEvent extends Envelope {
   data: { worker_id: string; error: string; error_class?: string; duration_ms?: number }
 }
 
+export interface WorkerHaltedEvent extends Envelope {
+  type: 'worker.halted'
+  data: { worker_id: string; reason?: string; output_preview?: string; duration_ms?: number }
+}
+
 // graph.*
 
 export interface GraphNodeEnterEvent extends Envelope {
@@ -215,6 +220,23 @@ export interface GraphNodeEnterEvent extends Envelope {
 export interface GraphNodeExitEvent extends Envelope {
   type: 'graph.node.exit'
   data: { node: string; pattern?: string; duration_ms?: number; output_preview?: string; error?: string }
+}
+
+export interface OrchestrationStepEvent extends Envelope {
+  type: 'orchestration.step'
+  data: {
+    depth?: number
+    pattern: string
+    action: string
+    worker_id?: string
+    reason?: string
+    input_preview?: string
+    output_preview?: string
+    duration_ms?: number
+    error?: string
+    confidence?: number
+    quality_score?: number
+  }
 }
 
 // memory.*
@@ -523,8 +545,10 @@ export type AGPKnownEvent =
   | WorkerSpawnedEvent
   | WorkerCompletedEvent
   | WorkerFailedEvent
+  | WorkerHaltedEvent
   | GraphNodeEnterEvent
   | GraphNodeExitEvent
+  | OrchestrationStepEvent
   | SkillLoadedEvent
   | SkillAppliedEvent
   | SkillLearnedEvent
@@ -545,10 +569,16 @@ export type AGPKnownEvent =
   | ErrorTransientEvent
   | ErrorFatalEvent
 
-/** Known AGP v1 catalogue + additive types above. Wire may carry other `type` strings — the runtime ``dispatch`` default branch must tolerate them (forward-compat). */
-export type AGPEvent = AGPKnownEvent
+/** Forward-compatible wire event: valid envelope + object ``data``, ``type`` not in the known catalogue. */
+export interface UnknownAgpEvent extends Envelope {
+  type: string
+  data: Record<string, unknown>
+}
 
-/** Parse and validate one NDJSON / WebSocket frame after ``JSON.parse`` (Zod; see ``agpWireParse.ts``). Prefer importing from this module — do not re-parse in callers. */
+/** Known AGP v1 catalogue + additive types above, plus forward-compatible unknown ``type`` strings. */
+export type AGPEvent = AGPKnownEvent | UnknownAgpEvent
+
+/** Parse and validate one NDJSON / WebSocket frame (Zod envelope + per-type ``data`` when catalogued). */
 export const parseInboundAGPEventJSON = (parsed: unknown): AGPEvent =>
   parseInboundAGPEventJSONWire(parsed) as unknown as AGPEvent
 
@@ -734,6 +764,6 @@ export type AGPCommand =
   | CommandHarnessGitCmd
   | CommandPlanPreviewCmd
 
-// Utility types
+// Utility types (WebSocket clients — see agloom_web `lib/agp/client.ts`. Stdio CLI uses `BridgeStatus` in `runtime/bridge.ts`.)
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed' | 'error'

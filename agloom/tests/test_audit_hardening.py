@@ -46,6 +46,22 @@ def test_extract_token_usage_dict_top_level_usage_metadata() -> None:
     assert _extract_token_usage(d) == {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3}
 
 
+def test_extract_token_usage_sums_all_messages() -> None:
+    class UM:
+        def __init__(self, inp: int, out: int) -> None:
+            self.input_tokens = inp
+            self.output_tokens = out
+
+    class Msg:
+        def __init__(self, inp: int, out: int) -> None:
+            self.usage_metadata = UM(inp, out)
+
+    class Resp:
+        messages = [Msg(10, 5), Msg(20, 8)]
+
+    assert _extract_token_usage(Resp()) == {"input_tokens": 30, "output_tokens": 13}
+
+
 def test_extend_invoke_config_merges_signal_queues_from_agent() -> None:
     import asyncio
 

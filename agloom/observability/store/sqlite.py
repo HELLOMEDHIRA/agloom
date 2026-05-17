@@ -6,9 +6,10 @@ SQLite-backed observability store.
 Appends every AGP Envelope to an ``events`` table and materialises
 per-session summary rows in ``sessions``.  All I/O is async (aiosqlite).
 
-Schema is append-only and migration-safe: columns are never removed,
-only added.  The store is designed to be opened once per runtime
-process and shared across all sessions via a single connection pool.
+Schema uses ``PRAGMA user_version`` for forward-compatible migrations
+(additive columns only).  The store opens a **dedicated writer** and a
+**dedicated reader** connection so HTTP read paths are not serialized
+behind ingest on the writer.
 """
 
 from __future__ import annotations
@@ -20,6 +21,9 @@ from dataclasses import dataclass
 from typing import Any
 
 import aiosqlite
+
+# Bump when additive migrations are required; see ``_apply_migrations``.
+_OBS_SCHEMA_VERSION = 1
 
 # ── DDL ───────────────────────────────────────────────────────────────────────
 
@@ -73,70 +77,97 @@ _SCHEMA = [
 
 # ── Data models ───────────────────────────────────────────────────────────────
 
+
 @dataclass
 class SessionSummary:
-    session_id:    str
-    thread_id:     str | None
-    started_at:    str
-    ended_at:      str | None
-    status:        str
-    pattern:       str | None
-    total_turns:   int
-    input_tokens:  int
+    session_id: str
+    thread_id: str | None
+    started_at: str
+    ended_at: str | None
+    status: str
+    pattern: str | None
+    total_turns: int
+    input_tokens: int
     output_tokens: int
-    duration_ms:   int | None
+    duration_ms: int | None
+
 
 @dataclass
 class EventRow:
-    id:          int
-    session_id:  str
-    thread_id:   str | None
-    run_id:      str | None
-    seq:         int
-    event_type:  str
-    ts:          str
-    payload:     dict[str, Any]
-    created_at:  int
+    id: int
+    session_id: str
+    thread_id: str | None
+    run_id: str | None
+    seq: int
+    event_type: str
+    ts: str
+    payload: dict[str, Any]
+    created_at: int
+
 
 # ── Store ─────────────────────────────────────────────────────────────────────
+
+
+async def _apply_migrations(db: aiosqlite.Connection) -> None:
+    """Set ``user_version`` and run additive ALTERs when bumping ``_OBS_SCHEMA_VERSION``."""
+    async with db.execute("PRAGMA user_version") as cur:
+        row = await cur.fetchone()
+    ver = int(row[0]) if row and row[0] is not None else 0
+
+    if ver < 1:
+        # Initial release: tables created by _SCHEMA; version marks upgrade path for future ALTERs.
+        pass
+
+    if ver != _OBS_SCHEMA_VERSION:
+        await db.execute(f"PRAGMA user_version = {_OBS_SCHEMA_VERSION}")
+
 
 class SQLiteObservabilityStore:
     """
     Thread-safe async SQLite store for AGP Envelopes.
 
-    Usage::
-
-        store = await SQLiteObservabilityStore.open("sessions.db")
-        await store.ingest(envelope_dict)
-        sessions = await store.list_sessions()
-        events = await store.get_events("s_abc123")
+    Writer and reader use separate connections (WAL mode) so API queries are not
+    queued behind bursty ingest on the writer. Each ``ingest`` commits so the
+    reader connection always sees persisted rows (WAL still allows a small window
+    of loss on unclean process exit before OS fsync).
     """
 
-    def __init__(self, db: aiosqlite.Connection, path: str) -> None:
-        self._db = db
+    def __init__(
+        self,
+        write_db: aiosqlite.Connection,
+        read_db: aiosqlite.Connection,
+        path: str,
+    ) -> None:
+        self._write_db = write_db
+        self._read_db = read_db
         self.path = path
         self._ingest_lock = asyncio.Lock()
-        self._pending_commits = 0
-
-    # ── Factory ───────────────────────────────────────────────────────────────
 
     @classmethod
     async def open(cls, path: str = "agloom_obs.db") -> SQLiteObservabilityStore:
-        db = await aiosqlite.connect(path, check_same_thread=False)
-        db.row_factory = aiosqlite.Row
-        # WAL mode for concurrent readers
-        await db.execute("PRAGMA journal_mode=WAL;")
-        await db.execute("PRAGMA synchronous=NORMAL;")
+        write_db = await aiosqlite.connect(path, check_same_thread=False)
+        write_db.row_factory = aiosqlite.Row
+        await write_db.execute("PRAGMA journal_mode=WAL;")
+        await write_db.execute("PRAGMA synchronous=NORMAL;")
         for stmt in _SCHEMA:
-            await db.execute(stmt)
-        await db.commit()
-        return cls(db, path)
+            await write_db.execute(stmt)
+        await _apply_migrations(write_db)
+        await write_db.commit()
+
+        read_db = await aiosqlite.connect(path, check_same_thread=False)
+        read_db.row_factory = aiosqlite.Row
+        await read_db.execute("PRAGMA journal_mode=WAL;")
+        # Avoid a long-lived implicit read transaction so this connection always sees
+        # the latest committed writes from the writer (WAL snapshots per transaction).
+        read_db.isolation_level = None
+
+        return cls(write_db, read_db, path)
 
     async def close(self) -> None:
         async with self._ingest_lock:
-            await self._db.commit()
-            self._pending_commits = 0
-        await self._db.close()
+            await self._write_db.commit()
+        await self._write_db.close()
+        await self._read_db.close()
 
     # ── Ingest ────────────────────────────────────────────────────────────────
 
@@ -151,7 +182,7 @@ class SQLiteObservabilityStore:
             ts = str(envelope.get("ts", ""))
             now_ms = int(time.time() * 1000)
 
-            await self._db.execute(
+            await self._write_db.execute(
                 """
                 INSERT OR IGNORE INTO events
                     (session_id, thread_id, run_id, seq, event_type, ts, payload, created_at)
@@ -163,7 +194,7 @@ class SQLiteObservabilityStore:
             # Upsert session summary
             data = envelope.get("data", {}) or {}
             if event_type == "session.opened":
-                await self._db.execute(
+                await self._write_db.execute(
                     """
                     INSERT OR IGNORE INTO sessions (session_id, thread_id, started_at, status)
                     VALUES (?, ?, ?, 'open')
@@ -174,7 +205,7 @@ class SQLiteObservabilityStore:
                 reason = data.get("reason", "unknown")
                 dur = data.get("duration_ms")
                 status = "error" if reason == "error" else "closed"
-                await self._db.execute(
+                await self._write_db.execute(
                     """
                     UPDATE sessions SET ended_at=?, status=?, duration_ms=?
                     WHERE session_id=?
@@ -182,17 +213,17 @@ class SQLiteObservabilityStore:
                     (ts, status, dur, session_id),
                 )
             elif event_type == "pattern.classified":
-                await self._db.execute(
+                await self._write_db.execute(
                     "UPDATE sessions SET pattern=? WHERE session_id=?",
                     (data.get("pattern"), session_id),
                 )
             elif event_type == "message.user":
-                await self._db.execute(
+                await self._write_db.execute(
                     "UPDATE sessions SET total_turns = total_turns + 1 WHERE session_id=?",
                     (session_id,),
                 )
             elif event_type == "metric.tokens":
-                await self._db.execute(
+                await self._write_db.execute(
                     """
                     UPDATE sessions
                     SET input_tokens  = input_tokens  + ?,
@@ -202,17 +233,14 @@ class SQLiteObservabilityStore:
                     (data.get("input_tokens", 0), data.get("output_tokens", 0), session_id),
                 )
 
-            self._pending_commits += 1
-            if self._pending_commits >= 50:
-                await self._db.commit()
-                self._pending_commits = 0
+            await self._write_db.commit()
 
     # ── Query: sessions ───────────────────────────────────────────────────────
 
     async def list_sessions(
         self,
         *,
-        limit:  int = 50,
+        limit: int = 50,
         offset: int = 0,
         status: str | None = None,
     ) -> list[SessionSummary]:
@@ -223,19 +251,20 @@ class SQLiteObservabilityStore:
             params.append(status)
         q += " ORDER BY started_at DESC LIMIT ? OFFSET ?"
         params += [limit, offset]
-        async with self._db.execute(q, params) as cur:
+        async with self._read_db.execute(q, params) as cur:
             rows = await cur.fetchall()
         return [_row_to_summary(r) for r in rows]
 
     async def get_session(self, session_id: str) -> SessionSummary | None:
-        async with self._db.execute(
-            "SELECT * FROM sessions WHERE session_id=?", (session_id,)
+        async with self._read_db.execute(
+            "SELECT * FROM sessions WHERE session_id=?",
+            (session_id,),
         ) as cur:
             row = await cur.fetchone()
         return _row_to_summary(row) if row else None
 
     async def session_count(self) -> int:
-        async with self._db.execute("SELECT COUNT(*) FROM sessions") as cur:
+        async with self._read_db.execute("SELECT COUNT(*) FROM sessions") as cur:
             row = await cur.fetchone()
         return int(row[0]) if row else 0
 
@@ -246,7 +275,7 @@ class SQLiteObservabilityStore:
         session_id: str,
         *,
         event_types: list[str] | None = None,
-        limit:  int = 500,
+        limit: int = 500,
         offset: int = 0,
         after_seq: int | None = None,
     ) -> list[EventRow]:
@@ -261,13 +290,14 @@ class SQLiteObservabilityStore:
             params.append(after_seq)
         q += " ORDER BY seq ASC LIMIT ? OFFSET ?"
         params += [limit, offset]
-        async with self._db.execute(q, params) as cur:
+        async with self._read_db.execute(q, params) as cur:
             rows = await cur.fetchall()
         return [_row_to_event(r) for r in rows]
 
     async def get_event_count(self, session_id: str) -> int:
-        async with self._db.execute(
-            "SELECT COUNT(*) FROM events WHERE session_id=?", (session_id,)
+        async with self._read_db.execute(
+            "SELECT COUNT(*) FROM events WHERE session_id=?",
+            (session_id,),
         ) as cur:
             row = await cur.fetchone()
         return int(row[0]) if row else 0
@@ -287,7 +317,7 @@ class SQLiteObservabilityStore:
             params.extend(event_types)
         q += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
-        async with self._db.execute(q, params) as cur:
+        async with self._read_db.execute(q, params) as cur:
             rows = await cur.fetchall()
         return list(reversed([_row_to_event(r) for r in rows]))
 
@@ -295,13 +325,13 @@ class SQLiteObservabilityStore:
 
     async def delete_session(self, session_id: str) -> None:
         async with self._ingest_lock:
-            await self._db.execute("DELETE FROM events  WHERE session_id=?", (session_id,))
-            await self._db.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
-            await self._db.commit()
-            self._pending_commits = 0
+            await self._write_db.execute("DELETE FROM events  WHERE session_id=?", (session_id,))
+            await self._write_db.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
+            await self._write_db.commit()
 
 
 # ── Row converters ────────────────────────────────────────────────────────────
+
 
 def _row_to_summary(r: aiosqlite.Row) -> SessionSummary:
     return SessionSummary(
@@ -316,6 +346,7 @@ def _row_to_summary(r: aiosqlite.Row) -> SessionSummary:
         output_tokens=r["output_tokens"],
         duration_ms=r["duration_ms"],
     )
+
 
 def _row_to_event(r: aiosqlite.Row) -> EventRow:
     return EventRow(

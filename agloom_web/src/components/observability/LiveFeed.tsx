@@ -13,6 +13,7 @@ const TYPE_COLOR: Record<string, string> = {
   'error.fatal':        'text-red-400',
   'error.transient':    'text-orange-400',
   'worker.failed':      'text-red-400',
+  'worker.halted':      'text-cyan-400',
   'worker.spawned':     'text-yellow-400',
   'message.assistant':  'text-white',
   'hitl.request':       'text-orange-400',
@@ -36,6 +37,7 @@ const summarise = (evt: AGPEvent): string => {
     case 'message.assistant': return `response`
     case 'tool.call.start':   return `tool: ${d['tool'] ?? '?'}()`
     case 'worker.spawned':    return `worker: ${d['name'] ?? '?'}`
+    case 'worker.halted':     return `halt: ${d['worker_id'] ?? '?'}`
     case 'hitl.request':      return `HITL: ${d['kind'] ?? '?'}`
     case 'error.fatal':       return `fatal: ${String(d['message'] ?? '').slice(0, 40)}`
     default:                  return evt.type

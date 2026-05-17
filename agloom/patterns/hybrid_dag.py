@@ -21,6 +21,14 @@ from ..models import (
 )
 from ._dag import group_by_level, inject_dag_context
 from ._resolve import resolve_worker_configs
+from ._steps_accounting import steps_taken_from_audit
+from ._synthesis_contract import (
+    ALL_PATTERN_WORKERS_FAILED_ERROR,
+    PH_ORIGINAL_QUERY,
+    PH_WORKER_OUTPUTS,
+    human_message_body_replace_placeholders,
+    pattern_synthesis_success,
+)
 from .hitl import run_workers_with_hitl
 
 logger = get_logger(__name__)
@@ -32,10 +40,10 @@ Workers executed in a dependency graph — some in parallel, some sequentially.
 Combine all results into a single coherent, well-structured final answer.
 
 ORIGINAL QUERY:
-{query}
+__AGLOOM_ORIGINAL_QUERY__
 
 WORKER OUTPUTS (in execution order):
-{outputs}
+__AGLOOM_WORKER_OUTPUTS__
 
 FINAL ANSWER:
 Provide a complete, unified answer that integrates all worker findings."""
@@ -96,18 +104,30 @@ async def handle_hybrid_dag(
 
     all_results: list[WorkerResult] = []
     completed: dict[str, WorkerResult] = {}
+    cumulative_skipped: list[str] = []
 
     for level_idx, level_configs in enumerate(levels):
         if halt_event.is_set():
             logger.warning(f"[HYBRID_DAG] HALT_ALL propagated — skipping Level {level_idx} and all subsequent levels.")
             for cfg in level_configs:
-                all_results.append(
-                    WorkerResult(
-                        worker_id=cfg.worker_id,
-                        task=cfg.task,
-                        output=f"Skipped — HALT_ALL fired in Level {level_idx - 1}.",
-                        signal=SignalType.FAILED,
-                        error="HALT_ALL",
+                wr = WorkerResult(
+                    worker_id=cfg.worker_id,
+                    task=cfg.task,
+                    output=f"Skipped — HALT_ALL fired in Level {level_idx - 1}.",
+                    signal=SignalType.HALTED,
+                    error="HALT_ALL",
+                )
+                all_results.append(wr)
+                completed[cfg.worker_id] = wr
+                steps.append(
+                    _make_step(
+                        StepType.WORKER_END,
+                        wr.worker_id,
+                        input=wr.task,
+                        output=wr.output,
+                        duration_ms=wr.elapsed_ms,
+                        signal=wr.signal.value,
+                        max_length=ml,
                     )
                 )
             continue
@@ -122,18 +142,26 @@ async def handle_hybrid_dag(
                 f"deps={cfg.depends_on or []}"
             )
 
-        level_results, skipped = await run_workers_with_hitl(
+        from ..orchestrator.hooks import run_dag_level_workers
+
+        level_results, skipped = await run_dag_level_workers(
             agent=agent,
             configs=enriched,
             invoke_config=config,
-            halt_event=halt_event,  # one event for whole DAG so HALT_ALL stops later levels
+            analysis=analysis,
+            halt_event=halt_event,
         )
 
         if skipped:
             logger.event(f"[HYBRID_DAG] Level {level_idx} skipped workers: {skipped}")
+        cumulative_skipped.extend(skipped)
 
         succeeded = sum(1 for r in level_results if r.signal == SignalType.SUCCESS)
         logger.event(f"[HYBRID_DAG] Level {level_idx} done: {succeeded}/{len(level_results)} workers succeeded.")
+
+        from ..orchestrator.hooks import recover_failed_workers
+
+        level_results = await recover_failed_workers(agent, config, level_results)
 
         for result in level_results:
             all_results.append(result)
@@ -157,15 +185,49 @@ async def handle_hybrid_dag(
     total = len(all_results)
 
     if total_success == 0:
+        if total == 0 and cumulative_skipped:
+            return ExecutionResult(
+                query=query,
+                pattern_used=PatternType.HYBRID_DAG,
+                output=(
+                    "All DAG workers were skipped at user request "
+                    f"(interrupt_before_workers): {cumulative_skipped}"
+                ),
+                success=True,
+                steps_taken=steps_taken_from_audit(steps),
+                worker_results=all_results,
+                analysis=analysis,
+                metadata={"user_skipped_workers": list(cumulative_skipped)},
+                steps=steps,
+                token_usage=usage,
+                messages=raw_messages,
+            )
+        halted = [r for r in all_results if r.signal == SignalType.HALTED]
+        if halted and total_success == 0:
+            logger.event(f"[HYBRID_DAG] Halted by user ({len(halted)} worker(s)).")
+            return ExecutionResult(
+                query=query,
+                pattern_used=PatternType.HYBRID_DAG,
+                output="DAG execution halted by user.",
+                success=False,
+                steps_taken=steps_taken_from_audit(steps),
+                worker_results=all_results,
+                error="HALT_ALL",
+                analysis=analysis,
+                steps=steps,
+                token_usage=usage,
+                messages=raw_messages,
+                metadata={"halted_workers": [r.worker_id for r in halted]},
+            )
         logger.error("[HYBRID_DAG] All workers failed.")
         return ExecutionResult(
             query=query,
             pattern_used=PatternType.HYBRID_DAG,
             output="All workers in the DAG failed.",
             success=False,
-            steps_taken=total,
+            steps_taken=steps_taken_from_audit(steps),
             worker_results=all_results,
-            error="AllWorkersFailed",
+            error=ALL_PATTERN_WORKERS_FAILED_ERROR,
             analysis=analysis,
             steps=steps,
             token_usage=usage,
@@ -173,9 +235,12 @@ async def handle_hybrid_dag(
         )
 
     outputs_block = _format_all_outputs(all_results)
-    synthesis_prompt = HYBRID_DAG_SYNTHESIS_PROMPT.format(
-        query=query,
-        outputs=outputs_block,
+    synthesis_prompt = human_message_body_replace_placeholders(
+        HYBRID_DAG_SYNTHESIS_PROMPT,
+        {
+            PH_ORIGINAL_QUERY: query,
+            PH_WORKER_OUTPUTS: outputs_block,
+        },
     )
     _timeout = agent.get("llm_timeout", 120.0) if isinstance(agent, dict) else 120.0
     t_synth = time.perf_counter()
@@ -188,9 +253,10 @@ async def handle_hybrid_dag(
         HumanMessage(content=synthesis_prompt),
     ]
     synthesis_error: str | None = None
+    synth_usage: dict[str, int] = {}
     try:
         synthesis, tail, last_chunk = await stream_or_invoke_llm(
-            llm, synth_input, agent, timeout=_timeout
+            llm, synth_input, agent, timeout=_timeout, phase="hybrid_dag_synthesis"
         )
         raw_messages.extend(tail)
         synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
@@ -213,6 +279,8 @@ async def handle_hybrid_dag(
             output=synthesis,
             duration_ms=synth_ms,
             max_length=ml,
+            usage=synth_usage if synth_usage else {},
+            phase="hybrid_dag_synthesis",
         )
     )
     logger.event(f"[HYBRID_DAG] Synthesis done: {len(synthesis)} chars.")
@@ -220,15 +288,23 @@ async def handle_hybrid_dag(
         f"[HYBRID_DAG] Done: {total_success}/{total} workers succeeded, {len(levels)} levels, {len(synthesis)} chars."
     )
 
+    worker_success = sum(1 for r in all_results if r.signal == SignalType.SUCCESS)
+    synthesis_degraded = synthesis_error is not None
+
     return ExecutionResult(
         query=query,
         pattern_used=PatternType.HYBRID_DAG,
         output=synthesis,
-        success=True,
-        steps_taken=total + 1,
+        success=pattern_synthesis_success(worker_results=all_results, synthesis_degraded=synthesis_degraded),
+        steps_taken=steps_taken_from_audit(steps),
         worker_results=all_results,
         error=synthesis_error,
         analysis=analysis,
+        metadata={
+            "worker_success_count": worker_success,
+            "worker_total": total,
+            "synthesis_degraded": synthesis_degraded,
+        },
         steps=steps,
         token_usage=usage,
         messages=raw_messages,

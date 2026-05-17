@@ -14,17 +14,20 @@ from langchain_core.tools import tool
 from .safety import BackgroundShellJob, SafetyContext, resolve_safe_path, split_command
 from .subprocess_env import safe_subprocess_env
 
-_SUBPROCESS_ENV: dict[str, str] | None = None
-
 _MAX_BACKGROUND_JOBS = 16
+_MAX_TOOL_OUTPUT_CHARS = 32_000
+_MAX_TOOL_STDERR_CHARS = 8_000
+
+
+def _cap_output(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
 
 
 def _subprocess_env() -> dict[str, str]:
-    """Cached env dict for subprocesses (built on first shell tool use)."""
-    global _SUBPROCESS_ENV
-    if _SUBPROCESS_ENV is None:
-        _SUBPROCESS_ENV = safe_subprocess_env()
-    return _SUBPROCESS_ENV
+    """Fresh env snapshot for each subprocess (reflects current process env)."""
+    return safe_subprocess_env()
 
 
 def make_which_tools() -> list[Any]:
@@ -88,9 +91,9 @@ def make_shell_tool(ctx: SafetyContext, *, timeout_s: float = 120.0) -> list[Any
         err = (proc.stderr or "").strip()
         parts: list[str] = [f"exit={proc.returncode}"]
         if out:
-            parts.append(out[-8000:] if len(out) > 8000 else out)
+            parts.append(_cap_output(out, _MAX_TOOL_OUTPUT_CHARS))
         if err:
-            parts.append("stderr:\n" + (err[-4000:] if len(err) > 4000 else err))
+            parts.append("stderr:\n" + _cap_output(err, _MAX_TOOL_STDERR_CHARS))
         return "\n".join(parts) if len(parts) > 1 else parts[0]
 
     @tool
@@ -129,9 +132,9 @@ def make_shell_tool(ctx: SafetyContext, *, timeout_s: float = 120.0) -> list[Any
         err = (proc.stderr or "").strip()
         parts: list[str] = [f"exit={proc.returncode}"]
         if out:
-            parts.append(out[-8000:] if len(out) > 8000 else out)
+            parts.append(_cap_output(out, _MAX_TOOL_OUTPUT_CHARS))
         if err:
-            parts.append("stderr:\n" + (err[-4000:] if len(err) > 4000 else err))
+            parts.append("stderr:\n" + _cap_output(err, _MAX_TOOL_STDERR_CHARS))
         return "\n".join(parts) if len(parts) > 1 else parts[0]
 
     @tool
@@ -167,7 +170,9 @@ def make_shell_tool(ctx: SafetyContext, *, timeout_s: float = 120.0) -> list[Any
             "env": _subprocess_env(),
         }
         if os.name == "nt":
-            popen_kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+            win_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", None)
+            if win_flags is not None:
+                popen_kw["creationflags"] = win_flags
         else:
             popen_kw["start_new_session"] = True
 

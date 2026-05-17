@@ -247,7 +247,11 @@ if state:
     print(f"Pattern: {data['pattern']}")
     print(f"Output: {data['output'][:100]}")
     print(f"Steps: {len(data['steps'])}")
+    if data.get("analysis"):
+        print(f"Classifier pattern: {data['analysis'].get('pattern')}")
 ```
+
+When a turn completes, checkpoints also store the classifier result (**`analysis`**) alongside output and steps so **`resume()`** can continue with the same pattern after an interrupt.
 
 ### State history (time travel)
 
@@ -259,9 +263,9 @@ async for snapshot in await agent.get_history(thread_id="session-1"):
     print(f"[{snapshot.checkpoint['ts']}] {data['query'][:60]} → {data['pattern']}")
 ```
 
-### Resuming interrupted runs
+### Resuming interrupted runs {#resuming-interrupted-runs}
 
-`resume()` operates on the **compiled LangGraph graph** path (not the normal `run_fresh` pipeline). It is intended for advanced interrupt/resume workflows where `interrupt_before` gates paused a graph node:
+`resume()` is for **LangGraph interrupt/resume** (not the usual `ainvoke` path). Use it when `interrupt_before` / `interrupt_after` paused a graph node and you need to supply the user's decision:
 
 ```python
 result = await agent.resume(
@@ -270,8 +274,10 @@ result = await agent.resume(
 )
 ```
 
+Before continuing, agloom reloads the saved classifier result from the checkpoint so the agent does **not** re-classify and switch patterns mid-interrupt.
+
 !!! note "Checkpoint vs resume"
-    `get_state()` and `get_history()` read checkpoints written by every `ainvoke()`/`astream_events()` call — they always have data. `resume()` requires the compiled graph path and is for advanced HITL workflows only.
+    `get_state()` and `get_history()` reflect checkpoints written after each `ainvoke()` / `astream_events()` call. `resume()` is only for graph interrupt flows with a **`checkpointer`** configured — not for normal turn-by-turn chat.
 
 ## Testing Agents
 

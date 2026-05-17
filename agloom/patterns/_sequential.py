@@ -4,8 +4,10 @@ from collections import deque
 
 from .. import worker as worker_module
 from ..logging_utils import get_logger
-from ..models import ResolvedWorkerConfig, SignalType, WorkerResult
+from ..models import PatternType, QueryAnalysis, ResolvedWorkerConfig, SignalType, WorkerResult
+from ._worker_signals import halted_worker_result, worker_execution_failed
 from ..worker import extend_invoke_config_with_event_queue
+from ._upstream_context import format_upstream_block, format_upstream_blocks
 from .worker_gates import drain_for_halt, get_signal_queue
 
 logger = get_logger(__name__)
@@ -16,7 +18,8 @@ def inject_pipeline_input(
     prev_result: WorkerResult,
 ) -> ResolvedWorkerConfig:
     """Inject only the previous step's output (strict A→B→C chain)."""
-    injected_task = f"{config.task}\n\nINPUT FROM PREVIOUS STEP ({prev_result.worker_id}):\n{prev_result.output}"
+    block = format_upstream_block(prev_result.worker_id, prev_result.output)
+    injected_task = f"{config.task}\n\nINPUT FROM PREVIOUS STEP ({prev_result.worker_id}):\n{block}"
     return config.model_copy(update={"task": injected_task})
 
 
@@ -28,7 +31,8 @@ def inject_planner_context(
     if not history:
         return config
     history_block = "\n\n".join(
-        f"[{r.worker_id}]  Task: {r.task}\nStatus: {r.signal.value}\nResult: {r.output}" for r in history
+        f"Task: {r.task}\nStatus: {r.signal.value}\n{format_upstream_block(r.worker_id, r.output)}"
+        for r in history
     )
     injected_task = f"{config.task}\n\nEXECUTION HISTORY:\n{history_block}"
     return config.model_copy(update={"task": injected_task})
@@ -84,7 +88,9 @@ async def run_sequential_workers(
         stop_on_failure: If True, abort the chain after a failed worker (pipeline default).
         invoke_config: Forwarded to ``run_worker`` (e.g. LangGraph ``configurable``).
 
-    ``HALT_ALL`` on the signal queue skips remaining steps. Returns ordered ``WorkerResult`` list.
+    ``HALT_ALL`` on the signal queue skips remaining steps (observed **between**
+    step iterations only — unlike parallel patterns, there is no shared task
+    listener that cancels an in-flight worker mid-step). Returns ordered ``WorkerResult`` list.
     """
     agent_name = agent.get("name", "Agent")
     llm = agent["llm"]
@@ -98,7 +104,7 @@ async def run_sequential_workers(
     logger.event(f"[Sequential/{mode}] {agent_name} — execution order: {[c.worker_id for c in sorted_configs]}")
 
     for idx, config in enumerate(sorted_configs):
-        if idx > 0 and signal_queue:
+        if signal_queue:
             halt = await drain_for_halt(
                 signal_queue,
                 caller_name=f"{agent_name}[{mode}]",
@@ -111,12 +117,10 @@ async def run_sequential_workers(
                 )
                 for rem in sorted_configs[idx:]:
                     ordered_results.append(
-                        WorkerResult(
+                        halted_worker_result(
                             worker_id=rem.worker_id,
                             task=rem.task,
                             output="Skipped — HALT_ALL received before this step.",
-                            signal=SignalType.FAILED,
-                            error="HALT_ALL",
                         )
                     )
                 break
@@ -157,10 +161,23 @@ async def run_sequential_workers(
             )
 
         if mode == "pipeline" and config.depends_on:
-            prev_id = config.depends_on[-1]
-            prev_result = results_map.get(prev_id)
-            if prev_result and prev_result.signal == SignalType.SUCCESS:
-                config = inject_pipeline_input(config, prev_result)
+            predecessors = [results_map[d] for d in config.depends_on if d in results_map]
+            ok_preds = [r for r in predecessors if r.signal == SignalType.SUCCESS]
+            if len(ok_preds) == 1:
+                config = inject_pipeline_input(config, ok_preds[0])
+            elif len(ok_preds) > 1:
+                combined = format_upstream_blocks(
+                    [(r.worker_id, f"status {r.signal.value}\n{r.output}") for r in ok_preds]
+                )
+                injected = (
+                    f"{config.task}\n\nINPUT FROM PREVIOUS STEPS "
+                    f"({', '.join(r.worker_id for r in ok_preds)}):\n{combined}"
+                )
+                config = config.model_copy(update={"task": injected})
+                logger.event(
+                    f"[Sequential/pipeline] Merging {len(ok_preds)} predecessor outputs "
+                    f"into worker {config.worker_id!r}"
+                )
 
         elif mode == "planner_executor":
             history = [results_map[dep] for dep in config.depends_on if dep in results_map]
@@ -172,12 +189,20 @@ async def run_sequential_workers(
             f"step {idx + 1}/{len(sorted_configs)} "
             f"worker='{config.worker_id}' depends_on={config.depends_on}"
         )
-        merged = extend_invoke_config_with_event_queue(invoke_config, agent.get("_event_queue"), agent=agent)
-        result = await worker_module.run_worker(config, llm, invoke_config=merged)
+        from ..orchestrator.hooks import run_worker_or_dispatch
+
+        step_analysis = (invoke_config or {}).get("_query_analysis")
+        if not isinstance(step_analysis, QueryAnalysis):
+            step_analysis = QueryAnalysis(
+                pattern=PatternType.REACT, complexity=5, reasoning="sequential"
+            )
+        result = await run_worker_or_dispatch(
+            agent, config, llm, invoke_config, step_analysis
+        )
         results_map[config.worker_id] = result
         ordered_results.append(result)
 
-        if result.signal == SignalType.FAILED:
+        if worker_execution_failed(result.signal):
             failed_ids.add(config.worker_id)
             if stop_on_failure:
                 logger.warning(

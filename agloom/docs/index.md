@@ -11,9 +11,11 @@ Documentation for the **PyPI library**: execution patterns, `create_agent`, memo
 
 ## Concepts & configuration
 
+- [Glossary](concepts/glossary.md) — turn, run, thread, checkpoint, orchestration
 - [How it works](concepts/how-it-works.md)
 - [Execution patterns](concepts/patterns.md)
 - [The `create_agent` API](concepts/create-agent.md)
+- [Recursive orchestration](features/orchestration.md)
 - [All parameters](configuration/parameters.md)
 
 CLI and web clients live in sibling packages; see the **CLI** and **Web** sections of the main docs site.

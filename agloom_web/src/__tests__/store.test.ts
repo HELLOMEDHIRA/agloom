@@ -196,6 +196,17 @@ describe('worker events', () => {
     expect(state().activeTurn?.workers[0]?.status).toBe('failed')
     expect(state().activeTurn?.workers[0]?.error).toBe('OOM')
   })
+
+  it('marks worker halted on worker.halted', () => {
+    dispatch({ ...env(), type: 'worker.spawned', data: { worker_id: 'w1', name: 'analyzer' } })
+    dispatch({
+      ...env(),
+      type: 'worker.halted',
+      data: { worker_id: 'w1', reason: 'HALT_ALL', output_preview: 'stopped' },
+    })
+    expect(state().activeTurn?.workers[0]?.status).toBe('halted')
+    expect(state().activeTurn?.workers[0]?.error).toBe('HALT_ALL')
+  })
 })
 
 // graph nodes
@@ -408,6 +419,11 @@ describe('AGPKnownEvent smoke', () => {
       { ...env(), type: 'runtime.ready', data: { agent_name: 'a' } },
       { ...env(), type: 'runtime.config', data: { model_id: 'm', tool_names: ['a'], capabilities: ['hitl'] } },
       { ...env(), type: 'runtime.config.applied', data: { model_id: 'm2' } },
+      {
+        ...env(),
+        type: 'runtime.mcp.servers',
+        data: { server_names: ['agsuperbrain'], servers: [{ name: 'agsuperbrain', ok: true, tool_count: 3 }] },
+      },
       { ...env(), type: 'runtime.pong', data: { ping_id: 'p1' } },
       { ...env(), type: 'runtime.schema', data: { json_schema: { a: 1 } } },
       { ...env(), type: 'runtime.tools', data: { tools: [{ name: 't1' }] } },
@@ -418,9 +434,21 @@ describe('AGPKnownEvent smoke', () => {
       { ...env(), type: 'agent.idle', data: {} },
       { ...env(), type: 'stream.heartbeat', data: { thread: 'th', chars_since_last: 1 } },
     ]
-    expect(new Set(f.map((e) => e.type)).size).toBe(49)
+    expect(new Set(f.map((e) => e.type)).size).toBe(50)
     for (const e of f) {
       expect(() => dispatch(e)).not.toThrow()
     }
+  })
+})
+
+describe('dispatch unknown AGP types', () => {
+  it('appends an unhandled-event protocol note and trace entry', () => {
+    dispatch({
+      ...env(),
+      type: 'zz.custom.unhandled',
+      data: { x: 1 },
+    } as unknown as AGPEvent)
+    expect(state().protocolNotes.some((n) => n.includes('Unknown / unhandled AGP event'))).toBe(true)
+    expect(state().executionTrace.some((t) => t.summary.includes('unknown: zz.custom.unhandled'))).toBe(true)
   })
 })

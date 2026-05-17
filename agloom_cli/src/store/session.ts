@@ -1,7 +1,7 @@
 /** CLI session store; `dispatch` is the reducer for inbound AGP events. */
 
 import { create } from 'zustand'
-import type { AGPEvent } from '../types/agp.js'
+import type { AGPEvent, RuntimeProviderEntry } from '../types/agp.js'
 import { dispatchAgpEvent, pushProtocolNotes } from './dispatchAgpEvent.js'
 
 export interface ThinkingStep {
@@ -29,7 +29,7 @@ export interface Worker {
   name?: string
   pattern?: string
   task?: string
-  status: 'running' | 'done' | 'failed'
+  status: 'running' | 'done' | 'failed' | 'halted'
   outputPreview?: string
   error?: string
 }
@@ -97,6 +97,8 @@ export interface SessionStore {
 
   // Session / runtime metadata
   sessionId: string | null
+  /** LangGraph thread from the latest ``session.opened`` / ``session.resumed`` envelope. */
+  activeThreadId: string | null
   runtimeVersion: string | null
   /** Wall-clock ms when `session.opened` / `session.resumed` arrived (client-side). */
   sessionOpenedAtMs: number | null
@@ -110,6 +112,8 @@ export interface SessionStore {
   todos: Array<{ id: string; text: string; done: boolean }>
   totalInputTokens: number
   totalOutputTokens: number
+  /** Last ``metric.tokens`` seq applied — ignore duplicate/out-of-order replays. */
+  lastMetricTokensSeq: number
   /** Token deltas attributed to the in-flight turn only (reset each `message.user`). */
   turnInputTokens: number
   turnOutputTokens: number
@@ -146,13 +150,19 @@ export interface SessionStore {
   mcpServerNames: string[]
   /** Per-server MCP status from ``runtime.mcp.servers`` (tool counts, ok/err). */
   mcpServerRows: McpServerStatusRow[]
+  /** Full rows from last ``runtime.providers`` (sidebar / protocol). */
+  providerRows: RuntimeProviderEntry[]
   autoApprovedTools: string[]
   filesUpdated: string[]
 
-  /** When false, completed turns show a one-line thinking summary (Ctrl+Y expands). */
-  expandHistoryThinking: boolean
-  /** When false, the in-flight turn shows one live-updating thinking line (Ctrl+Y expands). */
-  expandActiveThinking: boolean
+  /** Main chat column width (terminal cols minus optional metrics sidebar). */
+  mainColumnWidth: number
+
+  /** Shared wall clock (ms) for uptime displays — one interval in ``App``. */
+  wallClockMs: number
+
+  /** When true, reasoning steps are hidden (Ctrl+Y / ``/think`` toggles). Default: show dim inline trace. */
+  hideThinkingTrace: boolean
 
   dispatch: (evt: AGPEvent) => void
   addDiagnostic: (line: string) => void
@@ -162,9 +172,10 @@ export interface SessionStore {
   toggleActiveTurnToolExpandBulk: () => void
   /** Slash/UI helpers — append one line to the metrics sidebar wire notes. */
   appendProtocolNote: (line: string) => void
-  toggleExpandHistoryThinking: () => void
-  /** Ctrl+Y / ``/think``: expand current turn thinking if any, else transcript thinking rows. */
-  toggleThinkingUiExpand: () => void
+  /** Ctrl+Y / ``/think``: show or hide dim reasoning trace in the transcript. */
+  toggleHideThinkingTrace: () => void
+  setMainColumnWidth: (width: number) => void
+  setWallClockMs: (ms: number) => void
 }
 
 /** Read-oriented tools: show full result by default when done (still toggle with Ctrl+T / ``/tools``). */
@@ -196,6 +207,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
   activeTurn: null,
   hitlQueue: [],
   sessionId: null,
+  activeThreadId: null,
   runtimeVersion: null,
   sessionOpenedAtMs: null,
   model: null,
@@ -205,6 +217,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
   todos: [],
   totalInputTokens: 0,
   totalOutputTokens: 0,
+  lastMetricTokensSeq: 0,
   turnInputTokens: 0,
   turnOutputTokens: 0,
   metricsHistory: [],
@@ -225,10 +238,12 @@ export const useSessionStore = create<SessionStore>((set) => ({
   cliToolsCount: null,
   mcpServerNames: [],
   mcpServerRows: [],
+  providerRows: [],
   autoApprovedTools: [],
   filesUpdated: [],
-  expandHistoryThinking: false,
-  expandActiveThinking: true,
+  hideThinkingTrace: false,
+  mainColumnWidth: 80,
+  wallClockMs: Date.now(),
 
   dispatch: (evt: AGPEvent) => set((s) => dispatchAgpEvent(s, evt)),
 
@@ -248,17 +263,13 @@ export const useSessionStore = create<SessionStore>((set) => ({
       protocolNotes: pushProtocolNotes(s.protocolNotes, line),
     })),
 
-  toggleExpandHistoryThinking: () =>
-    set((s) => ({ ...s, expandHistoryThinking: !s.expandHistoryThinking })),
+  toggleHideThinkingTrace: () => set((s) => ({ ...s, hideThinkingTrace: !s.hideThinkingTrace })),
 
-  toggleThinkingUiExpand: () =>
-    set((s) => {
-      const at = s.activeTurn
-      if (at && at.thinkingSteps.length > 0) {
-        return { ...s, expandActiveThinking: !s.expandActiveThinking }
-      }
-      return { ...s, expandHistoryThinking: !s.expandHistoryThinking }
-    }),
+  setMainColumnWidth: (width: number) =>
+    set((s) => (s.mainColumnWidth === width ? s : { ...s, mainColumnWidth: width })),
+
+  setWallClockMs: (ms: number) =>
+    set((s) => (s.wallClockMs === ms ? s : { ...s, wallClockMs: ms })),
 
   toggleActiveTurnToolExpandBulk: () =>
     set((s) => {
@@ -282,18 +293,32 @@ export const useSessionStore = create<SessionStore>((set) => ({
       capabilities: null,
       protocolNotes: [],
       todos: [],
-      expandHistoryThinking: false,
-      expandActiveThinking: true,
+      hideThinkingTrace: false,
       totalInputTokens: 0,
       totalOutputTokens: 0,
+      lastMetricTokensSeq: 0,
       turnInputTokens: 0,
       turnOutputTokens: 0,
       metricsHistory: [],
       totalCostUsd: 0,
-      status: 'idle',
+      status: s.status === 'exited' ? 'exited' : 'idle',
       errorMessage: null,
       outboundPrompt: null,
       toolCallExpandedById: {},
       budgetUi: 'ok',
+      autoApprovedTools: [],
+      filesUpdated: [],
+      providerRows: [],
+      mcpServerRows: [],
+      mcpServerNames: [],
+      sessionStartedAt: null,
+      sessionUpdatedAt: null,
+      sessionMemoryMode: null,
+      memoryEnabled: null,
+      skillsEnabled: null,
+      harnessEnabled: null,
+      cliToolsEnabled: null,
+      cliToolsCount: null,
+      diagnostics: [],
     })),
 }))

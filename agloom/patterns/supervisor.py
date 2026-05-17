@@ -22,6 +22,8 @@ from ..models import (
 )
 from ..llm_streaming import astream_llm_to_event_queue
 from ._resolve import resolve_worker_configs
+from ._steps_accounting import steps_taken_from_audit
+from ._synthesis_contract import ALL_PATTERN_WORKERS_FAILED_ERROR, pattern_synthesis_success
 from .hitl import run_workers_with_hitl
 
 logger = get_logger(__name__)
@@ -103,17 +105,35 @@ async def handle_supervisor(
                 )
             )
 
-    worker_results, skipped_ids = await run_workers_with_hitl(
-        agent=agent,
-        configs=configs,
-        invoke_config=config,
+    from ..orchestrator.hooks import pattern_spawns_enabled, run_dag_level_workers
+
+    ibi_workers = agent.get("interrupt_before_workers") or []
+    use_dispatch_workers = (
+        pattern_spawns_enabled(agent, config)
+        and bool(agent.get("enable_supervisor_worker_dispatch", True))
+        and not ibi_workers
     )
+    if use_dispatch_workers:
+        worker_results, skipped_ids = await run_dag_level_workers(
+            agent=agent,
+            configs=configs,
+            invoke_config=config,
+            analysis=analysis,
+        )
+    else:
+        worker_results, skipped_ids = await run_workers_with_hitl(
+            agent=agent,
+            configs=configs,
+            invoke_config=config,
+        )
     for wr in worker_results:
         for step in getattr(wr, "steps", []):
             if step.type not in (StepType.TOOL_CALL, StepType.TOOL_RESULT):
                 continue
             steps.append(step)
-            if event_queue is not None:
+            if event_queue is not None and not (
+                step.metadata.get("wire_emitted") or step.metadata.get("_wire_emitted")
+            ):
                 event_type = "tool_call" if step.type == StepType.TOOL_CALL else "tool_result"
                 await event_queue.put(
                     AgentEvent(
@@ -160,20 +180,28 @@ async def handle_supervisor(
     if skipped_ids:
         logger.event(f"[Supervisor] Skipped workers: {skipped_ids}")
 
+    from ..orchestrator.hooks import recover_failed_workers
+
+    worker_results = await recover_failed_workers(agent, config, worker_results)
+
     if not worker_results and skipped_ids:
         return ExecutionResult(
             pattern_used=PatternType.SUPERVISOR,
             query=query,
-            output=f"All workers were aborted by interrupt_before_workers: {skipped_ids}",
+            output=(
+                "All workers were skipped at user request "
+                f"(interrupt_before_workers): {skipped_ids}"
+            ),
             steps_taken=1,
-            success=False,
+            success=True,
             analysis=analysis,
+            metadata={"user_skipped_workers": list(skipped_ids)},
             steps=steps,
             messages=raw_messages,
         )
 
     t_agg = time.perf_counter()
-    output, agg_msgs = await aggregate_results(
+    output, agg_msgs, synthesis_degraded, synthesis_error, agg_usage = await aggregate_results(
         agent=agent,
         query=query,
         worker_results=worker_results,
@@ -181,6 +209,10 @@ async def handle_supervisor(
     )
     raw_messages.extend(agg_msgs)
     agg_ms = round((time.perf_counter() - t_agg) * 1000, 1)
+    if agg_usage:
+        usage = _merge_token_usage(usage, agg_usage)
+    from ..wire_tokens import llm_label_from_run_config
+
     steps.append(
         _make_step(
             StepType.LLM_CALL,
@@ -189,21 +221,34 @@ async def handle_supervisor(
             output=output,
             duration_ms=agg_ms,
             max_length=ml,
+            usage=agg_usage if agg_usage else {},
+            phase="supervisor_aggregate",
+            model=llm_label_from_run_config(agent),
         )
     )
-    total_steps = len(worker_results) + 2
     any_success = any(wr.signal == SignalType.SUCCESS for wr in worker_results)
+    success = pattern_synthesis_success(worker_results=worker_results, synthesis_degraded=synthesis_degraded)
+    err: str | None
+    if not any_success:
+        err = ALL_PATTERN_WORKERS_FAILED_ERROR
+    else:
+        err = synthesis_error
     logger.event(f"[Supervisor] Done: {len(worker_results)} workers, {len(output)} chars.")
 
     return ExecutionResult(
         pattern_used=PatternType.SUPERVISOR,
         query=query,
         output=output,
-        steps_taken=total_steps,
-        success=any_success,
-        error=None if any_success else "AllWorkersFailed",
+        steps_taken=steps_taken_from_audit(steps),
+        success=success,
+        error=err,
         analysis=analysis,
         worker_results=worker_results,
+        metadata={
+            "synthesis_degraded": synthesis_degraded,
+            "worker_success_count": sum(1 for wr in worker_results if wr.signal == SignalType.SUCCESS),
+            "worker_total": len(worker_results),
+        },
         steps=steps,
         token_usage=usage,
         messages=raw_messages,
@@ -280,14 +325,16 @@ async def aggregate_results(
     query: str,
     worker_results: list[WorkerResult],
     skipped_ids: list[str],
-) -> tuple[str, list]:
+) -> tuple[str, list, bool, str | None, dict[str, int]]:
     """Synthesize all worker outputs via an LLM call.
 
     When _event_queue is present, streams tokens in real-time via
     llm.astream() so users see the synthesis being composed live.
+
+    Returns ``(output, llm_message_tail, synthesis_degraded, synthesis_error, aggregate_usage)``.
     """
     if not worker_results:
-        return "No worker results to aggregate.", []
+        return "No worker results to aggregate.", [], False, None, {}
 
     results_text = "\n".join(
         f"--- Worker {r.worker_id} | Status: {r.signal.value} ---\nTask: {r.task}\nResult: {r.output}"
@@ -308,12 +355,28 @@ async def aggregate_results(
     llm_messages = list(messages)
     event_queue = agent.get("_event_queue")
     _timeout = agent.get("llm_timeout", 120.0)
-    agg_timeout = _timeout * 0.5  # Give half of available time for aggregation
+    agg_cfg = agent.get("supervisor_aggregate_timeout")
+    if agg_cfg is not None:
+        try:
+            agg_timeout = float(agg_cfg)
+        except (TypeError, ValueError):
+            agg_timeout = max(30.0, float(_timeout) * 0.5)
+    else:
+        agg_timeout = max(30.0, float(_timeout) * 0.5)
 
     try:
         if event_queue is not None:
-            output, last_chunk = await astream_llm_to_event_queue(
+            output, last_chunk, stream_usage = await astream_llm_to_event_queue(
                 agent["llm"], messages, event_queue, timeout=agg_timeout
+            )
+            from ..wire_tokens import emit_usage_from_llm_response, llm_label_from_run_config
+
+            agg_usage = await emit_usage_from_llm_response(
+                agent,
+                last_chunk,
+                phase="supervisor_aggregate",
+                model=llm_label_from_run_config(agent),
+                stream_accumulated=stream_usage,
             )
             if last_chunk is not None:
                 llm_messages.append(last_chunk)
@@ -322,20 +385,29 @@ async def aggregate_results(
                 agent["llm"].ainvoke(messages),
                 timeout=agg_timeout,
             )
+            from ..wire_tokens import emit_usage_from_llm_response, llm_label_from_run_config
+
+            agg_usage = await emit_usage_from_llm_response(
+                agent,
+                resp,
+                phase="supervisor_aggregate",
+                model=llm_label_from_run_config(agent),
+            )
             output = resp.content if isinstance(resp.content, str) else str(resp.content)
             llm_messages.append(resp)
 
         logger.event(f"[Supervisor] Aggregation done: {len(output)} chars.")
-        return output, llm_messages
+        u = agg_usage if isinstance(agg_usage, dict) else {}
+        return output, llm_messages, False, None, u
     except TimeoutError:
         logger.error(f"[Supervisor] Aggregation timed out after {agg_timeout}s — falling back to concatenation.")
         output = "\n".join(f"{r.worker_id}: {r.output}" for r in worker_results)
         if event_queue is not None:
             await event_queue.put(AgentEvent(type="aggregation_fallback", data={"reason": "timeout"}))
-        return output, llm_messages
+        return output, llm_messages, True, "SynthesisTimeout", {}
     except Exception as e:
         logger.error(f"[Supervisor] Aggregation LLM failed: {e}")
         output = "\n".join(f"{r.worker_id}: {r.output}" for r in worker_results)
         if event_queue is not None:
             await event_queue.put(AgentEvent(type="aggregation_fallback", data={"reason": "error", "error": str(e)}))
-        return output, llm_messages
+        return output, llm_messages, True, "SynthesisFailed", {}

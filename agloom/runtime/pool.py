@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 
 from ..protocol import AsyncSessionEmitter
 from .registry import InMemoryRegistry, WorkerRegistry
@@ -58,6 +58,7 @@ class WorkerPool:
         self._restart_counts: dict[str, int] = {}  # worker_id → consecutive restart count
         self._running_tasks: dict[str, asyncio.Task[None]] = {}  # task_id → asyncio.Task
         self._health_monitor_task: asyncio.Task[None] | None = None
+        self._pending_workers: list[BaseWorker] = []
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -118,11 +119,15 @@ class WorkerPool:
         self._running_tasks[task.task_id] = asyncio_task
         asyncio_task.add_done_callback(lambda _: self._running_tasks.pop(task.task_id, None))
 
-    async def cancel_task(self, task_id: str) -> bool:
-        """Cancel a running task.  Returns ``True`` if found and cancelled."""
+    async def cancel_task(self, task_id: str, *, join_timeout_s: float = 5.0) -> bool:
+        """Cancel a running task and wait up to *join_timeout_s* for it to finish."""
         t = self._running_tasks.get(task_id)
         if t and not t.done():
             t.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(t), timeout=join_timeout_s)
+            except (TimeoutError, asyncio.CancelledError):
+                pass
             return True
         return False
 
@@ -141,14 +146,21 @@ class WorkerPool:
         attempt = 0
 
         while True:
-            # Find a capable, available worker
+            emitter = self._emitter_factory()
             worker = await self._wait_for_worker(task.required_capabilities)
             if worker is None:
                 logger.error("WorkerPool: no capable worker found for task %s — giving up", task.task_id)
                 task.status = TaskStatus.FAILED
+                try:
+                    emitter.emit_error(
+                        severity="transient",
+                        message="no worker available matching task capabilities",
+                        stage="pool.dispatch",
+                    )
+                except Exception:
+                    pass
                 return
 
-            emitter = self._emitter_factory()
             try:
                 if task.timeout_ms:
                     await asyncio.wait_for(
@@ -163,18 +175,18 @@ class WorkerPool:
 
             except TimeoutError:
                 task.status = TaskStatus.TIMED_OUT
-                task.finished_at = datetime.utcnow()
+                task.finished_at = datetime.now(UTC)
                 attempt += 1
                 error_code = "timeout"
 
             except asyncio.CancelledError:
                 task.status = TaskStatus.CANCELLED
-                task.finished_at = datetime.utcnow()
+                task.finished_at = datetime.now(UTC)
                 raise
 
             except Exception as exc:
                 task.status = TaskStatus.FAILED
-                task.finished_at = datetime.utcnow()
+                task.finished_at = datetime.now(UTC)
                 attempt += 1
                 error_code = "transient"
                 logger.exception(
@@ -187,6 +199,15 @@ class WorkerPool:
                     "WorkerPool: task %s exhausted retries (%d/%d)",
                     task.task_id, attempt, policy.max_retries,
                 )
+                try:
+                    emitter.emit_error(
+                        severity="fatal",
+                        message=f"task {task.task_id} failed after {attempt} attempt(s)",
+                        error_class=error_code or "retry_exhausted",
+                        stage="pool.execute",
+                    )
+                except Exception:
+                    pass
                 return
 
             delay = policy.delay_for_attempt(attempt)

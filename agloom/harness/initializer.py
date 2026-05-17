@@ -68,6 +68,7 @@ async def run_initializer(
     max_tasks: int = 50,
     llm_timeout: float = 60.0,
     init_git: bool = True,
+    git_initial_snapshot: bool = False,
 ) -> InitializerResult:
     """
     Initialize a new project: decompose goal → seed ProgressArtifact → setup git.
@@ -84,7 +85,9 @@ async def run_initializer(
         goal: The user's original project goal.
         max_tasks: Maximum number of tasks to generate (prevents runaway generation).
         llm_timeout: Timeout for the LLM decomposition call.
-        init_git: If True, initialize a git repository with an initial commit.
+        init_git: If True, run ``git init`` when the cwd is not already a repository.
+        git_initial_snapshot: When True (and ``init_git``), also ``git add`` and create an initial
+            commit. Default False so harness runs do not mass-stage secrets or build artifacts.
 
     Returns:
         InitializerResult with briefing text, tasks created, and setup status.
@@ -207,13 +210,17 @@ async def run_initializer(
         if not gs.is_repo:
             rc, _, _ = await git_session._run("init")
             if rc == 0:
-                rc2, _, _ = await git_session._run("add", "-A")
-                if rc2 == 0:
-                    await git_session.commit(
-                        f"feat: initial project setup — {project_name}",
-                    )
-                    git_init = True
-                    briefing_lines.append("Git repository initialized with initial commit.")
+                git_init = True
+                if git_initial_snapshot:
+                    rc2, _, _ = await git_session._run("add", "-A", "--", ".")
+                    if rc2 == 0:
+                        await git_session.commit(
+                            f"feat: initial project setup — {project_name}",
+                        )
+                briefing_lines.append(
+                    "Git repository initialized"
+                    + (" with initial commit." if git_initial_snapshot else " (no files committed yet).")
+                )
 
     briefing = "\n".join(briefing_lines)
     logger.info(f"[Initializer] Complete: {tasks_created} tasks, git={git_init}, project={project_name!r}")
@@ -241,7 +248,11 @@ def create_initializer_tool(
         # agent.tools.append(tool)
     """
 
-    async def initialize_project(goal: str, init_git: bool = True) -> str:
+    async def initialize_project(
+        goal: str,
+        init_git: bool = True,
+        git_initial_snapshot: bool = False,
+    ) -> str:
         """
         Initialize a new project. This decomposes your goal into a structured
         task list and sets up the progress tracking system.
@@ -252,6 +263,7 @@ def create_initializer_tool(
         Args:
             goal: The overall project goal (e.g. "Build a chat app with auth").
             init_git: Whether to initialize a git repository (default: True).
+            git_initial_snapshot: Whether to stage and commit all files after ``git init`` (default: False).
         """
         result = await run_initializer(
             llm=llm,
@@ -260,6 +272,7 @@ def create_initializer_tool(
             project_name=project_name,
             goal=goal,
             init_git=init_git,
+            git_initial_snapshot=git_initial_snapshot,
         )
         return result.briefing
 

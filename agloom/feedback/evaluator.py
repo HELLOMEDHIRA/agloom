@@ -69,8 +69,12 @@ class RunRecord(BaseModel):
 
     ``user_rating`` is application-defined (e.g. positive/negative or numeric scales);
     ``FeedbackStore.apply_user_feedback`` treats a fixed set of strings as negative.
+
+    ``schema_version`` is bumped only when this model shape changes incompatibly
+    (external tools may use it for migration).
     """
 
+    schema_version: int = 1
     run_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
     agent_name: str = ""
     query: str
@@ -80,6 +84,8 @@ class RunRecord(BaseModel):
     output_preview: str = ""
     success: bool = True
     score: EvalScore | None = None
+
+    user_id: str | None = None
 
     user_rating: str | None = None
     user_comment: str | None = None
@@ -144,6 +150,8 @@ class AutoEvaluator:
         try:
             score = await self._call_llm_eval(result, query)
 
+            uid = (getattr(result, "metadata", None) or {}).get("user_id")
+
             record = RunRecord(
                 run_id=run_id,
                 agent_name=self._agent,
@@ -156,6 +164,7 @@ class AutoEvaluator:
                 output_preview=str(getattr(result, "output", ""))[:400],
                 success=getattr(result, "success", True),
                 score=score,
+                user_id=str(uid) if uid is not None else None,
             )
 
             await self._store.save(record)
@@ -176,6 +185,7 @@ class AutoEvaluator:
             logger.warning(f"AutoEvaluator [{self._agent}]: evaluation failed for run {run_id}: {e}")
             # Store minimal record even on failure — for TrendDetector completeness
             try:
+                uid = (getattr(result, "metadata", None) or {}).get("user_id")
                 minimal = RunRecord(
                     run_id=run_id,
                     agent_name=self._agent,
@@ -183,6 +193,7 @@ class AutoEvaluator:
                     skill_used=skill_used,
                     success=getattr(result, "success", False),
                     output_preview=str(getattr(result, "output", ""))[:200],
+                    user_id=str(uid) if uid is not None else None,
                 )
                 await self._store.save(minimal)
             except Exception as exc2:

@@ -1,6 +1,6 @@
 /** HITL gate UI: option buttons or free-text (e.g. `ask_user` clarification). */
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { Box, Text, useInput } from 'ink'
 import { StatusMessage } from '@inkjs/ui'
 import TextInput from 'ink-text-input'
@@ -74,6 +74,13 @@ export const HITLPrompt = ({ request, bridge }: Props): React.ReactElement => {
 
   const { buttons } = useMemo(() => buildButtons(request.kind, request.options), [request.kind, request.options])
 
+  useEffect(() => {
+    setMode(
+      request.kind === 'clarification' && request.options.length === 0 ? 'free_text' : 'option',
+    )
+    setFreeText('')
+  }, [request.requestId, request.kind, request.options.length])
+
   const sendDefault = (): void => {
     bridge.hitlRespond(request.requestId, hitlDefaultDecision(request.kind, request.default))
   }
@@ -85,7 +92,7 @@ export const HITLPrompt = ({ request, bridge }: Props): React.ReactElement => {
       return
     }
     if (mode === 'option') {
-      if (key.return) { sendDefault(); return }
+      if (key.return) return
       if (request.kind === 'clarification' && input.toLowerCase() === 'c') {
         setMode('free_text')
         return
@@ -114,7 +121,7 @@ export const HITLPrompt = ({ request, bridge }: Props): React.ReactElement => {
         </Box>
         <Box marginTop={0}>
           <Text color="yellow" bold>{'  ❯ '}</Text>
-          <TextInput value={freeText} onChange={setFreeText} onSubmit={(t) => { const a = t.trim(); if (a) { bridge.hitlRespond(request.requestId, 'answered', a); setFreeText('') } else { sendDefault(); setFreeText('') } }} placeholder="Your answer…" />
+          <TextInput value={freeText} onChange={setFreeText} onSubmit={(t) => { const a = t.trim(); if (!a) return; bridge.hitlRespond(request.requestId, 'answered', a); setFreeText('') }} placeholder="Your answer…" />
         </Box>
       </Box>
     )

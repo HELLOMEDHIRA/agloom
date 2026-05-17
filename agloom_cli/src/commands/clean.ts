@@ -4,25 +4,21 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
+import { createInterface } from 'node:readline/promises'
 import { join } from 'node:path'
+
+import { resolveAgloomProjectRoot } from '../config.js'
+
+export interface CleanCliOptions {
+  dryRun?: boolean
+  yes?: boolean
+}
 
 const CLEAN_TARGETS = [
   '.agloom',
   '.agsuperbrain',
   'agloom-progress.json',
 ]
-
-const findProjectRoot = (start: string): string => {
-  let dir = start
-  while (true) {
-    if (existsSync(join(dir, '.git')) || existsSync(join(dir, 'agloom.yaml')) || existsSync(join(dir, '.agloom'))) {
-      return dir
-    }
-    const parent = join(dir, '..')
-    if (parent === dir) return start
-    dir = parent
-  }
-}
 
 const removeIfExists = (path: string): boolean => {
   if (existsSync(path)) {
@@ -32,7 +28,7 @@ const removeIfExists = (path: string): boolean => {
   return false
 }
 
-const cleanGitignore = (root: string): { removed: boolean; lines: number } => {
+const planGitignoreClean = (root: string): { removed: boolean; lines: number; result?: string } => {
   const gitignorePath = join(root, '.gitignore')
   if (!existsSync(gitignorePath)) return { removed: false, lines: 0 }
 
@@ -55,7 +51,6 @@ const cleanGitignore = (root: string): { removed: boolean; lines: number } => {
     return true
   })
 
-  // Remove consecutive blank lines
   const cleaned: string[] = []
   let prevBlank = false
   for (const line of lines) {
@@ -67,14 +62,36 @@ const cleanGitignore = (root: string): { removed: boolean; lines: number } => {
 
   const result = cleaned.join('\n').trimEnd() + '\n'
   if (result !== original) {
-    writeFileSync(gitignorePath, result, 'utf8')
-    return { removed: true, lines: original.split('\n').length - result.split('\n').length }
+    return {
+      removed: true,
+      lines: original.split('\n').length - result.split('\n').length,
+      result,
+    }
   }
   return { removed: false, lines: 0 }
 }
 
-export const runCleanCli = async(): Promise<number> => {
-  const root = findProjectRoot(process.cwd())
+const cleanGitignore = (root: string): { removed: boolean; lines: number } => {
+  const plan = planGitignoreClean(root)
+  if (!plan.removed || plan.result == null) return { removed: false, lines: 0 }
+  writeFileSync(join(root, '.gitignore'), plan.result, 'utf8')
+  return { removed: true, lines: plan.lines }
+}
+
+const confirmClean = async (): Promise<boolean> => {
+  if (!process.stdin.isTTY) return false
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  try {
+    const answer = await rl.question('  Remove agloom/agsuperbrain artifacts? [y/N] ')
+    return /^y(es)?$/i.test(answer.trim())
+  } finally {
+    rl.close()
+  }
+}
+
+export const runCleanCli = async (options: CleanCliOptions = {}): Promise<number> => {
+  const root = resolveAgloomProjectRoot(process.cwd())
+  const dryRun = options.dryRun === true
 
   process.stdout.write('\n')
   process.stdout.write('  ╔══════════════════════════════════════════════════════╗\n')
@@ -82,15 +99,60 @@ export const runCleanCli = async(): Promise<number> => {
   process.stdout.write('  ╚══════════════════════════════════════════════════════╝\n')
   process.stdout.write('\n')
 
-  const removed: string[] = []
+  const wouldRemove: string[] = []
   const notFound: string[] = []
 
   for (const target of CLEAN_TARGETS) {
     const fullPath = join(root, target)
-    if (removeIfExists(fullPath)) {
-      removed.push(target)
+    if (existsSync(fullPath)) {
+      wouldRemove.push(target)
     } else {
       notFound.push(target)
+    }
+  }
+
+  const gitPreview = planGitignoreClean(root)
+  const gitWouldChange = gitPreview.removed
+
+  if (dryRun) {
+    process.stdout.write(`  Project root: ${root}\n\n`)
+    process.stdout.write('  Dry run — would remove:\n')
+    if (wouldRemove.length === 0 && !gitWouldChange) {
+      process.stdout.write('    (nothing)\n')
+    } else {
+      for (const r of wouldRemove) {
+        process.stdout.write(`    ✕ ${r}\n`)
+      }
+    }
+    if (gitWouldChange) {
+      process.stdout.write(
+        `  Would clean .gitignore (remove ~${gitPreview.lines} agloom-related line(s))\n`,
+      )
+    }
+    process.stdout.write('\n  Done (no files changed).\n\n')
+    return 0
+  }
+
+  if (wouldRemove.length === 0 && !gitWouldChange) {
+    process.stdout.write('  Nothing to clean — no agloom/agsuperbrain artifacts found.\n')
+    process.stdout.write(`  (Scanned: ${root})\n`)
+    process.stdout.write('  Done.\n\n')
+    return 0
+  }
+
+  if (!options.yes) {
+    const ok = await confirmClean()
+    if (!ok) {
+      process.stdout.write('  Cancelled.\n\n')
+      return 0
+    }
+  }
+
+  const removed: string[] = []
+  for (const target of wouldRemove) {
+    const fullPath = join(root, target)
+    if (removeIfExists(fullPath)) {
+      removed.push(target)
     }
   }
 

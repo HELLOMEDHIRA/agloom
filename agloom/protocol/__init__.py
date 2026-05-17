@@ -329,6 +329,8 @@ __all__ = [
     "WorkerCompletedData",
     "WorkerFailed",
     "WorkerFailedData",
+    "WorkerHalted",
+    "WorkerHaltedData",
     "WorkerSpawned",
     "WorkerSpawnedData",
     "event_adapter",

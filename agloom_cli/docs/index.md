@@ -2,6 +2,9 @@
 
 The **agloom CLI** (`npm install -g agloom-cli`) is a terminal client with a **React**-based interactive UI. It speaks **AGP** (newline-delimited JSON) over stdio to **`agloom-runtime`** from the PyPI **`agloom`** package.
 
+!!! note "Same docs, two paths"
+    **Browsing on GitHub?** These Markdown files live in the repo at [`agloom_cli/docs/`](https://github.com/HELLOMEDHIRA/agloom/tree/main/agloom_cli/docs). **On [Read the Docs](https://agloom.readthedocs.io)**, they are copied into **`_packages/agloom_cli/`** during the docs build so they sit next to the Python package pages — same content, different URL.
+
 ## Prerequisites
 
 - **Python 3.12+** with `pip install agloom` so `agloom-runtime` is on your `PATH`.

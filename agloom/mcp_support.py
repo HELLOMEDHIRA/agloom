@@ -6,8 +6,9 @@ Uses ``langchain-mcp-adapters``; ``connect_mcp_servers`` is invoked lazily from 
 from __future__ import annotations
 
 import inspect
+import weakref
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, model_validator
@@ -113,7 +114,7 @@ class MCPCapabilities:
 
 async def load_mcp_capabilities(
     servers: list[MCPServerConfig],
-) -> tuple[list[MCPCapabilities], Any]:
+) -> tuple[list[MCPCapabilities], Any, dict[str, Any]]:
     """
     Connect to all MCP servers. Load tools + resources + prompts.
 
@@ -134,7 +135,8 @@ async def load_mcp_capabilities(
 
     server_dict = {cfg.name: cfg.to_client_dict() for cfg in servers}
     # langchain-mcp-adapters 0.1.0+: no ``async with MultiServerMCPClient`` — construct and use ``get_tools`` / ``session``.
-    client = MultiServerMCPClient(server_dict)  # type: ignore[arg-type]
+    client = MultiServerMCPClient(cast(Any, server_dict))
+    client_holder: dict[str, Any] = {"client": client, "_client_ref": weakref.ref(client)}
     logger.info(f"MCP: client ready for {list(server_dict)}")
 
     capabilities: list[MCPCapabilities] = []
@@ -154,7 +156,7 @@ async def load_mcp_capabilities(
                 if uris:
                     cap.resource_tool = _make_resource_tool(
                         server_name=cfg.name,
-                        client=client,
+                        client_holder=client_holder,
                         uris=uris,
                     )
                     logger.info(f"MCP [{cfg.name}]: {len(uris)} resource(s) → tool 'read_resource_{cfg.name}'")
@@ -171,7 +173,7 @@ async def load_mcp_capabilities(
                 if names:
                     cap.prompt_tool = _make_prompt_tool(
                         server_name=cfg.name,
-                        client=client,
+                        client_holder=client_holder,
                         prompt_names=names,
                     )
                     logger.info(f"MCP [{cfg.name}]: {len(names)} prompt(s) {names} → tool 'get_prompt_{cfg.name}'")
@@ -189,12 +191,12 @@ async def load_mcp_capabilities(
             f"{len(cap.prompt_names)} prompt(s)"
         )
 
-    return capabilities, client
+    return capabilities, client, client_holder
 
 
 def _make_resource_tool(
     server_name: str,
-    client: Any,
+    client_holder: dict[str, Any],
     uris: list[str],
 ) -> BaseTool:
     """
@@ -216,6 +218,10 @@ def _make_resource_tool(
         uri: str = Field(description=f"URI of the resource to read. Available: {uris_preview}")
 
     async def read_resource(uri: str) -> str:
+        ref = client_holder.get("_client_ref")
+        client = ref() if ref is not None else client_holder.get("client")
+        if client is None:
+            return f"MCP client for {server_name!r} is closed; reconnect the agent session."
         try:
             blobs = await client.get_resources(server_name, uris=[uri])
             if not blobs:
@@ -240,7 +246,7 @@ def _make_resource_tool(
 
 def _make_prompt_tool(
     server_name: str,
-    client: Any,
+    client_holder: dict[str, Any],
     prompt_names: list[str],
 ) -> BaseTool:
     """
@@ -265,6 +271,10 @@ def _make_prompt_tool(
         arguments: str = Field(default="{}", description="JSON string of arguments for the prompt template")
 
     async def get_prompt(name: str, arguments: str = "{}") -> str:
+        ref = client_holder.get("_client_ref")
+        client = ref() if ref is not None else client_holder.get("client")
+        if client is None:
+            return f"MCP client for {server_name!r} is closed; reconnect the agent session."
         try:
             args = json.loads(arguments) if arguments.strip() else {}
             messages = await client.get_prompt(server_name, name, arguments=args)
@@ -305,13 +315,15 @@ async def connect_mcp_servers(
 
     Raises:
         MCPConnectionError: if the adapter is missing, the multi-server client cannot start,
-        or any configured server fails its primary tool load (``get_tools``).
+        or any configured server fails its primary tool load (``get_tools``). On partial
+        server failure, the shared client is closed before raising — callers must not use
+        any returned capability handles from a failed connect attempt.
     """
     if not servers:
         return None, []
 
     try:
-        caps, client = await load_mcp_capabilities(servers)
+        caps, client, client_holder = await load_mcp_capabilities(servers)
     except ImportError as e:
         raise MCPConnectionError(str(e)) from e
     except Exception as e:
@@ -347,6 +359,7 @@ async def connect_mcp_servers(
     agent["tools"] = agent.get("tools", []) + new_tools
     agent["mcp_prompts"] = mcp_prompts
     agent["mcp_uris"] = mcp_uris
+    agent["_mcp_client_holder"] = client_holder
 
     resource_counts = {s: len(u) for s, u in mcp_uris.items()}
     logger.info(
@@ -371,8 +384,15 @@ async def connect_mcp_servers(
     return client, server_rows
 
 
-async def aclose_mcp_client(client: Any, *, log_name: str = "agent") -> None:
+async def aclose_mcp_client(
+    client: Any,
+    *,
+    log_name: str = "agent",
+    client_holder: dict[str, Any] | None = None,
+) -> None:
     """Best-effort shutdown for ``MultiServerMCPClient`` and similar (no reliable ``__aexit__``)."""
+    if client_holder is not None:
+        client_holder["client"] = None
     if client is None:
         return
     try:

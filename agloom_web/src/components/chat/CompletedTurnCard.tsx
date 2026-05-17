@@ -5,7 +5,8 @@ import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import type { CompletedTurn } from '../../store/session.js'
 import { cn } from '../../lib/utils/cn.js'
-import { Users } from 'lucide-react'
+import { workerIconClass, workerNameClass } from '../../lib/workerStatus.js'
+import { Users, Octagon } from 'lucide-react'
 import { ToolCallRow } from './ToolCallRow.js'
 
 interface Props { turn: CompletedTurn }
@@ -14,7 +15,7 @@ export const CompletedTurnCard = memo(({ turn }: Props) => {
   return (
     <article className="flex flex-col gap-4">
       <div className="flex gap-3 justify-end">
-        <div className="max-w-[80%] px-4 py-2.5 rounded-2xl rounded-br-sm bg-indigo-600 text-white text-sm leading-relaxed">
+        <div className="max-w-4/5 px-4 py-2.5 rounded-2xl rounded-br-sm bg-indigo-600 text-white text-sm leading-relaxed">
           {turn.userMessage}
         </div>
       </div>
@@ -32,9 +33,18 @@ export const CompletedTurnCard = memo(({ turn }: Props) => {
           )}
           {turn.workers.map((w) => (
             <div key={w.id} className="flex items-center gap-1.5 text-xs">
-              <Users size={10} className={w.status === 'done' ? 'text-emerald-400' : 'text-red-400'} />
-              <span className="text-neutral-400">{w.name}</span>
+              {w.status === 'halted' ? (
+                <Octagon size={10} className="text-cyan-400 shrink-0" />
+              ) : (
+                <Users size={10} className={workerIconClass(w.status)} />
+              )}
+              <span className={workerNameClass(w.status)}>
+                {w.name}
+              </span>
               {w.pattern && <span className="text-neutral-600">[{w.pattern}]</span>}
+              {w.status === 'halted' && w.outputPreview && (
+                <span className="text-cyan-500/80 truncate max-w-56">{w.outputPreview}</span>
+              )}
             </div>
           ))}
           {turn.toolCalls.map((tc) => (

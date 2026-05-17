@@ -34,12 +34,21 @@ Curated slugs keep strict API-key checks; any other ``provider:model`` token rou
 Use ``litellm:…`` for LiteLLM’s router, or ``lc:`` / ``init:`` for a full prefixed descriptor.
 
 When several API keys are set and no ``AGLOOM_PROVIDER`` is chosen, :func:`try_resolve_llm_from_api_keys`
-may prompt on an interactive TTY; non-interactive callers (including ``agloom-runtime``) use a fixed
-priority order instead.
+uses registry priority order.  An interactive ``input()`` chooser runs only when **both** TTYs are
+attached **and** ``AGLOOM_INTERACTIVE_PROVIDER_PICK=1`` (avoids hanging bridged stdio runtimes that
+inherit a TTY).
+
+**Unprefixed ``org/model`` ids** (no ``provider:`` prefix):
+
+- If the first path segment matches a curated provider slug (e.g. ``deepseek/deepseek-chat``) and
+  that provider's API key is set, :func:`get_model` routes there automatically.
+- ``meta-llama/…`` may alias to Groq when ``GROQ_API_KEY`` is set; otherwise Groq/Ollama heuristics
+  or an explicit prefix / ``AGLOOM_PROVIDER`` apply.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import sys
@@ -61,6 +70,41 @@ from agloom.llm.provider_registry import (
 from agloom.llm.provider_registry import (
     SLUG_TO_PIP_EXTRA as _SLUG_TO_EXTRA,
 )
+
+_logger = logging.getLogger(__name__)
+
+# Exact shorthand ids only — dated / versioned API names pass through unchanged.
+_LEGACY_ANTHROPIC_MODEL_ALIASES: dict[str, str] = {
+    "claude-3-sonnet": "claude-3-5-sonnet-20241022",
+    "claude-3-opus": "claude-3-opus-20240229",
+    "claude-3-haiku": "claude-3-haiku-20240307",
+}
+
+
+def _resolve_anthropic_model_id(model_id: str) -> str:
+    """Return the requested Anthropic model id.
+
+    Legacy Claude-3 shorthand aliases (e.g. ``claude-3-sonnet`` → dated API id) are **disabled**
+    by default so config cannot silently point at a different model than the string suggests.
+    Set ``AGLOOM_ANTHROPIC_LEGACY_SHORTHAND_ALIASES=1`` to restore the old mapping.
+    """
+    raw = model_id.strip()
+    if (os.environ.get("AGLOOM_ANTHROPIC_LEGACY_SHORTHAND_ALIASES") or "").strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return raw
+    resolved = _LEGACY_ANTHROPIC_MODEL_ALIASES.get(raw.lower())
+    if resolved is not None and resolved != raw:
+        _logger.warning(
+            "Anthropic legacy shorthand %r mapped to %r (AGLOOM_ANTHROPIC_LEGACY_SHORTHAND_ALIASES=1). "
+            "Prefer passing the full API model id.",
+            raw,
+            resolved,
+        )
+        return resolved
+    return raw
 
 
 def _slug_for_spread_llm(*, model_provider: str | None, model: str) -> str:
@@ -387,11 +431,67 @@ def _get_by_provider(
     )
 
 
+# First path segment of ``org/model`` → provider slug (when env + extra are ready).
+_SLASH_ORG_ALIASES: dict[str, str] = {
+    "meta-llama": "groq",
+    "meta_llama": "groq",
+    "mistralai": "mistralai",
+}
+
+
+def _provider_env_ready(slug: str) -> bool:
+    """True when the provider's resolver env keys (or Gemini/Google aliases) are set."""
+    if slug == "google":
+        return bool(_google_api_key())
+    info = PROVIDERS.get(slug)
+    if info is None:
+        return False
+    keys = info.resolver_env_keys
+    if not keys:
+        return False
+    return _env_configured(keys)
+
+
+def _slash_org_provider_candidates(model_id: str) -> list[str]:
+    """Provider slugs implied by the org prefix of an unprefixed slash model id."""
+    if "/" not in model_id:
+        return []
+    org = model_id.split("/", 1)[0].lower()
+    out: list[str] = []
+    norm = normalize_provider_slug(org.replace("-", "_"))
+    if norm in PROVIDERS:
+        out.append(norm)
+    alias = _SLASH_ORG_ALIASES.get(org)
+    if alias and alias not in out:
+        out.append(alias)
+    return out
+
+
+def _resolve_slash_model_by_org_prefix(
+    model_id: str, *, base_url: str | None, **kwargs: Any
+) -> Any | None:
+    """Route ``deepseek/deepseek-chat``-style ids when the org's API key is configured."""
+    usable = [
+        slug
+        for slug in _slash_org_provider_candidates(model_id)
+        if _provider_env_ready(slug) and _integration_importable(slug)
+    ]
+    if not usable:
+        return None
+    if len(usable) > 1:
+        raise ValueError(
+            f"Ambiguous model id {model_id!r}: multiple providers match org prefix "
+            f"({', '.join(usable)}). Use an explicit prefix, e.g. `{usable[0]}:{model_id}`."
+        )
+    return _get_by_provider(usable[0], model_id, base_url=base_url, **kwargs)
+
+
 def _ambiguous_slash_model_help(model_id: str) -> str:
     return (
         f"Ambiguous model id {model_id!r} (contains '/'). "
         "Pick the backend explicitly — for example:\n"
         '  create_agent(model="groq:meta-llama/llama-4-scout-17b-16e-instruct", ...)\n'
+        '  create_agent(model="deepseek/deepseek-chat", ...)  # when DEEPSEEK_API_KEY is set\n'
         '  create_agent(model="meta-llama/...", provider="groq", ...)\n'
         '  create_agent(model="ollama:llama3.2", base_url="http://127.0.0.1:11434", ...)\n'
         '  create_agent(model="litellm:groq/llama-3.3-70b-versatile", ...)\n'
@@ -403,7 +503,10 @@ def _ambiguous_slash_model_help(model_id: str) -> str:
 
 
 def _route_slash_model(model_id: str, *, base_url: str | None, **kwargs: Any) -> Any:
-    """Resolve ``org/model`` ids when no ``provider:`` prefix was used."""
+    """Resolve ``org/model`` ids when no ``provider:`` prefix was used.
+
+    Order: ``AGLOOM_PROVIDER`` → org-prefix auto-route → Groq/Ollama heuristics → error.
+    """
     pref_raw = (os.environ.get("AGLOOM_PROVIDER") or "").strip()
     pref = pref_raw.lower().replace("-", "_")
     if (
@@ -414,6 +517,10 @@ def _route_slash_model(model_id: str, *, base_url: str | None, **kwargs: Any) ->
         if pref == "mistral":
             pref = "mistralai"
         return _get_by_provider(pref, model_id, base_url=base_url, **kwargs)
+
+    org_routed = _resolve_slash_model_by_org_prefix(model_id, base_url=base_url, **kwargs)
+    if org_routed is not None:
+        return org_routed
 
     has_ollama = bool(_default_ollama_base_url(None))
     has_groq = bool(os.environ.get("GROQ_API_KEY"))
@@ -542,8 +649,8 @@ def try_resolve_llm_from_api_keys(*, interactive: bool | None = None, **llm_kwar
     """Pick a default model from API keys (e.g. ``agloom-runtime`` bootstrapping without an explicit model).
 
     - If exactly one provider is usable (key set + extra installed), use it.
-    - If several are usable and stdin/stdout are TTYs, prompt for a choice (override with ``AGLOOM_PROVIDER``).
-    - If several are usable but not interactive, use the first row in registry auto-detect priority order.
+    - If several are usable, pick interactively only when stdin/stdout are TTYs **and**
+      ``AGLOOM_INTERACTIVE_PROVIDER_PICK`` is enabled; otherwise use the first registry row.
 
     The registry ``default_model`` may be a bare id (including ``org/model`` paths). The chosen
     provider slug is always passed as ``provider=`` to :func:`get_model` so slash ids are not
@@ -595,7 +702,11 @@ def try_resolve_llm_from_api_keys(*, interactive: bool | None = None, **llm_kwar
                 return get_model(default_model, provider=slug, **llm_kwargs)
 
     if interactive is None:
-        interactive = sys.stdin.isatty() and sys.stdout.isatty()
+        interactive = (
+            sys.stdin.isatty()
+            and sys.stdout.isatty()
+            and (os.environ.get("AGLOOM_INTERACTIVE_PROVIDER_PICK") or "").strip().lower() in ("1", "true", "yes")
+        )
 
     if len(usable) == 1:
         slug, _label, default_model = usable[0]
@@ -784,16 +895,21 @@ def _get_openai_model(model_id: str, *, base_url: str | None = None, **kwargs: A
     except ImportError as e:
         raise MissingProviderDependency("openai", "'agloom[openai]'") from e
 
-    params: dict[str, Any] = {
-        "model": model_id,
-        "api_key": _require_env("OPENAI_API_KEY", for_provider="OpenAI"),
-        **spread_llm_options_for_provider("openai", kwargs),
-    }
-    if "temperature" not in params:
-        params["temperature"] = kwargs.get("temperature", 0)
-    if base_url:
-        params["base_url"] = base_url.strip()
-    return ChatOpenAI(**params)
+    api_key = _require_env("OPENAI_API_KEY", for_provider="OpenAI")
+    opts = spread_llm_options_for_provider("openai", kwargs)
+    temperature = opts.pop("temperature", None)
+    if temperature is None:
+        temperature = kwargs.get("temperature", 0)
+    bu = base_url.strip() if base_url else None
+    # Pass the API key positionally / as a dedicated kwarg — avoid stuffing secrets into a ``params``
+    # dict that is easy to log or stringify in tracebacks.
+    return ChatOpenAI(
+        model=model_id,
+        api_key=api_key,
+        temperature=temperature,
+        **({"base_url": bu} if bu else {}),
+        **opts,
+    )
 
 
 def _get_anthropic_model(model_id: str, **kwargs) -> Any:
@@ -802,14 +918,7 @@ def _get_anthropic_model(model_id: str, **kwargs) -> Any:
     except ImportError as e:
         raise MissingProviderDependency("anthropic", "'agloom[anthropic]'") from e
 
-    actual_model = model_id
-    if "claude-3" in model_id.lower():
-        if "sonnet" in model_id.lower():
-            actual_model = "claude-3-5-sonnet-20241022"
-        elif "opus" in model_id.lower():
-            actual_model = "claude-3-opus-20240229"
-        elif "haiku" in model_id.lower():
-            actual_model = "claude-3-haiku-20240307"
+    actual_model = _resolve_anthropic_model_id(model_id)
 
     opts = spread_llm_options_for_provider("anthropic", kwargs)
     if "temperature" not in opts:

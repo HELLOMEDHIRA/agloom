@@ -59,17 +59,19 @@ class ReplayEngine:
         prev_ts: datetime | None = None
 
         for ev in events:
+            cur_ts: datetime | None = None
             try:
                 cur_ts = datetime.fromisoformat(ev.ts.replace("Z", "+00:00"))
             except ValueError:
-                cur_ts = datetime.now(tz=UTC)
+                cur_ts = None
 
-            if speed > 0 and prev_ts is not None:
+            if speed > 0 and prev_ts is not None and cur_ts is not None:
                 delta = (cur_ts - prev_ts).total_seconds()
                 if delta > 0:
                     await asyncio.sleep(delta / speed)
 
-            prev_ts = cur_ts
+            if cur_ts is not None:
+                prev_ts = cur_ts
             yield ev.payload
 
     async def replay_ndjson(

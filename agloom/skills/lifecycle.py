@@ -6,12 +6,14 @@ import asyncio
 import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, field_validator
 
 from ..logging_utils import get_logger
 from ..memory.store import LongTermStore
+from .registry import _is_skill_sentinel
 
 logger = get_logger(__name__)
 
@@ -204,8 +206,10 @@ class SkillLifecycleManager:
             meta = getattr(r, "value", {}) or {}
             if meta.get("status") in ("archived", "deleted"):
                 continue
+            if _is_skill_sentinel(meta):
+                continue
             name = meta.get("name", "")
-            if not name or name.startswith("__"):
+            if not name:
                 continue
             meta["success_count"] = 0
             meta["failure_count"] = 0
@@ -227,8 +231,10 @@ class SkillLifecycleManager:
                 meta = getattr(r, "value", {}) or {}
                 if meta.get("status") in ("archived", "deleted"):
                     continue
+                if _is_skill_sentinel(meta):
+                    continue
                 name = meta.get("name", "")
-                if not name or name.startswith("__"):
+                if not name:
                     continue
 
                 last_used_str = meta.get("last_used", "")
@@ -519,19 +525,17 @@ Skills with model_reset_at set recently had their stats reset due to a model cha
         return None
 
 
-_fingerprint_cache: dict[int, str] = {}
-_FINGERPRINT_CACHE_MAX = 32
+_fingerprint_cache: WeakKeyDictionary[Any, str] = WeakKeyDictionary()
 
 
 def _compute_model_fingerprint(llm: Any) -> str:
-    """Config-level identity string (class + model name + provider) for drift detection. LRU-cached (max 32)."""
-    obj_id = id(llm)
-    if obj_id in _fingerprint_cache:
-        return _fingerprint_cache[obj_id]
+    """Config-level identity string (class + model name + provider) for drift detection.
 
-    if len(_fingerprint_cache) >= _FINGERPRINT_CACHE_MAX:
-        oldest = next(iter(_fingerprint_cache))
-        del _fingerprint_cache[oldest]
+    Cached per live ``llm`` instance via weak references (avoids stale hits after ``id`` reuse).
+    """
+    cached = _fingerprint_cache.get(llm)
+    if cached is not None:
+        return cached
 
     parts = [type(llm).__name__]
     for attr in ("model_name", "model", "model_id"):
@@ -545,7 +549,7 @@ def _compute_model_fingerprint(llm: Any) -> str:
             parts.append(str(val)[:50])
             break
     result = "|".join(parts)
-    _fingerprint_cache[obj_id] = result
+    _fingerprint_cache[llm] = result
     return result
 
 

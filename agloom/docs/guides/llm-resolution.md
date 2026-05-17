@@ -24,3 +24,15 @@ llm = await get_model("groq:meta-llama/llama-4-scout-17b-16e-instruct")
 ```
 
 For patching temperature, base URL, or API keys from config dicts, use the same **`normalize_provider_slug`** / **`spread_llm_options_for_provider`** pipeline internally consumed by **`get_model`** (see **`agloom.llm.llm_provider_params`** if you extend YAML loaders).
+
+## Unprefixed `org/model` ids
+
+When you omit a `provider:` prefix, **`get_model`** can infer the backend from the first path segment:
+
+| Model id | When it auto-routes |
+| -------- | ------------------- |
+| `deepseek/deepseek-chat` | `DEEPSEEK_API_KEY` set and `langchain-deepseek` installed |
+| `meta-llama/llama-…` | Often Groq when `GROQ_API_KEY` is set (alias) |
+| `mistralai/mistral-…` | `MISTRAL_API_KEY` set |
+
+If both Groq and Ollama env hints are set, or no org match applies, resolution fails with an explicit error — use `groq:…`, `ollama:…`, or `AGLOOM_PROVIDER`. Prefer **`provider:model`** prefixes in production configs.

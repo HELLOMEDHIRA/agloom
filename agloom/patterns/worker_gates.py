@@ -56,25 +56,38 @@ async def drain_for_halt(
 
     Returns False if queue is empty or None (normal step continuation).
 
-    Design: get_nowait() never blocks — event loop stays free between steps.
+    **Ordering:** All pending signals are drained with ``get_nowait()`` first; every
+    ``HALT_ALL`` is handled before any ``CLARIFICATION_REQUEST`` so HALT is not stuck
+    behind a blocking user prompt.
     """
     if signal_queue is None:
         return False
 
+    batch: list[Any] = []
     while True:
         try:
-            raw = signal_queue.get_nowait()
+            batch.append(signal_queue.get_nowait())
         except asyncio.QueueEmpty:
             break
 
+    halts = [
+        raw
+        for raw in batch
+        if isinstance(raw, Signal) and raw.signal_type == SignalType.HALT_ALL
+    ]
+    if halts:
+        sig = halts[0]
+        logger.warning(
+            f"[{caller_name}] L4 HALT_ALL — worker={sig.worker_id!r} — stopping execution "
+            f"({len(halts)} HALT signal(s) in batch; {len(batch) - len(halts)} other item(s) discarded)."
+        )
+        return True
+
+    for raw in batch:
         if not isinstance(raw, Signal):
             logger.warning(f"[{caller_name}] Ignoring non-Signal queue item: {type(raw).__name__!r}")
             continue
         signal = raw
-
-        if signal.signal_type == SignalType.HALT_ALL:
-            logger.warning(f"[{caller_name}] L4 HALT_ALL — worker={signal.worker_id!r} — stopping execution.")
-            return True
 
         if signal.signal_type == SignalType.CLARIFICATION_REQUEST:
             logger.event(f"[{caller_name}] L4 CLARIFICATION_REQUEST from {signal.worker_id!r}: {signal.message!r}")
@@ -113,3 +126,47 @@ async def drain_for_halt(
             logger.debug(f"[{caller_name}] Signal ignored: {signal.signal_type}")
 
     return False
+
+
+async def await_with_halt_polling(
+    main: asyncio.Task[Any],
+    *,
+    signal_queue: asyncio.Queue | None,
+    caller_name: str = "Worker",
+    user_callback: Any = None,
+    clarification_queues: dict[str, asyncio.Queue] | None = None,
+    poll_s: float = 0.25,
+) -> tuple[Any | None, bool]:
+    """Run ``main`` to completion, polling ``drain_for_halt`` on timeout slices.
+
+    Returns ``(result, halted)``. On halt, ``main`` is cancelled and ``(None, True)`` is returned.
+    """
+    try:
+        while not main.done():
+            try:
+                out = await asyncio.wait_for(asyncio.shield(main), timeout=poll_s)
+                return (out, False)
+            except asyncio.TimeoutError:
+                if signal_queue and await drain_for_halt(
+                    signal_queue,
+                    caller_name=caller_name,
+                    user_callback=user_callback,
+                    clarification_queues=clarification_queues,
+                ):
+                    main.cancel()
+                    try:
+                        await main
+                    except asyncio.CancelledError:
+                        pass
+                    return (None, True)
+            except asyncio.CancelledError:
+                raise
+        return (main.result(), False)
+    except asyncio.CancelledError:
+        if not main.done():
+            main.cancel()
+            try:
+                await main
+            except asyncio.CancelledError:
+                pass
+        raise

@@ -24,12 +24,14 @@ class SignalType(str, Enum):
     CLARIFICATION_REQUEST → worker needs human input before continuing
     SUCCESS               → worker completed normally
     FAILED                → worker failed after retries
+    HALTED                → user HALT_ALL or cooperative stop (not a retryable failure)
     """
 
     HALT_ALL = "HALT_ALL"
     CLARIFICATION_REQUEST = "CLARIFICATION_REQUEST"
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
+    HALTED = "HALTED"
 
 
 class Signal(BaseModel):
@@ -151,6 +153,26 @@ class QueryAnalysis(BaseModel):
     estimated_steps: int = Field(default=1, ge=1)
     subtasks: list[SubTask] = Field(default_factory=list)
     matched_skill: str | None = None
+    orchestration_depth: int | None = Field(
+        default=None,
+        ge=0,
+        le=20,
+        description="Suggested max recursive pattern depth for this turn (clamped to agent ceiling).",
+    )
+    orchestration_token_budget: int | None = Field(
+        default=None,
+        ge=0,
+        description="Suggested orchestration token budget for this turn.",
+    )
+    orchestration_llm_call_budget: int | None = Field(
+        default=None,
+        ge=0,
+        description="Suggested max orchestration LLM calls for this turn.",
+    )
+    orchestration_auto_escalation: bool | None = Field(
+        default=None,
+        description="Suggested auto-escalation for this turn (requires agent enable_auto_escalation).",
+    )
 
     @field_validator("complexity", "estimated_steps", mode="before")
     @classmethod
@@ -159,7 +181,7 @@ class QueryAnalysis(BaseModel):
         if v is None:
             return v
         if isinstance(v, bool):
-            return v
+            raise ValueError("boolean is not a valid integer for this field")
         if isinstance(v, int):
             return v
         if isinstance(v, float) and v == int(v):
@@ -175,6 +197,32 @@ class QueryAnalysis(BaseModel):
             except ValueError:
                 pass
         return v
+
+
+# Common truthy/falsy spellings from LLM tool JSON (only "true"/"false" is schema-safe).
+_WIRE_BOOL_TRUE = frozenset({"true", "1", "yes", "y", "on"})
+_WIRE_BOOL_FALSE = frozenset({"false", "0", "no", "n", "off"})
+
+
+def parse_wire_bool(value: Any) -> bool:
+    """Interpret classifier / tool boolean wire values (bool, number, or string)."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, int | float):
+        return value != 0
+    s = str(value).strip().lower()
+    if s in ("", "null", "none", "undefined"):
+        return False
+    if s in _WIRE_BOOL_TRUE:
+        return True
+    if s in _WIRE_BOOL_FALSE:
+        return False
+    try:
+        return int(float(s)) != 0
+    except ValueError:
+        return False
 
 
 class QueryAnalysisToolPayload(BaseModel):
@@ -196,6 +244,10 @@ class QueryAnalysisToolPayload(BaseModel):
     estimated_steps: str = "1"
     subtasks: list[SubTask] = Field(default_factory=list)
     matched_skill: str | None = None
+    orchestration_depth: str = ""
+    orchestration_token_budget: str = ""
+    orchestration_llm_call_budget: str = ""
+    orchestration_auto_escalation: str = ""
 
     @field_validator("direct_response", mode="before")
     @classmethod
@@ -205,6 +257,37 @@ class QueryAnalysisToolPayload(BaseModel):
         if isinstance(v, str) and v.strip().lower() in ("", "null", "none", "undefined"):
             return None
         return v
+
+    @field_validator(
+        "orchestration_depth",
+        "orchestration_token_budget",
+        "orchestration_llm_call_budget",
+        mode="before",
+    )
+    @classmethod
+    def _optional_int_wire(cls, v: Any) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, bool):
+            return ""
+        if isinstance(v, int | float):
+            return str(max(0, int(v)))
+        s = str(v).strip()
+        if s.lower() in ("", "null", "none", "undefined", "n/a"):
+            return ""
+        return s
+
+    @field_validator("orchestration_auto_escalation", mode="before")
+    @classmethod
+    def _optional_bool_wire(cls, v: Any) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        s = str(v).strip().lower()
+        if s in ("", "null", "none", "undefined", "n/a"):
+            return ""
+        return "true" if parse_wire_bool(v) else "false"
 
     @field_validator("complexity", mode="before")
     @classmethod
@@ -231,11 +314,7 @@ class QueryAnalysisToolPayload(BaseModel):
     @field_validator("can_parallelize", "needs_reflection", mode="before")
     @classmethod
     def _bool_wire(cls, v: Any) -> str:
-        if v is None:
-            return "false"
-        if isinstance(v, bool):
-            return "true" if v else "false"
-        return str(v).strip().lower()
+        return "true" if parse_wire_bool(v) else "false"
 
 
 def query_analysis_from_tool_payload(
@@ -264,15 +343,11 @@ def query_analysis_from_tool_payload(
     except (ValueError, TypeError):
         estimated_steps = 1
 
-    can_parallelize = (
-        raw.can_parallelize.lower() == "true" if isinstance(raw.can_parallelize, str) else bool(raw.can_parallelize)
-    )
+    can_parallelize = parse_wire_bool(raw.can_parallelize)
 
     # REFLECTION pattern without needs_reflection=True silently skips
     # the critique loop in patterns/reflection.py — enforce the invariant.
-    _needs_reflection = (
-        raw.needs_reflection.lower() == "true" if isinstance(raw.needs_reflection, str) else bool(raw.needs_reflection)
-    )
+    _needs_reflection = parse_wire_bool(raw.needs_reflection)
     needs_reflection = True if pattern == PatternType.REFLECTION else _needs_reflection
 
     reasoning = raw.reasoning or f"Routed to {pattern.value} pattern."
@@ -285,6 +360,23 @@ def query_analysis_from_tool_payload(
     if matched_skill and isinstance(matched_skill, str):
         matched_skill = matched_skill.strip() or None
 
+    def _optional_wire_int(field: str) -> int | None:
+        raw_val = getattr(raw, field, "") or ""
+        s = str(raw_val).strip()
+        if not s or s.lower() in ("null", "none", "undefined", "n/a"):
+            return None
+        try:
+            return max(0, int(s))
+        except ValueError:
+            return None
+
+    esc_raw = getattr(raw, "orchestration_auto_escalation", "") or ""
+    esc_s = str(esc_raw).strip().lower()
+    if not esc_s or esc_s in ("null", "none", "undefined", "n/a"):
+        orchestration_auto_escalation = None
+    else:
+        orchestration_auto_escalation = parse_wire_bool(esc_raw)
+
     return QueryAnalysis(
         pattern=pattern,
         complexity=complexity,
@@ -295,6 +387,10 @@ def query_analysis_from_tool_payload(
         can_parallelize=can_parallelize,
         needs_reflection=needs_reflection,
         matched_skill=matched_skill,
+        orchestration_depth=_optional_wire_int("orchestration_depth"),
+        orchestration_token_budget=_optional_wire_int("orchestration_token_budget"),
+        orchestration_llm_call_budget=_optional_wire_int("orchestration_llm_call_budget"),
+        orchestration_auto_escalation=orchestration_auto_escalation,
     )
 
 
@@ -356,6 +452,7 @@ class ResolvedWorkerConfig(BaseModel):
     retry_delay: float = 1.0
     interrupt_before_tools: list[str] = Field(default_factory=list)
     user_callback: Any | None = Field(default=None, exclude=True)
+    missing_tools: list[str] = Field(default_factory=list)
 
 
 class WorkerResult(BaseModel):
@@ -418,6 +515,9 @@ class ExecutionResult(BaseModel):
       a graph node calls interrupt(). Callers inspect interrupts[0].value
       to surface the question that caused the pause. Empty list when run
       completes normally.
+    analysis:
+      Classifier output for this turn (pattern, complexity, subtasks). Also persisted
+      in LangGraph checkpoints when a checkpointer is configured.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -427,7 +527,10 @@ class ExecutionResult(BaseModel):
     output: str
     steps_taken: int = 0
     success: bool = True
-    analysis: QueryAnalysis | None = None
+    analysis: QueryAnalysis | None = Field(
+        default=None,
+        description="Classifier output for this turn; persisted in checkpoints when configured.",
+    )
     worker_results: list[Any] = Field(default_factory=list)
     error: str | None = None
     thread_id: str | None = None
@@ -441,12 +544,164 @@ class ExecutionResult(BaseModel):
         description="Raw LangChain message objects (AIMessage, HumanMessage, ToolMessage, etc.) from the execution.",
     )
 
+    def model_post_init(self, __context: Any) -> None:
+        if not self.success and not self.error and self.output:
+            object.__setattr__(self, "error", self.output[:500])
 
-DEFAULT_STEP_MAX_LENGTH: int = 0
+
+class OrchestrationBudgetExceeded(Exception):
+    """Raised when depth, token, or LLM-call budgets are exceeded."""
+
+
+class OrchestrationCycleDetected(Exception):
+    """Raised when recursive cycle detection fires."""
+
+
+class PatternEscalationError(Exception):
+    """Raised when escalation rules cannot resolve a situation."""
+
+
+class SpawnInstruction(BaseModel):
+    """Instruction to run a pattern (root query or spawned sub-pattern)."""
+
+    pattern: PatternType
+    task: str
+    system_instruction: str = ""
+    required_tools: list[str] = Field(default_factory=list)
+    context: dict[str, str] = Field(default_factory=dict)
+    parent_worker_id: str = ""
+    escalation_reason: str = ""
+    max_depth: int | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    reclassify: bool = False
+
+
+class OrchestrationStep(BaseModel):
+    """One step in the orchestration trace."""
+
+    depth: int
+    pattern: PatternType
+    worker_id: str = ""
+    action: str
+    input_preview: str = ""
+    output_preview: str = ""
+    reason: str = ""
+    duration_ms: float = 0.0
+    token_usage: dict[str, int] = Field(default_factory=dict)
+    error: str | None = None
+    confidence: float | None = None
+    quality_score: float | None = None
+    timestamp: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+
+class SpawnedPatternRecord(BaseModel):
+    """Record of a spawned sub-pattern for cycle detection."""
+
+    spawn_id: str
+    pattern: PatternType
+    task_hash: str
+    worker_id: str = ""
+    parent_pattern: PatternType | None = None
+    reason: str = ""
+    depth: int = 0
+    success: bool | None = None
+    output_preview: str = ""
+
+
+class FailureRecord(BaseModel):
+    worker_id: str = ""
+    pattern: PatternType
+    error: str
+    depth: int = 0
+    attempt: int = 0
+
+
+class RetryRecord(BaseModel):
+    worker_id: str = ""
+    pattern: PatternType
+    attempt: int = 0
+    reason: str = ""
+    max_attempts: int = 0
+
+
+class OrchestrationContext(BaseModel):
+    """Shared state across recursive pattern invocations."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    current_depth: int = 0
+    max_depth: int = 5
+    root_query: str = ""
+    agent_config: dict[str, Any] = Field(default_factory=dict)
+
+    active_pattern: PatternType | None = None
+    parent_pattern: PatternType | None = None
+    parent_worker_id: str | None = None
+    grandparent_pattern: PatternType | None = None
+
+    orchestration_trace: list[OrchestrationStep] = Field(default_factory=list)
+    spawned_history: list[SpawnedPatternRecord] = Field(default_factory=list)
+
+    total_tokens_used: int = 0
+    max_total_tokens: int = 0
+    total_llm_calls: int = 0
+    max_total_llm_calls: int = 100
+    auto_escalation: bool = False
+    turn_plan_source: str = ""
+
+    confidence_scores: list[float] = Field(default_factory=list)
+    quality_scores: list[float] = Field(default_factory=list)
+    failure_history: list[FailureRecord] = Field(default_factory=list)
+    retry_history: list[RetryRecord] = Field(default_factory=list)
+    shared_results: dict[str, Any] = Field(default_factory=dict)
+
+    event_queue: Any = Field(default=None, exclude=True)
+
+    def child_context(
+        self,
+        *,
+        active_pattern: PatternType,
+        worker_id: str = "",
+    ) -> OrchestrationContext:
+        """Context for a spawned child pattern (depth +1)."""
+        return self.model_copy(
+            update={
+                "current_depth": self.current_depth + 1,
+                "grandparent_pattern": self.parent_pattern,
+                "parent_pattern": self.active_pattern,
+                "active_pattern": active_pattern,
+                "parent_worker_id": worker_id or self.parent_worker_id,
+                "orchestration_trace": list(self.orchestration_trace),
+                "spawned_history": list(self.spawned_history),
+                "confidence_scores": list(self.confidence_scores),
+                "quality_scores": list(self.quality_scores),
+                "failure_history": list(self.failure_history),
+                "retry_history": list(self.retry_history),
+                "shared_results": dict(self.shared_results),
+                "auto_escalation": self.auto_escalation,
+                "turn_plan_source": self.turn_plan_source,
+            }
+        )
+
+    def check_budget(self, *, depth_override: int | None = None) -> None:
+        depth = self.current_depth if depth_override is None else depth_override
+        if self.max_depth > 0 and depth >= self.max_depth:
+            raise OrchestrationBudgetExceeded(f"Max depth {self.max_depth} reached at depth {depth}")
+        if self.max_total_llm_calls > 0 and self.total_llm_calls >= self.max_total_llm_calls:
+            raise OrchestrationBudgetExceeded(f"Max LLM calls {self.max_total_llm_calls} reached")
+        if self.max_total_tokens > 0 and self.total_tokens_used >= self.max_total_tokens:
+            raise OrchestrationBudgetExceeded(f"Max tokens {self.max_total_tokens} reached")
+
+
+DEFAULT_STEP_MAX_LENGTH: int = 0  # 0 or negative: no truncation in _trunc/_make_step
 
 
 def _trunc(s: str, limit: int = DEFAULT_STEP_MAX_LENGTH) -> str:
-    """Truncate string to *limit* chars. 0 or negative → no truncation."""
+    """Truncate string to *limit* characters.
+
+    *limit* ≤ 0 means **no limit** (full string). The default is 0 so call sites
+    that omit ``max_length`` do not truncate unless they pass a positive cap.
+    """
     if limit <= 0:
         return s
     return s[:limit]
@@ -481,8 +736,71 @@ def _merge_token_usage(base: dict[str, int], addition: dict[str, int]) -> dict[s
     return merged
 
 
+def _merge_token_usage_max_per_key(base: dict[str, int], addition: dict[str, int]) -> dict[str, int]:
+    """Merge usage by taking the max per key (cumulative totals repeated on multiple AIMessages)."""
+    if not addition:
+        return dict(base)
+    if not base:
+        return dict(addition)
+    keys = set(base) | set(addition)
+    return {k: max(base.get(k, 0), addition.get(k, 0)) for k in keys}
+
+
+def _canonical_token_usage(usage: dict[str, int]) -> dict[str, int]:
+    """Map provider-specific keys (``prompt_tokens``, ``completion_tokens``, …) to input/output."""
+    inp = (usage.get("input_tokens", 0) or 0) + (usage.get("prompt_tokens", 0) or 0)
+    out = (usage.get("output_tokens", 0) or 0) + (usage.get("completion_tokens", 0) or 0)
+    canonical: dict[str, int] = {}
+    if inp:
+        canonical["input_tokens"] = inp
+    if out:
+        canonical["output_tokens"] = out
+    raw_total = usage.get("total_tokens")
+    if isinstance(raw_total, int) and raw_total > 0:
+        canonical["total_tokens"] = raw_total
+    elif inp and out and ("prompt_tokens" in usage or "completion_tokens" in usage):
+        canonical["total_tokens"] = inp + out
+    return canonical
+
+
+def _usage_from_metadata(meta: Any) -> dict[str, int]:
+    """Normalize LangChain ``usage_metadata`` (dict or object) to int fields."""
+    usage: dict[str, int] = {}
+    if not meta:
+        return usage
+    if isinstance(meta, dict):
+        for k, v in meta.items():
+            if isinstance(v, int):
+                usage[k] = v
+            elif v is not None:
+                try:
+                    usage[k] = int(v)
+                except (TypeError, ValueError):
+                    continue
+        return _canonical_token_usage(usage)
+    for field in (
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "prompt_tokens",
+        "completion_tokens",
+    ):
+        val = getattr(meta, field, None)
+        if val is not None:
+            try:
+                usage[field] = int(val)
+            except (TypeError, ValueError):
+                continue
+    return _canonical_token_usage(usage)
+
+
 def _extract_token_usage(response: Any) -> dict[str, int]:
-    """Extract token usage from a LangChain AIMessage or response dict."""
+    """Extract token usage from a LangChain AIMessage or response dict.
+
+    When *messages* lists multiple assistant turns with ``usage_metadata``, values are
+    merged by **summing** per key (OpenAI-style per-call totals). Streaming accumulation
+    uses :func:`agloom.wire_tokens.accumulate_stream_usage` (monotonic max per chunk).
+    """
     usage: dict[str, int] = {}
     messages = None
     if isinstance(response, dict):
@@ -490,45 +808,18 @@ def _extract_token_usage(response: Any) -> dict[str, int]:
     elif hasattr(response, "messages"):
         messages = response.messages
     if messages:
-        for msg in reversed(messages):
+        for msg in messages:
             meta = getattr(msg, "usage_metadata", None)
             if meta:
-                if isinstance(meta, dict):
-                    usage = {k: v for k, v in meta.items() if isinstance(v, int)}
-                else:
-                    for field in ("input_tokens", "output_tokens", "total_tokens"):
-                        val = getattr(meta, field, None)
-                        if val is not None:
-                            try:
-                                usage[field] = int(val)
-                            except (TypeError, ValueError):
-                                continue
-                break
+                usage = _merge_token_usage(usage, _usage_from_metadata(meta))
+        if usage:
+            return usage
     if not usage and isinstance(response, dict):
         meta = response.get("usage_metadata")
         if meta:
-            if isinstance(meta, dict):
-                usage = {k: v for k, v in meta.items() if isinstance(v, int)}
-            else:
-                for field in ("input_tokens", "output_tokens", "total_tokens"):
-                    val = getattr(meta, field, None)
-                    if val is not None:
-                        try:
-                            usage[field] = int(val)
-                        except (TypeError, ValueError):
-                            continue
+            usage = _usage_from_metadata(meta)
     if not usage and hasattr(response, "usage_metadata") and response.usage_metadata:
-        meta = response.usage_metadata
-        if isinstance(meta, dict):
-            usage = {k: v for k, v in meta.items() if isinstance(v, int)}
-        else:
-            for field in ("input_tokens", "output_tokens", "total_tokens"):
-                val = getattr(meta, field, None)
-                if val is not None:
-                    try:
-                        usage[field] = int(val)
-                    except (TypeError, ValueError):
-                        continue
+        usage = _usage_from_metadata(response.usage_metadata)
     return usage
 
 
@@ -566,6 +857,12 @@ _PROVIDER_HINTS: dict[str, str] = {
     "gemini-": "google_genai",
     "gemma-": "google_genai",
     "command-": "cohere",
+    "llama-": "groq",
+    "mistral-": "mistralai",
+    "mixtral-": "groq",
+    "codestral-": "mistralai",
+    "deepseek-": "deepseek",
+    "qwen": "together",
 }
 
 
@@ -720,6 +1017,64 @@ class AgentConfig(BaseModel):
             "ReAct: how many times the user_callback may extend the run with a user-chosen "
             "retry after REACT_TOOL_USE_FAILED. See ``agloom.hitl_contract``."
         ),
+    )
+
+    max_pattern_depth: int = Field(
+        default=0,
+        ge=0,
+        le=20,
+        description=(
+            "Ceiling for recursive pattern depth (0 = orchestration off). "
+            "When orchestration_plan_from_classifier is True, the classifier picks a per-turn depth ≤ this value."
+        ),
+    )
+    orchestration_plan_from_classifier: bool = Field(
+        default=True,
+        description=(
+            "When True and max_pattern_depth > 0, analyze_query() sets per-turn depth, token/LLM budgets, "
+            "and escalation (clamped to agent ceilings). When False, agent ceilings apply directly."
+        ),
+    )
+    max_orchestration_llm_calls: int = Field(
+        default=100,
+        ge=0,
+        description="Max total LLM calls across orchestration spawns (0 = unlimited).",
+    )
+    max_orchestration_tokens: int = Field(
+        default=0,
+        ge=0,
+        description="Max total tokens across orchestration spawns (0 = unlimited).",
+    )
+    enable_auto_escalation: bool = Field(
+        default=False,
+        description="When True, post-execution evaluation may spawn follow-up patterns.",
+    )
+    escalation_rules: list[str] = Field(
+        default_factory=lambda: ["default"],
+        description="Escalation rule set: 'default', 'conservative', or 'aggressive'.",
+    )
+    enable_pattern_spawns: bool = Field(
+        default=True,
+        description="When orchestration is on, pattern handlers may spawn sub-patterns.",
+    )
+    enable_orchestration_llm_eval: bool = Field(
+        default=True,
+        description=(
+            "Use an LLM call for orchestration quality and conflict evaluation on each dispatch step. "
+            "Set False for minimal structural fallback only."
+        ),
+    )
+    enable_dynamic_dag_nodes: bool = Field(
+        default=True,
+        description="HYBRID_DAG nodes reclassify and dispatch sub-patterns when orchestration is on.",
+    )
+    enable_supervisor_worker_dispatch: bool = Field(
+        default=True,
+        description="SUPERVISOR workers use per-worker dispatch when orchestration is on (no worker HITL).",
+    )
+    orchestration_evaluation_llm: Any = Field(
+        default=None,
+        description="Optional separate LLM for orchestration evaluation (defaults to main model).",
     )
 
     @field_validator("rate_limit")

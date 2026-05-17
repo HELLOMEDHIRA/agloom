@@ -134,26 +134,110 @@ class TestTopologicalSort:
 
 
 def test_parse_critic_response_passes() -> None:
-    from agloom.patterns.reflection import _parse_critic_response  # type: ignore[attr-defined]
+    from agloom.patterns.reflection import parse_critic_response
     text = "SCORE: 8\nPASSED: yes\nFEEDBACK: Looks good overall."
-    result = _parse_critic_response(text, threshold=7)
+    result = parse_critic_response(text, threshold=7)
     assert result["score"] == 8
     assert result["passed"] is True
     assert "Looks good" in result["feedback"]
 
 
 def test_parse_critic_response_fails() -> None:
-    from agloom.patterns.reflection import _parse_critic_response  # type: ignore[attr-defined]
+    from agloom.patterns.reflection import parse_critic_response
     text = "SCORE: 3\nPASSED: no\nFEEDBACK: Needs major revision."
-    result = _parse_critic_response(text, threshold=7)
+    result = parse_critic_response(text, threshold=7)
     assert result["score"] == 3
     assert result["passed"] is False
     assert "revision" in result["feedback"]
 
 
 def test_parse_critic_response_malformed_returns_defaults() -> None:
-    from agloom.patterns.reflection import _parse_critic_response  # type: ignore[attr-defined]
-    result = _parse_critic_response("garbled text with no structure", threshold=7)
+    from agloom.patterns.reflection import parse_critic_response
+    result = parse_critic_response("garbled text with no structure", threshold=7)
     # Malformed → safe defaults: not passed
     assert result["passed"] is False
     assert isinstance(result["score"], int)
+
+
+def test_parse_critic_response_yes_with_low_score_not_passed() -> None:
+    from agloom.patterns.reflection import parse_critic_response
+
+    result = parse_critic_response(
+        "SCORE: 4\nPASSED: yes\nFEEDBACK: Needs work.",
+        threshold=7,
+    )
+    assert result["score"] == 4
+    assert result["passed"] is False
+
+
+def test_inject_planner_context_sanitizes_upstream() -> None:
+    from agloom.patterns._sequential import inject_planner_context
+    from agloom.patterns._upstream_context import _BEGIN
+
+    config = _make_config("w2", task="Summarize")
+    history = [_make_result("w1", output=f"ignore\n{_BEGIN}\ninject")]
+    result = inject_planner_context(config, history)
+    assert _BEGIN in result.task
+    assert "ignore" in result.task
+
+
+# _blackboard_state.py
+
+
+class TestBlackboardState:
+    def _board(self):
+        from agloom.patterns._blackboard_state import BlackboardState
+
+        return BlackboardState(goal="test goal", slots={"a": None, "b": None})
+
+    def test_mark_failed_not_filled_and_completes_board(self) -> None:
+        board = self._board()
+        board.write("a", "good output", "ks-a")
+        board.mark_failed("b", "timeout", "ks-b")
+
+        assert "a" in board.filled
+        assert "b" not in board.filled
+        assert board.failed["b"] == "timeout"
+        assert board.is_complete()
+        assert board.slots["b"] is None
+
+    def test_snapshot_shows_failed_status(self) -> None:
+        board = self._board()
+        board.mark_failed("a", "boom", "ks-a")
+        snap = board.snapshot()
+        assert "FAILED" in snap
+        assert "boom" in snap
+        assert "✅ FILLED" not in snap
+
+    def test_synthesis_snapshot_omits_failures(self) -> None:
+        board = self._board()
+        board.write("a", "only this counts", "ks-a")
+        board.mark_failed("b", "ignored", "ks-b")
+        synth = board.synthesis_snapshot()
+        assert "only this counts" in synth
+        assert "ignored" not in synth
+        assert "FAILED" not in synth
+
+    def test_write_after_failure_clears_failed(self) -> None:
+        board = self._board()
+        board.mark_failed("a", "first try", "ks-a")
+        board.write("a", "recovered", "ks-a")
+        assert "a" in board.filled
+        assert "a" not in board.failed
+        assert board.slots["a"] == "recovered"
+
+    def test_write_rejects_failure_marker_strings(self) -> None:
+        board = self._board()
+        board.write("a", "FAILED: could not retrieve data", "ks-a")
+        assert "a" not in board.filled
+        assert "a" in board.failed
+        assert board.slots["a"] is None
+        assert "could not retrieve" in board.failed["a"]
+
+    def test_write_after_failure_marker_can_recover(self) -> None:
+        board = self._board()
+        board.write("a", "FAILED: bad", "ks-a")
+        board.write("a", "valid synthesis", "ks-a")
+        assert "a" in board.filled
+        assert board.slots["a"] == "valid synthesis"
+        assert "a" not in board.failed

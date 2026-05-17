@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from argparse import Namespace
 from pathlib import Path
 from typing import Any
+
+from .atomic_io import atomic_write_text
+
+_log = logging.getLogger(__name__)
 
 
 def load_allowlist_from_session_marker(path: Path) -> set[str]:
@@ -13,7 +18,9 @@ def load_allowlist_from_session_marker(path: Path) -> set[str]:
     try:
         raw = path.read_text(encoding="utf-8")
         data: Any = json.loads(raw)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        if not isinstance(exc, FileNotFoundError):
+            _log.warning("session marker allowlist JSON invalid or unreadable %s: %s", path, exc)
         return set()
     if not isinstance(data, dict):
         return set()
@@ -91,7 +98,8 @@ def load_tool_allowlist(path: Path) -> set[str]:
         data: Any = json.loads(raw)
     except FileNotFoundError:
         return set()
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        _log.warning("HITL allowlist file invalid JSON %s: %s", path, exc)
         return set()
     tools = data.get("tools") if isinstance(data, dict) else None
     if not isinstance(tools, list):
@@ -103,6 +111,4 @@ def save_tool_allowlist(path: Path, tools: set[str]) -> None:
     """Atomically write sorted unique tool names."""
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"tools": sorted(tools)}
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")

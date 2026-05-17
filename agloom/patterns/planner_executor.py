@@ -3,13 +3,26 @@
 import asyncio
 import time
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from ..llm_streaming import stream_or_invoke_llm
 from ..logging_utils import get_logger
-from ..models import ExecutionResult, PatternType, QueryAnalysis, StepType, WorkerPlan, _make_step, _merge_token_usage
+from ..models import (
+    ExecutionResult,
+    PatternType,
+    QueryAnalysis,
+    SignalType,
+    StepType,
+    WorkerPlan,
+    _extract_token_usage,
+    _make_step,
+    _merge_token_usage,
+)
+from ..wire_tokens import llm_label_from_run_config
 from ._resolve import resolve_worker_configs
 from ._sequential import run_sequential_workers
+from ._steps_accounting import steps_taken_from_audit
+from ._synthesis_contract import ALL_PATTERN_WORKERS_FAILED_ERROR, pattern_synthesis_success
 
 logger = get_logger(__name__)
 
@@ -67,7 +80,11 @@ async def handle_planner_executor(
         WorkerPlan(
             worker_id=st.worker_id,
             task=st.task,
-            system_instruction=st.system_instruction or PLANNER_EXECUTOR_WORKER_PROMPT,
+            system_instruction=(
+                st.system_instruction
+                if (st.system_instruction is not None and st.system_instruction.strip())
+                else PLANNER_EXECUTOR_WORKER_PROMPT
+            ),
             required_tools=st.required_tools,
             depends_on=st.depends_on,
             context=st.context,
@@ -103,9 +120,11 @@ async def handle_planner_executor(
         raw_messages.extend(getattr(wr, "messages", []))
 
     t_synth = time.perf_counter()
-    output, synth_msgs = await _synthesize(agent, query, worker_results)
+    output, synth_msgs, synthesis_degraded, synth_usage = await _synthesize(agent, query, worker_results)
     raw_messages.extend(synth_msgs)
     synth_ms = round((time.perf_counter() - t_synth) * 1000, 1)
+    if synth_usage:
+        usage = _merge_token_usage(usage, synth_usage)
     steps.append(
         _make_step(
             StepType.LLM_CALL,
@@ -114,23 +133,34 @@ async def handle_planner_executor(
             output=output,
             duration_ms=synth_ms,
             max_length=ml,
+            usage=synth_usage if synth_usage else {},
+            phase="planner_synthesize",
+            model=llm_label_from_run_config(agent),
         )
     )
 
-    successful = sum(1 for r in worker_results if r.signal.value == "SUCCESS")
+    successful = sum(1 for r in worker_results if r.signal == SignalType.SUCCESS)
     all_failed = successful == 0
     logger.event(
         f"[PLANNER_EXECUTOR] ✅ Done — {successful}/{len(worker_results)} steps succeeded, {len(output)} chars."
     )
 
+    err: str | None = None
+    if all_failed:
+        err = ALL_PATTERN_WORKERS_FAILED_ERROR
+    elif synthesis_degraded:
+        err = "SynthesisFailed"
+
     return ExecutionResult(
         pattern_used=PatternType.PLANNER_EXECUTOR,
         query=query,
         output=output,
-        steps_taken=len(worker_results) + 1,
-        success=not all_failed,
+        steps_taken=steps_taken_from_audit(steps),
+        success=pattern_synthesis_success(worker_results=worker_results, synthesis_degraded=synthesis_degraded),
+        error=err,
         analysis=analysis,
         worker_results=worker_results,
+        metadata={"synthesis_degraded": synthesis_degraded},
         steps=steps,
         token_usage=usage,
         messages=raw_messages,
@@ -141,8 +171,11 @@ async def _synthesize(
     agent: dict,
     query: str,
     worker_results: list,
-) -> tuple[str, list]:
-    """Manager LLM synthesizes all execution steps into a final answer."""
+) -> tuple[str, list, bool, dict[str, int]]:
+    """Manager LLM synthesizes all execution steps into a final answer.
+
+    Returns ``(text, llm_messages, synthesis_degraded, synth_usage)``.
+    """
     steps_text = "\n\n".join(
         [
             f"Step {i + 1} — {r.worker_id} | Status: {r.signal.value}\nTask  : {r.task}\nResult: {r.output}"
@@ -164,14 +197,24 @@ async def _synthesize(
 
     try:
         _timeout = agent.get("llm_timeout", 120.0)
-        text, llm_messages, _ = await stream_or_invoke_llm(
-            agent["llm"], synth_input, agent, timeout=_timeout
+        text, llm_messages, last_chunk = await stream_or_invoke_llm(
+            agent["llm"], synth_input, agent, timeout=_timeout, phase="planner_synthesize"
         )
         logger.event(f"[PLANNER_EXECUTOR] Synthesis done — {len(text)} chars.")
-        return text, llm_messages
+        synth_usage = _extract_token_usage(last_chunk) if last_chunk else {}
+        return text, llm_messages, False, synth_usage
     except Exception as e:
         logger.error(f"[PLANNER_EXECUTOR] Synthesis failed: {e}")
-        successful_workers = [r for r in worker_results if r.signal.value == "SUCCESS"]
+        successful_workers = [r for r in worker_results if r.signal == SignalType.SUCCESS]
+        audit_tail = AIMessage(
+            content=(
+                f"Synthesis LLM failed ({type(e).__name__}: {e}). "
+                f"Falling back to the best successful worker output for the user-facing answer; "
+                f"full step text is included below for auditing.\n\n{steps_text[:12000]}"
+            )
+        )
+        llm_messages = [*llm_messages, audit_tail]
         if not successful_workers:
-            return ("All execution steps failed.", llm_messages)
-        return (successful_workers[-1].output, llm_messages)
+            return ("All execution steps failed.", llm_messages, True, {})
+        best = max(successful_workers, key=lambda r: len(r.output or ""))
+        return (best.output, llm_messages, True, {})

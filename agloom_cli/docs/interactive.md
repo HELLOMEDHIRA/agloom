@@ -38,7 +38,7 @@ Typed at the input bar. The list below matches what **`/help`** shows in the UI.
 | `/help`              | Full list in-modal                                     |
 | `/cancel`            | Cancel current run (**Ctrl+X**)                        |
 | `/clear`             | Clear transcript + metrics notes                       |
-| `/undo`              | Undo last turn (pops last user message from memory)    |
+| `/undo`              | Remove last turn from session memory and the local transcript |
 | `/retry`             | Re-run the last completed turn                         |
 | `/checkpoint [name]` | Create a named git checkpoint (requires harness)       |
 | `/diff [path]`       | Show git diff for working tree (requires harness)      |

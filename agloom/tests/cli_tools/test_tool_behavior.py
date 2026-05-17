@@ -188,12 +188,12 @@ async def test_fetch_url_extract_readable_toggle(mock_client_cls: MagicMock, tmp
 
     mock_client_cls.return_value = _ctx()
     ft = _tools(tmp_path, network=True)["fetch_url"]
-    plain = await ft.ainvoke({"url": "http://example.test/x", "extract_readable_text": True})
+    plain = await ft.ainvoke({"url": "https://example.com/x", "extract_readable_text": True})
     assert "hello" in plain.lower()
     assert "<script>" not in plain.lower()
 
     mock_client_cls.return_value = _ctx()
-    rawish = await ft.ainvoke({"url": "http://example.test/x", "extract_readable_text": False})
+    rawish = await ft.ainvoke({"url": "https://example.com/x", "extract_readable_text": False})
     assert "<html>" in rawish.lower()
 
 
@@ -220,7 +220,7 @@ async def test_read_url_markdown_prefers_trafilatura_when_available(
 
     mock_client_cls.return_value = _ctx()
     rum = _tools(tmp_path, network=True)["read_url_markdown"]
-    out = await rum.ainvoke({"url": "http://example.test/article"})
+    out = await rum.ainvoke({"url": "https://example.com/article"})
     assert "TRAFILATURA_MAIN_BODY" in out
 
 
@@ -247,7 +247,7 @@ async def test_read_url_markdown_falls_back_when_trafilatura_none(
 
     mock_client_cls.return_value = _ctx()
     rum = _tools(tmp_path, network=True)["read_url_markdown"]
-    out = await rum.ainvoke({"url": "http://example.test/page"})
+    out = await rum.ainvoke({"url": "https://example.com/page"})
     assert "fallbackhello" in out.lower()
 
 

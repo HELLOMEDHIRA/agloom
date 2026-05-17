@@ -32,6 +32,17 @@ When handling **`command.invoke`** with file attachments in your own transport, 
 
 Schema export for external code generators: **`build_schema`**, **`write_schema`** in **`agloom.protocol.schema`**; the checked-in artifact is **`agloom/docs/protocol/agp-schema.json`**.
 
+### Maintaining client parsers
+
+When you add a wire field that **clients must parse**, update in lockstep:
+
+1. Pydantic models in **`agloom.protocol.events`** / **`commands`**
+2. **`agloom/tests/fixtures/agp_wire_required_keys.json`** (minimal required `data` keys)
+3. **`agp-schema.json`** via `python -m agloom.protocol.schema`
+4. TypeScript **`AGP_WIRE_DATA_SCHEMAS`** in **`agloom_cli`** and **`agloom_web`** (see each package’s `agpCatalogSync` test)
+
+The [AGP specification](../protocol/agp.md) stays the human-readable contract; avoid duplicating implementation names there.
+
 ## In-process parity with the wire
 
 If you do **not** want to manage an emitter but need **typed `Envelope` instances** (same classes as NDJSON lines), use **`UnifiedAgent.astream_agp_events()`** — see [Streaming & events](../features/streaming.md).

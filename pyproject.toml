@@ -1,6 +1,6 @@
 [project]
 name = "agloom"
-version = "0.1.79"
+version = "0.1.80"
 description = "Production agent framework on LangChain/LangGraph: nine execution patterns, persistent memory, skills, feedback, multi-level HITL, MCP, AGP protocol, runtime bridge, and observability hooks."
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -38,7 +38,7 @@ Repository = "https://github.com/HELLOMEDHIRA/agloom"
 Issues = "https://github.com/HELLOMEDHIRA/agloom/issues"
 
 [project.scripts]
-# Compatibility: ``agloom`` prints install guidance; the terminal client is the npm package ``agloom-cli``.
+# ``agloom`` → install notice for the npm TUI (``agloom-cli``). Library users: ``from agloom import create_agent``; clients: ``agloom-runtime serve``.
 agloom = "agloom.cli_notice:main"
 # AGP runtime bridge — UI-agnostic NDJSON event stream over stdio/ws.
 # Spec: agloom/docs/protocol/agp.md. Run as ``agloom-runtime serve --transport=stdio``.
@@ -232,6 +232,15 @@ skip-magic-trailing-comma = false
 [tool.pyrefly]
 python-version = "3.12"
 project-includes = ["agloom/**/*.py"]
+project-excludes = [
+    ".venv/**",
+    "**/.venv/**",
+    "**/site-packages/**",
+    "**/node_modules/**",
+    "agloom_cli/**",
+    "agloom_web/**",
+]
+# Do not pass `--check-all` locally unless debugging; it typechecks third-party imports and is very slow.
 # Optional provider / platform packages (lazy-imported or dev-only); treat as ``Any`` so checks pass without every extra.
 replace-imports-with-any = [
     "distro",
@@ -245,6 +254,7 @@ replace-imports-with-any = [
     "langchain_openai",
     "langchain_xai",
     "openai",
+    "websockets",
 ]
 
 # ── Commitizen ────────────────────────────────────────────────────────────────

@@ -5,7 +5,7 @@ import json
 import time
 from typing import Any, cast
 
-from ..multimodal import text_from_user_turn
+from ..multimodal import content_blocks_to_text, text_from_user_turn
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -22,16 +22,21 @@ from ..hitl_contract import (
     normalize_react_tool_use_failed_decision,
 )
 from ..logging_utils import get_logger
+from ..worker import resolve_event_queue
 from ..models import (
+    DEFAULT_SYSTEM_PROMPT,
     AgentEvent,
     ExecutionResult,
     PatternType,
     QueryAnalysis,
+    SignalType,
     StepType,
     _extract_token_usage,
     _make_step,
     _trunc,
 )
+from .hitl_read_file_dedupe import ReadFileHitlDeduper
+from .hitl_tool_coalesce import CompositeToolHitlCoalescer
 from .middleware import HumanApprovalMiddleware, ReactUserTurnToolChoiceMiddleware, UserAbort
 from .react_tool_recovery import (
     exception_indicates_tool_use_failed as _exception_indicates_tool_use_failed,
@@ -48,8 +53,71 @@ from .react_tool_recovery import (
 from .react_tool_recovery import (
     last_ai_message_is_stray_tool_json as _last_ai_message_is_stray_tool_json,
 )
+from ._steps_accounting import steps_taken_from_audit
 
 logger = get_logger(__name__)
+
+
+async def _react_failure(
+    agent: dict,
+    config: dict | None,
+    query: str | list[Any],
+    analysis: QueryAnalysis,
+    *,
+    output: str,
+    steps_taken: int,
+    steps: list,
+    messages: list | None = None,
+) -> ExecutionResult:
+    from ..orchestrator.hooks import maybe_recover_react_failure
+
+    failed = ExecutionResult(
+        pattern_used=PatternType.REACT,
+        query=query,
+        output=output,
+        steps_taken=steps_taken,
+        success=False,
+        analysis=analysis,
+        steps=steps,
+        messages=messages or [],
+    )
+    return await maybe_recover_react_failure(agent, config, query, analysis, failed)
+
+
+def _llm_label_from_agent(agent: dict) -> str | None:
+    llm = agent.get("llm")
+    if llm is None:
+        return None
+    for attr in ("model_name", "model", "model_id"):
+        v = getattr(llm, attr, None)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    cls = getattr(llm, "__class__", None)
+    return cls.__name__ if cls is not None else None
+
+
+def _llm_step_metadata(agent: dict, usage: dict[str, int], *, phase: str) -> dict[str, Any]:
+    extra: dict[str, Any] = {"phase": phase}
+    if usage:
+        extra["usage"] = usage
+    lbl = _llm_label_from_agent(agent)
+    if lbl:
+        extra["model"] = lbl
+    return extra
+
+
+async def _emit_llm_call_step(
+    run_config: dict | None,
+    event_queue: asyncio.Queue | None,
+    step: Any,
+) -> None:
+    """Push one ``llm_call`` AgentEvent so the runtime bridge can emit ``metric.tokens``."""
+    cfg = run_config or {}
+    if event_queue is not None and "_event_queue" not in cfg:
+        cfg = {**cfg, "_event_queue": event_queue}
+    from ..wire_tokens import emit_llm_call_from_step
+
+    await emit_llm_call_from_step(cfg, step)
 
 
 def _tool_input_as_dict(tool_input: Any) -> dict[str, Any]:
@@ -69,7 +137,16 @@ REACT_RECURSION_LIMIT = 25
 REACT_MAX_HITL_CYCLES = REACT_RECURSION_LIMIT // 2
 
 _MAX_TOOL_RETRIES = 5
+# Hard ceiling on total ``ainvoke`` attempts (including user-authorized extensions).
+REACT_ABSOLUTE_MAX_AINVOKE_ATTEMPTS = 24
 _RETRY_DELAY = 0.5
+
+
+def _react_retry_delay(attempt: int) -> float:
+    """Exponential backoff capped at 8s (``attempt`` is 1-based)."""
+    return min(_RETRY_DELAY * (2 ** min(max(0, attempt - 1), 4)), 8.0)
+
+
 # Cap ``ainvoke`` when **L2 HITL is off** — stuck model/tool loops cannot block forever.
 # The HITL path must not use this: ``ainvoke`` then includes time inside ``user_callback``
 # (approve/reject), which may take arbitrarily long.
@@ -89,7 +166,7 @@ def _react_tool_names(tools: list[Any]) -> frozenset[str]:
 def _langchain_react_middleware(agent: dict, *extra: Any) -> list[Any]:
     """Middleware for LangChain ``create_agent`` inside ReAct (tool_choice + optional HITL)."""
     chain: list[Any] = []
-    if agent.get("react_force_tool_choice_on_user_turn", True):
+    if agent.get("react_force_tool_choice_on_user_turn", False):
         chain.append(ReactUserTurnToolChoiceMiddleware())
     chain.extend(extra)
     return chain
@@ -101,12 +178,17 @@ def _hitl_middleware_extras(agent: dict) -> list[Any]:
     user_callback = agent.get("user_callback")
     if not interrupt_before_tools or not user_callback:
         return []
+    coalescer = agent.get("_hitl_tool_coalescer")
+    if coalescer is None:
+        coalescer = CompositeToolHitlCoalescer([ReadFileHitlDeduper()])
+        agent["_hitl_tool_coalescer"] = coalescer
     return [
         HumanApprovalMiddleware(
             interrupt_before_tools=list(interrupt_before_tools),
             user_callback=user_callback,
             agent_name=agent.get("name", "UnifiedAgent"),
             tool_allowlist=agent.get("_hitl_tool_allowlist"),
+            hitl_coalescer=coalescer,
         )
     ]
 
@@ -175,6 +257,20 @@ REACT_TOOL_DISCIPLINE = """
 """
 
 
+def _react_base_system_prompt(agent: dict) -> str:
+    """Resolve a string system prompt (never ``None``) for ReAct."""
+    base = agent.get("system_prompt")
+    if isinstance(base, str) and base.strip():
+        return base
+    if base is not None and not isinstance(base, str):
+        return str(base)
+    return DEFAULT_SYSTEM_PROMPT
+
+
+def _react_system_prompt(agent: dict) -> str:
+    return _react_base_system_prompt(agent) + REACT_TOOL_DISCIPLINE
+
+
 async def handle_react(
     agent: dict,
     query: str | list[Any],
@@ -188,7 +284,7 @@ async def handle_react(
     """
     llm = agent["llm"]
     tools = agent["tools"]
-    system_prompt = agent["system_prompt"] + REACT_TOOL_DISCIPLINE
+    system_prompt = _react_system_prompt(agent)
     name = agent.get("name", "UnifiedAgent")
     interrupt_before_tools = agent.get("interrupt_before_tools", [])
     user_callback = agent.get("user_callback")
@@ -203,7 +299,7 @@ async def handle_react(
         logger.debug("[React] No tools — direct LLM fallback.")
         t0 = time.perf_counter()
         messages = [
-            SystemMessage(content=agent["system_prompt"]),
+            SystemMessage(content=_react_base_system_prompt(agent)),
             HumanMessage(content=query),
         ]
         event_queue = agent.get("_event_queue")
@@ -281,22 +377,55 @@ async def handle_react(
             incoming_config=config,
         )
 
-    react_agent = create_agent(
-        model=llm,
-        tools=tools,
-        system_prompt=system_prompt,
-        middleware=_langchain_react_middleware(agent),
+    return await _run_react_ainvoke_with_retries(
+        agent=agent,
+        query=query,
+        analysis=analysis,
+        config=config,
     )
 
-    invoke_config = {
-        **(config or {}),
-        "recursion_limit": REACT_RECURSION_LIMIT,
-    }
 
-    state = {"messages": [{"role": "user", "content": query}]}
+async def _run_react_ainvoke_with_retries(
+    agent: dict,
+    query: str | list[Any],
+    analysis: QueryAnalysis,
+    config: dict | None = None,
+    *,
+    react_agent: Any | None = None,
+    initial_state: dict | None = None,
+    attempt_offset: int = 0,
+    collect_tool_steps: bool = True,
+    emit_tool_events_to_queue: bool = False,
+    log_prefix: str = "[React]",
+) -> ExecutionResult:
+    """Shared ``ainvoke`` loop: tool_use_failed retries, stray JSON recovery, optional HITL extension."""
+    llm = agent["llm"]
+    tools = agent["tools"]
+    system_prompt = _react_system_prompt(agent)
+    name = agent.get("name", "UnifiedAgent")
+    steps: list = (config or {}).get("_steps", [])
+    ml = agent.get("max_step_output_length", 0)
+
+    hitl_extras = _hitl_middleware_extras(agent)
+    hitl_active = bool(hitl_extras)
+
+    if react_agent is None:
+        react_agent = create_agent(
+            model=llm,
+            tools=tools,
+            system_prompt=system_prompt,
+            middleware=_langchain_react_middleware(agent, *hitl_extras),
+        )
+
+    invoke_config = cast(
+        RunnableConfig,  # noqa: TC006
+        {**(config or {}), "recursion_limit": REACT_RECURSION_LIMIT},
+    )
+
+    state = initial_state if initial_state is not None else {"messages": [{"role": "user", "content": query}]}
     response = None
     user_cb = agent.get("user_callback")
-    attempt = 0
+    attempt = max(0, attempt_offset)
     max_attempts = _MAX_TOOL_RETRIES
     tool_names = _react_tool_names(tools)
     stray_remaining = _STRAY_TOOL_JSON_RETRIES
@@ -309,12 +438,36 @@ async def handle_react(
 
     while attempt < max_attempts:
         attempt += 1
+        if attempt > REACT_ABSOLUTE_MAX_AINVOKE_ATTEMPTS:
+            logger.error(
+                f"{log_prefix} Absolute ainvoke cap ({REACT_ABSOLUTE_MAX_AINVOKE_ATTEMPTS}) reached."
+            )
+            return await _react_failure(
+                agent,
+                config,
+                query,
+                analysis,
+                output="REACT exceeded absolute attempt cap for tool/recovery retries.",
+                steps_taken=attempt,
+                steps=steps,
+                messages=(response or {}).get("messages", []),
+            )
         try:
             t0 = time.perf_counter()
-            response = await asyncio.wait_for(
-                react_agent.ainvoke(state, config=invoke_config),  # type: ignore[arg-type]
-                timeout=_AINVOKE_TIMEOUT,
+            _wall_timeout = max(
+                _AINVOKE_TIMEOUT,
+                float(agent.get("llm_timeout", _AINVOKE_TIMEOUT)),
             )
+            if hitl_active:
+                response = await asyncio.wait_for(
+                    cast(Any, react_agent).ainvoke(state, config=invoke_config),
+                    timeout=_wall_timeout,
+                )
+            else:
+                response = await asyncio.wait_for(
+                    cast(Any, react_agent).ainvoke(state, config=invoke_config),
+                    timeout=_AINVOKE_TIMEOUT,
+                )
             dur = round((time.perf_counter() - t0) * 1000, 1)
 
             msgs = response.get("messages", [])
@@ -325,10 +478,10 @@ async def handle_react(
             ):
                 stray_remaining -= 1
                 logger.warning(
-                    f"[React] Model returned tool intent as plain JSON text (not structured tool_calls) "
+                    f"{log_prefix} Model returned tool intent as plain JSON text (not structured tool_calls) "
                     f"— nudging provider; retries left={stray_remaining} (agent={name})."
                 )
-                await asyncio.sleep(_RETRY_DELAY)
+                await asyncio.sleep(_react_retry_delay(attempt))
                 state = {
                     "messages": list(msgs) + [HumanMessage(content=_human_message_after_stray_tool_json())]
                 }
@@ -339,34 +492,41 @@ async def handle_react(
                 output = "No output produced."
 
             usage = _extract_token_usage(response)
-            _collect_tool_steps(response, steps, max_length=ml)
-            steps.append(
-                _make_step(
-                    StepType.LLM_CALL,
-                    "react_agent",
-                    input=text_from_user_turn(query),
-                    output=output,
-                    duration_ms=dur,
-                    max_length=ml,
-                    messages=len(response.get("messages", [])),
-                )
+            if collect_tool_steps:
+                tool_steps_start = len(steps)
+                _collect_tool_steps(response, steps, max_length=ml)
+                if emit_tool_events_to_queue:
+                    await _emit_react_tool_steps_to_event_queue(agent, steps[tool_steps_start:])
+            llm_step = _make_step(
+                StepType.LLM_CALL,
+                "react_agent",
+                input=text_from_user_turn(query),
+                output=output,
+                duration_ms=dur,
+                max_length=ml,
+                messages=len(response.get("messages") or []),
+                **_llm_step_metadata(agent, usage, phase="react_agent"),
             )
+            steps.append(llm_step)
+            queue = resolve_event_queue(agent, config)
+            await _emit_llm_call_step(config, queue, llm_step)
 
-            logger.event(f"[React] ✅ Done — {len(response['messages'])} messages exchanged.")
+            resp_messages = response.get("messages") or []
+            logger.event(f"{log_prefix} ✅ Done — {len(resp_messages)} messages exchanged.")
             return ExecutionResult(
                 pattern_used=PatternType.REACT,
                 query=query,
                 output=output,
-                steps_taken=len(steps),
+                steps_taken=steps_taken_from_audit(steps),
                 success=True,
                 analysis=analysis,
                 steps=steps,
                 token_usage=usage,
-                messages=response.get("messages", []),
+                messages=resp_messages,
             )
 
         except GraphRecursionError:
-            logger.warning(f"[React] ⚠ Recursion limit ({REACT_RECURSION_LIMIT}) reached.")
+            logger.warning(f"{log_prefix} ⚠ Recursion limit ({REACT_RECURSION_LIMIT}) reached.")
             partial = "Step limit reached — partial result may be incomplete."
             try:
                 partial = _extract_last_ai_message(response) or partial
@@ -388,11 +548,11 @@ async def handle_react(
             if _exception_indicates_tool_use_failed(exc):
                 if attempt < max_attempts:
                     logger.warning(
-                        f"[React] ⚠ tool_use_failed on attempt "
+                        f"{log_prefix} ⚠ tool_use_failed on attempt "
                         f"{attempt}/{max_attempts} (agent={name}) "
                         f"— retrying in {_RETRY_DELAY}s."
                     )
-                    await asyncio.sleep(_RETRY_DELAY)
+                    await asyncio.sleep(_react_retry_delay(attempt))
                     state = {
                         "messages": state["messages"]
                         + [HumanMessage(content=_human_message_after_tool_use_failed(exc))]
@@ -402,43 +562,52 @@ async def handle_react(
                     user_recovery_budget -= 1
                     decision = await _user_decision_after_tool_use_failed(user_cb, exc)
                     if decision == "retry":
-                        max_attempts += _MAX_TOOL_RETRIES
+                        max_attempts = min(
+                            max_attempts + _MAX_TOOL_RETRIES,
+                            REACT_ABSOLUTE_MAX_AINVOKE_ATTEMPTS,
+                        )
+                        if max_attempts <= attempt:
+                            logger.error(
+                                f"{log_prefix} User retry requested but absolute attempt cap "
+                                f"({REACT_ABSOLUTE_MAX_AINVOKE_ATTEMPTS}) reached."
+                            )
+                            break
                         logger.event(
-                            f"[React] User authorized another model-turn batch after "
+                            f"{log_prefix} User authorized another model-turn batch after "
                             f"REACT_TOOL_USE_FAILED (recovery rounds left={user_recovery_budget})."
                         )
-                        await asyncio.sleep(_RETRY_DELAY)
+                        await asyncio.sleep(_react_retry_delay(attempt))
                         state = {
                             "messages": state["messages"]
                             + [HumanMessage(content=_human_message_after_tool_use_failed(exc))]
                         }
                         continue
 
-            logger.error(f"[React] ❌ Failed: {exc!r}")
+            logger.error(f"{log_prefix} ❌ Failed: {exc!r}")
             fail_note = (
                 "Provider rejected the model's tool output (tool_use_failed — usually prose instead of a structured tool call). "
                 if _exception_indicates_tool_use_failed(exc)
                 else ""
             )
             exc_str = str(exc).strip() or repr(exc)
-            return ExecutionResult(
-                pattern_used=PatternType.REACT,
-                query=query,
+            return await _react_failure(
+                agent,
+                config,
+                query,
+                analysis,
                 output=f"{fail_note}REACT execution failed: {exc_str}",
                 steps_taken=attempt,
-                success=False,
-                analysis=analysis,
                 steps=steps,
                 messages=(response or {}).get("messages", []),
             )
 
-    return ExecutionResult(
-        pattern_used=PatternType.REACT,
-        query=query,
+    return await _react_failure(
+        agent,
+        config,
+        query,
+        analysis,
         output="REACT exhausted all retries without a result.",
         steps_taken=max_attempts,
-        success=False,
-        analysis=analysis,
         steps=steps,
     )
 
@@ -458,11 +627,14 @@ async def _handle_react_streaming(
     - on_tool_end: tool results → pushed as "tool_result" events with matching id
     - on_chain_end: final state for response extraction
 
-    Falls back to the standard ainvoke path if astream_events is unavailable.
+    On ``astream_events`` failure, continues via :func:`_run_react_ainvoke_with_retries`
+    with the **same** ainvoke retry budget as the non-stream path (``attempt_offset=0``).
+    Partial stream progress is preserved via ``initial_state`` only; tool_use_failed is
+    not silently treated as a free extra attempt slice.
     """
     llm = agent["llm"]
     tools = agent["tools"]
-    system_prompt = agent["system_prompt"] + REACT_TOOL_DISCIPLINE
+    system_prompt = _react_system_prompt(agent)
     name = agent.get("name", "UnifiedAgent")
     steps: list = (config or {}).get("_steps", [])
     ml = agent.get("max_step_output_length", 0)
@@ -484,6 +656,14 @@ async def _handle_react_streaming(
     state = {"messages": [{"role": "user", "content": query}]}
 
     t0 = time.perf_counter()
+    steps.append(
+        _make_step(
+            StepType.WORKER_START,
+            "react_agent",
+            input=text_from_user_turn(query),
+            max_length=ml,
+        )
+    )
     final_response = None
     _tool_run_ids: dict[str, str] = {}
     _tool_arg_dicts: dict[str, dict[str, Any]] = {}
@@ -496,7 +676,7 @@ async def _handle_react_streaming(
                 chunk = event["data"]["chunk"]
                 content = getattr(chunk, "content", "")
                 if content:
-                    content = content if isinstance(content, str) else str(content)
+                    content = content_blocks_to_text(content)
                     if event_queue:
                         await event_queue.put(AgentEvent(type="token", data={"content": content}))
 
@@ -526,6 +706,7 @@ async def _handle_react_streaming(
                         input=str(tool_input),
                         id=run_id,
                         max_length=ml,
+                        wire_emitted=bool(event_queue),
                     )
                 )
 
@@ -567,6 +748,7 @@ async def _handle_react_streaming(
                         output=step_out,
                         id=run_id,
                         max_length=ml,
+                        wire_emitted=bool(event_queue),
                     )
                 )
 
@@ -587,27 +769,40 @@ async def _handle_react_streaming(
             recovery_state = {
                 "messages": list(msgs) + [HumanMessage(content=_human_message_after_stray_tool_json())]
             }
-            if hitl_active:
-                final_response = await react_agent.ainvoke(recovery_state, config=invoke_config)  # type: ignore[arg-type]
-            else:
-                final_response = await asyncio.wait_for(
-                    react_agent.ainvoke(recovery_state, config=invoke_config),  # type: ignore[arg-type]
-                    timeout=_AINVOKE_TIMEOUT,
-                )
+            _wall_timeout = max(
+                _AINVOKE_TIMEOUT,
+                float(agent.get("llm_timeout", _AINVOKE_TIMEOUT)),
+            )
+            final_response = await asyncio.wait_for(
+                cast(Any, react_agent).ainvoke(recovery_state, config=invoke_config),
+                timeout=_wall_timeout if hitl_active else _AINVOKE_TIMEOUT,
+            )
             output = _extract_last_ai_message(final_response) or output
             if not output:
                 output = "No output produced."
 
         usage = _extract_token_usage(final_response)
+        llm_step = _make_step(
+            StepType.LLM_CALL,
+            "react_agent",
+            input=text_from_user_turn(query),
+            output=output,
+            duration_ms=dur,
+            max_length=ml,
+            messages=len((final_response or {}).get("messages", [])),
+            **_llm_step_metadata(agent, usage, phase="react_agent"),
+        )
+        steps.append(llm_step)
+        await _emit_llm_call_step(config, event_queue, llm_step)
         steps.append(
             _make_step(
-                StepType.LLM_CALL,
+                StepType.WORKER_END,
                 "react_agent",
                 input=text_from_user_turn(query),
                 output=output,
                 duration_ms=dur,
                 max_length=ml,
-                messages=len((final_response or {}).get("messages", [])),
+                signal=SignalType.SUCCESS.value,
             )
         )
 
@@ -616,12 +811,36 @@ async def _handle_react_streaming(
             pattern_used=PatternType.REACT,
             query=query,
             output=output,
-            steps_taken=2,
+            steps_taken=steps_taken_from_audit(steps),
             success=True,
             analysis=analysis,
             steps=steps,
             token_usage=usage,
             messages=(final_response or {}).get("messages", []),
+        )
+
+    except asyncio.CancelledError:
+        logger.event("[React|stream] Cancelled — stopping ReAct stream.")
+        raise
+
+    except UserAbort:
+        logger.event("[React|stream] ✋ Aborted by user (tool not run).")
+        msgs_stream: list[Any] = []
+        if final_response is not None:
+            try:
+                msgs_stream = list((final_response or {}).get("messages", []))
+            except Exception:
+                msgs_stream = []
+        return ExecutionResult(
+            pattern_used=PatternType.REACT,
+            query=query,
+            output="Aborted",
+            steps_taken=steps_taken_from_audit(steps),
+            success=True,
+            analysis=analysis,
+            metadata={"user_aborted_tool": True},
+            steps=steps,
+            messages=msgs_stream,
         )
 
     except GraphRecursionError:
@@ -645,13 +864,33 @@ async def _handle_react_streaming(
 
     except Exception as exc:
         logger.warning(
-            f"[React|stream] astream_events failed ({type(exc).__name__}: {exc}) — falling back to ainvoke for {name}"
+            f"[React|stream] astream_events failed ({type(exc).__name__}: {exc}) — "
+            f"continuing via ainvoke retry loop for {name}"
         )
-        return await _handle_react_ainvoke_fallback(
+        initial_state: dict | None = None
+        if isinstance(final_response, dict):
+            msgs = final_response.get("messages")
+            if msgs:
+                initial_state = {"messages": list(msgs)}
+        if _exception_indicates_tool_use_failed(exc):
+            base_msgs = list(
+                (initial_state or {"messages": [{"role": "user", "content": query}]})["messages"]
+            )
+            initial_state = {
+                "messages": base_msgs
+                + [HumanMessage(content=_human_message_after_tool_use_failed(exc))]
+            }
+        return await _run_react_ainvoke_with_retries(
             agent=agent,
             query=query,
             analysis=analysis,
             config=config,
+            react_agent=react_agent,
+            initial_state=initial_state,
+            attempt_offset=0,
+            collect_tool_steps=True,
+            emit_tool_events_to_queue=True,
+            log_prefix="[React|stream→ainvoke]",
         )
 
 
@@ -659,13 +898,18 @@ async def _emit_react_tool_steps_to_event_queue(agent: dict, tool_steps: list) -
     """Emit tool_call / tool_result events for ``ainvoke`` paths (non-streaming HITL, stream fallback).
 
     Streaming ReAct + HITL uses ``astream_events`` directly; this backfills the queue when we fall
-    back to ``ainvoke`` or use :func:`_handle_react_hitl`.
+    back to ``ainvoke`` or use :func:`_handle_react_hitl``. Steps already marked ``wire_emitted``
+    (partial stream progress) are skipped so tool_call is not duplicated; missing tool_result
+    rows from the failed stream are still emitted.
     """
-    queue = agent.get("_event_queue")
+    queue = resolve_event_queue(agent)
     if not queue:
         return
     for step in tool_steps:
         if step.type not in (StepType.TOOL_CALL, StepType.TOOL_RESULT):
+            continue
+        meta = step.metadata or {}
+        if meta.get("wire_emitted") or meta.get("_wire_emitted"):
             continue
         event_type = "tool_call" if step.type == StepType.TOOL_CALL else "tool_result"
         await queue.put(
@@ -675,93 +919,9 @@ async def _emit_react_tool_steps_to_event_queue(agent: dict, tool_steps: list) -
                     "name": step.name,
                     "input": step.input,
                     "output": step.output,
-                    **step.metadata,
+                    **(step.metadata or {}),
                 },
             )
-        )
-
-
-async def _handle_react_ainvoke_fallback(
-    agent: dict,
-    query: str | list[Any],
-    analysis: QueryAnalysis,
-    config: dict | None = None,
-) -> ExecutionResult:
-    """Fallback to standard ainvoke when streaming is unavailable.
-
-    Emits tool_call/tool_result events post-hoc to the event queue so
-    UI consumers still receive tool visibility even on the fallback path.
-    """
-    llm = agent["llm"]
-    tools = agent["tools"]
-    system_prompt = agent["system_prompt"] + REACT_TOOL_DISCIPLINE
-    steps: list = (config or {}).get("_steps", [])
-    ml = agent.get("max_step_output_length", 0)
-
-    hitl_extras = _hitl_middleware_extras(agent)
-    hitl_active = bool(hitl_extras)
-
-    react_agent = create_agent(
-        model=llm,
-        tools=tools,
-        system_prompt=system_prompt,
-        middleware=_langchain_react_middleware(agent, *hitl_extras),
-    )
-    invoke_config = cast(
-        RunnableConfig,  # noqa: TC006
-        {**(config or {}), "recursion_limit": REACT_RECURSION_LIMIT},
-    )
-    state = {"messages": [{"role": "user", "content": query}]}
-
-    try:
-        t0 = time.perf_counter()
-        if hitl_active:
-            response = await react_agent.ainvoke(state, config=invoke_config)
-        else:
-            response = await asyncio.wait_for(
-                react_agent.ainvoke(state, config=invoke_config),
-                timeout=_AINVOKE_TIMEOUT,
-            )
-        dur = round((time.perf_counter() - t0) * 1000, 1)
-        output = _extract_last_ai_message(response) or "No output produced."
-        usage = _extract_token_usage(response)
-
-        tool_steps_start = len(steps)
-        _collect_tool_steps(response, steps, max_length=ml)
-        await _emit_react_tool_steps_to_event_queue(agent, steps[tool_steps_start:])
-
-        steps.append(
-            _make_step(
-                StepType.LLM_CALL,
-                "react_agent",
-                input=text_from_user_turn(query),
-                output=output,
-                duration_ms=dur,
-                max_length=ml,
-            )
-        )
-        return ExecutionResult(
-            pattern_used=PatternType.REACT,
-            query=query,
-            output=output,
-            steps_taken=2,
-            success=True,
-            analysis=analysis,
-            steps=steps,
-            token_usage=usage,
-            messages=response.get("messages", []),
-        )
-    except Exception as exc:
-        logger.error(f"[React|fallback] Failed: {exc!r}")
-        exc_str = str(exc).strip() or repr(exc)
-        return ExecutionResult(
-            pattern_used=PatternType.REACT,
-            query=query,
-            output=f"REACT execution failed: {exc_str}",
-            steps_taken=1,
-            success=False,
-            analysis=analysis,
-            steps=steps,
         )
 
 
@@ -782,11 +942,16 @@ async def _handle_react_hitl(
     The CLI always sets ``_event_queue`` and uses :func:`_handle_react_streaming` with the same
     middleware so the UI stays on ``astream_events``.
     """
+    coalescer = agent.get("_hitl_tool_coalescer")
+    if coalescer is None:
+        coalescer = CompositeToolHitlCoalescer([ReadFileHitlDeduper()])
+        agent["_hitl_tool_coalescer"] = coalescer
     approval_middleware = HumanApprovalMiddleware(
         interrupt_before_tools=interrupt_before_tools,
         user_callback=user_callback,
         agent_name=name,
         tool_allowlist=agent.get("_hitl_tool_allowlist"),
+        hitl_coalescer=coalescer,
     )
 
     react_agent = create_agent(
@@ -800,6 +965,8 @@ async def _handle_react_hitl(
         **(incoming_config or {}),
         "recursion_limit": REACT_RECURSION_LIMIT,
     }
+    steps: list = (incoming_config or {}).get("_steps", [])
+    ml = agent.get("max_step_output_length", 0)
     response: dict | None = None
     messages: list = [HumanMessage(content=query)]
     user_cb = user_callback
@@ -831,11 +998,17 @@ async def _handle_react_hitl(
         attempt += 1
         silent_in_batch += 1
         try:
-            # No outer timeout: HumanApprovalMiddleware may await the CLI/TUI until the user
-            # decides — asyncio.wait_for would raise TimeoutError during an open prompt.
-            response = await react_agent.ainvoke(  # type: ignore[no-matching-overload]
-                {"messages": messages},
-                config=invoke_config,
+            t0 = time.perf_counter()
+            _wall_timeout = max(
+                _AINVOKE_TIMEOUT,
+                float(agent.get("llm_timeout", _AINVOKE_TIMEOUT)),
+            )
+            response = await asyncio.wait_for(
+                cast(Any, react_agent).ainvoke(
+                    {"messages": messages},
+                    config=invoke_config,
+                ),
+                timeout=_wall_timeout,
             )
             msgs = (response or {}).get("messages", [])
             if (
@@ -848,27 +1021,45 @@ async def _handle_react_hitl(
                     f"[React|HITL] Stray tool JSON in assistant text — nudging provider; "
                     f"retries left={stray_remaining} (agent={name})."
                 )
-                await asyncio.sleep(_RETRY_DELAY)
+                await asyncio.sleep(_react_retry_delay(attempt))
                 messages = list(msgs) + [HumanMessage(content=_human_message_after_stray_tool_json())]
                 continue
 
-            ml = agent.get("max_step_output_length", 0)
             hitl_tool_steps: list = []
             _collect_tool_steps(response, hitl_tool_steps, max_length=ml)
+            steps.extend(hitl_tool_steps)
             await _emit_react_tool_steps_to_event_queue(agent, hitl_tool_steps)
 
             output = _extract_last_ai_message(response)
             if not output:
                 output = "No output produced."
 
+            dur = round((time.perf_counter() - t0) * 1000, 1)
+            usage = _extract_token_usage(response)
+            llm_step = _make_step(
+                StepType.LLM_CALL,
+                "react_agent",
+                input=text_from_user_turn(query),
+                output=output,
+                duration_ms=dur,
+                max_length=ml,
+                messages=len((response or {}).get("messages", [])),
+                **_llm_step_metadata(agent, usage, phase="react_agent"),
+            )
+            steps.append(llm_step)
+            queue = resolve_event_queue(agent, incoming_config)
+            await _emit_llm_call_step(incoming_config, queue, llm_step)
+
             logger.event(f"[React|HITL] ✅ Done — {len(output)} chars.")
             return ExecutionResult(
                 pattern_used=PatternType.REACT,
                 query=query,
                 output=output,
-                steps_taken=2,
+                steps_taken=steps_taken_from_audit(steps),
                 success=True,
                 analysis=analysis,
+                steps=steps,
+                token_usage=usage,
                 messages=(response or {}).get("messages", []),
             )
 
@@ -927,7 +1118,7 @@ async def _handle_react_hitl(
                             f"user_callback({HITLEvent.REACT_TOOL_USE_FAILED!r}, …). "
                             f"Sleep {_RETRY_DELAY}s."
                         )
-                    await asyncio.sleep(_RETRY_DELAY)
+                    await asyncio.sleep(_react_retry_delay(attempt))
                     messages.append(HumanMessage(content=_human_message_after_tool_use_failed(exc)))
                     response = None
                     continue
@@ -935,13 +1126,22 @@ async def _handle_react_hitl(
                     user_recovery_budget -= 1
                     decision = await _user_decision_after_tool_use_failed(user_cb, exc)
                     if decision == "retry":
-                        max_attempts += batch_size
+                        max_attempts = min(
+                            max_attempts + batch_size,
+                            REACT_ABSOLUTE_MAX_AINVOKE_ATTEMPTS,
+                        )
+                        if max_attempts <= attempt:
+                            logger.error(
+                                "[React|HITL] User retry requested but absolute attempt cap "
+                                f"({REACT_ABSOLUTE_MAX_AINVOKE_ATTEMPTS}) reached."
+                            )
+                            break
                         silent_in_batch = 0
                         logger.event(
                             f"[React|HITL] User authorized another model-turn batch after "
                             f"REACT_TOOL_USE_FAILED (recovery rounds left={user_recovery_budget})."
                         )
-                        await asyncio.sleep(_RETRY_DELAY)
+                        await asyncio.sleep(_react_retry_delay(attempt))
                         messages.append(HumanMessage(content=_human_message_after_tool_use_failed(exc)))
                         response = None
                         continue
@@ -955,23 +1155,25 @@ async def _handle_react_hitl(
             # Use ``repr(exc)`` so empty-message exceptions still surface their class name —
             # otherwise users see an unhelpful ``execution failed: `` with no diagnostic.
             exc_str = str(exc).strip() or repr(exc)
-            return ExecutionResult(
-                pattern_used=PatternType.REACT,
-                query=query,
+            return await _react_failure(
+                agent,
+                incoming_config,
+                query,
+                analysis,
                 output=f"{fail_note}REACT HITL execution failed: {exc_str}",
                 steps_taken=attempt,
-                success=False,
-                analysis=analysis,
+                steps=list(steps),
                 messages=(response or {}).get("messages", []),
             )
 
-    return ExecutionResult(
-        pattern_used=PatternType.REACT,
-        query=query,
+    return await _react_failure(
+        agent,
+        incoming_config,
+        query,
+        analysis,
         output="REACT HITL exhausted tool-call retries.",
         steps_taken=max_attempts,
-        success=False,
-        analysis=analysis,
+        steps=list(steps),
         messages=(response or {}).get("messages", []),
     )
 

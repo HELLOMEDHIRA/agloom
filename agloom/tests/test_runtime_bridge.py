@@ -6,6 +6,7 @@ import asyncio
 import io
 import json
 from collections.abc import AsyncIterable
+from typing import Any, cast
 
 import pytest
 
@@ -55,11 +56,15 @@ class _CaptureEmitter:
         return fn
 
 
+def capture_emitter() -> SessionEmitter:
+    return cast(SessionEmitter, _CaptureEmitter())
+
+
 def test_translate_classify_emits_pattern_then_thinking() -> None:
-    em = _CaptureEmitter()
+    em = capture_emitter()
     translate(
         AgentEvent(type="classify", data={"pattern": "REACT", "complexity": 5, "output": "ok"}),
-        em,  # type: ignore[arg-type]
+        em,
     )
     assert [name for name, _ in em.calls] == ["emit_pattern_classified", "emit_thinking_step"]
     assert em.calls[0][1]["pattern"] == "REACT"
@@ -67,27 +72,27 @@ def test_translate_classify_emits_pattern_then_thinking() -> None:
 
 
 def test_translate_token_preserves_whitespace() -> None:
-    em = _CaptureEmitter()
-    translate(AgentEvent(type="token", data={"output": "Hello, "}), em)  # type: ignore[arg-type]
+    em = capture_emitter()
+    translate(AgentEvent(type="token", data={"output": "Hello, "}), em)
     assert em.calls == [("emit_token_delta", {"text": "Hello, ", "role": "assistant", "message_id": None})]
 
 
 def test_translate_token_content_key() -> None:
     """``content`` key is the production key emitted by unified_agent/worker/patterns."""
-    em = _CaptureEmitter()
-    translate(AgentEvent(type="token", data={"content": " World!"}), em)  # type: ignore[arg-type]
+    em = capture_emitter()
+    translate(AgentEvent(type="token", data={"content": " World!"}), em)
     assert em.calls == [("emit_token_delta", {"text": " World!", "role": "assistant", "message_id": None})]
 
 
 def test_translate_token_text_key_fallback() -> None:
     """``text`` key is a legacy fallback that must still work."""
-    em = _CaptureEmitter()
-    translate(AgentEvent(type="token", data={"text": "foo"}), em)  # type: ignore[arg-type]
+    em = capture_emitter()
+    translate(AgentEvent(type="token", data={"text": "foo"}), em)
     assert em.calls == [("emit_token_delta", {"text": "foo", "role": "assistant", "message_id": None})]
 
 
 def test_translate_llm_call_emits_estimated_metric_cost_when_usage_present() -> None:
-    em = _CaptureEmitter()
+    em = capture_emitter()
     translate(
         AgentEvent(
             type="llm_call",
@@ -97,7 +102,7 @@ def test_translate_llm_call_emits_estimated_metric_cost_when_usage_present() -> 
                 "usage": {"input_tokens": 1, "output_tokens": 16, "total_tokens": 17},
             },
         ),
-        em,  # type: ignore[arg-type]
+        em,
     )
     names = [c[0] for c in em.calls]
     assert "emit_metric_tokens" in names
@@ -108,10 +113,10 @@ def test_translate_llm_call_emits_estimated_metric_cost_when_usage_present() -> 
 
 
 def test_translate_done_emits_message_assistant() -> None:
-    em = _CaptureEmitter()
+    em = capture_emitter()
     translate(
         AgentEvent(type="done", data={"output": "Final answer", "pattern": "REACT"}),
-        em,  # type: ignore[arg-type]
+        em,
     )
     assert em.calls == [
         ("emit_message_assistant", {"content": "Final answer", "message_id": None, "run_id": None, "pattern": "REACT"})
@@ -119,22 +124,22 @@ def test_translate_done_emits_message_assistant() -> None:
 
 
 def test_translate_skill_context_emits_skill_applied() -> None:
-    em = _CaptureEmitter()
+    em = capture_emitter()
     translate(
         AgentEvent(type="skill_context", data={"phase": "classifier", "injected_chars": 120}),
-        em,  # type: ignore[arg-type]
+        em,
     )
     assert em.calls == [("emit_skill_applied", {"phase": "classifier", "injected_chars": 120})]
 
 
 def test_translate_skill_learned_emits_skill_learned() -> None:
-    em = _CaptureEmitter()
+    em = capture_emitter()
     translate(
         AgentEvent(
             type="skill_learned",
             data={"skill_name": "foo_bar", "pattern": "react", "scope": "global", "source": "post_run"},
         ),
-        em,  # type: ignore[arg-type]
+        em,
     )
     assert em.calls == [
         (
@@ -145,7 +150,7 @@ def test_translate_skill_learned_emits_skill_learned() -> None:
 
 
 def test_translate_tool_result_load_skill_emits_skill_loaded() -> None:
-    em = _CaptureEmitter()
+    em = capture_emitter()
     translate(
         AgentEvent(
             type="tool_result",
@@ -156,26 +161,45 @@ def test_translate_tool_result_load_skill_emits_skill_loaded() -> None:
                 "output": "body text here",
             },
         ),
-        em,  # type: ignore[arg-type]
+        em,
     )
     assert [c[0] for c in em.calls] == ["emit_tool_call_result", "emit_skill_loaded", "emit_message_tool"]
     assert em.calls[1] == ("emit_skill_loaded", {"skill_name": "my_skill", "source": "tool", "body_chars": 14})
     assert em.calls[2][0] == "emit_message_tool"
 
 
+def test_translate_error_emits_fatal() -> None:
+    em = capture_emitter()
+    translate(
+        AgentEvent(type="error", data={"error": "boom", "error_class": "RuntimeError", "stage": "run"}),
+        em,
+    )
+    assert em.calls == [
+        (
+            "emit_error",
+            {
+                "severity": "fatal",
+                "message": "boom",
+                "error_class": "RuntimeError",
+                "stage": "run",
+            },
+        )
+    ]
+
+
 def test_translate_unknown_event_forwarded_as_thinking() -> None:
     """Forward-compat: unknown ``AgentEvent.type`` strings must surface as ``thinking.step``."""
-    em = _CaptureEmitter()
-    translate(AgentEvent(type="some_future_kind", data={"name": "x"}), em)  # type: ignore[arg-type]
+    em = capture_emitter()
+    translate(AgentEvent(type="some_future_kind", data={"name": "x"}), em)
     assert em.calls and em.calls[0][0] == "emit_thinking_step"
     assert em.calls[0][1]["step"] == "some_future_kind"
 
 
 def test_translate_thinking_event_carries_elapsed_ms() -> None:
-    em = _CaptureEmitter()
+    em = capture_emitter()
     translate(
         AgentEvent(type="thinking", data={"name": "analyze_query", "duration_ms": 87}),
-        em,  # type: ignore[arg-type]
+        em,
     )
     assert em.calls and em.calls[0] == (
         "emit_thinking_step",
@@ -184,15 +208,15 @@ def test_translate_thinking_event_carries_elapsed_ms() -> None:
 
 
 def test_translate_token_with_empty_text_skipped() -> None:
-    em = _CaptureEmitter()
-    translate(AgentEvent(type="token", data={"output": ""}), em)  # type: ignore[arg-type]
+    em = capture_emitter()
+    translate(AgentEvent(type="token", data={"output": ""}), em)
     assert em.calls == []
 
 
 def test_translate_token_empty_output_falls_through_to_content() -> None:
-    em = _CaptureEmitter()
+    em = capture_emitter()
     translate(
-        AgentEvent(type="token", data={"output": "", "content": "x"}),  # type: ignore[arg-type]
+        AgentEvent(type="token", data={"output": "", "content": "x"}),
         em,
     )
     assert em.calls == [
@@ -201,9 +225,9 @@ def test_translate_token_empty_output_falls_through_to_content() -> None:
 
 
 def test_translate_token_empty_text_falls_through_to_content() -> None:
-    em = _CaptureEmitter()
+    em = capture_emitter()
     translate(
-        AgentEvent(type="token", data={"text": "", "content": "y"}),  # type: ignore[arg-type]
+        AgentEvent(type="token", data={"text": "", "content": "y"}),
         em,
     )
     assert em.calls == [
@@ -212,7 +236,7 @@ def test_translate_token_empty_text_falls_through_to_content() -> None:
 
 
 def test_translate_done_nested_result_direct_emits_output() -> None:
-    em = _CaptureEmitter()
+    em = capture_emitter()
     translate(
         AgentEvent(
             type="done",
@@ -227,7 +251,7 @@ def test_translate_done_nested_result_direct_emits_output() -> None:
                 },
             },
         ),
-        em,  # type: ignore[arg-type]
+        em,
     )
     assert em.calls == [
         (
@@ -244,7 +268,7 @@ def test_translate_done_nested_result_direct_emits_output() -> None:
 
 def test_translate_done_nested_result_react_keeps_body_without_top_level_echo() -> None:
     """Nested ``result.output`` must reach the client when there is no top-level duplicate echo."""
-    em = _CaptureEmitter()
+    em = capture_emitter()
     translate(
         AgentEvent(
             type="done",
@@ -259,7 +283,7 @@ def test_translate_done_nested_result_react_keeps_body_without_top_level_echo() 
                 },
             },
         ),
-        em,  # type: ignore[arg-type]
+        em,
     )
     assert em.calls == [
         (
@@ -276,13 +300,13 @@ def test_translate_done_nested_result_react_keeps_body_without_top_level_echo() 
 
 def test_translate_done_react_suppresses_top_level_duplicate_only() -> None:
     """Top-level ``output`` on ``done`` is dropped for REACT when pattern is known (tokens carry prose)."""
-    em = _CaptureEmitter()
+    em = capture_emitter()
     translate(
         AgentEvent(
             type="done",
             data={"output": "Streamed already", "pattern": "REACT", "result": {"pattern_used": "REACT"}},
         ),
-        em,  # type: ignore[arg-type]
+        em,
     )
     assert em.calls == [
         ("emit_message_assistant", {"content": "", "message_id": None, "run_id": None, "pattern": "REACT"}),
@@ -290,7 +314,7 @@ def test_translate_done_react_suppresses_top_level_duplicate_only() -> None:
 
 
 def test_translate_done_falls_back_to_direct_shortcircuit_step_output() -> None:
-    em = _CaptureEmitter()
+    em = capture_emitter()
     translate(
         AgentEvent(
             type="done",
@@ -316,7 +340,7 @@ def test_translate_done_falls_back_to_direct_shortcircuit_step_output() -> None:
                 },
             },
         ),
-        em,  # type: ignore[arg-type]
+        em,
     )
     assert em.calls[0][0] == "emit_message_assistant"
     assert em.calls[0][1]["content"] == "Hello!"
@@ -579,6 +603,34 @@ async def test_bridge_translates_worker_end_success_to_worker_completed() -> Non
     assert completed[0].data.worker_id == "w_1"
     assert completed[0].data.duration_ms == 240
     assert completed[0].data.output_preview == "result text"
+
+
+@pytest.mark.asyncio
+async def test_bridge_translates_worker_end_halted_signal_to_worker_halted() -> None:
+    from agloom.protocol import WorkerHalted
+
+    agent = _FakeAgent(
+        [
+            AgentEvent(type="worker_start", data={"worker_id": "w_1"}),
+            AgentEvent(
+                type="worker_end",
+                data={
+                    "worker_id": "w_1",
+                    "signal": "HALTED",
+                    "output": "Stopped by user",
+                    "duration_ms": 12,
+                },
+            ),
+            AgentEvent(type="done", data={"output": "halted"}),
+        ]
+    )
+    buf = io.StringIO()
+    await run_invocation_to_writer(agent=agent, prompt="x", writer=buf)
+    events = _read_events(buf)
+    halted = [e for e in events if isinstance(e, WorkerHalted)]
+    assert len(halted) == 1
+    assert halted[0].data.reason == "HALT_ALL"
+    assert "Stopped" in halted[0].data.output_preview
 
 
 @pytest.mark.asyncio

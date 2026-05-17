@@ -1,7 +1,7 @@
 /** WorkerTree — hierarchical view of all spawned workers + tool calls in the active turn. */
 import React from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Users, Wrench, CheckCircle, XCircle, Loader2 } from 'lucide-react'
+import { Users, Wrench, CheckCircle, XCircle, Loader2, Octagon } from 'lucide-react'
 import { useSessionStore } from '../../store/session.js'
 import { cn, fmtDuration } from '../../lib/utils/cn.js'
 
@@ -31,13 +31,15 @@ export const WorkerTree = (): React.ReactElement => {
             className={cn(
               'rounded-lg border p-3 flex flex-col gap-2',
               w.status === 'running' ? 'border-yellow-800/60 bg-yellow-950/20'
-              : w.status === 'done'  ? 'border-emerald-800/50 bg-emerald-950/20'
+              : w.status === 'done' ? 'border-emerald-800/50 bg-emerald-950/20'
+              : w.status === 'halted' ? 'border-cyan-800/50 bg-cyan-950/20'
               : 'border-red-800/50 bg-red-950/20',
             )}
           >
             <div className="flex items-center gap-2">
               {w.status === 'running' ? <Loader2 size={12} className="text-yellow-400 animate-spin" />
-               : w.status === 'done'  ? <CheckCircle size={12} className="text-emerald-400" />
+               : w.status === 'done' ? <CheckCircle size={12} className="text-emerald-400" />
+               : w.status === 'halted' ? <Octagon size={12} className="text-cyan-400" />
                : <XCircle size={12} className="text-red-400" />}
               <Users size={11} className="text-neutral-400" />
               <span className="text-sm font-medium text-white">{w.name}</span>
@@ -45,7 +47,11 @@ export const WorkerTree = (): React.ReactElement => {
             </div>
             {w.task && <p className="text-xs text-neutral-500 leading-relaxed truncate">{w.task}</p>}
             {w.outputPreview && <p className="text-xs text-neutral-400 leading-relaxed line-clamp-2">{w.outputPreview}</p>}
-            {w.error && <p className="text-xs text-red-400">{w.error}</p>}
+            {w.error && (
+              <p className={cn('text-xs', w.status === 'halted' ? 'text-cyan-400' : 'text-red-400')}>
+                {w.error}
+              </p>
+            )}
           </motion.div>
         ))}
       </AnimatePresence>

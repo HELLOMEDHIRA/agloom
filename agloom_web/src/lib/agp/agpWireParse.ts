@@ -112,6 +112,10 @@ const d = {
     agent_name: z.string().optional(),
     cli_tools_enabled: z.boolean().optional(),
     cli_tools_count: z.number().optional(),
+    harness_enabled: z.boolean().optional(),
+    session_memory_mode: z.string().optional(),
+    agent_store_kind: z.string().optional(),
+    mcp_servers_configured: z.array(z.string()).optional(),
   }),
   runtimeConfig: z.object({
     model_id: z.string().optional(),
@@ -160,6 +164,21 @@ const d = {
     model_id: z.string().optional(),
     cli_tools_enabled: z.boolean().optional(),
     cli_tools_count: z.number().optional(),
+  }),
+  runtimeMCPServers: z.object({
+    server_names: z.array(z.string()),
+    servers: z
+      .array(
+        z.object({
+          name: z.string(),
+          ok: z.boolean(),
+          error: z.string().optional().nullable(),
+          tool_count: z.number().optional(),
+          tool_names: z.array(z.string()).optional(),
+          tool_names_truncated: z.boolean().optional(),
+        }),
+      )
+      .optional(),
   }),
   todosUpdated: z.object({
     items: z.array(z.record(z.string(), z.unknown())).optional(),
@@ -234,6 +253,12 @@ const d = {
     error_class: z.string().optional(),
     duration_ms: z.number().optional(),
   }),
+  workerHalted: z.object({
+    worker_id: z.string(),
+    reason: z.string().optional(),
+    output_preview: z.string().optional(),
+    duration_ms: z.number().optional(),
+  }),
   graphNodeEnter: z.object({
     node: z.string(),
     pattern: z.string().optional(),
@@ -245,6 +270,19 @@ const d = {
     duration_ms: z.number().optional(),
     output_preview: z.string().optional(),
     error: z.string().optional(),
+  }),
+  orchestrationStep: z.object({
+    depth: z.number().optional(),
+    pattern: z.string(),
+    action: z.string(),
+    worker_id: z.string().optional(),
+    reason: z.string().optional(),
+    input_preview: z.string().optional(),
+    output_preview: z.string().optional(),
+    duration_ms: z.number().optional(),
+    error: z.string().optional(),
+    confidence: z.number().optional(),
+    quality_score: z.number().optional(),
   }),
   memoryLtRecall: z.object({
     namespace: z.string().optional(),
@@ -296,15 +334,16 @@ const d = {
     model: z.string().optional(),
     phase: z.string().optional(),
     worker_id: z.string().optional(),
+    estimated: z.boolean().optional(),
   }),
   metricBudgetApproaching: z.object({
-    dimension: z.string(),
+    dimension: z.enum(['tokens', 'cost_usd']),
     used: z.number(),
     limit: z.number(),
     ratio: z.number(),
   }),
   metricBudgetExhausted: z.object({
-    dimension: z.string(),
+    dimension: z.enum(['tokens', 'cost_usd']),
     used: z.number(),
     limit: z.number(),
   }),
@@ -368,6 +407,7 @@ const DATA_BY_TYPE: Record<string, z.ZodTypeAny> = {
   'runtime.file.staged': d.runtimeFileStaged,
   'runtime.tool.result': d.runtimeToolResult,
   'runtime.config.applied': d.runtimeConfigApplied,
+  'runtime.mcp.servers': d.runtimeMCPServers,
   'todos.updated': d.todosUpdated,
   'tool.call.start': d.toolCallStart,
   'tool.call.result': d.toolCallResult,
@@ -379,8 +419,10 @@ const DATA_BY_TYPE: Record<string, z.ZodTypeAny> = {
   'worker.spawned': d.workerSpawned,
   'worker.completed': d.workerCompleted,
   'worker.failed': d.workerFailed,
+  'worker.halted': d.workerHalted,
   'graph.node.enter': d.graphNodeEnter,
   'graph.node.exit': d.graphNodeExit,
+  'orchestration.step': d.orchestrationStep,
   'memory.lt.recall': d.memoryLtRecall,
   'memory.session.write': d.memorySessionWrite,
   'memory.session.cleared': d.memorySessionCleared,
@@ -401,6 +443,12 @@ const DATA_BY_TYPE: Record<string, z.ZodTypeAny> = {
   'prompt.requested': d.promptRequested,
   'prompt.cancelled': d.promptCancelled,
 }
+
+/** Wire event types with a Zod ``data`` schema (must stay in sync with ``knownAgpEventTypes``). */
+export const AGP_WIRE_DATA_EVENT_TYPES = new Set<string>(Object.keys(DATA_BY_TYPE))
+
+/** Zod ``data`` validators keyed by wire ``type`` (used by contract-sync tests). */
+export const AGP_WIRE_DATA_SCHEMAS: Readonly<Record<string, z.ZodTypeAny>> = DATA_BY_TYPE
 
 /**
  * Validate wire JSON as an AGP v1 event. Unknown ``type`` values still require a valid envelope

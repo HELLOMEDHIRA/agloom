@@ -41,6 +41,17 @@ class _T:
         self.description = description
 
 
+def test_classifier_query_slot_single_substitution() -> None:
+    """Marker must not replace multiple occurrences if query echoes the marker."""
+    from agloom.classifier import _QUERY_SLOT_MARKER_PREFIX
+
+    marker = f"{_QUERY_SLOT_MARKER_PREFIX}deadbeef\ufeff"
+    query = f"see {marker} in docs"
+    prompt = build_classifier_user_prompt(tools_desc="none", query=query)
+    assert prompt.count(marker) == 1
+    assert f"Query: {query}" in prompt or query in prompt.split("Query:")[-1]
+
+
 def test_build_classifier_user_prompt_matches_tool_list() -> None:
     tools = [_T("echo", "Says {query}"), _T("grep", "Finds text")]
     td = "\n".join(f"  - {t.name}: {getattr(t, 'description', '')}" for t in tools)

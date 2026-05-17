@@ -72,7 +72,7 @@ async for evt in agent.astream_agp_events(
         print(f"tokens: {evt.data.input_tokens}↑ {evt.data.output_tokens}↓")
 ```
 
-Wire-format details, command vocabulary, and schema export live in [**AGP — Agloom Protocol**](../protocol/agp.md). For embedding the runtime bridge and stores in Python, see [AGP from Python](../guides/agp-python.md) and [Embedding the runtime](../guides/embedding-runtime.md).
+Wire-format details, command vocabulary, and schema export live in [**AGP — Agloom Protocol**](../protocol/agp.md). For how **`metric.tokens`** is produced without double-counting, see [Wire tokens & metric.tokens](wire-tokens.md). For embedding the runtime bridge and stores in Python, see [AGP from Python](../guides/agp-python.md) and [Embedding the runtime](../guides/embedding-runtime.md).
 
 Everything below applies to **`astream_events()`**, which yields **`AgentEvent`** instances (`event.type` string + `event.data` dict) until the run completes.
 
@@ -252,7 +252,7 @@ print(result.token_usage)
 # {'input_tokens': 245, 'output_tokens': 512, 'total_tokens': 757}
 ```
 
-Useful for cost monitoring and billing.
+Useful for cost monitoring and billing. On the AGP wire, **`metric.cost`** uses provider metadata when present; otherwise the runtime emits an approximate estimate (`estimated: true` on the event — not invoice-grade).
 
 ## 5. Raw LangChain Messages
 

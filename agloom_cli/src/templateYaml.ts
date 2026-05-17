@@ -32,7 +32,7 @@ execution:
   max_concurrent: 4
   max_retries: 2
   llm_timeout: 120.0
-  classifier_timeout: 30.0
+  classifier_timeout: 60.0
 
 safety:
   require_approval: true
@@ -71,7 +71,7 @@ execution:
   max_concurrent: 4
   max_retries: 2
   llm_timeout: 120.0
-  classifier_timeout: 30.0
+  classifier_timeout: 60.0
 
 safety:
   require_approval: true

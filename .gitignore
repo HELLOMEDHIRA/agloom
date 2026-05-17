@@ -1,6 +1,10 @@
 # Node (each package: agloom_cli/, agloom_web/)
 node_modules/
 
+# Never commit npm pack tarballs (wrong artefact risk)
+agloom_cli/*.tgz
+agloom_web/*.tgz
+
 # Python-generated files
 __pycache__/
 *.py[oc]

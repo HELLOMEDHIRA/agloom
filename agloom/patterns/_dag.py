@@ -100,6 +100,11 @@ def inject_dag_context(
                 f"This dependency failed: {dep_result.error or 'Unknown error'}. "
                 f"Proceed with available information."
             )
+        elif dep_result and dep_result.signal == SignalType.HALTED:
+            dep_sections.append(
+                f"━━━ OUTPUT FROM {dep_id} (HALTED) ━━━\n"
+                f"{dep_result.output}"
+            )
 
     if not dep_sections:
         return config

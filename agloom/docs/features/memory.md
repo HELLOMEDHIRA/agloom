@@ -37,11 +37,17 @@ async def main():
     # Option 1: Use defaults — session memory auto-created (ephemeral)
     agent = await create_agent(model=llm, name="chat-agent")
 
-    # Option 2: Explicit session memory (same behavior, but explicit)
+    # Option 2: Explicit SessionMemory (set max_turns on the instance)
     agent = await create_agent(
         model=llm,
-        memory=SessionMemory(),
-        session_max_turns=20,  # keep last 20 turns (default)
+        memory=SessionMemory(max_turns=50),
+        name="chat-agent",
+    )
+
+    # Option 3: Auto-created memory with session_max_turns (default 50)
+    agent = await create_agent(
+        model=llm,
+        session_max_turns=50,
         name="chat-agent",
     )
 ```
@@ -66,8 +72,20 @@ async def example(agent):
 
 - Each `ainvoke` call stores the query and response as a turn under `("session", thread_id)`
 - The last `session_max_turns` turns are injected into the system prompt on the next call
-- Older turns are evicted (FIFO)
+- When history grows past limits, older turns are compressed or dropped (see [Auto-Summarization](#auto-summarization) below — not a simple FIFO trim while `auto_summarize=True`)
 - Threads are isolated — different `thread_id` values get different histories
+
+!!! warning "Do not mix sync and async session writers"
+    If your store implements both **`get`/`put`** and **`aget`/`aput`** (e.g. LangGraph `InMemoryStore`), use **either** `SessionMemory.add_turn()` **or** `await SessionMemory.aadd_turn()` for a given agent, not both. Interleaving sync and async writes can race and produce last-writer-wins overwrites.
+
+### Undo last turn
+
+Remove the latest turn from **session memory** (the rolling chat transcript used for prompt injection) without a new LLM call:
+
+- **CLI:** type **`/undo`** in the interactive UI.
+- **Custom AGP client:** send **`command.memory.pop_last_turn`**; the runtime emits **`memory.session.turn_popped`** with `remaining_turns`.
+
+This does **not** rewind LangGraph checkpoints or change which pattern was selected for a past run. See [Checkpointer](../guides/production.md#checkpointer-state-persistence-and-inspection) if you need durable graph state.
 
 ### Passing `thread_id` and `user_id`
 
@@ -128,13 +146,13 @@ Long-term memory namespace is resolved in this order:
 | Parameter           | Default      | Description                                                                                                                              |
 | ------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `memory`            | auto-created | `SessionMemory()` instance. Auto-created with ephemeral `InMemoryStore` if not provided                                                  |
-| `session_max_turns` | `20`         | Max turns to retain. Only applies to the auto-created `SessionMemory` — ignored if you pass your own `memory=SessionMemory(max_turns=N)` |
+| `session_max_turns` | `50`         | Max turns to retain. Only applies to the auto-created `SessionMemory` — ignored if you pass your own `memory=SessionMemory(max_turns=N)` |
 
 ## Auto-Summarization
 
 When conversations grow long, raw turns can consume significant context window budget. agloom automatically summarizes older turns into a compressed summary, preserving key information while freeing up tokens for the current conversation.
 
-### How it works
+### How auto-summarization works
 
 1. After each turn is recorded, agloom counts the total tokens across all stored turns (using `tiktoken`)
 2. If the total exceeds `summarize_threshold` (default: 200,000 tokens), summarization triggers
@@ -213,7 +231,7 @@ User: What about the SUPERVISOR pattern?
 Assistant: The SUPERVISOR pattern is ideal for...
 ```
 
-### Configuration
+### Summarization configuration
 
 | Parameter             | Default   | Description                                                    |
 | --------------------- | --------- | -------------------------------------------------------------- |
@@ -301,7 +319,7 @@ With `enable_memory_tools=False`, the agent still benefits from passive injectio
 
 ## Query Cache
 
-agloom includes an optional **semantic query cache** backed by Qdrant. When enabled, repeated or semantically similar queries return cached results instantly without making LLM calls.
+agloom includes a **semantic query cache** backed by Qdrant. **`create_agent()` enables an in-memory default cache automatically** (`query_cache=None` → `default_query_cache()`). Pass **`query_cache=False`** to disable caching entirely, or pass the dict from `create_cache()` for custom embeddings / remote Qdrant. When enabled, repeated or semantically similar queries can return cached results without a full LLM run.
 
 ### Enabling the cache
 

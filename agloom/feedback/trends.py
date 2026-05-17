@@ -137,17 +137,18 @@ class TrendDetector:
 
     def _aggregate(self, records: list[dict]) -> dict:
         """Pure-Python aggregation of RunRecord dicts (no LLM)."""
+        chron = sorted(records, key=lambda r: str(r.get("created_at") or r.get("rated_at") or ""))
         by_pattern: dict[str, list[float]] = defaultdict(list)
         by_skill: dict[str, list[float]] = defaultdict(list)
         no_skill: int = 0
         total_scores: list[float] = []
 
         # Chronological split: compare older vs newer runs for drift.
-        mid = len(records) // 2
+        mid = len(chron) // 2
         first_half_scores: list[float] = []
         second_half_scores: list[float] = []
 
-        for i, r in enumerate(records):
+        for i, r in enumerate(chron):
             score_dict = r.get("score") or {}
             if isinstance(score_dict, dict):
                 s = score_dict
@@ -185,7 +186,7 @@ class TrendDetector:
             return round(sum(lst) / len(lst), 3) if lst else 0.0
 
         return {
-            "total": len(records),
+            "total": len(chron),
             "overall_avg": avg(total_scores),
             "first_half_avg": avg(first_half_scores),
             "second_half_avg": avg(second_half_scores),
@@ -196,7 +197,7 @@ class TrendDetector:
                 if avg(second_half_scores) < avg(first_half_scores) - 0.05
                 else "stable"
             ),
-            "no_skill_pct": round(no_skill / len(records) * 100, 1) if records else 0.0,
+            "no_skill_pct": round(no_skill / len(chron) * 100, 1) if chron else 0.0,
             "by_pattern": {p: {"avg": avg(v), "n": len(v)} for p, v in by_pattern.items()},
             "by_skill": {s: {"avg": avg(v), "n": len(v)} for s, v in by_skill.items()},
             # Last 3 runs vs earlier runs (needs ≥6 points); heuristic for per-skill decay.
@@ -239,7 +240,10 @@ Decaying skills (recent 3 runs much worse than earlier):
             level = logging.WARNING if insight.severity == "high" else logging.INFO
             logger.log_at(
                 level,
-                f"TrendDetector [{self._agent}] "
-                f"[{insight.category}] {insight.severity.upper()}: "
-                f"{insight.description} → {insight.action}",
+                "trend_insight",
+                agent=self._agent,
+                category=insight.category,
+                severity=insight.severity,
+                description=insight.description,
+                action=insight.action,
             )

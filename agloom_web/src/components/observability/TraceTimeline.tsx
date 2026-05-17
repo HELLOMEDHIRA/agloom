@@ -22,8 +22,10 @@ const TYPE_COLOR: Record<string, string> = {
   'worker.spawned':     'bg-yellow-900/80 border-yellow-700 text-yellow-300',
   'worker.completed':   'bg-emerald-950/80 border-emerald-800 text-emerald-400',
   'worker.failed':      'bg-red-900/80 border-red-700 text-red-300',
+  'worker.halted':      'bg-cyan-900/80 border-cyan-700 text-cyan-300',
   'hitl.request':       'bg-orange-900/80 border-orange-700 text-orange-300',
   'graph.node.enter':   'bg-violet-900/80 border-violet-700 text-violet-300',
+  'orchestration.step': 'bg-fuchsia-900/80 border-fuchsia-700 text-fuchsia-300',
   'graph.node.exit':    'bg-violet-950/80 border-violet-800 text-violet-400',
   'checkpoint.saved':   'bg-teal-900/80 border-teal-700 text-teal-300',
   'message.user':       'bg-indigo-800/80 border-indigo-600 text-indigo-200',
@@ -58,8 +60,10 @@ const shortLabel = (type: string, data: Record<string, unknown>): string => {
     case 'tool.result':       return `${d['tool'] ?? '?'} ${d['error'] ? '✗' : '✓'}`
     case 'worker.spawned':    return d['name'] ?? '?'
     case 'worker.completed':  return `done: ${d['worker_id'] ?? '?'}`
+    case 'worker.halted':     return `halt: ${d['worker_id'] ?? '?'}`
     case 'graph.node.enter':  return `→ ${d['node'] ?? '?'}`
     case 'graph.node.exit':   return `← ${d['node'] ?? '?'}`
+    case 'orchestration.step': return `↻ d${d['depth'] ?? '0'} ${d['pattern'] ?? '?'} ${d['action'] ?? ''}`
     case 'thinking.step':     return d['label'] ?? d['step'] ?? '?'
     case 'pattern.classified':return d['pattern'] ?? '?'
     case 'hitl.request':      return d['kind'] ?? '?'

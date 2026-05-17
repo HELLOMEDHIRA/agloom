@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -26,6 +27,22 @@ _disk_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="skill-io")
 
 GLOBAL_NS = ("skills", "global")
 BOOTSTRAP_KEY = "__bootstrapped__"
+
+
+def _is_skill_sentinel(meta: dict) -> bool:
+    """True for bootstrap/model-fingerprint rows, not user skills."""
+    name = str(meta.get("name") or meta.get("skill_name") or "")
+    if name.startswith("__"):
+        return True
+    if meta.get("bootstrapped"):
+        return True
+    return False
+
+
+def _skill_content_fingerprint(description: str, body: str) -> str:
+    raw = f"{description.strip()}\n{body.strip()}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
 
 _DEFAULT_SKILL_DIRS = [
     ".agent/skills",
@@ -119,7 +136,7 @@ class SkillRegistry:
         )
         for r in global_results:
             meta = _meta(r)
-            if meta.get("bootstrapped"):
+            if _is_skill_sentinel(meta):
                 continue
             m = SkillManifest.from_metadata(meta)
             if m:
@@ -132,6 +149,8 @@ class SkillRegistry:
         )
         for r in agent_results:
             meta = _meta(r)
+            if _is_skill_sentinel(meta):
+                continue
             m = SkillManifest.from_metadata(meta)
             if m:
                 merged[m.name] = m
@@ -173,7 +192,7 @@ class SkillRegistry:
             )
             for r in results:
                 meta = _meta(r)
-                if meta.get("bootstrapped"):
+                if _is_skill_sentinel(meta):
                     continue
                 m = SkillManifest.from_metadata(meta)
                 if m and m.name not in seen:
@@ -190,8 +209,34 @@ class SkillRegistry:
         tags: list[str] | None = None,
         skill_data: dict | None = None,
     ) -> None:
-        """Persist a learned skill to LTS (global or agent-scoped). Auto-increments version on overwrite."""
+        """Persist a learned skill to LTS (global or agent-scoped). Auto-increments version on overwrite.
+
+        Near-duplicate bodies (same SHA-256 of description+body) reuse the existing store key
+        even if *name* differs slightly, to avoid proliferating learned skills.
+        """
         ns = GLOBAL_NS if scope == "global" else self._agent_ns
+
+        fp = _skill_content_fingerprint(description, body)
+        canon_name = name
+        try:
+            candidates = await self._store.asearch(ns, query=description[:120], top_k=20)
+        except Exception as exc:
+            logger.debug(f"SkillRegistry [{self._agent_name}]: dedupe search skipped: {exc!r}")
+            candidates = []
+        for r in candidates:
+            meta = _meta(r)
+            if _is_skill_sentinel(meta):
+                continue
+            if meta.get("content_fingerprint") == fp and meta.get("name"):
+                canon_name = str(meta["name"])
+                if canon_name != name:
+                    logger.info(
+                        f"SkillRegistry [{self._agent_name}]: deduping learned skill "
+                        f"{name!r} → existing {canon_name!r} (matching content fingerprint)"
+                    )
+                break
+
+        name = canon_name
 
         prev_version = 0
         existing_meta = await self._fetch_raw_meta(ns, name)
@@ -210,6 +255,7 @@ class SkillRegistry:
             **manifest.to_metadata(),
             "body": body,
             "skill_data": skill_data or {},
+            "content_fingerprint": fp,
         }
         await self._lts_save(
             ns=ns,

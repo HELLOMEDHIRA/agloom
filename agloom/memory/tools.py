@@ -7,7 +7,6 @@ namespace is used and persistence will not match real sessions.
 
 from __future__ import annotations
 
-import uuid
 from typing import TYPE_CHECKING, Annotated
 
 from langchain_core.runnables import RunnableConfig
@@ -38,13 +37,12 @@ def _resolve_namespace(config: RunnableConfig | None) -> tuple[tuple[str, ...], 
     except Exception as exc:
         logger.debug(f"_resolve_namespace config read failed: {exc!r}")
 
-    ephemeral = ("memory", f"misconfigured_{uuid.uuid4().hex[:8]}")
     logger.error(
         "[MemoryTool] memory_namespace missing from RunnableConfig — "
-        f"using ephemeral namespace {ephemeral}. Saves will not persist across calls "
+        f"using fallback namespace {_FALLBACK_NS}. Saves will not persist across calls "
         "unless the caller sets configurable.memory_namespace (e.g. via UnifiedAgent)."
     )
-    return ephemeral, True
+    return _FALLBACK_NS, True
 
 
 def create_memory_tools(store: LongTermStore) -> list:

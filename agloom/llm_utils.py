@@ -115,6 +115,26 @@ class LLMSemaphore:
 DEFAULT_LLM_SEMAPHORE = LLMSemaphore(max_concurrent=10)
 
 
+class CircuitBreakerError(RuntimeError):
+    """The LLM :class:`CircuitBreaker` rejected this call (fast-fail or probe contention)."""
+
+
+class CircuitBreakerOpen(CircuitBreakerError):
+    """Breaker is OPEN — too many failures; cooldown not elapsed."""
+
+    def __init__(self, *, threshold: int, recovery_s: float) -> None:
+        self.threshold = threshold
+        self.recovery_s = recovery_s
+        super().__init__(
+            f"CircuitBreaker OPEN — fast-failing after {threshold} consecutive failures. "
+            f"Retry after {recovery_s}s cooldown."
+        )
+
+
+class CircuitBreakerHalfOpenBusy(CircuitBreakerError):
+    """HALF-OPEN state; another request is already acting as the probe."""
+
+
 async def robust_structured_call[T: BaseModel](
     llm: Any,
     schema: type[T],
@@ -133,18 +153,39 @@ async def robust_structured_call[T: BaseModel](
     errors: list[str] = []
     skip_json_schema = _llm_skips_json_schema_mode(llm) or _env_skip_json_schema_first()
 
+    async def _invoke_retry_half_busy(
+        structured: Any,
+        strategy_label: str,
+    ) -> T | None:
+        """Probe contention on HALF-OPEN is transient — retry with short backoff before giving up."""
+        delays_s = (0.0, 0.015, 0.04, 0.1, 0.25)
+        last_busy: CircuitBreakerHalfOpenBusy | None = None
+        for delay in delays_s:
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                return await _try_invoke(
+                    structured,
+                    messages,
+                    timeout,
+                    rate_limiter,
+                    tag,
+                    strategy_label,
+                    errors,
+                    circuit_breaker=_circuit_breaker_for(llm),
+                )
+            except CircuitBreakerHalfOpenBusy as exc:
+                last_busy = exc
+                continue
+        if last_busy is not None:
+            errors.append(f"{strategy_label}: {last_busy!r}")
+            logger.warning(f"{tag}{last_busy}")
+        return None
+
     if not skip_json_schema:
         structured = _build_structured(llm, schema, method="json_schema")
         if structured is not None:
-            result = await _try_invoke(
-                structured,
-                messages,
-                timeout,
-                rate_limiter,
-                tag,
-                "json_schema",
-                errors,
-            )
+            result = await _invoke_retry_half_busy(structured, "json_schema")
             if result is not None:
                 return result
 
@@ -153,14 +194,9 @@ async def robust_structured_call[T: BaseModel](
         for attempt in range(max_retries):
             if attempt > 0:
                 await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
-            result = await _try_invoke(
+            result = await _invoke_retry_half_busy(
                 structured,
-                messages,
-                timeout,
-                rate_limiter,
-                tag,
                 f"function_calling(attempt={attempt + 1})",
-                errors,
             )
             if result is not None:
                 return result
@@ -181,9 +217,19 @@ async def robust_structured_call[T: BaseModel](
     return None
 
 
-_structured_cache: OrderedDict[tuple, Any] = OrderedDict()
-_STRUCTURED_CACHE_MAX = 64
+_structured_by_llm: weakref.WeakKeyDictionary[Any, OrderedDict[tuple[type[Any], str | None], Any]] = (
+    weakref.WeakKeyDictionary()
+)
+_STRUCTURED_CACHE_MAX_PER_LLM = 64
 _cache_lock = threading.Lock()
+
+
+def _llm_allows_structured_cache(llm: Any) -> bool:
+    try:
+        weakref.ref(llm)
+    except TypeError:
+        return False
+    return True
 
 
 def _build_structured[T: BaseModel](
@@ -191,28 +237,40 @@ def _build_structured[T: BaseModel](
     schema: type[T],
     method: str | None,
 ) -> Any | None:
-    """Build a structured LLM, returning None if the method is unsupported. LRU-cached (max 64)."""
-    cache_key = (id(llm), schema, method)
-    with _cache_lock:
-        if cache_key in _structured_cache:
-            _structured_cache.move_to_end(cache_key)
-            return _structured_cache[cache_key]
+    """Build a structured LLM, returning None if the method is unsupported.
 
-        if len(_structured_cache) >= _STRUCTURED_CACHE_MAX:
-            _structured_cache.popitem(last=False)
+    Cached per LLM instance (``WeakKeyDictionary``) so ``id(llm)`` reuse after GC
+    cannot return a structured runnable bound to a different model.
+    """
+    inner_key = (schema, method)
+    cache_ok = _llm_allows_structured_cache(llm)
+
+    if cache_ok:
+        with _cache_lock:
+            inner = _structured_by_llm.get(llm)
+            if inner is not None and inner_key in inner:
+                inner.move_to_end(inner_key)
+                return inner[inner_key]
 
     kwargs: dict[str, Any] = {"include_raw": False}
     if method is not None:
         kwargs["method"] = method
     try:
         result = llm.with_structured_output(schema, **kwargs)
-        with _cache_lock:
-            _structured_cache[cache_key] = result
-        return result
     except (NotImplementedError, TypeError, ValueError):
+        result = None
+
+    if cache_ok:
         with _cache_lock:
-            _structured_cache[cache_key] = None
-        return None
+            inner = _structured_by_llm.get(llm)
+            if inner is None:
+                inner = OrderedDict()
+                _structured_by_llm[llm] = inner
+            if len(inner) >= _STRUCTURED_CACHE_MAX_PER_LLM:
+                inner.popitem(last=False)
+            inner[inner_key] = result
+
+    return result
 
 
 async def _try_invoke[T: BaseModel](
@@ -223,22 +281,29 @@ async def _try_invoke[T: BaseModel](
     tag: str,
     strategy: str,
     errors: list[str],
+    *,
+    circuit_breaker: CircuitBreaker | None = None,
 ) -> T | None:
     """Single invocation attempt with timeout, rate limiting, concurrency gating, and circuit breaker."""
+    breaker = circuit_breaker if circuit_breaker is not None else DEFAULT_CIRCUIT_BREAKER
     try:
         if rate_limiter:
             await rate_limiter.acquire()
-        async with DEFAULT_CIRCUIT_BREAKER, DEFAULT_LLM_SEMAPHORE:
+        async with breaker, DEFAULT_LLM_SEMAPHORE:
             result = await asyncio.wait_for(
                 structured.ainvoke(messages),
                 timeout=timeout,
             )
         return result
+    except asyncio.CancelledError:
+        raise
+    except CircuitBreakerHalfOpenBusy:
+        raise
+    except CircuitBreakerError as exc:
+        errors.append(f"{strategy}: {exc!r}")
+        logger.warning(f"{tag}{exc}")
+        return None
     except RuntimeError as exc:
-        if "CircuitBreaker" in str(exc):
-            errors.append(f"{strategy}: {exc!r}")
-            logger.warning(f"{tag}{exc}")
-            return None
         errors.append(f"{strategy}: {exc!r}")
         logger.debug(f"{tag}structured_call ({strategy}) failed: {exc!r}")
         return None
@@ -394,17 +459,17 @@ class CircuitBreaker:
             now = time.monotonic()
             if self._state == self.OPEN:
                 if now - self._last_failure < self._recovery:
-                    raise RuntimeError(
-                        f"CircuitBreaker OPEN — fast-failing after "
-                        f"{self._threshold} consecutive failures. "
-                        f"Retry after {self._recovery}s cooldown."
-                    )
+                    raise CircuitBreakerOpen(threshold=self._threshold, recovery_s=self._recovery)
                 self._state = self.HALF
             elif self._state == self.HALF:
-                raise RuntimeError("CircuitBreaker HALF-OPEN — a probe request is already in flight")
+                raise CircuitBreakerHalfOpenBusy(
+                    "CircuitBreaker HALF-OPEN — a probe request is already in flight"
+                )
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is asyncio.CancelledError:
+            return False
         async with self._lock:
             if exc_type is None:
                 self._failures = 0
@@ -423,3 +488,41 @@ class CircuitBreaker:
 
 
 DEFAULT_CIRCUIT_BREAKER = CircuitBreaker(failure_threshold=5, recovery_timeout=30.0)
+
+_breakers_by_llm: weakref.WeakKeyDictionary[Any, CircuitBreaker] = weakref.WeakKeyDictionary()
+_breakers_by_id: OrderedDict[int, CircuitBreaker] = OrderedDict()
+_MAX_ID_BREAKERS = 64
+_breakers_lock = threading.Lock()
+
+
+def _new_circuit_breaker() -> CircuitBreaker:
+    return CircuitBreaker(failure_threshold=5, recovery_timeout=30.0)
+
+
+def _circuit_breaker_for_id(llm: Any) -> CircuitBreaker:
+    """Fallback when ``llm`` cannot be a weak dict key (e.g. bare ``object()`` on Python 3.14)."""
+    key = id(llm)
+    with _breakers_lock:
+        br = _breakers_by_id.get(key)
+        if br is not None:
+            _breakers_by_id.move_to_end(key)
+            return br
+        if len(_breakers_by_id) >= _MAX_ID_BREAKERS:
+            _breakers_by_id.popitem(last=False)
+        br = _new_circuit_breaker()
+        _breakers_by_id[key] = br
+        return br
+
+
+def _circuit_breaker_for(llm: Any) -> CircuitBreaker:
+    """Per-LLM breaker so classifier failures do not trip structured calls on other models."""
+    try:
+        weakref.ref(llm)
+    except TypeError:
+        return _circuit_breaker_for_id(llm)
+    with _breakers_lock:
+        br = _breakers_by_llm.get(llm)
+        if br is None:
+            br = _new_circuit_breaker()
+            _breakers_by_llm[llm] = br
+        return br

@@ -1,9 +1,35 @@
 """Tool resolution — maps required_tools name strings to actual tool objects."""
 
 from ..logging_utils import get_logger
-from ..models import QueryAnalysis, ResolvedWorkerConfig, SubTask, WorkerPlan
+from ..models import AgentEvent, QueryAnalysis, ResolvedWorkerConfig, SubTask, WorkerPlan
 
 logger = get_logger(__name__)
+
+
+def _notify_missing_tools(agent: dict, worker_id: str, missing: list[str]) -> None:
+    """Log and optionally surface missing ``required_tools`` on the live event queue."""
+    names = ", ".join(missing)
+    msg = (
+        f"Worker '{worker_id}': required tool(s) not in registry ({names}) — "
+        "running LLM-only; behaviour may differ from the plan."
+    )
+    logger.warning(f"[Resolve] {msg}")
+    queue = agent.get("_event_queue")
+    if queue is None:
+        return
+    try:
+        queue.put_nowait(
+            AgentEvent(
+                type="thinking",
+                data={
+                    "step": "tool_resolve",
+                    "label": "Tool resolution warning",
+                    "detail": msg,
+                },
+            )
+        )
+    except Exception:
+        logger.debug("[Resolve] could not enqueue missing-tools warning", exc_info=True)
 
 
 def resolve_worker_configs(
@@ -22,6 +48,7 @@ def resolve_worker_configs(
 
     for subtask in subtasks:
         resolved_tools = []
+        missing_tools: list[str] = []
 
         if subtask.required_tools:
             for tool_name in subtask.required_tools:
@@ -29,10 +56,10 @@ def resolve_worker_configs(
                 if tool:
                     resolved_tools.append(tool)
                 else:
-                    logger.warning(f"[Resolve] Tool '{tool_name}' not in registry — skipped.")
+                    missing_tools.append(tool_name)
 
-        if not resolved_tools and subtask.required_tools:
-            logger.event(f"[Resolve] Worker '{subtask.worker_id}' has no matched tools — running as LLM-only.")
+        if missing_tools:
+            _notify_missing_tools(agent, subtask.worker_id, missing_tools)
 
         logger.event(
             f"[Resolve] Worker '{subtask.worker_id}' resolved → "
@@ -57,6 +84,7 @@ def resolve_worker_configs(
                 llm_timeout=float(agent.get("llm_timeout", 120.0)),
                 max_retries=agent.get("max_retries", 2),
                 retry_delay=agent.get("retry_delay", 1.0),
+                missing_tools=missing_tools,
             )
         )
 

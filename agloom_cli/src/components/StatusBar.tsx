@@ -1,6 +1,6 @@
 /** StatusBar — bottom bar with session status, thread id, and Ctrl shortcuts. */
 
-import React, { useEffect, useState } from 'react'
+import React from 'react'
 import { Box, Text, useWindowSize } from 'ink'
 import { ProgressBar, StatusMessage } from '@inkjs/ui'
 import { useSessionStore } from '../store/session.js'
@@ -80,16 +80,7 @@ export const StatusBar = ({ thread, layoutWidth }: Props): React.ReactElement =>
   const totalCost = useSessionStore((s) => s.totalCostUsd)
   const modelName = useSessionStore((s) => s.model)
   const openedAt = useSessionStore((s) => s.sessionOpenedAtMs)
-  const [nowMs, setNowMs] = useState(() => Date.now())
-  useEffect(() => {
-    if (openedAt == null) return
-    const id = setInterval(() => {
-      setNowMs(Date.now())
-    }, 1000)
-    return () => {
-      clearInterval(id)
-    }
-  }, [openedAt])
+  const nowMs = useSessionStore((s) => s.wallClockMs)
   const uptimeSec =
     openedAt != null ? (Math.max(0, nowMs - openedAt) / 1000).toFixed(1) : null
 

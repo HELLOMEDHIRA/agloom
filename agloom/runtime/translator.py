@@ -8,9 +8,14 @@ wire stream stays a complete trace without silently dropping data.
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
+from ..logging_utils import get_logger
 from ..models import AgentEvent
 from ..protocol import SessionEmitter
+from ..protocol.emitter import _lit_token_role
+
+logger = get_logger(__name__)
 
 # Event-type strings from ``UnifiedAgent.astream_events`` (opaque to callers). New types get a
 # dedicated branch when needed; unknown names still flow through as ``thinking.step``.
@@ -23,6 +28,35 @@ _AGENT_EVENT_THINKING_TYPES: frozenset[str] = frozenset(
         "cache_hit",
     }
 )
+
+# Explicit branches in ``translate`` — used only to log when a new type falls through.
+_TRANSLATED_AGENT_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "classify",
+        "token",
+        "done",
+        "answer",
+        "message_assistant",
+        "tool_call",
+        "tool_result",
+        "graph_node_enter",
+        "graph_node_exit",
+        "skill_context",
+        "skill_learned",
+        "memory_lt_recall",
+        "memory_session_write",
+        "memory_lt_store",
+        "checkpoint_saved",
+        "checkpoint_restored",
+        "feedback_scored",
+        "worker_start",
+        "worker_end",
+        "llm_call",
+        "orchestration",
+        "runtime.mcp.servers",
+        "error",
+    }
+) | _AGENT_EVENT_THINKING_TYPES
 
 
 def _pattern_tail_upper(v: Any) -> str:
@@ -59,6 +93,26 @@ def _assistant_body_from_done_result(res: dict[str, Any]) -> str:
     return ""
 
 
+def _event_thread_id(data: dict[str, Any]) -> str | None:
+    for key in ("thread", "thread_id"):
+        raw = data.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    return None
+
+
+def _reject_cross_thread_event(data: dict[str, Any], emitter: SessionEmitter) -> bool:
+    """Drop events tagged for a different LangGraph thread than this emitter fork."""
+    tagged = _event_thread_id(data)
+    if tagged is None:
+        return False
+    return tagged != emitter._thread
+
+
+def _new_tool_call_id(tool: str) -> str:
+    return f"tc_{tool}_{uuid4().hex[:12]}"
+
+
 def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
     """Dispatch one :class:`AgentEvent` to the correct AGP emit method.
 
@@ -67,6 +121,8 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
     """
     et = event.type
     data = event.data or {}
+    if _reject_cross_thread_event(data, emitter):
+        return
 
     if et == "classify":
         # Classification events from analyze_query: payload includes pattern + complexity.
@@ -108,7 +164,7 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
             return
         emitter.emit_token_delta(
             text=text,
-            role=_str(data.get("role")) or "assistant",  # type: ignore[arg-type]
+            role=_lit_token_role(_str(data.get("role")) or "assistant"),
             message_id=_str(data.get("message_id")),
         )
         return
@@ -119,8 +175,10 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
         # *top-level* ``output``/``content`` on ``done`` would replay the same text in
         # ``message.assistant``. Suppress only that explicit echo — keep body recovered solely from
         # ``result`` when there was no top-level terminal field (otherwise UIs see a blank reply).
-        # Tradeoff: if tokens already streamed the same prose as ``result.output``, the final
-        # ``message.assistant`` can duplicate once; we prefer that over an empty reply.
+        # Tradeoff: if ``token`` deltas already streamed the same prose as ``result.output``,
+        # ``message.assistant`` may repeat it once on non-DIRECT patterns; we prefer that
+        # over an empty reply. Suppressing ``from_explicit`` when ``patt != DIRECT`` avoids a
+        # second full copy from the done payload on top of streamed tokens.
         res = data.get("result")
         from_explicit = _str(data.get("output")) or _str(data.get("content")) or ""
         content = from_explicit
@@ -165,7 +223,7 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
         # pending tool row. ``tool_call_id`` is mandatory on the AGP side; synthesize from name
         # when the runtime didn't supply one (older backends, unit tests).
         tool = _str(data.get("name")) or _str(data.get("tool")) or "unknown_tool"
-        tcid = _str(data.get("tool_call_id")) or _str(data.get("id")) or f"tc_{tool}_{event.timestamp}"
+        tcid = _str(data.get("tool_call_id")) or _str(data.get("id")) or _new_tool_call_id(tool)
         args = data.get("args")
         if not isinstance(args, dict):
             args = {}
@@ -180,7 +238,7 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
 
     if et == "tool_result":
         tool = _str(data.get("name")) or _str(data.get("tool")) or "unknown_tool"
-        tcid = _str(data.get("tool_call_id")) or _str(data.get("id")) or f"tc_{tool}_{event.timestamp}"
+        tcid = _str(data.get("tool_call_id")) or _str(data.get("id")) or _new_tool_call_id(tool)
         # Errored tool runs sometimes arrive on this same channel — discriminate via ``error``
         # key so the wire stays semantically clean (success vs failure events are distinct).
         err = _str(data.get("error"))
@@ -337,9 +395,19 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
 
     if et == "worker_end":
         worker_id = _str(data.get("worker_id")) or _str(data.get("name")) or _str(data.get("id")) or "worker"
-        # Errored workers ride the same channel — discriminate via ``error`` key, mirroring the
-        # ``tool_result`` → ``tool.call.error`` pattern so the wire stays semantically clean.
+        signal = _str(data.get("signal"))
+        # Errored workers ride the same channel — discriminate via ``error`` / ``signal``, mirroring
+        # the ``tool_result`` → ``tool.call.error`` pattern so the wire stays semantically clean.
         err = _str(data.get("error"))
+        if signal == "HALTED":
+            out = _str(data.get("output")) or _str(data.get("content")) or ""
+            emitter.emit_worker_halted(
+                worker_id=worker_id,
+                reason=err or "HALT_ALL",
+                output_preview=out[:1024] if out else "",
+                duration_ms=_int(data.get("duration_ms")),
+            )
+            return
         if err:
             emitter.emit_worker_failed(
                 worker_id=worker_id,
@@ -428,6 +496,22 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
         )
         return
 
+    if et == "orchestration":
+        emitter.emit_orchestration_step(
+            depth=_int(data.get("depth")) or 0,
+            pattern=_str(data.get("pattern")) or "UNKNOWN",
+            action=_str(data.get("action")) or "step",
+            worker_id=_str(data.get("worker_id")),
+            reason=_str(data.get("reason")),
+            input_preview=_str(data.get("input_preview")),
+            output_preview=_str(data.get("output_preview")),
+            duration_ms=_int(data.get("duration_ms")),
+            error=_str(data.get("error")),
+            confidence=_float(data.get("confidence")),
+            quality_score=_float(data.get("quality_score")),
+        )
+        return
+
     if et == "runtime.mcp.servers":
         names = data.get("server_names", [])
         srv = data.get("servers")
@@ -441,8 +525,21 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
         )
         return
 
+    if et == "error":
+        emitter.emit_error(
+            severity=_str(data.get("severity")) or "fatal",
+            message=_str(data.get("error")) or _str(data.get("message")) or "unknown error",
+            error_class=_str(data.get("error_class")),
+            stage=_str(data.get("stage")) or "invocation",
+        )
+        return
+
     # Forward-compat: unknown event types still surface as a thinking step so nothing is lost.
     # When new categories ship (tool.*, hitl.*, …) we add explicit branches above this line.
+    if et not in _TRANSLATED_AGENT_EVENT_TYPES:
+        logger.warning(
+            f"translate: unmapped AgentEvent type {et!r} — forwarding as thinking.step"
+        )
     emitter.emit_thinking_step(
         step=et,
         label=_str(data.get("name")) or et,

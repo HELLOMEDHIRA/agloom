@@ -1,10 +1,11 @@
-/** MetricsPanel — right-hand session telemetry card. */
+/** MetricsPanel — right-hand session telemetry card (scrollable when content exceeds terminal height). */
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useMemo } from 'react'
 import { Box, Text } from 'ink'
 import { Badge } from '@inkjs/ui'
 import { useSessionStore, type MetricTokensSlice, type ToolCall } from '../store/session.js'
 import { fmtDuration, fmtTokens, fmtUsd, shortenMiddle, truncate } from '../utils/format.js'
+import { ScrollableColumn } from './ScrollableColumn.js'
 
 const rollupPhases = (history: MetricTokensSlice[]): Map<string, { input: number; output: number }> => {
   const m = new Map<string, { input: number; output: number }>()
@@ -54,21 +55,29 @@ const TOOL_STATUS_BADGE_COLOR: Record<ToolCall['status'], 'yellow' | 'green' | '
 
 const fmtTime = (iso: string | null): string => {
   if (!iso) return '—'
-  try { return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }
-  catch { return iso }
+  try {
+    return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  } catch {
+    return iso
+  }
 }
+
+const spacer = (key: string): React.ReactElement => (
+  <Text key={key} color="gray" dimColor>
+    {' '}
+  </Text>
+)
 
 interface Props {
   thread: string
   width: number
+  /** Total panel height in terminal rows (border + title + scroll body). */
+  maxHeight: number
 }
 
-export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
-  const [nowMs, setNowMs] = useState(() => Date.now())
-  useEffect(() => {
-    const id = setInterval(() => setNowMs(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [])
+export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactElement => {
+  const status = useSessionStore((s) => s.status)
+  const nowMs = useSessionStore((s) => s.wallClockMs)
 
   const sessionId = useSessionStore((s) => s.sessionId)
   const sessionOpenedAtMs = useSessionStore((s) => s.sessionOpenedAtMs)
@@ -84,17 +93,15 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
   const turnOut = useSessionStore((s) => s.turnOutputTokens)
   const metricsHistory = useSessionStore((s) => s.metricsHistory)
   const totalCostUsd = useSessionStore((s) => s.totalCostUsd)
-  const status = useSessionStore((s) => s.status)
   const protocolNotes = useSessionStore((s) => s.protocolNotes)
-  const toolNames = useSessionStore((s) => s.toolNames)
   const memoryEnabled = useSessionStore((s) => s.memoryEnabled)
   const sessionMemoryMode = useSessionStore((s) => s.sessionMemoryMode)
   const skillsEnabled = useSessionStore((s) => s.skillsEnabled)
   const harnessEnabled = useSessionStore((s) => s.harnessEnabled)
   const cliToolsEnabled = useSessionStore((s) => s.cliToolsEnabled)
   const cliToolsCount = useSessionStore((s) => s.cliToolsCount)
-  const mcpServerNames = useSessionStore((s) => s.mcpServerNames)
   const mcpServerRows = useSessionStore((s) => s.mcpServerRows)
+  const mcpServerNames = useSessionStore((s) => s.mcpServerNames)
   const autoApprovedTools = useSessionStore((s) => s.autoApprovedTools)
   const filesUpdated = useSessionStore((s) => s.filesUpdated)
 
@@ -141,255 +148,388 @@ export const MetricsPanel = ({ thread, width }: Props): React.ReactElement => {
     return { kind: 'none' as const }
   }, [mcpServerRows, mcpServerNames])
 
+  const memoryLabel = useMemo(() => {
+    if (sessionMemoryMode != null && sessionMemoryMode !== '') {
+      if (sessionMemoryMode === 'none') return '✗ none'
+      if (sessionMemoryMode === 'off') return '✓ in-memory'
+      return `✓ ${sessionMemoryMode}`
+    }
+    if (memoryEnabled === true) return '✓ ON'
+    if (memoryEnabled === false) return '✗ OFF'
+    return '—'
+  }, [sessionMemoryMode, memoryEnabled])
+
+  const memoryColor = useMemo(() => {
+    if (
+      sessionMemoryMode === 'sqlite' ||
+      sessionMemoryMode === 'in-memory' ||
+      sessionMemoryMode === 'off' ||
+      memoryEnabled === true
+    ) {
+      return 'green' as const
+    }
+    if (sessionMemoryMode === 'none' || memoryEnabled === false) return 'red' as const
+    return 'gray' as const
+  }, [sessionMemoryMode, memoryEnabled])
+
+  const bodyLines = useMemo(() => {
+    const lines: React.ReactElement[] = []
+
+    lines.push(
+      <Text key="identity-h" bold color="white">
+        Identity
+      </Text>,
+    )
+    lines.push(
+      <Text key="session" wrap="truncate-end">
+        <Text color="gray">session </Text>
+        <Text color="white">{sid}</Text>
+      </Text>,
+    )
+    lines.push(
+      <Text key="thread" wrap="truncate-end">
+        <Text color="gray">thread </Text>
+        <Text color="white">{th}</Text>
+      </Text>,
+    )
+    lines.push(
+      <Text key="times" wrap="truncate-end">
+        <Text color="gray">started </Text>
+        <Text color="white">{fmtTime(sessionStartedAt)}</Text>
+        <Text color="gray"> · updated </Text>
+        <Text color="white">{fmtTime(sessionUpdatedAt)}</Text>
+      </Text>,
+    )
+
+    lines.push(spacer('sp-features'))
+    lines.push(
+      <Text key="features-h" bold color="white">
+        Features
+      </Text>,
+    )
+    lines.push(
+      <Text key="memory" wrap="truncate-end">
+        <Text color="gray">memory </Text>
+        <Text color={memoryColor}>{memoryLabel}</Text>
+      </Text>,
+    )
+    lines.push(
+      <Text key="skills" wrap="truncate-end">
+        <Text color="gray">skills </Text>
+        <Text color={skillsEnabled === true ? 'green' : skillsEnabled === false ? 'red' : 'gray'}>
+          {skillsEnabled === true ? '✓ ON (LT store)' : skillsEnabled === false ? '✗ OFF' : '—'}
+        </Text>
+      </Text>,
+    )
+    lines.push(
+      <Text key="cli" wrap="truncate-end">
+        <Text color="gray">cli tools </Text>
+        <Text color={cliToolsCount != null && cliToolsCount > 0 ? 'green' : cliToolsEnabled === false ? 'red' : 'gray'}>
+          {cliToolsCount != null && cliToolsCount > 0
+            ? `${cliToolsCount} tools`
+            : cliToolsEnabled === false
+              ? '✗ OFF'
+              : cliToolsCount === 0
+                ? '0 tools'
+                : '—'}
+        </Text>
+      </Text>,
+    )
+    lines.push(
+      <Text key="harness" wrap="truncate-end">
+        <Text color="gray">harness </Text>
+        <Text color={harnessEnabled === true ? 'green' : harnessEnabled === false ? 'red' : 'gray'}>
+          {harnessEnabled === true ? '✓ ON' : harnessEnabled === false ? '✗ OFF' : '—'}
+        </Text>
+      </Text>,
+    )
+    lines.push(
+      <Text key="mcp" wrap="truncate-end">
+        <Text color="gray">mcp </Text>
+        {mcpRollup.kind === 'live' ? (
+          <>
+            <Text color={mcpRollup.allServersOk ? 'green' : mcpRollup.hasFail ? 'yellow' : 'gray'}>
+              {mcpRollup.allServersOk ? '✓ ' : mcpRollup.hasFail ? '⚠ ' : '○ '}
+            </Text>
+            <Text color={mcpRollup.allServersOk ? 'green' : 'white'}>
+              {mcpRollup.okServers}/{mcpRollup.totalServers} ok · {mcpRollup.tools} tools
+            </Text>
+          </>
+        ) : mcpRollup.kind === 'pending' ? (
+          <>
+            <Text color="yellow">○ </Text>
+            <Text color="gray">{mcpRollup.totalServers} srv · tools after connect</Text>
+          </>
+        ) : (
+          <Text color="gray">— no servers</Text>
+        )}
+      </Text>,
+    )
+
+    lines.push(spacer('sp-activity'))
+    lines.push(
+      <Text key="activity-h" bold color="white">
+        Activity
+      </Text>,
+    )
+    lines.push(
+      <Text key="activity" wrap="truncate-end">
+        <Text color="gray">uptime </Text>
+        <Text color="yellow">{sessionOpenedAtMs ? fmtDuration(uptimeMs) : '—'}</Text>
+        <Text color="gray"> · turns </Text>
+        <Text color="yellow">{turnCount}</Text>
+        <Text color="gray"> · </Text>
+        <Badge color={RUN_STATUS_BADGE_COLOR[status as RunStatus] ?? 'gray'}>{status}</Badge>
+      </Text>,
+    )
+
+    lines.push(spacer('sp-tokens'))
+    lines.push(
+      <Text key="tokens-h" bold color="white">
+        Tokens
+      </Text>,
+    )
+    lines.push(
+      <Text key="tokens-sess" wrap="truncate-end">
+        <Text color="gray">session </Text>
+        <Text color="green">{fmtTokens(totalIn)}↑</Text>
+        <Text color="gray"> </Text>
+        <Text color="blue">{fmtTokens(totalOut)}↓</Text>
+        <Text color="gray" dimColor>
+          {' '}
+          ({totalIn + totalOut} Σ)
+        </Text>
+      </Text>,
+    )
+    if (activeTurn) {
+      lines.push(
+        <Text key="tokens-turn" wrap="truncate-end">
+          <Text color="gray">this turn </Text>
+          <Text color="green">{fmtTokens(turnIn)}↑</Text>
+          <Text color="gray"> </Text>
+          <Text color="blue">{fmtTokens(turnOut)}↓</Text>
+        </Text>,
+      )
+    }
+    if (completedTurns.length > 0) {
+      lines.push(
+        <Text key="tokens-last" color="gray" dimColor wrap="truncate-end">
+          last answer ·{' '}
+          {completedTurns.at(-1)?.tokens != null ? `${completedTurns.at(-1)!.tokens} tok` : '—'}
+        </Text>,
+      )
+    }
+
+    lines.push(spacer('sp-cost'))
+    lines.push(
+      <Text key="cost-h" bold color="white">
+        Cost
+      </Text>,
+    )
+    lines.push(
+      <Text key="cost" color={totalCostUsd > 0 ? 'yellow' : 'gray'} dimColor={totalCostUsd <= 0} wrap="truncate-end">
+        {fmtUsd(totalCostUsd)}
+        {totalCostUsd > 0 ? ' (session)' : ''}
+      </Text>,
+    )
+
+    if (phaseRows.length > 0) {
+      lines.push(spacer('sp-phase'))
+      lines.push(
+        <Text key="phase-h" bold color="white">
+          By phase
+        </Text>,
+      )
+      for (const [phase, v] of phaseRows) {
+        lines.push(
+          <Text key={`phase-${phase}`} wrap="truncate-end">
+            <Text color="magenta">{truncate(phase, 14).padEnd(14)}</Text>
+            <Text color="green">{fmtTokens(v.input)}↑</Text>
+            <Text color="gray"> </Text>
+            <Text color="blue">{fmtTokens(v.output)}↓</Text>
+          </Text>,
+        )
+      }
+    }
+
+    if (mcpServerRows.length > 0 || mcpServerNames.length > 0) {
+      lines.push(spacer('sp-mcp'))
+      lines.push(
+        <Text key="mcp-h" bold color="white">
+          MCP
+        </Text>,
+      )
+      if (mcpServerRows.length > 0) {
+        mcpServerRows.forEach((r, i) => {
+          lines.push(
+            <Text key={`mcp-${r.name}-${i}`} wrap="truncate-end">
+              <Text color={r.ok ? 'green' : 'red'}>{r.ok ? '● ' : '○ '}</Text>
+              <Text color="cyan">{truncate(r.name, 18)}</Text>
+              <Text color="gray">
+                {r.ok ? ` · ${r.toolCount} tools` : ` · ${truncate(String(r.error ?? 'error'), innerW - 22)}`}
+              </Text>
+            </Text>,
+          )
+        })
+      } else {
+        mcpServerNames.forEach((n, i) => {
+          lines.push(
+            <Text key={`mcp-pend-${i}`} wrap="truncate-end">
+              <Text color="yellow">○ </Text>
+              <Text color="cyan">{truncate(n, 18)}</Text>
+              <Text color="gray" dimColor>
+                {' '}
+                · pending (first message)
+              </Text>
+            </Text>,
+          )
+        })
+      }
+    }
+
+    if (filesUpdated.length > 0) {
+      lines.push(spacer('sp-files'))
+      lines.push(
+        <Text key="files-h" bold color="white">
+          Files updated
+        </Text>,
+      )
+      filesUpdated.slice(-6).forEach((f, i) => {
+        lines.push(
+          <Text key={`file-${i}`} color="green" dimColor wrap="truncate-end">
+            ✓ {truncate(f, innerW - 2)}
+          </Text>,
+        )
+      })
+    }
+
+    if (autoApprovedTools.length > 0) {
+      lines.push(spacer('sp-auto'))
+      lines.push(
+        <Text key="auto-h" bold color="white">
+          Auto-approved
+        </Text>,
+      )
+      lines.push(
+        <Text key="auto-list" color="gray" dimColor wrap="truncate-end">
+          {autoApprovedTools.join(', ')}
+        </Text>,
+      )
+    }
+
+    lines.push(spacer('sp-tools'))
+    lines.push(
+      <Text key="tools-h" bold color="white">
+        Tools (recent)
+      </Text>,
+    )
+    if (toolRows.length === 0) {
+      lines.push(
+        <Text key="tools-empty" color="gray" dimColor>
+          —
+        </Text>,
+      )
+    } else {
+      for (const { turnLabel, tc } of toolRows) {
+        lines.push(
+          <Text key={tc.id} wrap="truncate-end">
+            <Text color="gray">T{turnLabel} </Text>
+            <Badge color={TOOL_STATUS_BADGE_COLOR[tc.status]}>{tc.status}</Badge>
+            <Text bold> {truncate(tc.tool, 18)}</Text>
+            {tc.durationMs !== undefined ? (
+              <Text color="gray" dimColor>
+                {' '}
+                {fmtDuration(tc.durationMs)}
+              </Text>
+            ) : tc.status === 'pending' ? (
+              <Text color="gray" dimColor>
+                {' '}
+                …
+              </Text>
+            ) : null}
+          </Text>,
+        )
+      }
+    }
+
+    if (protocolNotes.length > 0) {
+      lines.push(spacer('sp-wire'))
+      lines.push(
+        <Text key="wire-h" bold color="white">
+          Wire notes
+        </Text>,
+      )
+      protocolNotes.slice(-8).forEach((line, i) => {
+        lines.push(
+          <Text key={`wire-${i}-${line.slice(0, 12)}`} color="gray" dimColor wrap="truncate-end">
+            {truncate(line, innerW)}
+          </Text>,
+        )
+      })
+    }
+
+    return lines
+  }, [
+    activeTurn,
+    autoApprovedTools,
+    cliToolsCount,
+    cliToolsEnabled,
+    completedTurns,
+    filesUpdated,
+    harnessEnabled,
+    innerW,
+    mcpRollup,
+    mcpServerNames,
+    mcpServerRows,
+    memoryColor,
+    memoryLabel,
+    phaseRows,
+    protocolNotes,
+    sessionOpenedAtMs,
+    sessionStartedAt,
+    sessionUpdatedAt,
+    sid,
+    skillsEnabled,
+    status,
+    th,
+    toolRows,
+    totalCostUsd,
+    totalIn,
+    totalOut,
+    turnCount,
+    turnIn,
+    turnOut,
+    uptimeMs,
+  ])
+
+  /** Title (2) + border/pad (2) + optional scroll hint (1). */
+  const scrollBodyLines = Math.max(4, maxHeight - 5)
+
   return (
     <Box
       flexDirection="column"
       width={width}
+      height={maxHeight}
       flexShrink={0}
       borderStyle="round"
       borderColor="cyan"
       paddingX={1}
       paddingY={1}
     >
-      <Text bold color="cyan">Session</Text>
-      <Text color="gray" dimColor>
+      <Text bold color="cyan">
+        Session
+      </Text>
+      <Text color="gray" dimColor wrap="truncate-end">
         {runtimeVersion ? `rt ${runtimeVersion}` : ' '}
         {model ? ` · ${truncate(model, innerW - 12)}` : ''}
       </Text>
 
-      {/* ── Session Info ─────────────────────────────────────────── */}
-      <Box marginTop={1} flexDirection="column" width={innerW}>
-        <Text bold color="white">Identity</Text>
-        <Text>
-          <Text color="gray">session </Text>
-          <Text color="white">{sid}</Text>
-        </Text>
-        <Text>
-          <Text color="gray">thread </Text>
-          <Text color="white">{th}</Text>
-        </Text>
-        <Text>
-          <Text color="gray">started </Text>
-          <Text color="white">{fmtTime(sessionStartedAt)}</Text>
-          <Text color="gray"> · updated </Text>
-          <Text color="white">{fmtTime(sessionUpdatedAt)}</Text>
-        </Text>
-      </Box>
-
-      {/* ── Status Toggles ────────────────────────────────────────── */}
-      <Box marginTop={1} flexDirection="column" width={innerW}>
-        <Text bold color="white">Features</Text>
-        <Text>
-          <Text color="gray">memory </Text>
-          <Text
-            color={
-              sessionMemoryMode === 'sqlite' ||
-              sessionMemoryMode === 'in-memory' ||
-              sessionMemoryMode === 'off' ||
-              memoryEnabled === true
-                ? 'green'
-                : sessionMemoryMode === 'none' || memoryEnabled === false
-                  ? 'red'
-                  : 'gray'
-            }
-          >
-            {sessionMemoryMode != null && sessionMemoryMode !== ''
-              ? sessionMemoryMode === 'none'
-                ? '✗ none'
-                : sessionMemoryMode === 'off'
-                  ? '✓ in-memory'
-                  : `✓ ${sessionMemoryMode}`
-              : memoryEnabled === true
-                ? '✓ ON'
-                : memoryEnabled === false
-                  ? '✗ OFF'
-                  : '—'}
-          </Text>
-        </Text>
-        <Text>
-          <Text color="gray">skills </Text>
-          <Text color={skillsEnabled === true ? 'green' : skillsEnabled === false ? 'red' : 'gray'}>
-            {skillsEnabled === true ? '✓ ON (LT store)' : skillsEnabled === false ? '✗ OFF' : '—'}
-          </Text>
-        </Text>
-        <Text>
-          <Text color="gray">cli tools </Text>
-          <Text color={cliToolsCount != null && cliToolsCount > 0 ? 'green' : cliToolsEnabled === false ? 'red' : 'gray'}>
-            {cliToolsCount != null && cliToolsCount > 0
-              ? `${cliToolsCount} tools`
-              : cliToolsEnabled === false
-                ? '✗ OFF'
-                : cliToolsCount === 0
-                  ? '0 tools'
-                  : '—'}
-          </Text>
-        </Text>
-        <Text>
-          <Text color="gray">harness </Text>
-          <Text color={harnessEnabled === true ? 'green' : harnessEnabled === false ? 'red' : 'gray'}>
-            {harnessEnabled === true ? '✓ ON' : harnessEnabled === false ? '✗ OFF' : '—'}
-          </Text>
-        </Text>
-        <Text>
-          <Text color="gray">mcp </Text>
-          {mcpRollup.kind === 'live' ? (
-            <>
-              <Text color={mcpRollup.allServersOk ? 'green' : mcpRollup.hasFail ? 'yellow' : 'gray'}>
-                {mcpRollup.allServersOk ? '✓ ' : mcpRollup.hasFail ? '⚠ ' : '○ '}
-              </Text>
-              <Text color={mcpRollup.allServersOk ? 'green' : 'white'}>
-                {mcpRollup.okServers}/{mcpRollup.totalServers} ok · {mcpRollup.tools} tools
-              </Text>
-            </>
-          ) : mcpRollup.kind === 'pending' ? (
-            <>
-              <Text color="yellow">○ </Text>
-              <Text color="gray">{mcpRollup.totalServers} srv · tools after connect</Text>
-            </>
-          ) : (
-            <Text color="gray">— no servers</Text>
-          )}
-        </Text>
-      </Box>
-
-      {/* ── Activity ──────────────────────────────────────────────── */}
-      <Box marginTop={1} flexDirection="column" width={innerW}>
-        <Text bold color="white">Activity</Text>
-        <Text>
-          <Text color="gray">uptime </Text>
-          <Text color="yellow">{sessionOpenedAtMs ? fmtDuration(uptimeMs) : '—'}</Text>
-          <Text color="gray"> · turns </Text>
-          <Text color="yellow">{turnCount}</Text>
-          <Text color="gray"> · </Text>
-          <Badge color={RUN_STATUS_BADGE_COLOR[status as RunStatus] ?? 'gray'}>{status}</Badge>
-        </Text>
-      </Box>
-
-      {/* ── Tokens ────────────────────────────────────────────────── */}
-      <Box marginTop={1} flexDirection="column" width={innerW}>
-        <Text bold color="white">Tokens</Text>
-        <Text>
-          <Text color="gray">session </Text>
-          <Text color="green">{fmtTokens(totalIn)}↑</Text>
-          <Text color="gray"> </Text>
-          <Text color="blue">{fmtTokens(totalOut)}↓</Text>
-          <Text color="gray" dimColor> ({totalIn + totalOut} Σ)</Text>
-        </Text>
-        {activeTurn && (
-          <Text>
-            <Text color="gray">this turn </Text>
-            <Text color="green">{fmtTokens(turnIn)}↑</Text>
-            <Text color="gray"> </Text>
-            <Text color="blue">{fmtTokens(turnOut)}↓</Text>
-          </Text>
-        )}
-        {completedTurns.length > 0 && (
-          <Text color="gray" dimColor>
-            last answer · {completedTurns.at(-1)?.tokens != null ? `${completedTurns.at(-1)!.tokens} tok` : '—'}
-          </Text>
-        )}
-      </Box>
-
-      <Box marginTop={1} flexDirection="column" width={innerW}>
-        <Text bold color="white">Cost</Text>
-        <Text color={totalCostUsd > 0 ? 'yellow' : 'gray'} dimColor={totalCostUsd <= 0}>
-          {fmtUsd(totalCostUsd)}
-          {totalCostUsd > 0 ? ' (session)' : ''}
-        </Text>
-      </Box>
-
-      {/* ── By Phase ──────────────────────────────────────────────── */}
-      {phaseRows.length > 0 && (
-        <Box marginTop={1} flexDirection="column" width={innerW}>
-          <Text bold color="white">By phase</Text>
-          {phaseRows.map(([phase, v]) => (
-            <Text key={phase}>
-              <Text color="magenta">{truncate(phase, 14).padEnd(14)}</Text>
-              <Text color="green">{fmtTokens(v.input)}↑</Text>
-              <Text color="gray"> </Text>
-              <Text color="blue">{fmtTokens(v.output)}↓</Text>
-            </Text>
-          ))}
-        </Box>
-      )}
-
-      {(mcpServerRows.length > 0 || mcpServerNames.length > 0) && (
-        <Box marginTop={1} flexDirection="column" width={innerW}>
-          <Text bold color="white">MCP</Text>
-          {mcpServerRows.length > 0 ? (
-            mcpServerRows.map((r, i) => (
-              <Text key={`${r.name}-${i}`} wrap="truncate-end">
-                <Text color={r.ok ? 'green' : 'red'}>{r.ok ? '● ' : '○ '}</Text>
-                <Text color="cyan">{truncate(r.name, 18)}</Text>
-                <Text color="gray">
-                  {r.ok ? ` · ${r.toolCount} tools` : ` · ${truncate(String(r.error ?? 'error'), innerW - 22)}`}
-                </Text>
-              </Text>
-            ))
-          ) : (
-            mcpServerNames.map((n, i) => (
-              <Text key={i} wrap="truncate-end">
-                <Text color="yellow">○ </Text>
-                <Text color="cyan">{truncate(n, 18)}</Text>
-                <Text color="gray" dimColor> · pending (first message)</Text>
-              </Text>
-            ))
-          )}
-        </Box>
-      )}
-
-      {/* ── Files Updated ─────────────────────────────────────────── */}
-      {filesUpdated.length > 0 && (
-        <Box marginTop={1} flexDirection="column" width={innerW}>
-          <Text bold color="white">Files updated</Text>
-          {filesUpdated.slice(-6).map((f, i) => (
-            <Text key={i} color="green" dimColor>✓ {truncate(f, innerW - 2)}</Text>
-          ))}
-        </Box>
-      )}
-
-      {/* ── Auto-Approved Tools ────────────────────────────────────── */}
-      {autoApprovedTools.length > 0 && (
-        <Box marginTop={1} flexDirection="column" width={innerW}>
-          <Text bold color="white">Auto-approved</Text>
-          <Text color="gray" dimColor>{autoApprovedTools.join(', ')}</Text>
-        </Box>
-      )}
-
-      {/* ── Recent Tools ──────────────────────────────────────────── */}
-      <Box marginTop={1} flexDirection="column" width={innerW}>
-        <Text bold color="white">Tools (recent)</Text>
-        {toolRows.length === 0 ? (
-          <Text color="gray" dimColor>—</Text>
-        ) : (
-          toolRows.map(({ turnLabel, tc }) => (
-            <Box key={tc.id} flexDirection="column">
-              <Text>
-                <Text color="gray">T{turnLabel} </Text>
-                <Badge color={TOOL_STATUS_BADGE_COLOR[tc.status]}>{tc.status}</Badge>
-                <Text bold> {truncate(tc.tool, 18)}</Text>
-                {tc.durationMs !== undefined ? (
-                  <Text color="gray" dimColor> {fmtDuration(tc.durationMs)}</Text>
-                ) : tc.status === 'pending' ? (
-                  <Text color="gray" dimColor> …</Text>
-                ) : null}
-              </Text>
-            </Box>
-          ))
-        )}
-      </Box>
-
-      {/* ── Wire Notes ────────────────────────────────────────────── */}
-      {protocolNotes.length > 0 && (
-        <Box marginTop={1} flexDirection="column" width={innerW}>
-          <Text bold color="white">Wire notes</Text>
-          {protocolNotes.slice(-8).map((line, i) => (
-            <Text key={`${i}-${line.slice(0, 20)}`} color="gray" dimColor wrap="truncate-end">
-              {truncate(line, innerW)}
-            </Text>
-          ))}
-        </Box>
-      )}
+      <ScrollableColumn
+        maxLines={scrollBodyLines}
+        lines={bodyLines}
+        pinToBottomOnGrow
+        allowBracketScroll={false}
+      />
     </Box>
   )
 }

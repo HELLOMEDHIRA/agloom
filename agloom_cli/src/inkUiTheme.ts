@@ -3,7 +3,7 @@
 import { defaultTheme, extendTheme, type Theme } from '@inkjs/ui'
 import type { AgloomTheme } from './themeContext.js'
 
-export function buildInkUiTheme(mode: AgloomTheme): Theme {
+export const buildInkUiTheme = (mode: AgloomTheme): Theme => {
   if (mode === 'dark') return defaultTheme
   return extendTheme(defaultTheme, {
     components: {

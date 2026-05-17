@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import json
 from datetime import UTC, datetime
 
@@ -204,7 +206,7 @@ def test_session_closed_invalid_reason_rejected() -> None:
             session="s",
             thread="t",
             seq=7,
-            data=SessionClosedData(reason="finished"),  # type: ignore[arg-type]
+            data=SessionClosedData(reason=cast(Any, "finished")),
         )
 
 
@@ -330,7 +332,7 @@ def test_error_transient_round_trip() -> None:
 
 def test_error_severity_invalid_rejected() -> None:
     with pytest.raises(ValidationError):
-        ErrorData(severity="warn", message="x")  # type: ignore[arg-type]
+        ErrorData(severity=cast(Any, "warn"), message="x")
 
 
 def test_event_adapter_dispatches_tool_call_start() -> None:
@@ -380,7 +382,7 @@ def test_hitl_request_round_trip_tool_approval() -> None:
 def test_hitl_request_kind_invalid_rejected() -> None:
     """``kind`` is a closed Literal — typos must fail at construction."""
     with pytest.raises(ValidationError):
-        HITLRequestData(request_id="hr_x", kind="freeform")  # type: ignore[arg-type]
+        HITLRequestData(request_id="hr_x", kind=cast(Any, "freeform"))
 
 
 def test_hitl_granted_round_trip() -> None:
@@ -506,6 +508,25 @@ def test_worker_completed_round_trip_with_truncation() -> None:
     assert d["parent"] == "evt_spawn"
     assert d["data"]["truncated"] is True
     assert d["data"]["output_bytes"] == 99999
+
+
+def test_worker_halted_round_trip() -> None:
+    from agloom.protocol.events import WorkerHalted, WorkerHaltedData
+
+    evt = WorkerHalted(
+        session="s",
+        thread="t",
+        seq=44,
+        data=WorkerHaltedData(
+            worker_id="w_1",
+            reason="HALT_ALL",
+            output_preview="partial output",
+            duration_ms=90,
+        ),
+    )
+    d = _round_trip(evt)
+    assert d["type"] == "worker.halted"
+    assert d["data"]["reason"] == "HALT_ALL"
 
 
 def test_worker_failed_round_trip_carries_error_class() -> None:

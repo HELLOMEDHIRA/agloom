@@ -97,8 +97,11 @@ const passthroughRuntime = doubleDash === -1 ? [] : process.argv.slice(doubleDas
 const shouldPrintCombinedVersion = (argv: string[]): boolean => {
   const args = argv.slice(2)
   if (!args.some((a) => a === '--version' || a === '-V')) return false
-  const firstSub = args.find((a) => !a.startsWith('-'))
-  if (firstSub === 'init' || firstSub === 'eval' || firstSub === 'upgrade' || firstSub === 'sessions') return false
+  // Only skip when a subcommand is argv[2] (e.g. `agloom init --version`), not `agloom --version init`.
+  const subAtTwo = args[0]
+  if (subAtTwo && !subAtTwo.startsWith('-')) {
+    if (subAtTwo === 'init' || subAtTwo === 'eval' || subAtTwo === 'sessions') return false
+  }
   return true
 }
 
@@ -156,20 +159,6 @@ const CLI_DESCRIPTION = 'agloom CLI — AGP terminal client (interactive UI or o
 const subProgram = new Command().name('agloom').description(CLI_DESCRIPTION)
 
 subProgram
-  .command('upgrade')
-  .description('Compare installed agloom-cli + agloom versions to npm / PyPI latest')
-  .action(async () => {
-    try {
-      const { runUpgradeCli } = await import('./commands/upgrade.js')
-      process.exit(await runUpgradeCli())
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      process.stderr.write(`[agloom] upgrade failed: ${msg}\n`)
-      process.exit(1)
-    }
-  })
-
-subProgram
   .command('init')
   .description('Create .agloom/ directories and starter agloom.yaml when missing')
   .option('--config <path>', 'Use the directory containing this file as the project root')
@@ -203,10 +192,12 @@ subProgram
 subProgram
   .command('clean')
   .description('Remove .agloom/, .agsuperbrain/, and clean .gitignore')
-  .action(async () => {
+  .option('--dry-run', 'List what would be removed without deleting')
+  .option('-y, --yes', 'Skip confirmation prompt')
+  .action(async (opts: { dryRun?: boolean; yes?: boolean }) => {
     try {
       const { runCleanCli } = await import('./commands/clean.js')
-      process.exit(await runCleanCli())
+      process.exit(await runCleanCli({ dryRun: opts.dryRun, yes: opts.yes }))
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       process.stderr.write(`[agloom] clean failed: ${msg}\n`)
@@ -317,9 +308,9 @@ if (shouldPrintCombinedVersion(argvMain)) {
   process.exit(0)
 }
 
-const EXPLICIT_SUBCOMMANDS = new Set(['upgrade', 'init', 'sessions', 'clean', 'eval'])
+const EXPLICIT_SUBCOMMANDS = new Set(['init', 'sessions', 'clean', 'eval'])
 
-function useExplicitSubcommandArgv(argv: string[]): boolean {
+const useExplicitSubcommandArgv = (argv: string[]): boolean => {
   const s2 = argv[2]
   if (s2 && !s2.startsWith('-') && EXPLICIT_SUBCOMMANDS.has(s2)) {
     return true

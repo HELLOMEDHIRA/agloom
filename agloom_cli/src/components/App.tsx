@@ -1,16 +1,16 @@
 /** Root terminal UI layout: AGP-driven state via `useSessionStore.dispatch`; completed turns render in the live tree (replay-safe). */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { dirname, resolve } from 'node:path'
+import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { Alert } from '@inkjs/ui'
 import { Box, Text, useApp, useInput, useWindowSize } from 'ink'
 import { Header } from './Header.js'
-import { CompletedTurnCard } from './CompletedTurnCard.js'
 import { ActiveTurn } from './ActiveTurn.js'
 import { HITLPrompt } from './HITLPrompt.js'
 import { InputBar } from './InputBar.js'
 import { StatusBar } from './StatusBar.js'
 import { MetricsPanel } from './MetricsPanel.js'
+import { ChatTranscript } from './ChatTranscript.js'
 import { useAGPStream } from '../hooks/useAGPStream.js'
 import { useSessionStore } from '../store/session.js'
 import type { AGPBridge } from '../runtime/bridge.js'
@@ -19,6 +19,7 @@ import { appendHistory, defaultHistoryPath, loadHistory } from '../utils/promptH
 import { suggestFromHistory } from '../utils/fuzzySuggest.js'
 import { splitPastedMultilineWhenSingleLineMode } from '../utils/pasteCompose.js'
 import { isCtrlY } from '../utils/keys.js'
+import { resolveAgloomProjectRoot } from '../config.js'
 
 interface AppProps {
   bridge: AGPBridge
@@ -46,11 +47,18 @@ export const App = ({
 
   useEffect(() => {
     if (!cliSessionId?.trim()) return
-    useSessionStore.setState((s) => ({
-      ...s,
-      sessionId: s.sessionId ?? cliSessionId.trim(),
-    }))
+    const cur = useSessionStore.getState().sessionId
+    if (!cur) {
+      useSessionStore.setState({ sessionId: cliSessionId.trim() })
+    }
   }, [cliSessionId])
+
+  useEffect(() => {
+    const tick = (): void => useSessionStore.getState().setWallClockMs(Date.now())
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [])
 
   const completedTurns = useSessionStore((s) => s.completedTurns)
   const activeTurn = useSessionStore((s) => s.activeTurn)
@@ -62,10 +70,11 @@ export const App = ({
   const reset = useSessionStore((s) => s.reset)
   const clearError = useSessionStore((s) => s.clearError)
   const appendProtocolNote = useSessionStore((s) => s.appendProtocolNote)
-  const toggleThinkingUiExpand = useSessionStore((s) => s.toggleThinkingUiExpand)
-  const expandHistoryThinking = useSessionStore((s) => s.expandHistoryThinking)
+  const toggleHideThinkingTrace = useSessionStore((s) => s.toggleHideThinkingTrace)
+  const hideThinkingTrace = useSessionStore((s) => s.hideThinkingTrace)
 
-  const [thread] = useState(initialThread)
+  const activeThreadId = useSessionStore((s) => s.activeThreadId)
+  const thread = activeThreadId ?? initialThread
   const [input, setInput] = useState('')
   const [diagOpen, setDiagOpen] = useState(showDiag)
   const [metricsSidebarOpen, setMetricsSidebarOpen] = useState(true)
@@ -78,7 +87,12 @@ export const App = ({
     void histRefresh
     return loadHistory(histPath)
   }, [histPath, histRefresh])
-  const [histIdx, setHistIdx] = useState(0)
+  /** `null` = composing new input; otherwise index into `histLines`. */
+  const [histIdx, setHistIdx] = useState<number | null>(null)
+
+  useEffect(() => {
+    setHistIdx(null)
+  }, [histRefresh, histLines.length])
 
   const fuzzySuggestions = useMemo(
     () => (!input.startsWith('/') ? suggestFromHistory(input, histLines, 4) : []),
@@ -90,16 +104,12 @@ export const App = ({
   const ml = multilineOpt || pasteCompose
 
   const fireThinkingHotkey = useCallback(() => {
-    const before = useSessionStore.getState()
-    const hadActive = Boolean(before.activeTurn && before.activeTurn.thinkingSteps.length > 0)
-    toggleThinkingUiExpand()
+    toggleHideThinkingTrace()
     const after = useSessionStore.getState()
-    if (hadActive) {
-      appendProtocolNote(`Thinking (current turn): ${after.expandActiveThinking ? 'expanded' : 'compact (live summary line)'}`)
-    } else {
-      appendProtocolNote(`Thinking in transcript: ${after.expandHistoryThinking ? 'expanded' : 'compact (summary rows)'}`)
-    }
-  }, [toggleThinkingUiExpand, appendProtocolNote])
+    appendProtocolNote(
+      after.hideThinkingTrace ? 'Reasoning trace hidden (Ctrl+Y or /think to show)' : 'Reasoning trace visible (dim)',
+    )
+  }, [toggleHideThinkingTrace, appendProtocolNote])
 
   const { columns, rows } = useWindowSize()
   const termWidth = columns ?? 80
@@ -113,6 +123,33 @@ export const App = ({
   const SPLIT_MIN_TERM_WIDTH = 92
   const showMetricsSidebar = metricsSidebarOpen && termWidth >= SPLIT_MIN_TERM_WIDTH
   const mainColumnWidth = showMetricsSidebar ? termWidth - SIDEBAR_WIDTH - 1 : termWidth
+  const setMainColumnWidth = useSessionStore((s) => s.setMainColumnWidth)
+
+  useEffect(() => {
+    setMainColumnWidth(mainColumnWidth)
+  }, [mainColumnWidth, setMainColumnWidth])
+
+  const headerRows = 3
+  const statusRows = 2
+  const inputRows = status !== 'hitl' ? 4 : 0
+  const hitlRows = status === 'hitl' ? 7 : 0
+  const activeTurnRows = activeTurn ? 8 : 0
+  const diagRows = diagOpen ? 9 : 0
+  const slashRows = slashHelpOpen ? SLASH_HELP_LINES.length + 4 : 0
+  const outboundRows = outboundPrompt && !activeTurn ? 2 : 0
+  const scrollHintRows = 1
+  const consumedAboveTranscript =
+    headerRows +
+    statusRows +
+    inputRows +
+    hitlRows +
+    activeTurnRows +
+    diagRows +
+    slashRows +
+    outboundRows +
+    scrollHintRows +
+    2
+  const chatScrollLines = Math.max(4, Math.max(0, termHeight - consumedAboveTranscript))
 
   useInput((char, key) => {
     if (slashHelpOpen) {
@@ -127,6 +164,7 @@ export const App = ({
     }
     if (key.ctrl && char === 'c') {
       bridge.shutdown()
+      setTimeout(() => bridge.kill(), 150)
       setTimeout(() => exit(), 600)
       return
     }
@@ -143,23 +181,24 @@ export const App = ({
       appendProtocolNote('Tools: toggled expand/collapse for current turn (Ctrl+T)')
       return
     }
-    if (char === 't' && !key.ctrl && input === '' && !slashHelpOpen) {
-      useSessionStore.getState().toggleActiveTurnToolExpandBulk()
-      appendProtocolNote('Tools: toggled expand/collapse for current turn (t)')
-      return
-    }
   })
 
   const recallPrev = (): void => {
     if (histLines.length === 0) return
-    const i = (histIdx - 1 + histLines.length) % histLines.length
+    const i = histIdx === null ? histLines.length - 1 : Math.max(0, histIdx - 1)
     setHistIdx(i)
     setInput(histLines[i] ?? '')
   }
 
   const recallNext = (): void => {
     if (histLines.length === 0) return
-    const i = (histIdx + 1) % histLines.length
+    if (histIdx === null) return
+    if (histIdx >= histLines.length - 1) {
+      setHistIdx(null)
+      setInput('')
+      return
+    }
+    const i = histIdx + 1
     setHistIdx(i)
     setInput(histLines[i] ?? '')
   }
@@ -194,6 +233,7 @@ export const App = ({
         bridge.invoke(body, thread)
         appendHistory(histPath, body)
         setHistRefresh((n) => n + 1)
+        setHistIdx(null)
         setPendingLines([])
         setPasteCompose(false)
         setInput('')
@@ -212,6 +252,7 @@ export const App = ({
     bridge.invoke(trimmed, thread)
     appendHistory(histPath, trimmed)
     setHistRefresh((n) => n + 1)
+    setHistIdx(null)
     setPasteCompose(false)
     setInput('')
   }
@@ -317,7 +358,13 @@ export const App = ({
               `### User\n\n${t.userMessage}\n\n### Assistant\n\n${t.assistantMessage}\n`,
           )
           .join('\n---\n\n')
-        const target = resolve(rawPath)
+        const root = resolveAgloomProjectRoot(process.cwd())
+        const target = isAbsolute(rawPath) ? resolve(rawPath) : resolve(root, rawPath)
+        const rel = relative(root, target)
+        if (rel.startsWith('..') || isAbsolute(rel)) {
+          appendProtocolNote('/save · path must stay under project root')
+          break
+        }
         void (async () => {
           try {
             const { mkdir, writeFile } = await import('node:fs/promises')
@@ -355,13 +402,10 @@ export const App = ({
       }
 
       case '/think': {
-        toggleThinkingUiExpand()
+        toggleHideThinkingTrace()
         const st = useSessionStore.getState()
-        const hadActive = st.activeTurn && st.activeTurn.thinkingSteps.length > 0
         appendProtocolNote(
-          hadActive
-            ? `/think · current turn thinking ${st.expandActiveThinking ? 'expanded' : 'compact'}`
-            : `/think · transcript thinking ${st.expandHistoryThinking ? 'expanded' : 'compact'}`,
+          st.hideThinkingTrace ? '/think · reasoning hidden' : '/think · reasoning visible (dim inline)',
         )
         break
       }
@@ -507,9 +551,12 @@ export const App = ({
         )}
 
         <Box flexDirection="column" flexGrow={1} minHeight={0} marginX={1}>
-          {completedTurns.map((turn) => (
-            <CompletedTurnCard key={turn.id} turn={turn} thinkingExpanded={expandHistoryThinking} />
-          ))}
+          <ChatTranscript
+            turns={completedTurns}
+            hideThinkingTrace={hideThinkingTrace}
+            width={mainColumnWidth}
+            maxLines={chatScrollLines}
+          />
         </Box>
 
         <ActiveTurn />
@@ -582,8 +629,19 @@ export const App = ({
         </Box>
 
       {showMetricsSidebar && (
-        <Box marginLeft={1} flexDirection="column" width={SIDEBAR_WIDTH} flexShrink={0}>
-          <MetricsPanel thread={thread} width={SIDEBAR_WIDTH} />
+        <Box
+          marginLeft={1}
+          flexDirection="column"
+          width={SIDEBAR_WIDTH}
+          flexGrow={1}
+          minHeight={0}
+          flexShrink={0}
+        >
+          <MetricsPanel
+            thread={thread}
+            width={SIDEBAR_WIDTH}
+            maxHeight={Math.max(10, termHeight - 3)}
+          />
         </Box>
       )}
       </Box>

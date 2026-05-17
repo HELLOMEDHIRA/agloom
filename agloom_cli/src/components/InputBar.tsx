@@ -1,6 +1,6 @@
 /** Composer: multiline when `pendingLines`; paste/newlines handled in `App` via `onChange`. Uses `ink-text-input` (controlled); `@inkjs/ui` TextInput is uncontrolled. */
 
-import React from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Box, Text } from 'ink'
 import { Alert } from '@inkjs/ui'
 import TextInput from 'ink-text-input'
@@ -23,7 +23,7 @@ interface Props {
   suggestions?: string[]
   /** Match main column width so the composer spans the chat pane. */
   composerWidth?: number
-  /** Ctrl+Y / expand thinking — runs even while the agent is busy (composer is disabled). */
+  /** Ctrl+Y / hide or show dim reasoning trace — runs even while the agent is busy. */
   onThinkingHotkey?: () => void
 }
 
@@ -45,6 +45,33 @@ export const InputBar = ({
   const errorMessage = useSessionStore((s) => s.errorMessage)
 
   const showSlashHints = value.startsWith('/') && value.length >= 1 && !value.includes(' ')
+  const showHistorySuggestions =
+    !isDisabled && suggestions !== undefined && suggestions.length > 0 && !value.startsWith('/')
+
+  const [selectedSuggestion, setSelectedSuggestion] = useState(0)
+  const pendingSuggestionRef = useRef<string | null>(null)
+  const suggestionKey = suggestions?.join('\u0000') ?? ''
+
+  useEffect(() => {
+    setSelectedSuggestion(0)
+  }, [suggestionKey])
+
+  const applySuggestion = (text: string): void => {
+    pendingSuggestionRef.current = text
+    onChange(text)
+  }
+
+  const handleComposerChange = (v: string): void => {
+    const pending = pendingSuggestionRef.current
+    if (pending !== null) {
+      if (v === pending) {
+        pendingSuggestionRef.current = null
+        return
+      }
+      pendingSuggestionRef.current = null
+    }
+    onChange(v)
+  }
 
   useInput((_input, key) => {
     if (isCtrlY(_input, key)) {
@@ -52,6 +79,23 @@ export const InputBar = ({
       return
     }
     if (isDisabled) return
+
+    if (showHistorySuggestions && suggestions) {
+      if (key.upArrow) {
+        setSelectedSuggestion((i) => (i - 1 + suggestions.length) % suggestions.length)
+        return
+      }
+      if (key.downArrow) {
+        setSelectedSuggestion((i) => (i + 1) % suggestions.length)
+        return
+      }
+      if (key.tab) {
+        const pick = suggestions[selectedSuggestion] ?? suggestions[0]
+        if (pick) applySuggestion(pick)
+        return
+      }
+    }
+
     if (key.ctrl && _input === 'p') {
       onRecallPrev?.()
       return
@@ -92,13 +136,23 @@ export const InputBar = ({
         </Box>
       )}
 
-      {suggestions !== undefined && suggestions.length > 0 && !value.startsWith('/') && (
+      {showHistorySuggestions && suggestions && (
         <Box flexDirection="column" marginX={2} marginBottom={0}>
-          {suggestions.map((s, i) => (
-            <Text key={`${i}-${s.slice(0, 40)}`} dimColor color="gray">
-              ↪ {s.length > 140 ? `${s.slice(0, 137)}…` : s}
-            </Text>
-          ))}
+          {suggestions.map((s, i) => {
+            const picked = i === selectedSuggestion
+            const label = s.length > 140 ? `${s.slice(0, 137)}…` : s
+            return (
+              <Text key={`${i}-${s.slice(0, 40)}`} wrap="truncate-end">
+                <Text color={picked ? accent : 'gray'} bold={picked} dimColor={!picked}>
+                  {picked ? '▸ ' : '  '}
+                  {label}
+                </Text>
+              </Text>
+            )
+          })}
+          <Text color="gray" dimColor>
+            ↑↓ select · Tab apply · Ctrl+P/N full history
+          </Text>
         </Box>
       )}
 
@@ -109,7 +163,7 @@ export const InputBar = ({
               {ln.length > 160 ? `${ln.slice(0, 157)}…` : ln}
             </Text>
           ))}
-          <Text dimColor>── blank line + Enter sends · Ctrl+P/N history · Ctrl+Y or /think thinking</Text>
+          <Text dimColor>── blank line + Enter sends · Ctrl+P/N history · Ctrl+Y or /think reasoning</Text>
         </Box>
       )}
 
@@ -127,7 +181,7 @@ export const InputBar = ({
         ) : (
           <TextInput
             value={value}
-            onChange={onChange}
+            onChange={handleComposerChange}
             onSubmit={onSubmit}
             placeholder={
               ml

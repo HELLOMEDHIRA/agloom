@@ -363,7 +363,7 @@
     },
     "CheckpointSavedData": {
       "additionalProperties": true,
-      "description": "A LangGraph checkpoint was successfully persisted.\n\nEmitted after every successful ``_save_checkpoint`` call in ``run_fresh``.\n``label`` is an optional human-readable tag from ``command.snapshot.request``.\n``run_id`` identifies the agent run that produced this checkpoint.",
+      "description": "A LangGraph checkpoint was successfully persisted.\n\nEmitted after the agent saves checkpoint state (each completed turn when a\ncheckpointer is configured, or after ``command.snapshot.request``).\n``label`` is an optional human-readable tag from ``command.snapshot.request``.\n``run_id`` identifies the agent run that produced this checkpoint.",
       "properties": {
         "thread": {
           "title": "Thread",
@@ -1711,6 +1711,189 @@
       "title": "MemoryLtStoreData",
       "type": "object"
     },
+    "MemorySessionCleared": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "memory.session.cleared",
+          "default": "memory.session.cleared",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/MemorySessionClearedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "MemorySessionCleared",
+      "type": "object"
+    },
+    "MemorySessionClearedData": {
+      "additionalProperties": true,
+      "description": "Short-term session memory for *thread* was cleared (no turns remain).",
+      "properties": {
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread"
+      ],
+      "title": "MemorySessionClearedData",
+      "type": "object"
+    },
+    "MemorySessionTurnPopped": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "memory.session.turn_popped",
+          "default": "memory.session.turn_popped",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/MemorySessionTurnPoppedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "MemorySessionTurnPopped",
+      "type": "object"
+    },
+    "MemorySessionTurnPoppedData": {
+      "additionalProperties": true,
+      "description": "One short-term session turn was removed (e.g. user ``/undo`` in the CLI).",
+      "properties": {
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "remaining_turns": {
+          "title": "Remaining Turns",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "thread",
+        "remaining_turns"
+      ],
+      "title": "MemorySessionTurnPoppedData",
+      "type": "object"
+    },
     "MemorySessionWrite": {
       "additionalProperties": false,
       "properties": {
@@ -2168,6 +2351,43 @@
       "title": "MessageUser",
       "type": "object"
     },
+    "MessageUserAttachmentSummary": {
+      "additionalProperties": true,
+      "description": "Small attachment record for transcript replay (no raw bytes on the wire).",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "mime_type": {
+          "title": "Mime Type",
+          "type": "string"
+        },
+        "byte_length": {
+          "default": 0,
+          "title": "Byte Length",
+          "type": "integer"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        }
+      },
+      "required": [
+        "name",
+        "mime_type"
+      ],
+      "title": "MessageUserAttachmentSummary",
+      "type": "object"
+    },
     "MessageUserData": {
       "additionalProperties": true,
       "description": "Inbound user prompt \u2014 emitted once per ``command.invoke`` so the wire records the turn.",
@@ -2187,12 +2407,238 @@
           ],
           "default": null,
           "title": "Message Id"
+        },
+        "attachments": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/MessageUserAttachmentSummary"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attachments"
         }
       },
       "required": [
         "content"
       ],
       "title": "MessageUserData",
+      "type": "object"
+    },
+    "MetricBudgetApproaching": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "metric.budget.approaching",
+          "default": "metric.budget.approaching",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/MetricBudgetApproachingData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "MetricBudgetApproaching",
+      "type": "object"
+    },
+    "MetricBudgetApproachingData": {
+      "additionalProperties": true,
+      "description": "Once per dimension when cumulative usage crosses ~80% of the configured limit.",
+      "properties": {
+        "dimension": {
+          "enum": [
+            "tokens",
+            "cost_usd"
+          ],
+          "title": "Dimension",
+          "type": "string"
+        },
+        "used": {
+          "title": "Used",
+          "type": "number"
+        },
+        "limit": {
+          "title": "Limit",
+          "type": "number"
+        },
+        "ratio": {
+          "title": "Ratio",
+          "type": "number"
+        }
+      },
+      "required": [
+        "dimension",
+        "used",
+        "limit",
+        "ratio"
+      ],
+      "title": "MetricBudgetApproachingData",
+      "type": "object"
+    },
+    "MetricBudgetExhausted": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "metric.budget.exhausted",
+          "default": "metric.budget.exhausted",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/MetricBudgetExhaustedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "MetricBudgetExhausted",
+      "type": "object"
+    },
+    "MetricBudgetExhaustedData": {
+      "additionalProperties": true,
+      "description": "When cumulative usage reaches the limit; runtime may block further invokes.",
+      "properties": {
+        "dimension": {
+          "enum": [
+            "tokens",
+            "cost_usd"
+          ],
+          "title": "Dimension",
+          "type": "string"
+        },
+        "used": {
+          "title": "Used",
+          "type": "number"
+        },
+        "limit": {
+          "title": "Limit",
+          "type": "number"
+        }
+      },
+      "required": [
+        "dimension",
+        "used",
+        "limit"
+      ],
+      "title": "MetricBudgetExhaustedData",
       "type": "object"
     },
     "MetricCost": {
@@ -2320,7 +2766,6 @@
         },
         "estimated": {
           "default": false,
-          "description": "True when ``cost`` is a client-side heuristic (provider did not bill on-wire).",
           "title": "Estimated",
           "type": "boolean"
         }
@@ -2471,6 +2916,201 @@
       "title": "MetricTokensData",
       "type": "object"
     },
+    "OrchestrationStep": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "orchestration.step",
+          "default": "orchestration.step",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/OrchestrationStepData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "OrchestrationStep",
+      "type": "object"
+    },
+    "OrchestrationStepData": {
+      "additionalProperties": true,
+      "description": "Recursive pattern orchestration trace (spawn, escalate, complete).",
+      "properties": {
+        "depth": {
+          "default": 0,
+          "title": "Depth",
+          "type": "integer"
+        },
+        "pattern": {
+          "title": "Pattern",
+          "type": "string"
+        },
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "worker_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Worker Id"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "input_preview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Preview"
+        },
+        "output_preview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Preview"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "quality_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quality Score"
+        }
+      },
+      "required": [
+        "pattern",
+        "action"
+      ],
+      "title": "OrchestrationStepData",
+      "type": "object"
+    },
     "PatternClassified": {
       "additionalProperties": false,
       "properties": {
@@ -2593,6 +3233,112 @@
         "pattern"
       ],
       "title": "PatternClassifiedData",
+      "type": "object"
+    },
+    "PlanPreview": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "plan.preview",
+          "default": "plan.preview",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/PlanPreviewData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "PlanPreview",
+      "type": "object"
+    },
+    "PlanPreviewData": {
+      "additionalProperties": true,
+      "description": "Classifier-only plan (``command.plan.preview``); does not run tools or patterns.",
+      "properties": {
+        "pattern": {
+          "title": "Pattern",
+          "type": "string"
+        },
+        "complexity": {
+          "default": 0,
+          "title": "Complexity",
+          "type": "integer"
+        },
+        "reasoning": {
+          "default": "",
+          "title": "Reasoning",
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "pattern"
+      ],
+      "title": "PlanPreviewData",
       "type": "object"
     },
     "PromptCancelled": {
@@ -2962,6 +3708,30 @@
           ],
           "default": null,
           "title": "Model Id"
+        },
+        "cli_tools_enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cli Tools Enabled"
+        },
+        "cli_tools_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cli Tools Count"
         }
       },
       "title": "RuntimeConfigAppliedData",
@@ -2996,9 +3766,237 @@
           },
           "title": "Capabilities",
           "type": "array"
+        },
+        "cli_tools_enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cli Tools Enabled"
+        },
+        "cli_tools_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cli Tools Count"
         }
       },
       "title": "RuntimeConfigData",
+      "type": "object"
+    },
+    "RuntimeFileStaged": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "runtime.file.staged",
+          "default": "runtime.file.staged",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RuntimeFileStagedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "RuntimeFileStaged",
+      "type": "object"
+    },
+    "RuntimeFileStagedData": {
+      "additionalProperties": true,
+      "description": "A client attachment was written under the agent working directory.",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "bytes": {
+          "title": "Bytes",
+          "type": "integer"
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread"
+        }
+      },
+      "required": [
+        "path",
+        "bytes"
+      ],
+      "title": "RuntimeFileStagedData",
+      "type": "object"
+    },
+    "RuntimeMCPServers": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "runtime.mcp.servers",
+          "default": "runtime.mcp.servers",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RuntimeMCPServersData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "RuntimeMCPServers",
+      "type": "object"
+    },
+    "RuntimeMCPServersData": {
+      "additionalProperties": true,
+      "description": "Emitted after MCP session init (may be empty if none configured).",
+      "properties": {
+        "server_names": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Server Names",
+          "type": "array"
+        },
+        "servers": {
+          "description": "Per-server summary rows after connect (name, ok, error?, tool_count, tool_names, \u2026). Empty when MCP was not attempted or the wire predates this field.",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Servers",
+          "type": "array"
+        }
+      },
+      "title": "RuntimeMCPServersData",
       "type": "object"
     },
     "RuntimePong": {
@@ -3094,6 +4092,131 @@
       "title": "RuntimePongData",
       "type": "object"
     },
+    "RuntimeProviderEntry": {
+      "additionalProperties": true,
+      "description": "One curated provider row (from :func:`agloom.llm.provider_registry.provider_catalog`).",
+      "properties": {
+        "slug": {
+          "title": "Slug",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "default_model": {
+          "title": "Default Model",
+          "type": "string"
+        },
+        "primary_env_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Primary Env Key"
+        }
+      },
+      "required": [
+        "slug",
+        "label",
+        "default_model"
+      ],
+      "title": "RuntimeProviderEntry",
+      "type": "object"
+    },
+    "RuntimeProvidersPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "runtime.providers",
+          "default": "runtime.providers",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RuntimeProvidersPayloadData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "RuntimeProvidersPayload",
+      "type": "object"
+    },
+    "RuntimeProvidersPayloadData": {
+      "additionalProperties": true,
+      "properties": {
+        "providers": {
+          "items": {
+            "$ref": "#/$defs/RuntimeProviderEntry"
+          },
+          "title": "Providers",
+          "type": "array"
+        }
+      },
+      "title": "RuntimeProvidersPayloadData",
+      "type": "object"
+    },
     "RuntimeReady": {
       "additionalProperties": false,
       "properties": {
@@ -3182,6 +4305,76 @@
           ],
           "default": null,
           "title": "Agent Name"
+        },
+        "cli_tools_enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cli Tools Enabled"
+        },
+        "cli_tools_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cli Tools Count"
+        },
+        "harness_enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Harness Enabled"
+        },
+        "session_memory_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Session rolling-memory backend from CLI/YAML before lazy agent bootstrap: ``sqlite`` | ``in-memory`` | ``none``; when ``--memory`` is omitted, ``in-memory`` (ephemeral SessionMemory matching default ``create_agent`` session memory).",
+          "title": "Session Memory Mode"
+        },
+        "agent_store_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "LangGraph store kind (``sqlite`` / ``memory`` / ``none`` / \u2026); skills LT stack when not ``none``.",
+          "title": "Agent Store Kind"
+        },
+        "mcp_servers_configured": {
+          "description": "MCP server names from ``--mcp`` / config (not yet connected until first invoke).",
+          "items": {
+            "type": "string"
+          },
+          "title": "Mcp Servers Configured",
+          "type": "array"
         }
       },
       "title": "RuntimeReadyData",
@@ -3359,6 +4552,99 @@
         "session_id"
       ],
       "title": "RuntimeSessionCreatedData",
+      "type": "object"
+    },
+    "RuntimeSessionRenamed": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "runtime.session.renamed",
+          "default": "runtime.session.renamed",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/RuntimeSessionRenamedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "RuntimeSessionRenamed",
+      "type": "object"
+    },
+    "RuntimeSessionRenamedData": {
+      "additionalProperties": true,
+      "properties": {
+        "from_session_id": {
+          "title": "From Session Id",
+          "type": "string"
+        },
+        "to_session_id": {
+          "title": "To Session Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_session_id",
+        "to_session_id"
+      ],
+      "title": "RuntimeSessionRenamedData",
       "type": "object"
     },
     "RuntimeSessionsPayload": {
@@ -4708,6 +5994,96 @@
       "title": "ThinkingStepData",
       "type": "object"
     },
+    "TodosUpdated": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "todos.updated",
+          "default": "todos.updated",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/TodosUpdatedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "TodosUpdated",
+      "type": "object"
+    },
+    "TodosUpdatedData": {
+      "additionalProperties": true,
+      "description": "Session-scoped todo list snapshot (from ``write_todos`` meta tool).",
+      "properties": {
+        "items": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "title": "TodosUpdatedData",
+      "type": "object"
+    },
     "TokenDelta": {
       "additionalProperties": false,
       "properties": {
@@ -5015,7 +6391,7 @@
     },
     "ToolCallResultData": {
       "additionalProperties": true,
-      "description": "Tool finished successfully. ``output_preview`` is truncated; full content lives in\n:class:`ToolCallStart` via correlation by ``tool_call_id``.",
+      "description": "Tool finished successfully. ``output_preview`` is truncated; full content lives in\n:class:`ToolCallStart` via correlation by ``tool_call_id``.\n\nOptional ``diff`` carries file before/after for edit tools (wire + UI).",
       "properties": {
         "tool": {
           "title": "Tool",
@@ -5058,6 +6434,19 @@
           "default": false,
           "title": "Truncated",
           "type": "boolean"
+        },
+        "diff": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Diff"
         }
       },
       "required": [
@@ -5417,6 +6806,116 @@
       "title": "WorkerFailedData",
       "type": "object"
     },
+    "WorkerHalted": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "worker.halted",
+          "default": "worker.halted",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/WorkerHaltedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "WorkerHalted",
+      "type": "object"
+    },
+    "WorkerHaltedData": {
+      "additionalProperties": true,
+      "properties": {
+        "worker_id": {
+          "title": "Worker Id",
+          "type": "string"
+        },
+        "reason": {
+          "default": "HALT_ALL",
+          "title": "Reason",
+          "type": "string"
+        },
+        "output_preview": {
+          "default": "",
+          "title": "Output Preview",
+          "type": "string"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        }
+      },
+      "required": [
+        "worker_id"
+      ],
+      "title": "WorkerHaltedData",
+      "type": "object"
+    },
     "WorkerSpawned": {
       "additionalProperties": false,
       "properties": {
@@ -5554,6 +7053,57 @@
       "title": "WorkerSpawnedData",
       "type": "object"
     },
+    "CommandAttachFile": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.attach.file",
+          "default": "command.attach.file",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandAttachFileData"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "CommandAttachFile",
+      "type": "object"
+    },
+    "CommandAttachFileData": {
+      "additionalProperties": true,
+      "description": "Upload a file into the agent's CLI-tools working directory.\n\n``content_base64`` is standard base64 (padding optional). The runtime writes to\n``<working_dir>/.agloom_uploads/<id>_<sanitized_filename>`` and emits\n``runtime.file.staged`` with a path relative to ``working_dir`` (POSIX slashes).",
+      "properties": {
+        "filename": {
+          "title": "Filename",
+          "type": "string"
+        },
+        "content_base64": {
+          "title": "Content Base64",
+          "type": "string"
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread"
+        }
+      },
+      "required": [
+        "filename",
+        "content_base64"
+      ],
+      "title": "CommandAttachFileData",
+      "type": "object"
+    },
     "CommandCancel": {
       "additionalProperties": true,
       "properties": {
@@ -5611,16 +7161,94 @@
     },
     "CommandConfigSetData": {
       "additionalProperties": true,
-      "description": "Swap the chat model by id string (``resolve_model``).",
+      "description": "Hot-reload pieces of agent configuration (model, sampling, system prompt).\n\nAt least one field must be set. ``cli_tools`` is reserved for future hot-reconfiguration.\nRouting pattern is chosen by the runtime classifier \u2014 not user-configurable here.\n\n**Budget** fields (optional): set session token / USD caps (``0`` or negative clears that cap).",
       "properties": {
         "model_id": {
-          "title": "Model Id",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Id"
+        },
+        "cli_tools": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cli Tools"
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Temperature"
+        },
+        "top_p": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Top P"
+        },
+        "system_prompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "System Prompt"
+        },
+        "budget_token_limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Budget Token Limit"
+        },
+        "budget_cost_usd_limit": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Budget Cost Usd Limit"
         }
       },
-      "required": [
-        "model_id"
-      ],
       "title": "CommandConfigSetData",
       "type": "object"
     },
@@ -5707,7 +7335,7 @@
     },
     "CommandHITLRespondData": {
       "additionalProperties": true,
-      "description": "Resolve a pending ``hitl.request``.\n\n``decision`` must match the options listed in the original ``hitl.request``\n(e.g. ``accept``/``reject``/``allowlist`` for tool gates).  Unknown values\nnormalise to ``reject`` \u2014 the runtime never auto-approves on bad input.\n``text`` carries a free-text answer for ``clarification`` kind gates.",
+      "description": "Resolve a pending ``hitl.request``.\n\n``decision`` is one of the user-facing gate outcomes (runtime-emitted ``timeout`` /\n``cancelled`` are not valid command inputs). Unknown values normalise to ``reject``.\n``text`` carries a free-text answer for ``clarification`` kind gates.",
       "properties": {
         "request_id": {
           "title": "Request Id",
@@ -5740,6 +7368,62 @@
         "request_id"
       ],
       "title": "CommandHITLRespondData",
+      "type": "object"
+    },
+    "CommandHarnessGit": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.harness.git",
+          "default": "command.harness.git",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandHarnessGitData"
+        }
+      },
+      "title": "CommandHarnessGit",
+      "type": "object"
+    },
+    "CommandHarnessGitData": {
+      "additionalProperties": true,
+      "description": "Direct harness git ops (requires runtime with harness + LT store).",
+      "properties": {
+        "op": {
+          "default": "diff",
+          "enum": [
+            "checkpoint",
+            "diff",
+            "status",
+            "checkpoints",
+            "revert_hint"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "name": {
+          "default": "cli",
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "path": {
+          "default": "",
+          "title": "Path",
+          "type": "string"
+        },
+        "cached": {
+          "default": false,
+          "title": "Cached",
+          "type": "boolean"
+        }
+      },
+      "title": "CommandHarnessGitData",
       "type": "object"
     },
     "CommandInvoke": {
@@ -5805,12 +7489,99 @@
           ],
           "default": null,
           "title": "Context"
+        },
+        "attachments": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/InvokeAttachment"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attachments"
         }
       },
       "required": [
         "prompt"
       ],
       "title": "CommandInvokeData",
+      "type": "object"
+    },
+    "CommandMemoryClear": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.memory.clear",
+          "default": "command.memory.clear",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandMemoryClearData"
+        }
+      },
+      "title": "CommandMemoryClear",
+      "type": "object"
+    },
+    "CommandMemoryClearData": {
+      "additionalProperties": true,
+      "description": "Clear short-term session memory for ``thread`` (LangGraph thread id).\n\nOmit ``thread`` only when the client cannot infer it \u2014 runtimes may reject or no-op.",
+      "properties": {
+        "thread": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread"
+        }
+      },
+      "title": "CommandMemoryClearData",
+      "type": "object"
+    },
+    "CommandMemoryPopLastTurn": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.memory.pop_last_turn",
+          "default": "command.memory.pop_last_turn",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandMemoryPopLastTurnData"
+        }
+      },
+      "title": "CommandMemoryPopLastTurn",
+      "type": "object"
+    },
+    "CommandMemoryPopLastTurnData": {
+      "additionalProperties": true,
+      "description": "Pop the last short-term session-memory turn for ``thread`` (LangGraph thread id).\n\nThe runtime emits ``memory.session.turn_popped`` with the new turn count on success.",
+      "properties": {
+        "thread": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread"
+        }
+      },
+      "title": "CommandMemoryPopLastTurnData",
       "type": "object"
     },
     "CommandPing": {
@@ -5847,6 +7618,63 @@
         }
       },
       "title": "CommandPingData",
+      "type": "object"
+    },
+    "CommandPlanPreview": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.plan.preview",
+          "default": "command.plan.preview",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandPlanPreviewData"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "CommandPlanPreview",
+      "type": "object"
+    },
+    "CommandPlanPreviewData": {
+      "additionalProperties": true,
+      "description": "Run classifier only; emits ``plan.preview`` (no agent execution).",
+      "properties": {
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prompt"
+      ],
+      "title": "CommandPlanPreviewData",
+      "type": "object"
+    },
+    "CommandProvidersList": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.providers.list",
+          "default": "command.providers.list",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandProvidersListData"
+        }
+      },
+      "title": "CommandProvidersList",
+      "type": "object"
+    },
+    "CommandProvidersListData": {
+      "additionalProperties": true,
+      "description": "Request the curated provider catalog (slug, label, default model, env key).",
+      "properties": {},
+      "title": "CommandProvidersListData",
       "type": "object"
     },
     "CommandRuntimeShutdown": {
@@ -5986,6 +7814,45 @@
       "description": "List sessions present in the configured :class:`~agloom.protocol.store.EventStore`.",
       "properties": {},
       "title": "CommandSessionListData",
+      "type": "object"
+    },
+    "CommandSessionRename": {
+      "additionalProperties": true,
+      "properties": {
+        "type": {
+          "const": "command.session.rename",
+          "default": "command.session.rename",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/CommandSessionRenameData"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "CommandSessionRename",
+      "type": "object"
+    },
+    "CommandSessionRenameData": {
+      "additionalProperties": true,
+      "description": "Rewrite stored replay rows from ``from_session_id`` to ``to_session_id``.",
+      "properties": {
+        "from_session_id": {
+          "title": "From Session Id",
+          "type": "string"
+        },
+        "to_session_id": {
+          "title": "To Session Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_session_id",
+        "to_session_id"
+      ],
+      "title": "CommandSessionRenameData",
       "type": "object"
     },
     "CommandSessionResume": {
@@ -6295,6 +8162,31 @@
       ],
       "title": "CommandWorkerAssignData",
       "type": "object"
+    },
+    "InvokeAttachment": {
+      "additionalProperties": true,
+      "description": "Inline file payload (base64). Staged under ``.agloom/attachments/<thread>/`` by the runtime.",
+      "properties": {
+        "name": {
+          "default": "file",
+          "title": "Name",
+          "type": "string"
+        },
+        "mime_type": {
+          "default": "application/octet-stream",
+          "title": "Mime Type",
+          "type": "string"
+        },
+        "data_base64": {
+          "title": "Data Base64",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data_base64"
+      ],
+      "title": "InvokeAttachment",
+      "type": "object"
     }
   },
   "discriminator": {
@@ -6314,21 +8206,31 @@
       "hitl.request": "#/$defs/HITLRequest",
       "memory.lt.recall": "#/$defs/MemoryLtRecall",
       "memory.lt.store": "#/$defs/MemoryLtStore",
+      "memory.session.cleared": "#/$defs/MemorySessionCleared",
+      "memory.session.turn_popped": "#/$defs/MemorySessionTurnPopped",
       "memory.session.write": "#/$defs/MemorySessionWrite",
       "message.assistant": "#/$defs/MessageAssistant",
       "message.tool": "#/$defs/MessageTool",
       "message.user": "#/$defs/MessageUser",
+      "metric.budget.approaching": "#/$defs/MetricBudgetApproaching",
+      "metric.budget.exhausted": "#/$defs/MetricBudgetExhausted",
       "metric.cost": "#/$defs/MetricCost",
       "metric.tokens": "#/$defs/MetricTokens",
+      "orchestration.step": "#/$defs/OrchestrationStep",
       "pattern.classified": "#/$defs/PatternClassified",
+      "plan.preview": "#/$defs/PlanPreview",
       "prompt.cancelled": "#/$defs/PromptCancelled",
       "prompt.requested": "#/$defs/PromptRequested",
       "runtime.config": "#/$defs/RuntimeConfig",
       "runtime.config.applied": "#/$defs/RuntimeConfigApplied",
+      "runtime.file.staged": "#/$defs/RuntimeFileStaged",
+      "runtime.mcp.servers": "#/$defs/RuntimeMCPServers",
       "runtime.pong": "#/$defs/RuntimePong",
+      "runtime.providers": "#/$defs/RuntimeProvidersPayload",
       "runtime.ready": "#/$defs/RuntimeReady",
       "runtime.schema": "#/$defs/RuntimeSchemaPayload",
       "runtime.session.created": "#/$defs/RuntimeSessionCreated",
+      "runtime.session.renamed": "#/$defs/RuntimeSessionRenamed",
       "runtime.sessions": "#/$defs/RuntimeSessionsPayload",
       "runtime.tool.result": "#/$defs/RuntimeToolInvokeResult",
       "runtime.tools": "#/$defs/RuntimeToolsPayload",
@@ -6341,12 +8243,14 @@
       "skill.loaded": "#/$defs/SkillLoaded",
       "stream.heartbeat": "#/$defs/StreamHeartbeat",
       "thinking.step": "#/$defs/ThinkingStep",
+      "todos.updated": "#/$defs/TodosUpdated",
       "token.delta": "#/$defs/TokenDelta",
       "tool.call.error": "#/$defs/ToolCallError",
       "tool.call.result": "#/$defs/ToolCallResult",
       "tool.call.start": "#/$defs/ToolCallStart",
       "worker.completed": "#/$defs/WorkerCompleted",
       "worker.failed": "#/$defs/WorkerFailed",
+      "worker.halted": "#/$defs/WorkerHalted",
       "worker.spawned": "#/$defs/WorkerSpawned"
     },
     "propertyName": "type"
@@ -6374,16 +8278,31 @@
       "$ref": "#/$defs/RuntimeToolsPayload"
     },
     {
+      "$ref": "#/$defs/RuntimeProvidersPayload"
+    },
+    {
       "$ref": "#/$defs/RuntimeSessionsPayload"
     },
     {
       "$ref": "#/$defs/RuntimeSessionCreated"
     },
     {
+      "$ref": "#/$defs/RuntimeSessionRenamed"
+    },
+    {
+      "$ref": "#/$defs/RuntimeFileStaged"
+    },
+    {
       "$ref": "#/$defs/RuntimeToolInvokeResult"
     },
     {
       "$ref": "#/$defs/RuntimeConfigApplied"
+    },
+    {
+      "$ref": "#/$defs/RuntimeMCPServers"
+    },
+    {
+      "$ref": "#/$defs/TodosUpdated"
     },
     {
       "$ref": "#/$defs/SessionHeartbeat"
@@ -6402,6 +8321,9 @@
     },
     {
       "$ref": "#/$defs/PatternClassified"
+    },
+    {
+      "$ref": "#/$defs/PlanPreview"
     },
     {
       "$ref": "#/$defs/ThinkingStep"
@@ -6446,10 +8368,16 @@
       "$ref": "#/$defs/WorkerFailed"
     },
     {
+      "$ref": "#/$defs/WorkerHalted"
+    },
+    {
       "$ref": "#/$defs/GraphNodeEnter"
     },
     {
       "$ref": "#/$defs/GraphNodeExit"
+    },
+    {
+      "$ref": "#/$defs/OrchestrationStep"
     },
     {
       "$ref": "#/$defs/SkillLoaded"
@@ -6468,6 +8396,12 @@
     },
     {
       "$ref": "#/$defs/MemorySessionWrite"
+    },
+    {
+      "$ref": "#/$defs/MemorySessionCleared"
+    },
+    {
+      "$ref": "#/$defs/MemorySessionTurnPopped"
     },
     {
       "$ref": "#/$defs/MemoryLtRecall"
@@ -6491,6 +8425,12 @@
       "$ref": "#/$defs/MetricCost"
     },
     {
+      "$ref": "#/$defs/MetricBudgetApproaching"
+    },
+    {
+      "$ref": "#/$defs/MetricBudgetExhausted"
+    },
+    {
       "$ref": "#/$defs/ErrorTransient"
     },
     {
@@ -6505,17 +8445,24 @@
     "description": "Typed JSON objects sent on the NDJSON stream from client to runtime \u2014 discriminated by top-level ``type`` (``command.*``). No AGP envelope fields.",
     "discriminator": {
       "mapping": {
+        "command.attach.file": "#/$defs/CommandAttachFile",
         "command.cancel": "#/$defs/CommandCancel",
         "command.config.set": "#/$defs/CommandConfigSet",
         "command.feedback": "#/$defs/CommandFeedback",
+        "command.harness.git": "#/$defs/CommandHarnessGit",
         "command.hitl.respond": "#/$defs/CommandHITLRespond",
         "command.invoke": "#/$defs/CommandInvoke",
+        "command.memory.clear": "#/$defs/CommandMemoryClear",
+        "command.memory.pop_last_turn": "#/$defs/CommandMemoryPopLastTurn",
         "command.ping": "#/$defs/CommandPing",
+        "command.plan.preview": "#/$defs/CommandPlanPreview",
+        "command.providers.list": "#/$defs/CommandProvidersList",
         "command.runtime.shutdown": "#/$defs/CommandRuntimeShutdown",
         "command.schema.request": "#/$defs/CommandSchemaRequest",
         "command.session.create": "#/$defs/CommandSessionCreate",
         "command.session.delete": "#/$defs/CommandSessionDelete",
         "command.session.list": "#/$defs/CommandSessionList",
+        "command.session.rename": "#/$defs/CommandSessionRename",
         "command.session.resume": "#/$defs/CommandSessionResume",
         "command.snapshot.request": "#/$defs/CommandSnapshotRequest",
         "command.subscribe": "#/$defs/CommandSubscribe",
@@ -6561,6 +8508,9 @@
         "$ref": "#/$defs/CommandToolList"
       },
       {
+        "$ref": "#/$defs/CommandProvidersList"
+      },
+      {
         "$ref": "#/$defs/CommandSubscribe"
       },
       {
@@ -6576,10 +8526,28 @@
         "$ref": "#/$defs/CommandSessionDelete"
       },
       {
+        "$ref": "#/$defs/CommandSessionRename"
+      },
+      {
+        "$ref": "#/$defs/CommandAttachFile"
+      },
+      {
         "$ref": "#/$defs/CommandToolInvoke"
       },
       {
         "$ref": "#/$defs/CommandConfigSet"
+      },
+      {
+        "$ref": "#/$defs/CommandMemoryClear"
+      },
+      {
+        "$ref": "#/$defs/CommandMemoryPopLastTurn"
+      },
+      {
+        "$ref": "#/$defs/CommandHarnessGit"
+      },
+      {
+        "$ref": "#/$defs/CommandPlanPreview"
       }
     ]
   },

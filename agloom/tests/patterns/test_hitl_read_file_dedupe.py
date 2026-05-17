@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from agloom.patterns.hitl_read_file_dedupe import (
     ReadFileHitlDeduper,
     parse_read_file_path_offset_limit,
@@ -7,8 +10,11 @@ from agloom.patterns.hitl_read_file_dedupe import (
 
 
 def test_parse_read_file_path_offset_limit() -> None:
+    expected_path = str(Path("a.toml").resolve())
+    if sys.platform == "win32":
+        expected_path = expected_path.lower()
     assert parse_read_file_path_offset_limit({"path": "a.toml", "offset": 0, "limit": 100}) == (
-        "a.toml",
+        expected_path,
         0,
         100,
     )

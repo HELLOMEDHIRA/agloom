@@ -176,14 +176,14 @@ agloom -m groq:llama-3.3-70b-versatile
 agloom "Explain quantum computing in 2 sentences"
 ```
 
-See the [CLI overview](../../../_packages/agloom_cli/index.md) (paths resolve after `make docs-prepare` copies package docs into `docs/_packages/`).
+See the CLI overview: [GitHub source: `agloom_cli/docs/index.md`](https://github.com/HELLOMEDHIRA/agloom/blob/main/agloom_cli/docs/index.md); [Read the Docs (built copy)](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/) — same page after `make docs-prepare` / MkDocs.
 
 ## What's Next?
 
 | Topic                     | Link                                                   |
 | ------------------------- | ------------------------------------------------------ |
 | Understand the 9 patterns | [Execution Patterns](../concepts/patterns.md)          |
-| CLI (Node / TUI)          | [CLI overview](../../../_packages/agloom_cli/index.md) |
+| CLI (Node / TUI)          | [CLI on Read the Docs](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/) · [source `agloom_cli/docs/`](https://github.com/HELLOMEDHIRA/agloom/tree/main/agloom_cli/docs) |
 | Every parameter explained | [All Parameters](../configuration/parameters.md)       |
 | Add memory to your agent  | [Memory](../features/memory.md)                        |
 | Build streaming UIs       | [Streaming & Events](../features/streaming.md)         |

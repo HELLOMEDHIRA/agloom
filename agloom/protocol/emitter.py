@@ -14,10 +14,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import sys
 import threading
+import time
+from queue import Full as QueueFull
 from collections.abc import Callable
-from typing import IO, Any, Literal
+from typing import IO, Any, Literal, cast
 
 from .envelope import PROTOCOL_MODULE_VERSION, Envelope
 from .events import (
@@ -39,6 +42,8 @@ from .events import (
     GraphNodeEnterData,
     GraphNodeExit,
     GraphNodeExitData,
+    OrchestrationStep,
+    OrchestrationStepData,
     HITLAllowlisted,
     HITLDecision,
     HITLDecisionData,
@@ -141,6 +146,8 @@ from .events import (
     WorkerCompletedData,
     WorkerFailed,
     WorkerFailedData,
+    WorkerHalted,
+    WorkerHaltedData,
     WorkerSpawned,
     WorkerSpawnedData,
 )
@@ -148,7 +155,71 @@ from .events import (
 logger_emitter = logging.getLogger(__name__)
 
 
-def _store_append_done(t: asyncio.Task) -> None:
+def _sanitize_non_finite_json(value: Any) -> Any:
+    """Replace NaN/Infinity with ``None`` so wire JSON does not surprise TS number parsers."""
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None
+    if isinstance(value, dict):
+        return {k: _sanitize_non_finite_json(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_non_finite_json(v) for v in value]
+    return value
+
+_MAX_STORE_APPEND_INFLIGHT = 128
+
+
+class _SharedStoreAppendInflight:
+    """Cap concurrent EventStore append tasks per session emitter tree."""
+
+    __slots__ = ("_lock", "_count", "_pending")
+
+    def __init__(self) -> None:
+        self._count = 0
+        self._lock = threading.Lock()
+        self._pending: set[asyncio.Task[Any]] = set()
+
+    def try_acquire(self) -> bool:
+        with self._lock:
+            if self._count >= _MAX_STORE_APPEND_INFLIGHT:
+                return False
+            self._count += 1
+            return True
+
+    def release(self) -> None:
+        with self._lock:
+            self._count = max(0, self._count - 1)
+
+    def note_task(self, task: asyncio.Task[Any]) -> None:
+        with self._lock:
+            self._pending.add(task)
+
+        def _drop(t: asyncio.Task[Any]) -> None:
+            with self._lock:
+                self._pending.discard(t)
+
+        task.add_done_callback(_drop)
+
+    async def drain(self, timeout: float = 5.0) -> None:
+        """Wait for in-flight store append tasks (best-effort, bounded)."""
+        deadline = time.monotonic() + max(0.05, timeout)
+        while time.monotonic() < deadline:
+            with self._lock:
+                pending = [t for t in self._pending if not t.done()]
+                count = self._count
+            if not pending and count == 0:
+                return
+            if pending:
+                wait_s = min(0.25, deadline - time.monotonic())
+                if wait_s > 0:
+                    await asyncio.wait(pending, timeout=wait_s)
+            else:
+                await asyncio.sleep(0.01)
+
+
+def _store_append_done(t: asyncio.Task, *, inflight: _SharedStoreAppendInflight | None = None) -> None:
+    if inflight is not None:
+        inflight.release()
     if t.cancelled():
         return
     exc = t.exception()
@@ -158,6 +229,49 @@ def _store_append_done(t: asyncio.Task) -> None:
 
 WriterLike = IO[str]
 """Anything with ``.write(str)`` and ``.flush()`` — typically ``sys.stdout``."""
+
+
+def _lit_token_role(role: str) -> Literal["assistant", "tool"]:
+    if role in ("assistant", "tool"):
+        return cast(Literal["assistant", "tool"], role)
+    return "assistant"
+
+
+def _lit_hitl_actor(actor: str) -> Literal["auto", "timeout", "user"]:
+    if actor in ("auto", "timeout", "user"):
+        return cast(Literal["auto", "timeout", "user"], actor)
+    return "user"
+
+
+def _lit_skill_loaded_source(source: str) -> Literal["disk", "on_demand", "post_run", "registry", "seed", "tool"]:
+    allowed = ("disk", "on_demand", "post_run", "registry", "seed", "tool")
+    if source in allowed:
+        return cast(Literal["disk", "on_demand", "post_run", "registry", "seed", "tool"], source)
+    return "tool"
+
+
+def _lit_skill_applied_phase(phase: str) -> Literal["classifier", "worker"]:
+    if phase in ("classifier", "worker"):
+        return cast(Literal["classifier", "worker"], phase)
+    return "classifier"
+
+
+def _lit_skill_learned_source(source: str | None) -> Literal["on_demand", "post_run", "seed"] | None:
+    if source is None:
+        return None
+    if source in ("on_demand", "post_run", "seed"):
+        return cast(Literal["on_demand", "post_run", "seed"], source)
+    return "on_demand"
+
+
+def _lit_prompt_kind(kind: str) -> Literal["user_turn"]:
+    return "user_turn"
+
+
+def _lit_prompt_cancel_reason(reason: str) -> Literal["shutdown", "user_aborted"]:
+    if reason in ("shutdown", "user_aborted"):
+        return cast(Literal["shutdown", "user_aborted"], reason)
+    return "shutdown"
 
 
 class _SharedSeq:
@@ -215,6 +329,7 @@ class SessionEmitter:
         _shared_seq: _SharedSeq | None = None,
         _write_lock: threading.Lock | None = None,
         _sub_filter: _SubscriptionFilter | None = None,
+        _store_append_inflight: _SharedStoreAppendInflight | None = None,
     ) -> None:
         self._session = session
         self._thread = thread
@@ -227,11 +342,17 @@ class SessionEmitter:
         self._shared_seq: _SharedSeq = _shared_seq if _shared_seq is not None else _SharedSeq()
         self._write_lock: threading.Lock = _write_lock if _write_lock is not None else threading.Lock()
         self._sub_filter: _SubscriptionFilter = _sub_filter if _sub_filter is not None else _SubscriptionFilter()
+        self._store_append_inflight: _SharedStoreAppendInflight = (
+            _store_append_inflight if _store_append_inflight is not None else _SharedStoreAppendInflight()
+        )
         self._opened = False
         self._closed = False
+        self._last_open: SessionOpened | None = None
+        self._last_resume: SessionResumed | None = None
+        self.budget_tracker: Any | None = None
 
     @classmethod
-    def _callback_only(
+    def for_callback_only(
         cls,
         *,
         session: str,
@@ -239,8 +360,12 @@ class SessionEmitter:
         capabilities: list[str] | None = None,
         on_emit: Callable[[Envelope], None] | None = None,
         _shared_seq: _SharedSeq | None = None,
+        _sub_filter: _SubscriptionFilter | None = None,
     ) -> SessionEmitter:
         """Create an emitter that only calls ``on_emit`` — no JSON is written anywhere.
+
+        Sets ``_writer`` to ``None`` on purpose; :meth:`_write` skips stdout when the writer
+        is unset and only invokes ``on_emit`` / optional store append.
 
         Used by :meth:`UnifiedAgent.astream_agp_events` to get typed AGP event objects
         without the overhead of NDJSON serialisation.
@@ -254,10 +379,12 @@ class SessionEmitter:
         inst._store = None
         inst._shared_seq = _shared_seq if _shared_seq is not None else _SharedSeq()
         inst._write_lock = threading.Lock()
-        inst._sub_filter = _SubscriptionFilter()
+        inst._sub_filter = _sub_filter if _sub_filter is not None else _SubscriptionFilter()
         inst._opened = False
         inst._closed = False
         return inst
+
+    _callback_only = for_callback_only  # backward-compatible alias
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -267,8 +394,8 @@ class SessionEmitter:
         ``capabilities_override`` is optional; canonical capability tokens belong on
         :meth:`emit_runtime_config`.
         """
-        if self._opened:
-            return self._last_open  # type: ignore[has-type]
+        if self._opened and self._last_open is not None:
+            return self._last_open
         self._opened = True
         evt = SessionOpened(
             session=self._session,
@@ -321,8 +448,8 @@ class SessionEmitter:
         Use this when the runtime detects a known ``thread_id`` (LangGraph checkpoint
         exists) or on receiving ``command.session.resume``.
         """
-        if self._opened:
-            return self._last_resume  # type: ignore[has-type]
+        if self._opened and self._last_resume is not None:
+            return self._last_resume
         self._opened = True
         evt = SessionResumed(
             session=self._session,
@@ -430,7 +557,7 @@ class SessionEmitter:
             parent=parent,
             data=TokenDeltaData(
                 text=text,
-                role=role,  # type: ignore[arg-type]
+                role=_lit_token_role(role),
                 message_id=message_id,
             ),
         )
@@ -644,7 +771,7 @@ class SessionEmitter:
             data=HITLDecisionData(
                 request_id=request_id,
                 decision=decision,
-                actor=actor,  # type: ignore[arg-type]
+                actor=_lit_hitl_actor(actor),
                 text=text,
                 detail=detail,
             ),
@@ -730,6 +857,69 @@ class SessionEmitter:
         self._write(evt)
         return evt
 
+    def emit_worker_halted(
+        self,
+        *,
+        worker_id: str,
+        reason: str = "HALT_ALL",
+        output_preview: str = "",
+        duration_ms: int | None = None,
+        parent: str | None = None,
+    ) -> WorkerHalted:
+        """Worker stopped by user HALT_ALL (not an operational failure)."""
+        evt = WorkerHalted(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=WorkerHaltedData(
+                worker_id=worker_id,
+                reason=reason,
+                output_preview=output_preview,
+                duration_ms=duration_ms,
+            ),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_orchestration_step(
+        self,
+        *,
+        depth: int,
+        pattern: str,
+        action: str,
+        worker_id: str | None = None,
+        reason: str | None = None,
+        input_preview: str | None = None,
+        output_preview: str | None = None,
+        duration_ms: int | None = None,
+        error: str | None = None,
+        confidence: float | None = None,
+        quality_score: float | None = None,
+        parent: str | None = None,
+    ) -> OrchestrationStep:
+        evt = OrchestrationStep(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=OrchestrationStepData(
+                depth=depth,
+                pattern=pattern,
+                action=action,
+                worker_id=worker_id,
+                reason=reason,
+                input_preview=input_preview,
+                output_preview=output_preview,
+                duration_ms=duration_ms,
+                error=error,
+                confidence=confidence,
+                quality_score=quality_score,
+            ),
+        )
+        self._write(evt)
+        return evt
+
     def emit_graph_node_enter(
         self,
         *,
@@ -799,7 +989,7 @@ class SessionEmitter:
             parent=parent,
             data=SkillLoadedData(
                 skill_name=skill_name,
-                source=source,  # type: ignore[arg-type]
+                source=_lit_skill_loaded_source(source),
                 version=version,
                 body_chars=body_chars,
             ),
@@ -820,7 +1010,7 @@ class SessionEmitter:
             seq=self._next_seq(),
             parent=parent,
             data=SkillAppliedData(
-                phase=phase,  # type: ignore[arg-type]
+                phase=_lit_skill_applied_phase(phase),
                 injected_chars=injected_chars,
             ),
         )
@@ -845,7 +1035,7 @@ class SessionEmitter:
                 skill_name=skill_name,
                 pattern=pattern,
                 scope=scope,
-                source=source,  # type: ignore[arg-type]
+                source=_lit_skill_learned_source(source),
             ),
         )
         self._write(evt)
@@ -864,7 +1054,7 @@ class SessionEmitter:
             seq=self._next_seq(),
             parent=parent,
             data=PromptRequestedData(
-                kind=kind,  # type: ignore[arg-type]
+                kind=_lit_prompt_kind(kind),
                 preview=preview,
             ),
         )
@@ -884,7 +1074,7 @@ class SessionEmitter:
             seq=self._next_seq(),
             parent=parent,
             data=PromptCancelledData(
-                reason=reason,  # type: ignore[arg-type]
+                reason=_lit_prompt_cancel_reason(reason),
                 detail=detail,
             ),
         )
@@ -1536,7 +1726,8 @@ class SessionEmitter:
         without racing on ``_thread`` or producing duplicate ``seq`` numbers.
 
         The forked emitter is *not* opened/closed automatically — the caller is responsible
-        for its lifecycle (typically the bridge does this).
+        for its lifecycle (typically the bridge does this). Inherits ``_last_open`` /
+        ``_last_resume`` so idempotent ``open()`` / resume helpers behave like the parent.
         """
         child = SessionEmitter(
             session=self._session,
@@ -1548,11 +1739,14 @@ class SessionEmitter:
             _shared_seq=self._shared_seq,
             _write_lock=self._write_lock,
             _sub_filter=self._sub_filter,
+            _store_append_inflight=self._store_append_inflight,
         )
         # Mark as already open so the child doesn't re-emit session.opened.
         child._opened = True
+        child._last_open = self._last_open
+        child._last_resume = self._last_resume
         if getattr(self, "budget_tracker", None) is not None:
-            child.budget_tracker = self.budget_tracker  # type: ignore[attr-defined]
+            child.budget_tracker = self.budget_tracker
         return child
 
     # ── subscription filter (command.subscribe / unsubscribe) ─────────────────
@@ -1591,7 +1785,7 @@ class SessionEmitter:
         prefs = self._sub_filter.prefixes
         if prefs is None:
             return True
-        if typ.startswith(("session.", "error.", "runtime.", "prompt.", "hitl.")):
+        if typ.startswith(("session.", "error.", "runtime.", "prompt.", "hitl.", "metric.")):
             return True
         return any(typ.startswith(p) for p in prefs)
 
@@ -1600,10 +1794,51 @@ class SessionEmitter:
     def _next_seq(self) -> int:
         return self._shared_seq.next()
 
+    def _schedule_store_append(self, evt: Envelope) -> None:
+        if self._store is None:
+            return
+        if not self._store_append_inflight.try_acquire():
+            logger_emitter.warning(
+                "SessionEmitter: store append inflight cap (%d) — dropping seq=%s type=%s",
+                _MAX_STORE_APPEND_INFLIGHT,
+                getattr(evt, "seq", "?"),
+                getattr(evt, "type", "?"),
+            )
+            return
+        try:
+            d = event_to_dict(evt)
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._store_append_inflight.release()
+                logger_emitter.debug(
+                    "SessionEmitter: no running event loop — skipping EventStore append "
+                    "(use AsyncSessionEmitter or an async test loop for persistence).",
+                )
+                return
+            inflight = self._store_append_inflight
+
+            def _done(t: asyncio.Task) -> None:
+                _store_append_done(t, inflight=inflight)
+
+            t = loop.create_task(self._store.append(self._session, d))
+            inflight.note_task(t)
+            t.add_done_callback(_done)
+        except Exception:
+            self._store_append_inflight.release()
+            logger_emitter.debug("SessionEmitter store append scheduling failed (ignored)", exc_info=True)
+
+    async def drain_store_appends(self, timeout: float = 5.0) -> None:
+        """Wait for in-flight EventStore append tasks (tests / shutdown)."""
+        await self._store_append_inflight.drain(timeout=timeout)
+
     def _write(self, evt: Envelope) -> None:
         typ = str(getattr(evt, "type", ""))
         wire_ok = self._subscription_allows_wire(typ)
-        line = evt.model_dump_json(by_alias=True, exclude_none=True)
+        wire_dict = _sanitize_non_finite_json(
+            evt.model_dump(mode="json", by_alias=True, exclude_none=True)
+        )
+        line = json.dumps(wire_dict, ensure_ascii=False)
         if self._writer is not None and wire_ok:
             with self._write_lock:
                 self._writer.write(line + "\n")
@@ -1615,23 +1850,12 @@ class SessionEmitter:
                 # ``on_emit`` is observation-only; failures must not affect the wire.
                 logger_emitter.debug("SessionEmitter on_emit callback failed (ignored)", exc_info=True)
         if self._store is not None:
-            try:
-                d = event_to_dict(evt)
-                try:
-                    loop = asyncio.get_running_loop()
-                    t = loop.create_task(self._store.append(self._session, d))
-                    t.add_done_callback(_store_append_done)
-                except RuntimeError:
-                    # No running event loop (e.g. synchronous test context). Skip store persistence
-                    # rather than raising — the synchronous emitter is not async-safe.
-                    pass
-            except Exception:
-                logger_emitter.debug("SessionEmitter store append scheduling failed (ignored)", exc_info=True)
+            self._schedule_store_append(evt)
 
 
 def event_to_dict(evt: Envelope) -> dict[str, Any]:
     """Round-trip helper: dump an event to its on-the-wire dict form (parsed JSON)."""
-    return evt.model_dump(mode="json", by_alias=True, exclude_none=True)
+    return _sanitize_non_finite_json(evt.model_dump(mode="json", by_alias=True, exclude_none=True))
 
 
 class AsyncSessionEmitter(SessionEmitter):
@@ -1666,6 +1890,7 @@ class AsyncSessionEmitter(SessionEmitter):
         _shared_seq: _SharedSeq | None = None,
         _write_lock: threading.Lock | None = None,
         _sub_filter: _SubscriptionFilter | None = None,
+        _store_append_inflight: _SharedStoreAppendInflight | None = None,
     ) -> None:
         # Do NOT pass writer to parent — we manage writes ourselves via the queue.
         super().__init__(
@@ -1678,6 +1903,7 @@ class AsyncSessionEmitter(SessionEmitter):
             _shared_seq=_shared_seq,
             _write_lock=_write_lock,
             _sub_filter=_sub_filter,
+            _store_append_inflight=_store_append_inflight,
         )
         # Parent __init__ defaults to sys.stdout; override to None since AsyncSessionEmitter
         # routes all writes through its internal queue — the async_writer is the real target.
@@ -1685,6 +1911,16 @@ class AsyncSessionEmitter(SessionEmitter):
         self._async_writer = writer
         self._queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=queue_maxsize)
         self._drain_task: asyncio.Task[None] | None = None
+
+    def _enqueue_wire_line(self, line: str) -> None:
+        """Enqueue one NDJSON line; drop with log when the async queue is full."""
+        try:
+            self._queue.put_nowait(line)
+        except QueueFull:
+            logger_emitter.warning(
+                "AsyncSessionEmitter: wire queue full (maxsize=%s) — dropping event line",
+                self._queue.maxsize,
+            )
 
     # ── async context manager ────────────────────────────────────────────────
 
@@ -1716,21 +1952,19 @@ class AsyncSessionEmitter(SessionEmitter):
     def _write(self, evt: Envelope) -> None:
         typ = str(getattr(evt, "type", ""))
         wire_ok = self._subscription_allows_wire(typ)
-        line = evt.model_dump_json(by_alias=True, exclude_none=True)
+        wire_dict = _sanitize_non_finite_json(
+            evt.model_dump(mode="json", by_alias=True, exclude_none=True)
+        )
+        line = json.dumps(wire_dict, ensure_ascii=False)
         if wire_ok:
-            self._queue.put_nowait(line)
+            self._enqueue_wire_line(line)
         if self._on_emit is not None:
             try:
                 self._on_emit(evt)
             except Exception:
                 logger_emitter.debug("AsyncSessionEmitter on_emit callback failed (ignored)", exc_info=True)
         if self._store is not None:
-            try:
-                d = event_to_dict(evt)
-                t = asyncio.get_running_loop().create_task(self._store.append(self._session, d))
-                t.add_done_callback(_store_append_done)
-            except Exception:
-                logger_emitter.debug("AsyncSessionEmitter store append scheduling failed (ignored)", exc_info=True)
+            self._schedule_store_append(evt)
 
     def write_replay_dict(self, evt_dict: dict[str, Any]) -> None:
         """Enqueue one replayed NDJSON line when the subscription filter allows (see parent)."""
@@ -1738,7 +1972,7 @@ class AsyncSessionEmitter(SessionEmitter):
         if not self._subscription_allows_wire(typ):
             return
         line = json.dumps(evt_dict, ensure_ascii=False)
-        self._queue.put_nowait(line)
+        self._enqueue_wire_line(line)
 
     # ── drain loop ───────────────────────────────────────────────────────────
 
@@ -1759,7 +1993,7 @@ class AsyncSessionEmitter(SessionEmitter):
                 else:
                     await loop.run_in_executor(None, writer, item + "\n")
             except Exception:
-                pass
+                logger_emitter.warning("AsyncSessionEmitter drain: writer failed", exc_info=True)
 
     def fork_for_thread(self, thread: str) -> AsyncSessionEmitter:
         """Fork an ``AsyncSessionEmitter`` sibling sharing the same drain queue and seq counter."""
@@ -1773,13 +2007,17 @@ class AsyncSessionEmitter(SessionEmitter):
             _shared_seq=self._shared_seq,
             _write_lock=self._write_lock,
             _sub_filter=self._sub_filter,
+            _store_append_inflight=self._store_append_inflight,
         )
-        # Share the same queue so a single drain task handles all forked emitters.
+        # Share the same queue and drain task so forked emitters never orphan lines.
         child._queue = self._queue
         child._drain_task = self._drain_task
+        child._async_writer = self._async_writer
         child._opened = True
+        child._last_open = self._last_open
+        child._last_resume = self._last_resume
         if getattr(self, "budget_tracker", None) is not None:
-            child.budget_tracker = self.budget_tracker  # type: ignore[attr-defined]
+            child.budget_tracker = self.budget_tracker
         return child
 
 

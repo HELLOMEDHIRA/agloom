@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.messages import HumanMessage
 
@@ -25,7 +25,9 @@ from ..models import (
 from ..worker import extend_invoke_config_with_event_queue
 from ._blackboard_state import BlackboardState
 from ._resolve import resolve_worker_configs
-from .worker_gates import drain_for_halt, get_signal_queue
+from ._steps_accounting import steps_taken_from_audit
+from ._synthesis_contract import ALL_PATTERN_WORKERS_FAILED_ERROR, pattern_synthesis_success
+from .worker_gates import await_with_halt_polling, drain_for_halt, get_signal_queue
 
 logger = get_logger(__name__)
 
@@ -57,8 +59,9 @@ async def handle_blackboard(
     """
     Resolve KS configs, initialise board with empty slots, then loop:
     pick eligible KS → inject board snapshot → run → write slot.
-    Failed KS get a failure marker so dependents aren't permanently blocked.
-    L4 HALT_ALL checked after each KS. Synthesizes from filled board.
+    Failed KS are marked attempted (not filled) so dependents unblock.
+    sequential runners only observe ``HALT_ALL`` between worker steps (see
+    :mod:`agloom.patterns._sequential`).
 
     *max_rounds* overrides the module-level ``MAX_ROUNDS`` constant for this invocation,
     allowing callers to adjust the ceiling without monkey-patching the global.
@@ -101,7 +104,8 @@ async def handle_blackboard(
         eligible = [
             cfg
             for cfg in ks_configs
-            if cfg.worker_id not in board.filled and all(dep in board.filled for dep in cfg.depends_on)
+            if cfg.worker_id not in board.attempted
+            and all(dep in board.attempted for dep in cfg.depends_on)
         ]
 
         if not eligible:
@@ -119,6 +123,20 @@ async def handle_blackboard(
         )
 
         for ks_cfg in eligible:
+            if signal_queue:
+                halt = await drain_for_halt(
+                    signal_queue,
+                    caller_name=f"{agent_name}[Blackboard]",
+                    user_callback=agent.get("user_callback"),
+                    clarification_queues=(
+                        config.get("configurable", {}).get("clarification_queues") if config else {}
+                    ),
+                )
+                if halt:
+                    logger.warning(f"[Blackboard] HALT_ALL before KS '{ks_cfg.worker_id}' — stopping.")
+                    halt_triggered = True
+                    break
+
             snapshot = board.snapshot()
             enriched_cfg = ks_cfg.model_copy(
                 update={
@@ -132,7 +150,27 @@ async def handle_blackboard(
 
             logger.event(f"[Blackboard] Running KS '{ks_cfg.worker_id}' (round {round_num})")
             merged = extend_invoke_config_with_event_queue(config, agent.get("_event_queue"), agent=agent)
-            result = await worker_module.run_worker(enriched_cfg, llm, invoke_config=merged)
+            clar_qs = (config.get("configurable", {}).get("clarification_queues") if config else {}) or {}
+            worker_task = asyncio.create_task(
+                worker_module.run_worker(enriched_cfg, llm, invoke_config=merged)
+            )
+            run_out, halted_mid = await await_with_halt_polling(
+                worker_task,
+                signal_queue=signal_queue,
+                caller_name=f"{agent_name}[Blackboard]",
+                user_callback=agent.get("user_callback"),
+                clarification_queues=clar_qs,
+            )
+            if halted_mid:
+                result = WorkerResult(
+                    worker_id=ks_cfg.worker_id,
+                    task=enriched_cfg.task,
+                    output="Cancelled — HALT_ALL during Knowledge Source run.",
+                    signal=SignalType.HALTED,
+                    error="HALT_ALL",
+                )
+            else:
+                result = cast(WorkerResult, run_out)
             worker_results.append(result)
             raw_messages.extend(getattr(result, "messages", []))
             steps.append(
@@ -153,11 +191,18 @@ async def handle_blackboard(
                 board.write(ks_cfg.worker_id, result.output, ks_cfg.worker_id)
                 logger.event(f"[Blackboard] Slot '{ks_cfg.worker_id}' filled — {len(result.output)} chars.")
             else:
-                failure_marker = f"FAILED: {result.error or 'unknown error'}"
-                board.write(ks_cfg.worker_id, failure_marker, ks_cfg.worker_id)
-                logger.warning(
-                    f"[Blackboard] KS '{ks_cfg.worker_id}' failed: {result.error} — wrote failure marker to board."
+                board.mark_failed(
+                    ks_cfg.worker_id,
+                    result.error or "unknown error",
+                    ks_cfg.worker_id,
                 )
+                logger.warning(
+                    f"[Blackboard] KS '{ks_cfg.worker_id}' failed: {result.error} — slot marked failed."
+                )
+
+            if halted_mid:
+                halt_triggered = True
+                break
 
             if signal_queue:
                 halt = await drain_for_halt(
@@ -196,13 +241,15 @@ async def handle_blackboard(
             pattern_used=PatternType.BLACKBOARD,
             query=query,
             output=("All Knowledge Sources failed — no board content to synthesize."),
-            steps_taken=len(worker_results),
+            steps_taken=steps_taken_from_audit(steps),
             success=False,
             analysis=analysis,
             worker_results=worker_results,
+            error=ALL_PATTERN_WORKERS_FAILED_ERROR,
             metadata={
                 "rounds_used": rounds,
                 "slots_filled": list(board.filled),
+                "slots_failed": list(board.failed),
                 "slots_unfilled": board.unfilled_slots(),
                 "board_history": board.history,
                 "halt_triggered": halt_triggered,
@@ -212,13 +259,18 @@ async def handle_blackboard(
             messages=raw_messages,
         )
 
-    synthesis_prompt = BLACKBOARD_SYNTHESIS_PROMPT.replace("{board_snapshot}", board.snapshot())
+    synthesis_prompt = BLACKBOARD_SYNTHESIS_PROMPT.replace(
+        "{board_snapshot}", board.synthesis_snapshot()
+    )
     synth_input = [HumanMessage(content=synthesis_prompt)]
+    synthesis_degraded = False
+    synthesis_error: str | None = None
+    synthesis = ""
     try:
         _timeout = agent.get("llm_timeout", 120.0) if isinstance(agent, dict) else 120.0
         t_synth = time.perf_counter()
         synthesis, tail, last_chunk = await stream_or_invoke_llm(
-            llm, synth_input, agent, timeout=_timeout
+            llm, synth_input, agent, timeout=_timeout, phase="blackboard_synthesis"
         )
         raw_messages.extend(tail)
         synth_usage = _extract_token_usage(last_chunk) if last_chunk else {}
@@ -233,13 +285,28 @@ async def handle_blackboard(
                 output=synthesis,
                 duration_ms=synth_ms,
                 max_length=ml,
+                usage=synth_usage,
+                phase="blackboard_synthesis",
             )
         )
         logger.event(f"[Blackboard] Synthesis done — {len(synthesis)} chars.")
     except Exception as exc:
         logger.error(f"[Blackboard] Synthesis LLM failed: {exc}")
+        synthesis_degraded = True
+        synthesis_error = "SynthesisFailed"
         raw_messages.extend(synth_input)
         synthesis = "\n\n".join(f"[{r.worker_id}]: {r.output}" for r in successful)
+        steps.append(
+            _make_step(
+                StepType.LLM_CALL,
+                "blackboard_synthesis",
+                input=query,
+                output=synthesis,
+                max_length=ml,
+                phase="blackboard_synthesis",
+                synthesis_error=str(exc),
+            )
+        )
 
     logger.event(
         f"[Blackboard] {agent_name} — done. "
@@ -247,20 +314,38 @@ async def handle_blackboard(
         f"{rounds} round(s), {len(synthesis)} chars."
     )
 
+    from ..orchestrator.hooks import maybe_spawn_conflict_resolution
+
+    slot_outputs = [r.output for r in successful]
+    swarm_resolution = await maybe_spawn_conflict_resolution(
+        agent,
+        config,
+        query,
+        slot_outputs,
+        target_pattern=PatternType.SWARM,
+    )
+    if swarm_resolution is not None and swarm_resolution.success:
+        synthesis = swarm_resolution.output
+        usage = _merge_token_usage(usage, swarm_resolution.token_usage)
+        steps.extend(swarm_resolution.steps)
+
     return ExecutionResult(
         pattern_used=PatternType.BLACKBOARD,
         query=query,
         output=synthesis,
-        success=len(successful) > 0,
-        steps_taken=len(worker_results),
+        success=pattern_synthesis_success(worker_results=worker_results, synthesis_degraded=synthesis_degraded),
+        steps_taken=steps_taken_from_audit(steps),
         analysis=analysis,
         worker_results=worker_results,
+        error=synthesis_error,
         metadata={
             "rounds_used": rounds,
             "slots_filled": list(board.filled),
+            "slots_failed": list(board.failed),
             "slots_unfilled": board.unfilled_slots(),
             "board_history": board.history,
             "halt_triggered": halt_triggered,
+            "synthesis_degraded": synthesis_degraded,
         },
         steps=steps,
         token_usage=usage,

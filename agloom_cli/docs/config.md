@@ -15,24 +15,24 @@ Optional YAML layers configure defaults without long command lines. **Precedence
 
 Validated fields (unknown keys are preserved via passthrough for forward compatibility):
 
-| Key                  | Type     | Purpose                                           |          |                |
-| -------------------- | -------- | ------------------------------------------------- | -------- | -------------- |
-| `model`              | string   | Default `-m`                                      |          |                |
-| `provider`           | string   | Default `--provider`                              |          |                |
-| `temperature`        | number   | Sampling temperature                              |          |                |
-| `max_tokens`         | integer  | Max output tokens                                 |          |                |
-| `multiline`          | boolean  | TUI compose: `true` = blank Enter sends (default **true** if omitted); `false` = single-line |
-| `system_prompt`      | string   | Inline system prompt                              |          |                |
-| `system_prompt_file` | string   | Path to prompt file                               |          |                |
-| `store`              | `none` \ | `memory` \                                        | `sqlite` | AGP EventStore |
-| `store_path`         | string   | SQLite path                                       |          |                |
-| `memory`             | string   | Session memory backend hint (`sqlite`, `in-memory`, `none`, …) |          |                |
-| `memory_path`        | string   | SQLite session memory path                        |          |                |
-| `skills_dir`         | string   | Skills **disk mirror** directory (defaults to `.agloom/skills` under cwd when omitted; see [Flags](flags.md)) |          |                |
-| `summarizer_model`   | string   | Summarizer model id                               |          |                |
-| `auto_summarize`     | boolean  | Toggle auto summarization                         |          |                |
-| `session_max_turns`  | integer  | Session window                                    |          |                |
-| `mcp`                | array    | Strings `name:path` or `{ name, config }` objects |          |                |
+| Key | Type | Purpose |
+| --- | --- | --- |
+| `model` | string | Default `-m` |
+| `provider` | string | Default `--provider` |
+| `temperature` | number | Sampling temperature |
+| `max_tokens` | integer | Max output tokens |
+| `multiline` | boolean | TUI compose: `true` = blank Enter sends (default **true** if omitted); `false` = single-line |
+| `system_prompt` | string | Inline system prompt |
+| `system_prompt_file` | string | Path to prompt file |
+| `store` | string | AGP EventStore backend: `none`, `memory`, or `sqlite` |
+| `store_path` | string | SQLite path for `store=sqlite` |
+| `memory` | string | Session memory backend hint (`sqlite`, `in-memory`, `none`, …) |
+| `memory_path` | string | SQLite session memory path |
+| `skills_dir` | string | Skills **disk mirror** directory (defaults to `.agloom/skills` under cwd when omitted; see [Flags](flags.md)) |
+| `summarizer_model` | string | Summarizer model id |
+| `auto_summarize` | boolean | Toggle auto summarization |
+| `session_max_turns` | integer | Session window (default **50**; maps from `memory.max_turns`) |
+| `mcp` | array | Strings `name:path` or `{ name, config }` objects |
 
 Flat keys **`no_memory`** and **`no_skills`** are stripped when YAML is loaded — they are not supported configuration.
 

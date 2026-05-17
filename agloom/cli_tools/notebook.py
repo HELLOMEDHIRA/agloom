@@ -48,7 +48,7 @@ def make_notebook_tools(ctx: SafetyContext) -> list[Any]:
     def notebook_read(path: str, max_chars_per_cell: int = 24_000) -> str:
         """Load a Jupyter notebook (``.ipynb``) and return numbered cells (markdown/code/raw) with source text."""
         try:
-            cap = max(256, min(int(max_chars_per_cell), 500_000))
+            cap = max(256, min(max_chars_per_cell, 500_000))
         except (TypeError, ValueError):
             cap = 24_000
         try:

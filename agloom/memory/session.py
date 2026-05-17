@@ -24,17 +24,35 @@ _SUMMARIZE_PROMPT = (
 )
 
 _CHARS_PER_TOKEN = 4
+_tiktoken_encoder: Any | None = None
+_tiktoken_encoder_lock = threading.Lock()
+
+
+def _get_tiktoken_encoder() -> Any | None:
+    global _tiktoken_encoder
+    if _tiktoken_encoder is not None:
+        return _tiktoken_encoder
+    with _tiktoken_encoder_lock:
+        if _tiktoken_encoder is not None:
+            return _tiktoken_encoder
+        try:
+            import tiktoken
+
+            _tiktoken_encoder = tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            _tiktoken_encoder = None
+    return _tiktoken_encoder
 
 
 def _count_tokens(text: str) -> int:
     """Count tokens using tiktoken if available, else char approximation."""
-    try:
-        import tiktoken
-
-        enc = tiktoken.get_encoding("cl100k_base")
-        return len(enc.encode(text))
-    except Exception:
-        return len(text) // _CHARS_PER_TOKEN
+    enc = _get_tiktoken_encoder()
+    if enc is not None:
+        try:
+            return len(enc.encode(text))
+        except Exception:
+            pass
+    return len(text) // _CHARS_PER_TOKEN
 
 
 def _turns_to_text(turns: list[dict]) -> str:
@@ -73,13 +91,14 @@ class SessionMemory:
     def __init__(
         self,
         store: Any = None,
-        max_turns: int = 20,
+        max_turns: int = 50,
         auto_summarize: bool = True,
         summarize_threshold: int = 200_000,
         summarizer_model: Any = None,
         *,
         summarize_max_tokens_budget: int | None = None,
         on_turns_async: Callable[[str, list[dict[str, Any]]], Awaitable[None]] | None = None,
+        agp_session_key: str | None = None,
     ) -> None:
         if store is None:
             from langgraph.store.memory import InMemoryStore
@@ -96,6 +115,7 @@ class SessionMemory:
         self.summarizer_model = summarizer_model
         self.summarize_max_tokens_budget = summarize_max_tokens_budget
         self.on_turns_async = on_turns_async
+        self.agp_session_key = (agp_session_key or "").strip() or None
         self._turn_lock = asyncio.Lock()
         self._sync_turn_lock = threading.Lock()
 
@@ -109,6 +129,8 @@ class SessionMemory:
             logger.debug(f"SessionMemory on_turns_async failed (non-fatal): {exc!r}")
 
     def _ns(self, thread_id: str) -> tuple:
+        if self.agp_session_key:
+            return _NAMESPACE_PREFIX + (self.agp_session_key, thread_id)
         return _NAMESPACE_PREFIX + (thread_id,)
 
     def _effective_summarize_token_threshold(self) -> int:
@@ -118,6 +140,37 @@ class SessionMemory:
             if b > 0:
                 return max(1, int(b * 0.8))
         return self.summarize_threshold
+
+    def _maybe_summarize_sync(self, turns: list[dict]) -> list[dict]:
+        """Sync summarize for ``add_turn`` (uses ``invoke`` when a model is configured)."""
+        if not self.auto_summarize or self.summarizer_model is None:
+            return turns
+        if len(turns) < 4:
+            return turns
+
+        total = _total_tokens(turns)
+        threshold = self._effective_summarize_token_threshold()
+        if total <= threshold:
+            return turns
+
+        split_idx = max(1, int(len(turns) * 0.7))
+        oldest = turns[:split_idx]
+        recent = turns[split_idx:]
+        prompt = _SUMMARIZE_PROMPT.format(turns_text=_turns_to_text(oldest))
+
+        try:
+            from langchain_core.messages import HumanMessage
+
+            invoke = getattr(self.summarizer_model, "invoke", None)
+            if not callable(invoke):
+                return turns
+            resp = invoke([HumanMessage(content=prompt)])
+            content = getattr(resp, "content", resp)
+            summary = content if isinstance(content, str) else str(content)
+            return [{"q": _SUMMARY_MARKER, "a": summary.strip(), "p": "summary"}] + recent
+        except Exception as exc:
+            logger.warning(f"[SessionMemory] sync auto-summarize failed ({exc!r}) — keeping original turns.")
+            return turns
 
     async def _maybe_summarize(self, turns: list[dict]) -> list[dict]:
         """Summarize oldest turns if estimated tokens exceed the effective threshold.
@@ -175,6 +228,12 @@ class SessionMemory:
         metadata: dict | None = None,
     ) -> None:
         """Append one turn. Drops oldest when max_turns exceeded."""
+        if not (
+            callable(getattr(self.store, "get", None)) and callable(getattr(self.store, "put", None))
+        ):
+            raise TypeError(
+                "SessionMemory.add_turn() requires a store with sync get/put; use await aadd_turn() instead.",
+            )
         with self._sync_turn_lock:
             ns = self._ns(thread_id)
             key = "turns"
@@ -193,6 +252,7 @@ class SessionMemory:
                     **(metadata or {}),
                 }
             )
+            turns = self._maybe_summarize_sync(turns)
             if len(turns) > self.max_turns:
                 turns = turns[-self.max_turns :]
             self.store.put(ns, key, {"turns": turns})

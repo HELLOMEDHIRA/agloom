@@ -284,6 +284,18 @@ class WorkerFailed(Envelope):
     data: WorkerFailedData
 
 
+class WorkerHaltedData(_DataBase):
+    worker_id: str
+    reason: str = "HALT_ALL"
+    output_preview: str = ""
+    duration_ms: int | None = None
+
+
+class WorkerHalted(Envelope):
+    type: Literal["worker.halted"] = "worker.halted"
+    data: WorkerHaltedData
+
+
 # ── metric.* ──────────────────────────────────────────────────────────────────
 
 
@@ -521,7 +533,8 @@ class MemoryLtStore(Envelope):
 class CheckpointSavedData(_DataBase):
     """A LangGraph checkpoint was successfully persisted.
 
-    Emitted after every successful ``_save_checkpoint`` call in ``run_fresh``.
+    Emitted after the agent saves checkpoint state (each completed turn when a
+    checkpointer is configured, or after ``command.snapshot.request``).
     ``label`` is an optional human-readable tag from ``command.snapshot.request``.
     ``run_id`` identifies the agent run that produced this checkpoint.
     """
@@ -613,6 +626,30 @@ class GraphNodeExitData(_DataBase):
 class GraphNodeExit(Envelope):
     type: Literal["graph.node.exit"] = "graph.node.exit"
     data: GraphNodeExitData
+
+
+# ── orchestration.step ─────────────────────────────────────────────────────────
+
+
+class OrchestrationStepData(_DataBase):
+    """Recursive pattern orchestration trace (spawn, escalate, complete)."""
+
+    depth: int = 0
+    pattern: str
+    action: str
+    worker_id: str | None = None
+    reason: str | None = None
+    input_preview: str | None = None
+    output_preview: str | None = None
+    duration_ms: int | None = None
+    error: str | None = None
+    confidence: float | None = None
+    quality_score: float | None = None
+
+
+class OrchestrationStep(Envelope):
+    type: Literal["orchestration.step"] = "orchestration.step"
+    data: OrchestrationStepData
 
 
 # ── skill.* ───────────────────────────────────────────────────────────────────
@@ -741,7 +778,7 @@ class RuntimeReadyData(_DataBase):
         description=(
             "Session rolling-memory backend from CLI/YAML before lazy agent bootstrap: "
             "``sqlite`` | ``in-memory`` | ``none``; when ``--memory`` is omitted, ``in-memory`` "
-            "(ephemeral SessionMemory matching :func:`agloom.unified_agent.create_agent` defaults)."
+            "(ephemeral SessionMemory matching default ``create_agent`` session memory)."
         ),
     )
     agent_store_kind: str | None = Field(
@@ -995,17 +1032,6 @@ class ErrorData(_DataBase):
     retryable: bool = False
 
 
-class ErrorEvent(Envelope):
-    """``type="error.transient"`` or ``"error.fatal"`` — discriminator follows ``data.severity``.
-
-    The on-the-wire ``type`` is set explicitly per emit; we keep two Pydantic classes so the
-    discriminated union stays well-formed.
-    """
-
-    type: Literal["error.transient", "error.fatal"]
-    data: ErrorData
-
-
 class ErrorTransient(Envelope):
     type: Literal["error.transient"] = "error.transient"
     data: ErrorData
@@ -1057,8 +1083,10 @@ Event = Annotated[
     | WorkerSpawned
     | WorkerCompleted
     | WorkerFailed
+    | WorkerHalted
     | GraphNodeEnter
     | GraphNodeExit
+    | OrchestrationStep
     | SkillLoaded
     | SkillApplied
     | SkillLearned
@@ -1122,7 +1150,6 @@ __all__ = [
     "CheckpointSaved",
     "CheckpointSavedData",
     "ErrorData",
-    "ErrorEvent",
     "ErrorFatal",
     "ErrorSeverity",
     "ErrorTransient",
@@ -1133,6 +1160,8 @@ __all__ = [
     "GraphNodeEnterData",
     "GraphNodeExit",
     "GraphNodeExitData",
+    "OrchestrationStep",
+    "OrchestrationStepData",
     "HITLAllowlisted",
     "HITLDecision",
     "HITLDecisionData",
@@ -1221,6 +1250,8 @@ __all__ = [
     "WorkerCompletedData",
     "WorkerFailed",
     "WorkerFailedData",
+    "WorkerHalted",
+    "WorkerHaltedData",
     "WorkerSpawned",
     "WorkerSpawnedData",
     "event_adapter",

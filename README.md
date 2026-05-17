@@ -30,13 +30,25 @@ Nine execution patterns. Auto-selected per task. Skills improve over time.
 
 If you already use LangChain’s agent APIs, think of **`create_agent`** as your main entrypoint — with orchestration, memory, streaming, and safety knobs in one place.
 
-### Install
+### Install (Python library)
 
 ```bash
 pip install agloom
 # optional extras, e.g. Groq:
 pip install agloom[groq]
 ```
+
+**What you get from PyPI**
+
+| Command / package | Role |
+| ----------------- | ---- |
+| `pip install agloom` | Python library + **`agloom-runtime`** (AGP bridge process) |
+| `agloom-runtime serve` | NDJSON/WebSocket server — used by clients below |
+| **`agloom` on PATH** | Short install notice only — **not** the interactive terminal UI |
+
+**Terminal UI:** install the npm package from repo folder [`agloom_cli/`](agloom_cli/) (`npm install` → `npm run build` → `npm start` or global `agloom` after publish). It spawns `agloom-runtime` over stdio.
+
+**Model temperature:** pass a configured LangChain chat model (e.g. `ChatGroq(..., temperature=0.2)`) or a provider-prefixed string (`"groq:llama-3.3-70b-versatile"`). `create_agent` does not take a separate `temperature=` argument.
 
 ### Your first agent
 
@@ -79,7 +91,7 @@ For the full feature tour, see **[What you get](https://agloom.readthedocs.io/_p
 - **Terminal:** the **agloom CLI** (npm `agloom-cli`, repo **`agloom_cli/`**) is the terminal client — **React**-based UI. From that folder: `npm install` → `npm run build` → `npm start`. It talks to **`agloom-runtime`** over AGP (stdio by default). [CLI quick start](agloom_cli/docs/index.md)
 - **Browser:** **`agloom_web/`** is the Vite workspace for sessions and observability — same idea, run commands inside that folder.
 
-PyPI’s **`agloom`** package includes the library and **`agloom-runtime`**. The **`agloom`** command prints a short pointer to the **agloom CLI** (repo folder `agloom_cli/`) for backwards compatibility.
+PyPI ships the **library** and **`agloom-runtime`**, not the Ink/React terminal. The console script named **`agloom`** only prints where to install the **agloom-cli** npm client (see table above).
 
 <br>
 

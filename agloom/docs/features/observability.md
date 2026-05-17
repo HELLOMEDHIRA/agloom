@@ -110,7 +110,7 @@ print(result.token_usage)
 # {'input_tokens': 245, 'output_tokens': 512, 'total_tokens': 757}
 ```
 
-Token usage is aggregated across **all** LLM calls in a run — including classification, worker calls, and synthesis steps.
+Token usage is aggregated across **all** LLM calls in a run — including classification, worker calls, and synthesis steps. For how **`metric.tokens`** on the AGP wire avoids double-counting, see [Wire tokens & metric.tokens](wire-tokens.md). When providers omit dollar amounts, **`metric.cost`** may be marked **`estimated": true`** (approximate only).
 
 ## Event Streaming for UI
 

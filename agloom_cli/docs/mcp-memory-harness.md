@@ -51,6 +51,7 @@ Separate from AGP EventStore:
 The harness is a **cross-session task management system** built into the runtime. It helps the agent maintain accuracy and progress across **long-running**, **multi-turn**, or **multi-session** goals — without losing context or repeating work.
 
 Think of it as a structured "scratchpad" that the agent reads and writes on every turn, so it always knows:
+
 - **Where am I?** (which task is active)
 - **What have I done?** (completed tasks, verification results)
 - **What's next?** (pending tasks with priority)
@@ -68,7 +69,8 @@ The harness solves the "agent forgetfulness" problem for anything longer than a 
 The harness is **enabled automatically** whenever a LangGraph store is available. The runtime opens a default SQLite store at `.agloom/graph_store.sqlite`, so harness activates automatically. Harness cannot be disabled — it is required for accuracy and efficiency on long-running tasks.
 
 To confirm: when you run `agloom`, the boot logs will say:
-```
+
+```text
 [agloom-runtime] agent LT store=sqlite harness=on
 ```
 
@@ -92,7 +94,7 @@ The harness injects **11 tools** that form a structured workflow:
 
 ### Typical flow
 
-```
+```text
 1. User: "Build a login system"
 2. Agent calls initialize_project → creates tasks:
    [T1] Design DB schema  [PENDING]

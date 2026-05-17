@@ -200,8 +200,8 @@ def test_awrap_tool_call_aborts_on_user_reject() -> None:
         asyncio.run(mw.awrap_tool_call(req, handler))
 
 
-def test_awrap_tool_call_read_file_second_smaller_limit_skips_second_hitl() -> None:
-    """Two read_file calls same path/offset; second limit <= first approved → one HITL only."""
+def test_awrap_tool_call_read_file_second_smaller_limit_prompts_again_after_accept() -> None:
+    """One-time Accept does not coalesce — each call prompts until allowlisted."""
     calls: list[int] = []
 
     async def callback(event: str, payload: Any) -> str:
@@ -233,6 +233,45 @@ def test_awrap_tool_call_read_file_second_smaller_limit_skips_second_hitl() -> N
         assert await mw.awrap_tool_call(r2, handler) == "ok"
 
     asyncio.run(run())
+    assert len(calls) == 2
+
+
+def test_awrap_tool_call_read_file_allowlist_coalesces_subset_read() -> None:
+    """Allowlist + read_file dedupe: second smaller limit on same path skips a second prompt."""
+    calls: list[int] = []
+
+    async def callback(event: str, payload: Any) -> str:
+        calls.append(1)
+        return "allowlist"
+
+    allowlist: set[str] = set()
+    mw = HumanApprovalMiddleware(
+        interrupt_before_tools=["tools"],
+        user_callback=callback,
+        agent_name="agent_allowlist_coalesce",
+        tool_allowlist=allowlist,
+    )
+
+    async def handler(req: Any) -> str:
+        return "ok"
+
+    r1 = _make_request_v1(
+        "read_file",
+        {"path": "pyproject.toml", "offset": 0, "limit": 8000},
+        tool_call_id="a",
+    )
+    r2 = _make_request_v1(
+        "read_file",
+        {"path": "pyproject.toml", "offset": 0, "limit": 160},
+        tool_call_id="b",
+    )
+
+    async def run() -> None:
+        assert await mw.awrap_tool_call(r1, handler) == "ok"
+        assert await mw.awrap_tool_call(r2, handler) == "ok"
+
+    asyncio.run(run())
+    assert "read_file" in allowlist
     assert len(calls) == 1
 
 

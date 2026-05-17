@@ -35,7 +35,6 @@ Use ``async with agent:`` or ``await agent.aclose()`` to release MCP clients and
 from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
 from importlib.metadata import version as _version
 
-from .cli_tools import CLI_TOOL_NAMES, SafetyContext, get_cli_tools
 from .delegation import (
     BackgroundDelegationManager,
     BackgroundTask,
@@ -139,11 +138,15 @@ if _HARNESS_AVAILABLE:
 
 
 def __getattr__(name: str):
-    """Lazy-export cache helpers so ``import agloom`` does not load Qdrant."""
+    """Lazy-export heavy submodules: cache (Qdrant), CLI tool registry."""
     if name in ("cache_get", "cache_set", "create_cache"):
         from . import cache as _cache
 
         return getattr(_cache, name)
+    if name in ("CLI_TOOL_NAMES", "SafetyContext", "get_cli_tools"):
+        from . import cli_tools as _cli_tools
+
+        return getattr(_cli_tools, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

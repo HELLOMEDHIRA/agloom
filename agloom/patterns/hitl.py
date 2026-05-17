@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 import asyncio
-from typing import cast
+import contextlib
+from typing import Any, cast
 
 from .. import worker as worker_module
 from ..hitl_contract import HITLEvent, call_user_callback
 from ..logging_utils import get_logger
 from ..models import ResolvedWorkerConfig, Signal, SignalType, WorkerResult
 from ..worker import extend_invoke_config_with_event_queue
+from ._worker_signals import halted_worker_result
 from .worker_gates import get_signal_queue
 
 logger = get_logger(__name__)
+
+# Bounded join when awaiting worker tasks (cancelled workers should finish quickly; guard hangs).
+_TASK_JOIN_TIMEOUT_S = 600.0
+_SIGNAL_POLL_TIMEOUT_S = 0.2
+_SIGNAL_POLL_TIMEOUT = object()  # sentinel from _timed_signal_get on queue timeout
 
 
 async def run_workers_with_hitl(
@@ -52,7 +59,11 @@ async def _check_before_workers(
     agent: dict,
     configs: list[ResolvedWorkerConfig],
 ) -> tuple[list[ResolvedWorkerConfig], list[str]]:
-    """Gate each worker against interrupt_before_workers. 'workers' = wildcard."""
+    """Gate each worker against interrupt_before_workers.
+
+    Wildcards: ``*`` or ``__all__`` matches every worker id. The string ``workers`` is a **literal**
+    worker id only (not a wildcard — use ``*`` for all workers).
+    """
     interrupt_list: list[str] = agent.get("interrupt_before_workers") or []
     user_callback = agent.get("user_callback")
 
@@ -81,10 +92,15 @@ async def _check_before_workers(
                 ),
             )
         except Exception as exc:
-            logger.error(f"[HITL] L3-Before: callback raised {exc} — skipping '{cfg.worker_id}' for safety.")
-            decision = "skip"
+            logger.error(
+                f"[HITL] L3-Before: callback raised {exc!r} — failing open (continue with worker); "
+                f"not treating as user skip."
+            )
+            approved.append(cfg)
+            continue
 
         if str(decision).strip().lower() in ("skip", "abort", "no", "cancel"):
+            # Same user-decline contract as L2 UserAbort / middleware skip: not an execution failure bit.
             logger.event(f"[HITL] L3-Before: '{cfg.worker_id}' skipped by user.")
             skipped.append(cfg.worker_id)
         else:
@@ -149,36 +165,39 @@ async def _run_parallel_workers(
     return results
 
 
-async def _listen_for_halt(
+async def _timed_signal_get(signal_queue: asyncio.Queue) -> Any:
+    """Return the next queue item, or :data:`_SIGNAL_POLL_TIMEOUT` after a short idle window."""
+    try:
+        return await asyncio.wait_for(signal_queue.get(), timeout=_SIGNAL_POLL_TIMEOUT_S)
+    except TimeoutError:
+        return _SIGNAL_POLL_TIMEOUT
+
+
+async def _apply_l4_signal_batch(
+    *,
     agent: dict,
+    agent_name: str,
+    batch: list[Any],
     tasks: list[asyncio.Task],
     halt_event: asyncio.Event,
-    invoke_config: dict | None = None,
-) -> None:
-    """
-    Background drain of signal_queue. HALT_ALL cancels all tasks.
-    CLARIFICATION_REQUEST routes through user_callback to per-worker queues
-    without blocking other workers.
-    """
-    signal_queue = get_signal_queue(agent, invoke_config)
-    if signal_queue is None:
-        return
+    clarification_queues: dict[str, asyncio.Queue],
+    user_callback: Any,
+) -> bool:
+    """Process one drained batch. Returns True when HALT_ALL fired (listener should exit)."""
+    halts = [x for x in batch if isinstance(x, Signal) and x.signal_type == SignalType.HALT_ALL]
+    if halts:
+        sig = halts[0]
+        logger.warning(
+            f"[HITL] L4 HALT_ALL — worker={sig.worker_id!r} "
+            f"msg={sig.message!r} — cancelling {len(tasks)} task(s)."
+        )
+        halt_event.set()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        return True
 
-    clarification_queues: dict[str, asyncio.Queue] = {}
-    if invoke_config:
-        clarification_queues = invoke_config.get("configurable", {}).get("clarification_queues") or {}
-
-    user_callback = agent.get("user_callback")
-    agent_name = agent.get("name", "Agent")
-
-    while not all(t.done() for t in tasks):
-        try:
-            raw = await asyncio.wait_for(signal_queue.get(), timeout=0.2)
-        except TimeoutError:
-            continue
-        except asyncio.CancelledError:
-            return
-
+    for raw in batch:
         if not isinstance(raw, Signal):
             logger.warning(
                 f"[HITL] Ignoring non-Signal queue item: {type(raw).__name__!r} — "
@@ -186,17 +205,6 @@ async def _listen_for_halt(
             )
             continue
         signal = raw
-
-        if signal.signal_type == SignalType.HALT_ALL:
-            logger.warning(
-                f"[HITL] L4 HALT_ALL — worker={signal.worker_id!r} "
-                f"msg={signal.message!r} — cancelling {len(tasks)} task(s)."
-            )
-            halt_event.set()
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            return
 
         if signal.signal_type == SignalType.CLARIFICATION_REQUEST:
             logger.event(f"[HITL] L4 CLARIFICATION_REQUEST from {signal.worker_id!r} — question={signal.message!r}")
@@ -233,10 +241,83 @@ async def _listen_for_halt(
                     f"[HITL] user_callback raised during clarification: {exc} — "
                     f"sending fallback answer to worker '{signal.worker_id}'."
                 )
-                await cq.put(f"Clarification request failed ({exc}). Proceed with your best judgment.")
+                await cq.put(
+                    "Clarification could not be collected. Proceed with your best judgment."
+                )
 
         else:
             logger.debug(f"[HITL] L4 signal ignored: {signal.signal_type}")
+    return False
+
+
+async def _listen_for_halt(
+    agent: dict,
+    tasks: list[asyncio.Task],
+    halt_event: asyncio.Event,
+    invoke_config: dict | None = None,
+) -> None:
+    """
+    Background drain of signal_queue. HALT_ALL cancels all tasks.
+    CLARIFICATION_REQUEST routes through user_callback to per-worker queues
+    without blocking other workers.
+    """
+    signal_queue = get_signal_queue(agent, invoke_config)
+    if signal_queue is None:
+        return
+
+    clarification_queues: dict[str, asyncio.Queue] = {}
+    if invoke_config:
+        clarification_queues = invoke_config.get("configurable", {}).get("clarification_queues") or {}
+
+    user_callback = agent.get("user_callback")
+    agent_name = agent.get("name", "Agent")
+
+    pending_workers = {t for t in tasks if not t.done()}
+    poll_task: asyncio.Task[Any] | None = None
+
+    try:
+        while pending_workers:
+            if poll_task is None or poll_task.done():
+                poll_task = asyncio.create_task(_timed_signal_get(signal_queue))
+
+            done, still = await asyncio.wait(
+                pending_workers | {poll_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            pending_workers = {t for t in still if t is not poll_task and not t.done()}
+
+            if poll_task not in done:
+                continue
+
+            item = poll_task.result()
+            poll_task = None
+            if item is _SIGNAL_POLL_TIMEOUT:
+                continue
+
+            batch = [item]
+            while True:
+                try:
+                    batch.append(signal_queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
+
+            if await _apply_l4_signal_batch(
+                agent=agent,
+                agent_name=agent_name,
+                batch=batch,
+                tasks=tasks,
+                halt_event=halt_event,
+                clarification_queues=clarification_queues,
+                user_callback=user_callback,
+            ):
+                return
+    except asyncio.CancelledError:
+        return
+    finally:
+        if poll_task is not None and not poll_task.done():
+            poll_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await poll_task
 
 
 async def _collect_with_after_interrupt(
@@ -259,13 +340,22 @@ async def _collect_with_after_interrupt(
             for t in pending:
                 cfg = tasks[t]
                 try:
-                    r = cast(WorkerResult, await t)
+                    r = cast(
+                        WorkerResult,
+                        await asyncio.wait_for(asyncio.shield(t), timeout=_TASK_JOIN_TIMEOUT_S),
+                    )
+                except asyncio.TimeoutError:
+                    r = halted_worker_result(
+                        worker_id=cfg.worker_id,
+                        task=cfg.task,
+                        output="Timed out waiting for worker task after HALT_ALL.",
+                        error="TaskJoinTimeout",
+                    )
                 except asyncio.CancelledError:
-                    r = WorkerResult(
+                    r = halted_worker_result(
                         worker_id=cfg.worker_id,
                         task=cfg.task,
                         output="Cancelled — HALT_ALL fired.",
-                        signal=SignalType.FAILED,
                         error="CancelledError",
                     )
                 results.append(r)
@@ -294,13 +384,23 @@ async def _collect_with_after_interrupt(
                 continue
             cfg = tasks[task]
             try:
-                result = cast(WorkerResult, await task)
-            except asyncio.CancelledError:
+                result = cast(
+                    WorkerResult,
+                    await asyncio.wait_for(asyncio.shield(task), timeout=_TASK_JOIN_TIMEOUT_S),
+                )
+            except asyncio.TimeoutError:
                 result = WorkerResult(
                     worker_id=cfg.worker_id,
                     task=cfg.task,
-                    output="Cancelled — HALT_ALL fired.",
+                    output="Timed out waiting for worker task to finish.",
                     signal=SignalType.FAILED,
+                    error="TaskJoinTimeout",
+                )
+            except asyncio.CancelledError:
+                result = halted_worker_result(
+                    worker_id=cfg.worker_id,
+                    task=cfg.task,
+                    output="Cancelled — HALT_ALL fired.",
                     error="CancelledError",
                 )
             except Exception as exc:
@@ -337,5 +437,19 @@ async def _collect_with_after_interrupt(
     return results
 
 
+_HITL_WORKERS_LITERAL_WARNED = False
+
+
 def _should_interrupt(worker_id: str, interrupt_list: list[str]) -> bool:
-    return "workers" in interrupt_list or worker_id in interrupt_list
+    global _HITL_WORKERS_LITERAL_WARNED
+    tokens = {x.strip() for x in interrupt_list if x.strip()}
+    if "*" in tokens or "__all__" in tokens:
+        return True
+    if "workers" in tokens and not _HITL_WORKERS_LITERAL_WARNED:
+        _HITL_WORKERS_LITERAL_WARNED = True
+        logger.warning(
+            "[HITL] interrupt_* list contains 'workers', which is not a wildcard "
+            "(use '*' or '__all__' for all workers). Only a worker whose id is literally "
+            "'workers' will match."
+        )
+    return worker_id in tokens

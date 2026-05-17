@@ -272,3 +272,29 @@ describe('AGPBridge — command dispatch', () => {
     ;(mockStdin as Record<string, unknown>)['writable'] = true
   })
 })
+
+describe('AGPBridge — auto-reconnect', () => {
+  beforeEach(() => {
+    jest.useFakeTimers()
+    mockWrite.mockClear()
+    exitListeners.length = 0
+  })
+
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
+  it('schedules restart after unexpected exit when autoReconnect is enabled', () => {
+    const { spawn } = jest.requireMock('node:child_process') as { spawn: jest.Mock }
+    spawn.mockClear()
+    const bridge = createAGPBridge()
+    bridge.start([], { autoReconnect: true, reconnectDelayMs: 1000, reconnectMaxAttempts: 2 })
+    expect(spawn).toHaveBeenCalledTimes(1)
+    for (const fn of exitListeners.splice(0)) {
+      fn(1, null)
+    }
+    jest.advanceTimersByTime(1000)
+    expect(spawn).toHaveBeenCalledTimes(2)
+    bridge.kill()
+  })
+})

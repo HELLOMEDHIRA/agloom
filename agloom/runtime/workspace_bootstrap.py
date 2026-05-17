@@ -10,6 +10,7 @@ the CLI default template (``agloom_cli`` ``defaultAgloomTemplate`` / ``config``)
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -20,6 +21,10 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from .atomic_io import atomic_write_text
+
+SESSION_MARKER_SCHEMA_VERSION = 1
 
 _DEFAULT_RULES_README = """Add rule files here (*.md, *.mdc). Set rules.dir in agloom.yaml to use another folder.
 """
@@ -49,8 +54,10 @@ def _ensure_agsuperbrain_mcp_in_nested_yaml(path: Path) -> None:
     if not path.is_file():
         return
     try:
+        from .yaml_safe import safe_yaml_load
+
         raw = path.read_text(encoding="utf-8")
-        doc = yaml.safe_load(raw)
+        doc = safe_yaml_load(raw, label=str(path))
         if not isinstance(doc, dict):
             return
         mcp = doc.get("mcp")
@@ -211,7 +218,7 @@ execution:
   max_concurrent: 4
   max_retries: 2
   llm_timeout: 120.0
-  classifier_timeout: 30.0
+  classifier_timeout: 60.0
 
 safety:
   require_approval: true
@@ -293,6 +300,15 @@ def sessions_dir_for_runtime(cwd: Path | None = None, *, args: Any | None = None
     return agloom_root / "sessions"
 
 
+def _workspace_yaml_rewrite_allowed(args: Any | None) -> bool:
+    if args is None:
+        return False
+    if getattr(args, "rewrite_workspace_yaml", False):
+        return True
+    v = (os.environ.get("AGLOOM_REWRITE_WORKSPACE_YAML") or "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
 def ensure_agloom_workspace(cwd: Path | None = None, *, args: Any | None = None) -> tuple[Path, bool]:
     """Scaffold ``.agloom/`` dirs and starter YAML when missing (also run from ``agloom-runtime serve`` stdio).
 
@@ -337,7 +353,7 @@ def ensure_agloom_workspace(cwd: Path | None = None, *, args: Any | None = None)
             nested_yaml.write_text(DEFAULT_AGLOOM_YAML, encoding="utf-8")
             created = True
 
-    if nested_yaml.is_file():
+    if nested_yaml.is_file() and _workspace_yaml_rewrite_allowed(args):
         _ensure_agsuperbrain_mcp_in_nested_yaml(nested_yaml)
         rewrite_agloom_yaml_strip_memory_skills_enabled(nested_yaml)
 
@@ -459,7 +475,7 @@ def merge_session_marker_thread_turns(
     existing["conversation"] = conv
     existing["session_id"] = session_id
 
-    path.write_text(json.dumps(existing, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(existing, indent=2, sort_keys=False) + "\n")
     return path
 
 
@@ -523,6 +539,7 @@ def write_session_started_json(
         started_at = str(existing["started_at"])
 
     payload: dict[str, Any] = {
+        "schema_version": SESSION_MARKER_SCHEMA_VERSION,
         "session_id": session_id,
         "started_at": started_at,
         "cwd": str(root),
@@ -543,5 +560,5 @@ def write_session_started_json(
         if pk in existing and pk not in payload:
             payload[pk] = existing[pk]
 
-    path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=False) + "\n")
     return path

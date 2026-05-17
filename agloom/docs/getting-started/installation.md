@@ -33,15 +33,21 @@ agloom supports multiple LLM providers. Install only what you need:
 === "pip"
 
     ```bash
+    pip install agloom[openai]       # OpenAI
+    pip install agloom[anthropic]   # Anthropic
+    pip install agloom[huggingface] # Hugging Face Inference / chat stack
+    pip install agloom[memory]     # sentence-transformers + HF (smart context / skills)
     pip install agloom[groq]         # Groq (Llama, Mixtral)
-    pip install agloom[nvidia]       # NVIDIA NIM
-    pip install 'agloom[groq,nvidia]'   # Groq + NVIDIA extras together
+    pip install agloom[nvidia]     # NVIDIA NIM
+    pip install 'agloom[groq,nvidia]'   # combine named extras (there is no agloom[all])
     pip install agloom[docs]         # MkDocs (same stack as dev docs builds)
     ```
 
 === "uv"
 
     ```bash
+    uv add agloom[openai]
+    uv add agloom[memory]
     uv add agloom[groq]
     uv add 'agloom[groq,nvidia]'
     ```

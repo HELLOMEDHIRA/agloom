@@ -25,4 +25,4 @@ Production build: **`npm run build`** → static **`dist/`**. Set **`VITE_AGP_WS
 - **[architecture.md](architecture.md)** — stack, proxies, state (`dispatch` reducer parity with CLI), deployment & CSP notes.
 - **Python / AGP protocol** — canonical spec in the main repo at `agloom/docs/protocol/agp.md` (published under MkDocs **Protocol**).
 
-The Zustand **`dispatch`** reducer handles **every** inbound **`AGPEvent`** type so wire traffic is not silently dropped; runtime/tool/memory feedback surfaces via **`protocolNotes`** and the execution trace panel.
+The Zustand **`dispatch`** reducer handles inbound AGP events so wire traffic is not silently dropped; runtime, tool, and memory feedback surfaces in the execution trace panel.

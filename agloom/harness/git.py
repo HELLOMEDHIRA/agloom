@@ -9,11 +9,30 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from ..cli_tools.subprocess_env import safe_subprocess_env
 from ..logging_utils import get_logger
 
 logger = get_logger(__name__)
 
+_MAX_STAGE_PATHS = 500
+
 _CHECKPOINT_PREFIX = "agloom/"
+
+
+def _sanitize_git_message(msg: str, *, max_len: int = 10_000) -> str:
+    """Strip control characters that break ``git -m`` or inject misleading ``git log`` output."""
+    s = msg.replace("\r\n", "\n").replace("\r", "\n")
+    # Single-line subjects: flatten newlines in the first line for ``commit -m``.
+    lines = s.split("\n", 1)
+    first = lines[0].replace("\n", " ")
+    rest = ("\n" + lines[1]) if len(lines) > 1 else ""
+    s = first + rest
+    out_chars: list[str] = []
+    for ch in s[:max_len]:
+        o = ord(ch)
+        if ch == "\n" or o >= 32:
+            out_chars.append(ch)
+    return "".join(out_chars).strip() or "(empty message)"
 
 
 @dataclass
@@ -85,6 +104,23 @@ class GitSession:
     def _author_env(self) -> dict[str, str]:
         return {"GIT_AUTHOR_NAME": self._author_name, "GIT_AUTHOR_EMAIL": self._author_email}
 
+    def _git_env(self, extra: dict[str, str] | None = None) -> dict[str, str]:
+        """Conservative subprocess env — drop inherited GIT_* redirect vars."""
+        env = safe_subprocess_env(self._author_env())
+        for key in (
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_CONFIG",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_SYSTEM",
+        ):
+            env.pop(key, None)
+        env.setdefault("GIT_TERMINAL_PROMPT", "0")
+        if extra:
+            env.update(extra)
+        return env
+
     async def _run(
         self,
         *args: str,
@@ -94,7 +130,7 @@ class GitSession:
     ) -> tuple[int, str, str]:
         """Run a git command. Returns (returncode, stdout, stderr)."""
         try:
-            merged_env = {**os.environ, **(env or {})} if env is not None else None
+            merged_env = self._git_env(env) if env is not None else self._git_env()
             proc = await asyncio.create_subprocess_exec(
                 "git",
                 *args,
@@ -210,14 +246,6 @@ class GitSession:
                 continue
             parts = line.split("|")
             if len(parts) >= 5:
-                commit_hash = parts[0]
-                rc2, stat_out, _ = await self._run("show", "--shortstat", "--format=", "-1", commit_hash)
-                files_changed = 0
-                if rc2 == 0 and stat_out.strip():
-                    for word in stat_out.split():
-                        if word.isdigit():
-                            files_changed = int(word)
-                            break
                 commits.append(
                     GitCommit(
                         hash=parts[0],
@@ -225,7 +253,7 @@ class GitSession:
                         message=parts[2],
                         author=parts[3],
                         date=parts[4],
-                        files_changed=files_changed,
+                        files_changed=0,
                     )
                 )
         return commits
@@ -250,9 +278,16 @@ class GitSession:
                 logger.debug("[Git] Nothing to commit — working tree clean")
                 return ""
 
-            await self._run("add", "-A")
+            paths = list(dict.fromkeys(gs.staged + gs.unstaged + gs.untracked))
+            if paths:
+                for i in range(0, len(paths), _MAX_STAGE_PATHS):
+                    chunk = paths[i : i + _MAX_STAGE_PATHS]
+                    rc_add, _, err_add = await self._run("add", "--", *chunk)
+                    if rc_add != 0:
+                        logger.warning(f"[Git] git add failed: {err_add}")
+                        return ""
 
-            commit_args = ["commit", "-m", message]
+            commit_args = ["commit", "-m", _sanitize_git_message(message)]
             if allow_empty:
                 commit_args.insert(1, "--allow-empty")
             rc, _, stderr = await self._run(*commit_args, env=self._author_env())
@@ -296,8 +331,15 @@ class GitSession:
                     return ""
 
             tag_name = f"{_CHECKPOINT_PREFIX}{name}"
+            rc_exist, _, _ = await self._run("rev-parse", f"refs/tags/{tag_name}")
+            if rc_exist == 0:
+                logger.warning(f"[Git] Checkpoint tag already exists: {tag_name}")
+                return ""
+
             ts = datetime.now(UTC).isoformat()
-            msg = f"Checkpoint: {name}\n\n{description}\n\nsession={session_id}\ncreated_at={ts}"
+            msg = _sanitize_git_message(
+                f"Checkpoint: {name}\n\n{description}\n\nsession={session_id}\ncreated_at={ts}",
+            )
 
             rc, _, stderr = await self._run("tag", "-a", tag_name, "-m", msg, commit_hash, env=self._author_env())
             if rc != 0:

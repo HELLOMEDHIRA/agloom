@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+import time
+import uuid
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -470,21 +473,19 @@ class ProgressTracker:
             return self._artifact
 
     def _load_from_disk(self) -> ProgressArtifact | None:
-        """Scan upward from cwd for agloom-progress.json."""
+        """Load ``agloom-progress.json`` from cwd only (no upward walk)."""
         try:
-            cwd = Path.cwd()
+            f = Path.cwd() / _PROGRESS_FILE
         except Exception:
-            cwd = Path(".")
-
-        for directory in [cwd] + list(cwd.parents):
-            f = directory / _PROGRESS_FILE
-            if f.exists():
-                try:
-                    data = json.loads(f.read_text())
-                    return ProgressArtifact.model_validate(data)
-                except Exception as exc:
-                    logger.warning(f"[Progress] Failed to load {f}: {exc!r}")
-        return None
+            f = Path(_PROGRESS_FILE)
+        if not f.exists():
+            return None
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            return ProgressArtifact.model_validate(data)
+        except Exception as exc:
+            logger.warning(f"[Progress] Failed to load {f}: {exc!r}")
+            return None
 
     async def save_progress(self) -> None:
         """Persist current artifact to LongTermStore."""
@@ -514,22 +515,42 @@ class ProgressTracker:
 
             target = (path or Path.cwd()) / _PROGRESS_FILE
             target.parent.mkdir(parents=True, exist_ok=True)
-            # Write the canonical ProgressArtifact shape so it round-trips via _load_from_disk.
-            target.write_text(self._artifact.model_dump_json())
+            payload = self._artifact.model_dump_json()
+            tmp = target.with_name(f"{target.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                tmp.write_text(payload, encoding="utf-8")
+                tmp.replace(target)
+            except BaseException:
+                if tmp.exists():
+                    try:
+                        tmp.unlink()
+                    except OSError:
+                        pass
+                raise
 
         meta_file = target.with_suffix(".meta.json")
-        meta_file.write_text(
-            json.dumps(
-                {
-                    "project": self._project_name,
-                    "agent": self._agent_name,
-                    "saved_at": datetime.now(UTC).isoformat(),
-                    "completion": f"{self._artifact.completion_ratio:.0%}",
-                    "tasks": len(self._artifact.tasks),
-                },
-                indent=2,
-            )
+        meta_payload = json.dumps(
+            {
+                "project": self._project_name,
+                "agent": self._agent_name,
+                "saved_at": datetime.now(UTC).isoformat(),
+                "completion": f"{self._artifact.completion_ratio:.0%}",
+                "tasks": len(self._artifact.tasks),
+                "version": self._artifact.version,
+            },
+            indent=2,
         )
+        meta_tmp = meta_file.with_name(f"{meta_file.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            meta_tmp.write_text(meta_payload, encoding="utf-8")
+            meta_tmp.replace(meta_file)
+        except BaseException:
+            if meta_tmp.exists():
+                try:
+                    meta_tmp.unlink()
+                except OSError:
+                    pass
+            raise
         logger.info(f"[Progress] Saved to disk: {target}")
         return str(target)
 
@@ -717,8 +738,13 @@ async def get_progress_tracker(
     agent_name: str,
     project_name: str = "project",
 ) -> ProgressTracker:
-    """Get or create a singleton ProgressTracker per (agent_name, project_name)."""
+    """Get or create a singleton ProgressTracker per (agent_name, project_name, event loop)."""
     key = f"{agent_name}:{project_name}"
+    try:
+        loop = asyncio.get_running_loop()
+        key = f"{key}:loop:{id(loop)}"
+    except RuntimeError:
+        key = f"{key}:thread:{threading.get_ident()}"
     async with _tracker_lock:
         if key not in _progress_trackers:
             _progress_trackers[key] = ProgressTracker(store, agent_name, project_name)
@@ -966,3 +992,28 @@ def bootstrap_progress_tool(tracker: ProgressTracker):
         return f"=== SESSION BOOTSTRAP ===\n\n{warmup}\n{progress_ctx}\n{next_text}\n=== END BOOTSTRAP ==="
 
     return bootstrap_progress
+
+
+def cleanup_stale_progress_file(
+    directory: Path | None = None,
+    *,
+    max_age_seconds: float = 7 * 24 * 3600,
+) -> bool:
+    """Remove ``agloom-progress.json`` when older than *max_age_seconds* (best-effort)."""
+    base = directory or Path.cwd()
+    target = base / _PROGRESS_FILE
+    if not target.is_file():
+        return False
+    try:
+        age = time.time() - target.stat().st_mtime
+        if age < max_age_seconds:
+            return False
+        target.unlink()
+        meta = target.with_suffix(".meta.json")
+        if meta.is_file():
+            meta.unlink()
+        logger.info(f"ProgressTracker: removed stale {target.name} (age {age:.0f}s)")
+        return True
+    except OSError as exc:
+        logger.debug(f"ProgressTracker: could not remove stale progress file: {exc!r}")
+        return False

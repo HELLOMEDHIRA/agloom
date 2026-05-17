@@ -1,8 +1,8 @@
 """Reflection pattern — iterative generate → critique → revise loop until quality threshold."""
 
 import re
+import time
 
-from .. import worker as worker_module
 from ..logging_utils import get_logger
 from ..models import (
     ExecutionResult,
@@ -18,6 +18,8 @@ from ..models import (
 )
 from ..worker import extend_invoke_config_with_event_queue
 from ._resolve import resolve_worker_configs
+from ._steps_accounting import steps_taken_from_audit
+from .hitl import run_workers_with_hitl
 from .worker_gates import drain_for_halt, get_signal_queue
 
 logger = get_logger(__name__)
@@ -58,7 +60,6 @@ async def handle_reflection(
     L4 HALT_ALL checked between iterations (not mid-generate/critique).
     """
     agent_name = agent.get("name", "Agent")
-    llm = agent["llm"]
     ml = agent.get("max_step_output_length", 0)
     max_iterations = agent.get("max_reflection_iterations", 3)
     quality_threshold = agent.get("reflection_threshold", 7)
@@ -91,8 +92,17 @@ async def handle_reflection(
     best_score: int = 0
     feedback: str = ""
     worker_results: list[WorkerResult] = []
+    llm_timeout = float(agent.get("llm_timeout", 120.0))
+    wall_deadline = time.monotonic() + llm_timeout * max(max_iterations, 1) * 3
 
     for iteration in range(max_iterations):
+        if time.monotonic() > wall_deadline:
+            cap_s = llm_timeout * max(max_iterations, 1) * 3
+            logger.warning(
+                f"[Reflection] {agent_name} — wall-clock budget exceeded "
+                f"({cap_s:.0f}s cap); returning best draft."
+            )
+            break
         if iteration > 0 and signal_queue:
             halt = await drain_for_halt(
                 signal_queue,
@@ -107,11 +117,11 @@ async def handle_reflection(
                     pattern_used=PatternType.REFLECTION,
                     query=query,
                     output=(best_draft or f"Halted before completion (HALT_ALL at iteration {iteration})."),
-                    steps_taken=len(worker_results) + 1,
-                    success=False,
+                    steps_taken=steps_taken_from_audit(steps),
+                    success=True,
                     analysis=analysis,
                     worker_results=worker_results,
-                    error="HALT_ALL",
+                    metadata={"halted_by_user": True, "halt_at_iteration": iteration},
                     messages=raw_messages,
                 )
 
@@ -140,7 +150,27 @@ async def handle_reflection(
 
         logger.event(f"[Reflection] {agent_name} — iteration {iteration + 1}/{max_iterations}: generating...")
         merged = extend_invoke_config_with_event_queue(config, agent.get("_event_queue"), agent=agent)
-        gen_result = await worker_module.run_worker(gen_cfg, llm, invoke_config=merged)
+        gen_out, gen_skipped = await run_workers_with_hitl(agent, [gen_cfg], invoke_config=merged)
+        if gen_skipped or not gen_out:
+            logger.warning(
+                f"[Reflection] Generator skipped by L3-before at iteration {iteration}: {gen_skipped!r}"
+            )
+            if not best_draft:
+                best_draft = "Generator skipped at user request."
+            return ExecutionResult(
+                pattern_used=PatternType.REFLECTION,
+                query=query,
+                output=best_draft,
+                steps_taken=steps_taken_from_audit(steps),
+                success=False,
+                analysis=analysis,
+                worker_results=worker_results,
+                metadata={"user_skipped_generator": list(gen_skipped or [])},
+                steps=steps,
+                token_usage=usage,
+                messages=raw_messages,
+            )
+        gen_result = gen_out[0]
         worker_results.append(gen_result)
         raw_messages.extend(getattr(gen_result, "messages", []))
         steps.append(
@@ -175,19 +205,45 @@ async def handle_reflection(
         critic_cfg = resolve_worker_configs(agent, [critic_plan])[0]
 
         logger.event(f"[Reflection] {agent_name} — iteration {iteration + 1}/{max_iterations}: critiquing...")
-        critic_result = await worker_module.run_worker(critic_cfg, llm, invoke_config=merged)
+        critic_out, critic_skipped = await run_workers_with_hitl(agent, [critic_cfg], invoke_config=merged)
+        if critic_skipped or not critic_out:
+            logger.warning(
+                f"[Reflection] Critic skipped by L3-before at iteration {iteration}: {critic_skipped!r} — stopping loop."
+            )
+            if not best_draft and gen_result.output:
+                best_draft = gen_result.output
+            return ExecutionResult(
+                pattern_used=PatternType.REFLECTION,
+                query=query,
+                output=best_draft or "Critic skipped at user request.",
+                steps_taken=steps_taken_from_audit(steps),
+                success=True,
+                analysis=analysis,
+                worker_results=worker_results,
+                metadata={"user_skipped_critic": list(critic_skipped or [])},
+                steps=steps,
+                token_usage=usage,
+                messages=raw_messages,
+            )
+        critic_result = critic_out[0]
         worker_results.append(critic_result)
         raw_messages.extend(getattr(critic_result, "messages", []))
         if critic_result.token_usage:
             usage = _merge_token_usage(usage, critic_result.token_usage)
 
-        parsed = _parse_critic_response(critic_result.output, quality_threshold)
+        parsed = parse_critic_response(critic_result.output, quality_threshold)
         current_score = parsed["score"]
         feedback = parsed["feedback"]
+        score_trusted: bool = parsed.get("score_trusted", False)
 
-        if current_score >= best_score:
+        if score_trusted and current_score > best_score:
             best_draft = draft
             best_score = current_score
+        elif not score_trusted:
+            logger.warning(
+                f"[Reflection] Critic SCORE not parseable at iteration {iteration} — "
+                f"not promoting draft from numeric score (draft unchanged unless already better)."
+            )
 
         steps.append(
             _make_step(
@@ -199,24 +255,25 @@ async def handle_reflection(
             )
         )
 
+        log_score = max(0, min(10, current_score))
         logger.event(
             f"[Reflection] {agent_name} — "
             f"iteration {iteration + 1} result: "
-            f"score={current_score}/10, passed={parsed['passed']}, "
+            f"score={log_score}/10, passed={parsed['passed']}, "
             f"feedback='{feedback[:80]}...'"
         )
 
-        if current_score >= quality_threshold:
+        if score_trusted and current_score >= quality_threshold and parsed.get("passed"):
             logger.event(
                 f"[Reflection] {agent_name} — "
-                f"quality threshold met ({current_score}>={quality_threshold}) "
+                f"quality threshold met ({current_score}>={quality_threshold}, passed=yes) "
                 f"after {iteration + 1} iteration(s)."
             )
             return ExecutionResult(
                 pattern_used=PatternType.REFLECTION,
                 query=query,
                 output=best_draft,
-                steps_taken=len(worker_results),
+                steps_taken=steps_taken_from_audit(steps),
                 success=True,
                 analysis=analysis,
                 worker_results=worker_results,
@@ -234,7 +291,7 @@ async def handle_reflection(
         pattern_used=PatternType.REFLECTION,
         query=query,
         output=best_draft or "Reflection failed to produce a valid draft.",
-        steps_taken=len(worker_results),
+        steps_taken=steps_taken_from_audit(steps),
         success=False,
         analysis=analysis,
         worker_results=worker_results,
@@ -248,13 +305,17 @@ async def handle_reflection(
     )
 
 
-def _parse_critic_response(text: str, threshold: int) -> dict:
+def parse_critic_response(text: str, threshold: int) -> dict:
     """Parse SCORE/PASSED/FEEDBACK from critic text. Falls back to safe defaults on garbled input."""
     try:
         score: int = 0
         passed: bool | None = None
 
         score_match = re.search(r"SCORE\s*:\s*(\d+)", text, re.IGNORECASE)
+        if not score_match:
+            score_match = re.search(r"\bscore\s*[:\-]?\s*(\d+)\s*/\s*10\b", text, re.IGNORECASE)
+        if not score_match:
+            score_match = re.search(r"\b(\d+)\s*/\s*10\b", text)
         if score_match:
             score = max(0, min(10, int(score_match.group(1))))
 
@@ -271,8 +332,11 @@ def _parse_critic_response(text: str, threshold: int) -> dict:
 
         if passed is None:
             passed = score >= threshold  # inclusive: threshold counts as pass
+        elif passed_match and score_match and passed and score < threshold:
+            # Explicit PASSED:yes with sub-threshold score — do not treat as pass.
+            passed = False
 
-        return {"score": score, "passed": passed, "feedback": feedback}
+        return {"score": score, "passed": passed, "feedback": feedback, "score_trusted": bool(score_match)}
 
     except Exception:
-        return {"score": 5, "passed": False, "feedback": text}
+        return {"score": 0, "passed": False, "feedback": text, "score_trusted": False}

@@ -61,7 +61,7 @@ export const HITLGate = ({ request, onRespond }: Props): React.ReactElement => {
           onChange={(e) => setClarification(e.target.value)}
           placeholder="Your answer…"
           rows={3}
-          className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-indigo-500 w-full resize-y min-h-[72px]"
+          className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-600 focus:outline-none focus:border-indigo-500 w-full resize-y min-h-18"
         />
         <div className="flex gap-2">
           <button

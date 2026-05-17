@@ -3,6 +3,7 @@
 import { createInterface } from 'node:readline/promises'
 import stripAnsi from 'strip-ansi'
 import type { AGPEvent, InvokeAttachment } from './types/agp.js'
+import { isAgpEventType } from './types/agpEventGuards.js'
 import type { AGPBridge } from './runtime/bridge.js'
 import { writeBannerToStderr } from './banner.js'
 import { ensureAgloomCliWorkspace } from './workspaceBootstrap.js'
@@ -107,34 +108,40 @@ export const runDirect = async(options: {
   }
 
   const onStream = (evt: AGPEvent) => {
-    if (evt.type === 'error.fatal') {
+    if (isAgpEventType(evt, 'error.fatal')) {
       sawFatalOnWire = true
     }
     if (opts.json) {
       process.stdout.write(`${JSON.stringify(evt)}\n`)
       return
     }
-    if (evt.type === 'error.transient' || evt.type === 'error.fatal') {
+    if (isAgpEventType(evt, 'error.transient') || isAgpEventType(evt, 'error.fatal')) {
       process.stderr.write(`[agloom] ${evt.data.severity}: ${evt.data.message}\n`)
       return
     }
-    if (evt.type === 'worker.failed') {
+    if (isAgpEventType(evt, 'worker.failed')) {
       process.stderr.write(`[agloom] worker failed: ${evt.data.error}\n`)
       return
     }
-    if (evt.type === 'metric.tokens') {
+    if (isAgpEventType(evt, 'worker.halted')) {
+      process.stderr.write(`[agloom] worker halted: ${evt.data.reason ?? 'HALT_ALL'}\n`)
+      return
+    }
+    if (isAgpEventType(evt, 'metric.tokens')) {
       inputTok += evt.data.input_tokens ?? 0
       outputTok += evt.data.output_tokens ?? 0
     }
-    if (evt.type === 'metric.cost') {
+    if (isAgpEventType(evt, 'metric.cost')) {
       costUsd += evt.data.cost ?? 0
       if (evt.data.estimated) costHasEstimate = true
     }
-    if (evt.type === 'token.delta' && !opts.noStream) {
-      if (evt.data.text) gotModelOutput = true
-      writeOut(evt.data.text)
+    if (isAgpEventType(evt, 'token.delta') && !opts.noStream) {
+      if (evt.data.text) {
+        gotModelOutput = true
+        writeOut(evt.data.text)
+      }
     }
-    if (evt.type === 'message.assistant') {
+    if (isAgpEventType(evt, 'message.assistant')) {
       const c = evt.data.content ?? ''
       if (c) gotModelOutput = true
       if (!opts.json && c) {
@@ -144,8 +151,8 @@ export const runDirect = async(options: {
       }
     }
 
-    if (evt.type === 'hitl.request') {
-      const id = evt.data.request_id
+    if (isAgpEventType(evt, 'hitl.request')) {
+      const id = String(evt.data.request_id ?? '')
       const tty = process.stdin.isTTY && process.stderr.isTTY
       if (opts.autoApprove) {
         if (!sessionEnded) bridge.hitlRespond(id, 'accept')
@@ -174,7 +181,7 @@ export const runDirect = async(options: {
       if (!sessionEnded) bridge.hitlRespond(id, 'reject')
     }
 
-    if (evt.type === 'session.closed') {
+    if (isAgpEventType(evt, 'session.closed')) {
       sessionEnded = true
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
       if (!opts.quiet && !opts.json) {
@@ -197,9 +204,10 @@ export const runDirect = async(options: {
           const mi = runtimeArgs.indexOf('--model')
           const mid =
             mi >= 0 && runtimeArgs[mi + 1] != null ? String(runtimeArgs[mi + 1]) : ''
-          if (mid.startsWith('nvidia:')) {
+          if (mid.includes(':')) {
+            const prov = mid.split(':')[0] ?? ''
             extra =
-              '[agloom] nvidia:… install `agloom[nvidia]` if imports fail. Empty stdout with a key set usually means a blank model reply or routing short-circuit — run `--json` and check `message.assistant` / `error.*`. Session JSON: `api_key_env*` is only for `--api-key-env`; see `provider_primary_api_key_env`, `provider_credential_env`, and `provider_primary_credential_present` for standard env detection.\n'
+              `[agloom] model prefix ${prov}:… — install the matching \`agloom[${prov}]\` extra if imports fail. Empty output with a key set often means a blank reply or a routing short-circuit; run \`--json\` and check \`message.assistant\` / \`error.*\`.\n`
           } else if (!runtimeArgs.includes('--model')) {
             extra =
               '[agloom] no `--model` was sent (e.g. yaml `model: auto` with no override). Set a provider API key, `AGLOOM_MODEL`, or run `agloom -m provider:model-id`.\n'
@@ -238,7 +246,7 @@ export const runDirect = async(options: {
 
   await new Promise<void>((resolve) => {
     const done = (evt: AGPEvent) => {
-      if (evt.type === 'session.closed') {
+      if (isAgpEventType(evt, 'session.closed')) {
         bridge.off('event', done)
         resolve()
       }

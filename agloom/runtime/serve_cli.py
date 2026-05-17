@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import logging
 import os
 import re
+import stat
 from argparse import Namespace
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,25 @@ from agloom.llm.provider_registry import PROVIDER_ENV_KEYS
 from agloom.llm.sampling_presets import build_sampling_section_for_session_marker, infer_provider_slug_from_args
 from agloom.mcp_support import MCPServerConfig
 from agloom.memory.session import SessionMemory
+
+_log = logging.getLogger(__name__)
+
+MAX_SYSTEM_PROMPT_FILE_BYTES = 256 * 1024
+
+_KNOWN_WS_QUERY_KEYS = frozenset(
+    {
+        "model",
+        "provider",
+        "temperature",
+        "top_p",
+        "top_k",
+        "session_max_turns",
+        "max_tokens",
+        "frequency_penalty",
+        "presence_penalty",
+        "skip_tool_approval",
+    }
+)
 
 
 def cli_tools_options_from_args(args: Namespace) -> dict[str, Any] | None:
@@ -42,6 +63,12 @@ def merge_ws_connection_args(base: Namespace, request_path: str) -> Namespace:
     if not request_path or "?" not in request_path:
         return out
     qs = parse_qs(urlparse(request_path).query)
+    unknown = set(qs.keys()) - _KNOWN_WS_QUERY_KEYS
+    if unknown:
+        _log.warning(
+            "ignored unknown WebSocket query override(s): %s",
+            ", ".join(sorted(unknown)),
+        )
 
     def pick(key: str) -> str | None:
         v = qs.get(key)
@@ -58,37 +85,37 @@ def merge_ws_connection_args(base: Namespace, request_path: str) -> Namespace:
         try:
             out.temperature = float(t)
         except ValueError:
-            pass
+            _log.warning("ignored invalid WebSocket query override temperature=%r", t)
     if (tp := pick("top_p")) is not None:
         try:
             out.top_p = float(tp)
         except ValueError:
-            pass
+            _log.warning("ignored invalid WebSocket query override top_p=%r", tp)
     if (tk := pick("top_k")) is not None:
         try:
             out.top_k = int(tk)
         except ValueError:
-            pass
+            _log.warning("ignored invalid WebSocket query override top_k=%r", tk)
     if (sm := pick("session_max_turns")) is not None:
         try:
             out.session_max_turns = int(sm)
         except ValueError:
-            pass
+            _log.warning("ignored invalid WebSocket query override session_max_turns=%r", sm)
     if (mt := pick("max_tokens")) is not None:
         try:
             out.max_tokens = int(mt)
         except ValueError:
-            pass
+            _log.warning("ignored invalid WebSocket query override max_tokens=%r", mt)
     if (fp := pick("frequency_penalty")) is not None:
         try:
             out.frequency_penalty = float(fp)
         except ValueError:
-            pass
+            _log.warning("ignored invalid WebSocket query override frequency_penalty=%r", fp)
     if (pp := pick("presence_penalty")) is not None:
         try:
             out.presence_penalty = float(pp)
         except ValueError:
-            pass
+            _log.warning("ignored invalid WebSocket query override presence_penalty=%r", pp)
     sk = pick("skip_tool_approval")
     if sk is not None and sk.lower() in ("1", "true", "yes"):
         out.require_tool_approval = False
@@ -121,6 +148,16 @@ def apply_api_key_env(args: Namespace) -> None:
     os.environ[keys[0]] = secret.strip()
 
 
+def _allow_inject_api_key_from_session_marker() -> bool:
+    """Opt-in: resume must set ``AGLOOM_ALLOW_INJECT_API_KEY_FROM_SESSION_MARKER=1`` to copy
+    ``api_key_secret`` from session JSON into the process environment.
+
+    Prevents accidental credential load from a shared or checked-in ``.agloom/sessions/*.json``.
+    """
+    v = (os.environ.get("AGLOOM_ALLOW_INJECT_API_KEY_FROM_SESSION_MARKER") or "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
 def _persist_api_key_marker_requested(args: Namespace) -> bool:
     if getattr(args, "persist_api_key_in_session_marker", False):
         return True
@@ -134,12 +171,33 @@ def inject_api_key_secret_from_session_marker(args: Namespace, marker_path: Path
     Only runs when the target variable named in the marker is **unset or empty** so a live
     process environment always wins over stale JSON.
 
-    Pairs with :func:`session_started_snapshot_from_args` when the marker contains
-    ``api_key_secret`` (default unless ``AGLOOM_OMIT_API_KEY_FROM_SESSION=1``). The
-    ``--persist-api-key-in-session-marker`` flag only adds
-    ``persist_api_key_in_session_marker: true`` to the snapshot for audit.
+    New session snapshots only embed ``api_key_secret`` when the user opts in via
+    ``--persist-api-key-in-session-marker`` or ``AGLOOM_PERSIST_API_KEY_IN_SESSION_MARKER``
+    (see :func:`session_started_snapshot_from_args`). **Resume** loads that secret only when
+    ``AGLOOM_ALLOW_INJECT_API_KEY_FROM_SESSION_MARKER=1`` is set in the environment.
+    Older markers may still contain a secret from previous releases — without the allow env var,
+    the runtime will not copy it into the process (set keys in the environment or export the
+    allow var for trusted machines only). ``AGLOOM_OMIT_API_KEY_FROM_SESSION=1`` blocks writing
+    the secret at snapshot time even when persistence is requested.
+
+    Refuses to read credentials from group/world-writable marker files on **POSIX**
+    (credential-substitution risk on multi-user systems). On Windows, ``st_mode`` bits are
+    not reliable for ACLs, so this check is skipped there.
     """
     if marker_path is None or not marker_path.is_file():
+        return
+    if not _allow_inject_api_key_from_session_marker():
+        return
+    try:
+        if os.name != "nt":
+            st = marker_path.stat()
+            if (st.st_mode & (stat.S_IWGRP | stat.S_IWOTH)) != 0:
+                _log.warning(
+                    "refusing to inject api_key_secret from group/world-writable session marker: %s",
+                    marker_path,
+                )
+                return
+    except OSError:
         return
     try:
         raw = json.loads(marker_path.read_text(encoding="utf-8"))
@@ -232,6 +290,12 @@ def system_prompt_from_args(args: Namespace) -> Any | None:
     fp = getattr(args, "system_prompt_file", None)
     if fp:
         p = Path(str(fp)).expanduser()
+        if not p.is_file():
+            raise ValueError(f"system_prompt_file is not a regular file: {fp!r}")
+        if p.is_symlink():
+            raise ValueError("system_prompt_file must not be a symlink")
+        if p.stat().st_size > MAX_SYSTEM_PROMPT_FILE_BYTES:
+            raise ValueError(f"system_prompt_file exceeds {MAX_SYSTEM_PROMPT_FILE_BYTES} bytes")
         return p.read_text(encoding="utf-8")
     sp = getattr(args, "system_prompt", None)
     if sp:
@@ -260,14 +324,14 @@ def mcp_specs_from_agloom_yaml(cwd: Path | None = None) -> list[str]:
     Used when ``agloom-runtime`` is started without ``--mcp`` fragments (e.g. plain
     ``python -m agloom.runtime``) so MCP still matches the nested project YAML.
     """
-    import yaml
+    from .yaml_safe import safe_yaml_load
 
     root = cwd or Path.cwd()
     for yaml_path in (root / ".agloom" / "agloom.yaml", root / "agloom.yaml"):
         if not yaml_path.is_file():
             continue
         try:
-            raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+            raw = safe_yaml_load(yaml_path.read_text(encoding="utf-8"), label=str(yaml_path))
         except Exception:
             continue
         if not isinstance(raw, dict):
@@ -306,16 +370,24 @@ def mcp_configs_from_args(args: Namespace, *, cwd: Path | None = None) -> list[M
         specs = mcp_specs_from_agloom_yaml(cwd)
     if not specs:
         return []
-    import yaml
+    from .yaml_safe import safe_yaml_load
 
+    root = (cwd or Path.cwd()).resolve()
     out: list[MCPServerConfig] = []
     for spec in specs:
         if ":" not in spec:
             raise ValueError(f"invalid --mcp {spec!r}; expected name:path/to.yaml")
         name, _, path = spec.partition(":")
         name = name.strip()
-        path_p = Path(path.strip()).expanduser().resolve()
-        raw = yaml.safe_load(path_p.read_text(encoding="utf-8"))
+        path_raw = Path(path.strip()).expanduser()
+        path_p = path_raw.resolve() if path_raw.is_absolute() else (root / path_raw).resolve()
+        try:
+            path_p.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(
+                f"MCP yaml path {path_p} must be under the runtime working directory ({root})"
+            ) from exc
+        raw = safe_yaml_load(path_p.read_text(encoding="utf-8"), label=str(path_p))
         if not isinstance(raw, dict):
             raise ValueError(f"MCP yaml {path_p} must be a mapping")
         merged = dict(raw)
@@ -339,19 +411,23 @@ def mcp_server_names_configured_from_args(args: Namespace) -> list[str]:
 
 
 def cli_tools_bundle_metrics_from_args(args: Namespace) -> tuple[bool, int]:
-    """Bundled CLI tool count matching ``create_agent`` (includes ``task`` tool slot)."""
+    """Bundled CLI tool count matching ``create_agent`` (includes ``task`` tool slot).
+
+    ``task_agent_cell`` is a one-element list so :func:`~agloom.cli_tools.get_cli_tools` can
+    capture the lazy task-agent reference as a side effect; only ``len(tools)`` is returned.
+    """
     opts = cli_tools_options_from_args(args)
     if opts is None:
         return False, 0
     from agloom.cli_tools import get_cli_tools
 
-    cell: list[Any | None] = [None]
+    task_agent_cell: list[Any | None] = [None]
     tools = get_cli_tools(
         working_dir=opts.get("working_dir", ".") or ".",
         allow_shell=bool(opts.get("allow_shell", True)),
         allow_network=bool(opts.get("allow_network", True)),
         sandbox=bool(opts.get("sandbox", True)),
-        task_agent_cell=cell,
+        task_agent_cell=task_agent_cell,
     )
     return True, len(tools)
 
@@ -404,33 +480,20 @@ def summarizer_model_from_args(args: Namespace) -> Any | None:
 
 
 def memory_kwargs_from_args(args: Namespace) -> dict[str, Any]:
-    """Session-memory kwargs for ``create_agent`` (excluding sqlite — handled in ``__main__``)."""
-    out: dict[str, Any] = {}
-    mt = (getattr(args, "memory_type", None) or "").strip().lower()
-    if mt == "sqlite":
-        return out
-    if not mt or mt in ("default", "auto"):
-        return out
-    if mt == "none":
-        from langgraph.store.memory import InMemoryStore
+    """Non-model kwargs for ``create_agent`` — session memory is attached via :func:`open_isolated_session_memory`."""
+    _ = args
+    return {}
 
-        out["memory"] = SessionMemory(store=InMemoryStore(), max_turns=1, auto_summarize=False)
-        return out
-    if mt == "in-memory":
-        from langgraph.store.memory import InMemoryStore
 
-        _budget: int | None = None
-        raw_mt = getattr(args, "max_tokens", None)
-        if raw_mt is not None:
-            try:
-                n = int(raw_mt)
-                if n > 0:
-                    _budget = n
-            except (TypeError, ValueError):
-                pass
-        out["memory"] = SessionMemory(store=InMemoryStore(), summarize_max_tokens_budget=_budget)
-        return out
-    raise ValueError(f"unsupported --memory {mt!r} (try in-memory, none, sqlite)")
+async def open_isolated_session_memory(
+    args: Namespace,
+    *,
+    agp_session_id: str,
+) -> tuple[Any, Any]:
+    """Per-AGP-session memory (see :mod:`agloom.runtime.session_memory`)."""
+    from .session_memory import open_isolated_session_memory as _open
+
+    return await _open(args, agp_session_id=agp_session_id)
 
 
 async def open_sqlite_session_memory(
@@ -438,57 +501,10 @@ async def open_sqlite_session_memory(
     *,
     ws_session_id: str | None = None,
 ) -> tuple[Any, Any]:
-    """If ``--memory sqlite``, return ``(SessionMemory, cleanup_coro)`` else ``(None, None)``.
+    """Backward-compatible wrapper around :func:`open_isolated_session_memory`."""
+    from .session_memory import open_sqlite_session_memory as _open
 
-    With *ws_session_id*, isolate DB files per WebSocket session so concurrent connections do not
-    share the same SQLite store file.
-    """
-    mt = (getattr(args, "memory_type", None) or "").strip().lower()
-    if mt != "sqlite":
-        return None, None
-    raw = getattr(args, "memory_path", None) or ".agloom/session_memory.sqlite"
-
-    def _prepare_sqlite_path() -> Path:
-        base = Path(str(raw)).expanduser()
-        if not base.is_absolute():
-            p = (Path.cwd() / base).resolve()
-        else:
-            p = base.resolve()
-        if ws_session_id:
-            safe = re.sub(r"[^\w.\-+=]", "_", ws_session_id.strip()) or "session"
-            p = p.parent / f"{p.stem}_{safe}{p.suffix}"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        return p
-
-    db_path = await asyncio.to_thread(_prepare_sqlite_path)
-    conn = str(db_path)
-    from contextlib import AsyncExitStack
-
-    from langgraph.store.sqlite import AsyncSqliteStore
-
-    stack = AsyncExitStack()
-    store = await stack.enter_async_context(AsyncSqliteStore.from_conn_string(conn))
-    await store.setup()
-    mt = getattr(args, "max_tokens", None)
-    mt_budget: int | None = None
-    if mt is not None:
-        try:
-            n = int(mt)
-            if n > 0:
-                mt_budget = n
-        except (TypeError, ValueError):
-            pass
-    sm = SessionMemory(
-        store=store,
-        max_turns=int(getattr(args, "session_max_turns", 50) or 50),
-        auto_summarize=bool(getattr(args, "auto_summarize", True)),
-        summarize_max_tokens_budget=mt_budget,
-    )
-
-    async def cleanup() -> None:
-        await stack.aclose()
-
-    return sm, cleanup
+    return await _open(args, ws_session_id=ws_session_id)
 
 
 DEFAULT_SESSION_MAX_TURNS = 50
@@ -541,25 +557,61 @@ def _provider_primary_api_key_env_name(resolved_slug: str | None) -> str | None:
 
 
 def _llm_endpoint_snapshot(args: Namespace) -> dict[str, Any]:
-    """Non-secret HTTP hints matching :mod:`agloom.llm.model_resolver` env conventions."""
-    out: dict[str, Any] = {}
+    """Non-secret HTTP hints for session JSON (LiteLLM / vLLM / Ollama / OpenAI-compatible).
+
+    ``base_url`` is the explicit ``--base-url`` (or user-edited value in the marker). Env-derived
+    URLs are listed separately so resume can show what the shell had at snapshot time without
+    overwriting an edited ``base_url``.
+    """
+    bu = getattr(args, "base_url", None)
+    base_url_cli = bu.strip() if isinstance(bu, str) and bu.strip() else None
+    oll = os.environ.get("OLLAMA_BASE_URL") or os.environ.get("OLLAMA_HOST")
+    oll_s = oll.strip() if isinstance(oll, str) and oll.strip() else None
+    compat = os.environ.get("VLLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
+    compat_s = compat.strip() if isinstance(compat, str) and compat.strip() else None
+    return {
+        "base_url": base_url_cli,
+        "ollama_base_url_from_env": oll_s,
+        "openai_compatible_base_url_from_env": compat_s,
+    }
+
+
+def merge_base_url_from_session_marker(args: Namespace, marker_path: Path | None) -> None:
+    """When ``--base-url`` was not passed, restore ``effective_config.base_url`` from the marker.
+
+    Users edit ``base_url`` in ``.agloom/sessions/<id>.json`` for LiteLLM ``api_base``, vLLM, or
+    other OpenAI-compatible gateways; restart the same session id to apply. CLI ``--base-url`` wins.
+    """
     bu = getattr(args, "base_url", None)
     if isinstance(bu, str) and bu.strip():
-        out["base_url"] = bu.strip()
-    oll = os.environ.get("OLLAMA_BASE_URL") or os.environ.get("OLLAMA_HOST")
-    if oll:
-        oll_s = oll.strip()
-        if oll_s:
-            out["ollama_base_url_from_env"] = oll_s
-    compat = os.environ.get("VLLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
-    if compat:
-        compat_s = compat.strip()
-        if compat_s:
-            out["openai_compatible_base_url_from_env"] = compat_s
-    return out
+        return
+    if marker_path is None or not marker_path.is_file():
+        return
+    try:
+        raw = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return
+    if not isinstance(raw, dict):
+        return
+    eff = raw.get("effective_config")
+    if not isinstance(eff, dict):
+        return
+    url: str | None = None
+    top = eff.get("base_url")
+    if isinstance(top, str) and top.strip():
+        url = top.strip()
+    if url is None:
+        ep = eff.get("llm_endpoint")
+        if isinstance(ep, dict):
+            nested = ep.get("base_url")
+            if isinstance(nested, str) and nested.strip():
+                url = nested.strip()
+    if url:
+        args.base_url = url
 
 
 def _omit_api_key_secret_from_session_marker() -> bool:
+    """When true, never write ``api_key_secret`` into a new session snapshot (even if persist was requested)."""
     v = (os.environ.get("AGLOOM_OMIT_API_KEY_FROM_SESSION") or "").strip().lower()
     return v in ("1", "true", "yes", "on")
 
@@ -567,17 +619,19 @@ def _omit_api_key_secret_from_session_marker() -> bool:
 def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     """Serializable effective-config snapshot for ``.agloom/sessions/<id>.json``.
 
-    By default ``effective_config`` includes ``api_key_secret`` (key material copied from the
-    resolved credential env var) so you can edit the session file and resume without the shell
-    env. **Treat session JSON as secret-bearing** — do not commit ``.agloom/sessions/`` to git.
-    Set ``AGLOOM_OMIT_API_KEY_FROM_SESSION=1`` to skip writing ``api_key_secret`` (names-only
-    snapshot).
+    By default ``effective_config`` does **not** include ``api_key_secret`` — session JSON is not
+    cleartext key-bearing unless you opt in. To embed the resolved API key for resume without
+    the shell env, use ``--persist-api-key-in-session-marker`` or set
+    ``AGLOOM_PERSIST_API_KEY_IN_SESSION_MARKER=1``. **Treat any marker that contains
+    ``api_key_secret`` as secret** — do not commit ``.agloom/sessions/`` to git.
 
-    With ``--persist-api-key-in-session-marker`` or ``AGLOOM_PERSIST_API_KEY_IN_SESSION_MARKER=1``,
-    ``persist_api_key_in_session_marker: true`` is also set on the snapshot for explicit audit.
+    Set ``AGLOOM_OMIT_API_KEY_FROM_SESSION=1`` to block writing ``api_key_secret`` even when
+    persistence was requested. When a secret is written, ``persist_api_key_in_session_marker:
+    true`` is set on the snapshot.
 
-    Resume uses :func:`inject_api_key_secret_from_session_marker` when the named env var is
-    empty and the marker still carries ``api_key_secret``.
+    Resume uses :func:`inject_api_key_secret_from_session_marker` when
+    ``AGLOOM_ALLOW_INJECT_API_KEY_FROM_SESSION_MARKER=1``, the target env var is empty, and the
+    marker still carries ``api_key_secret`` (including older snapshots).
 
     ``effective_config`` always includes ``max_tokens``, ``frequency_penalty``, and
     ``presence_penalty`` (defaults when omitted on the CLI); users may override via flags or
@@ -588,14 +642,18 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     prefix. ``provider_credential_env`` lists canonical env vars for that slug and whether
     each was non-empty (names only in that list).
 
-    ``api_key_env`` / ``api_key_env_nonempty`` identify the env var whose value is stored in
-    ``api_key_secret`` (``--api-key-env`` remap, else first non-empty canonical key for the
-    provider). ``credential_env_var`` / ``provider_primary_api_key_env`` are only written when
+    ``api_key_env`` / ``api_key_env_nonempty`` identify the env var that would supply the key
+    (``--api-key-env`` remap, else first non-empty canonical key for the provider).
+    ``credential_env_var`` / ``provider_primary_api_key_env`` are only written when
     they differ from ``api_key_env`` (remap / older layouts).
 
     ``provider_primary_credential_present`` is ``True`` when any canonical var for the resolved
     slug was set, or when ``provider_resolved`` is ``None`` and any curated provider API key env
     was set.
+
+    ``base_url`` and ``llm_endpoint`` are always written (``null`` when unset) so session JSON is
+    self-documenting for LiteLLM / vLLM / Ollama custom endpoints. Edit ``base_url`` and restart
+    the session id to apply (see :func:`merge_base_url_from_session_marker`).
     """
     api_env = getattr(args, "api_key_env", None)
     api_present = False
@@ -649,8 +707,8 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     if primary and primary != snapshot_api_key_env:
         eff["provider_primary_api_key_env"] = primary
     endpoint = _llm_endpoint_snapshot(args)
-    if endpoint:
-        eff["llm_endpoint"] = endpoint
+    eff["base_url"] = endpoint["base_url"]
+    eff["llm_endpoint"] = endpoint
     tx = getattr(args, "temperature", None)
     if tx is not None:
         eff["temperature"] = float(tx)
@@ -673,11 +731,18 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     eff["with_cli_tools"] = bool(getattr(args, "with_cli_tools", False))
     eff["require_tool_approval"] = bool(getattr(args, "require_tool_approval", True))
 
-    if not _omit_api_key_secret_from_session_marker() and cred_var and cred_nonempty:
+    wrote_secret = False
+    if (
+        _persist_api_key_marker_requested(args)
+        and not _omit_api_key_secret_from_session_marker()
+        and cred_var
+        and cred_nonempty
+    ):
         mat = os.environ.get(cred_var)
         if isinstance(mat, str) and mat.strip():
             eff["api_key_secret"] = mat.strip()
-    if _persist_api_key_marker_requested(args):
+            wrote_secret = True
+    if wrote_secret:
         eff["persist_api_key_in_session_marker"] = True
 
     return {

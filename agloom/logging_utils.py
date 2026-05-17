@@ -58,21 +58,23 @@ def configure_package_logging(debug: bool = False) -> None:
             lg.setLevel(_package_level)
 
     if not _configured:
-        root = logging.getLogger()
-        if not root.handlers:
-            handler = logging.StreamHandler()
-            if _log_format() == "json":
-                handler.setFormatter(logging.Formatter("%(message)s"))
-            else:
-                handler.setFormatter(
-                    logging.Formatter(
-                        "%(asctime)s %(levelname)-5s %(name)s — %(message)s",
-                        datefmt="%H:%M:%S",
-                    )
+        handler = logging.StreamHandler()
+        if _log_format() == "json":
+            handler.setFormatter(logging.Formatter("%(message)s"))
+        else:
+            handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s %(levelname)-5s %(name)s — %(message)s",
+                    datefmt="%H:%M:%S",
                 )
-            root.addHandler(handler)
-        if root.level == logging.NOTSET or root.level > _package_level:
-            root.setLevel(_package_level)
+            )
+        # Prefer the ``agloom`` namespace; propagate to root only when the app already configured it.
+        root = logging.getLogger()
+        pkg_root = logging.getLogger("agloom")
+        if not pkg_root.handlers:
+            pkg_root.addHandler(handler)
+            pkg_root.setLevel(_package_level)
+        pkg_root.propagate = bool(root.handlers)
         _configured = True
 
 

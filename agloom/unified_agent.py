@@ -1,20 +1,23 @@
-"""Agent runtime: pattern routing, ``run_fresh`` execution, and ``UnifiedAgent`` facade.
+"""Agent runtime: pattern routing, turn execution, and ``UnifiedAgent`` facade.
 
 ``create_agent`` / ``create_agent_sync`` validate configuration and return ``UnifiedAgent``.
-The default execution path is direct handler calls inside ``run_fresh``; a compiled LangGraph
-is only materialized for checkpoint APIs (``get_state``, ``get_history``, ``resume``).
+The default path is ``ainvoke`` / ``astream`` / ``astream_events``; a compiled LangGraph is
+materialized when needed for ``get_state``, ``get_history``, and ``resume``.
 """
 
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import contextlib
 import inspect
 import sys
+import threading
 import time
 import uuid
+import weakref
 from collections import OrderedDict
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
 
@@ -41,6 +44,7 @@ from .memory import (
     build_memory_context,
     create_memory_tools,
 )
+from .multimodal import content_blocks_to_text
 from .models import (
     DEFAULT_SYSTEM_PROMPT,
     AgentConfig,
@@ -64,6 +68,7 @@ from .patterns.reflection import handle_reflection
 from .patterns.supervisor import handle_supervisor
 from .patterns.swarm import handle_swarm
 from .wire_execution_result import execution_result_wire_dict
+from .wire_tokens import record_emitted_usage
 
 try:
     from .feedback.wireup import (
@@ -177,7 +182,7 @@ async def _handle_direct(
                     last_chunk = chunk
                     content = getattr(chunk, "content", "")
                     if content:
-                        content = content if isinstance(content, str) else str(content)
+                        content = content_blocks_to_text(content)
                         chunks.append(content)
                         await _emit_token_event(agent, content)
 
@@ -190,7 +195,7 @@ async def _handle_direct(
                 agent["llm"].ainvoke(messages),
                 timeout=_timeout,
             )
-            output = response.content
+            output = content_blocks_to_text(response.content)
             usage = _extract_token_usage(response)
             raw_messages = messages + [response]
 
@@ -202,7 +207,9 @@ async def _handle_direct(
             output=output,
             duration_ms=dur,
             max_length=ml,
-            **usage,
+            usage=usage,
+            model=_llm_label(agent["llm"]),
+            phase="direct_llm",
         )
         steps.append(step)
         await _emit_step_event(agent, step)
@@ -233,22 +240,16 @@ _HANDLERS: dict[PatternType, Any] = {
 }
 
 
-@lru_cache(maxsize=32)
-def _init_chat_model(model_id: str) -> BaseChatModel:
-    from langchain.chat_models import init_chat_model
-
-    return init_chat_model(model_id, temperature=0)
-
-
 def resolve_model(model: Any) -> BaseChatModel:
-    """Accept a BaseChatModel instance or a model-id string. String IDs are LRU-cached (max 32).
+    """Accept a ``BaseChatModel`` instance or a model-id string.
 
-    String ids are delegated to ``langchain.chat_models.init_chat_model``; install the matching
-    ``langchain-*`` integration from https://docs.langchain.com/oss/python/integrations/chat
-    for providers beyond the default stack (AWS Bedrock, xAI, Mistral, …).
+    Strings use :func:`agloom.llm.model_resolver.get_model` (provider routing and env keys).
+    Pass a preconfigured ``BaseChatModel`` instance to set temperature and other kwargs.
     """
     if isinstance(model, str):
-        return _init_chat_model(model)
+        from agloom.llm.model_resolver import get_model
+
+        return get_model(model)
     return model
 
 
@@ -290,18 +291,26 @@ async def _emit_step_event(config: dict, step: AgentStep) -> None:
     if queue is None:
         return
     event_type = _step_type_to_event_type(step.type)
-    await queue.put(
-        AgentEvent(
-            type=event_type,
-            data={
-                "name": step.name,
-                "input": step.input,
-                "output": step.output,
-                "duration_ms": step.duration_ms,
-                **step.metadata,
-            },
-        )
-    )
+    data = {
+        "name": step.name,
+        "input": step.input,
+        "output": step.output,
+        "duration_ms": step.duration_ms,
+        **step.metadata,
+    }
+    await queue.put(AgentEvent(type=event_type, data=data))
+    if event_type == "llm_call":
+        usage_raw = data.get("usage")
+        if isinstance(usage_raw, dict):
+            record_emitted_usage(config, usage_raw)
+            step.metadata["_wire_emitted"] = True
+
+
+def _surrogate_safe_text(text: str) -> str:
+    """Strip lone surrogates so JSON/wire consumers never see invalid UTF-16."""
+    if not text:
+        return text
+    return text.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
 
 
 async def _emit_token_event(config: dict, content: str) -> None:
@@ -309,7 +318,7 @@ async def _emit_token_event(config: dict, content: str) -> None:
     queue = config.get("_event_queue")
     if queue is None:
         return
-    await queue.put(AgentEvent(type="token", data={"content": content}))
+    await queue.put(AgentEvent(type="token", data={"content": _surrogate_safe_text(content)}))
 
 
 def _approx_char_tokens(text: str, *, cap_chars: int = 48_000) -> int:
@@ -325,16 +334,102 @@ def _build_classifier_augmented_query(
     memory_ctx: str, harness_ctx: str, processed_query: str
 ) -> str:
     """Merge memory / harness snippets ahead of the user query for ``analyze_query``."""
-    chunks: list[str] = []
     mem = memory_ctx.strip()
     har = harness_ctx.strip()
+    harness_block = f"\n\n=== CROSS-SESSION PROGRESS ===\n{har}\n" if har else ""
     if mem:
-        chunks.append(mem)
-    if har:
-        chunks.append(f"CROSS-SESSION PROGRESS\n{har}")
-    if not chunks:
-        return processed_query
-    return "\n".join(chunks) + "\n" + processed_query
+        return f"{mem}{harness_block}\n{processed_query}"
+    if harness_block:
+        return f"{harness_block}\n{processed_query}"
+    return processed_query
+
+
+async def _resolve_system_prompt_for_turn(
+    config: dict[str, Any],
+    *,
+    raw_query_str: str,
+    context: dict,
+    thread_id: str,
+    user_id: str | None,
+) -> dict[str, Any]:
+    """Resolve callable ``system_prompt`` and return an updated agent config dict."""
+    sp = config["system_prompt"]
+    if callable(sp) and not isinstance(sp, str):
+        _sp_state = {
+            "messages": [],
+            "query": raw_query_str,
+            "context": context,
+            "thread_id": thread_id,
+            "user_id": user_id,
+        }
+        resolved_sp = await _maybe_await(sp(_sp_state))
+        if isinstance(resolved_sp, SystemMessage):
+            resolved_sp = (
+                resolved_sp.content if isinstance(resolved_sp.content, str) else str(resolved_sp.content)
+            )
+        return {**config, "system_prompt": resolved_sp or DEFAULT_SYSTEM_PROMPT}
+    return config
+
+
+async def _build_harness_context_for_classify(config: dict[str, Any], *, is_frozen: bool) -> str:
+    """Cross-session progress snippet for the classifier (skipped when frozen or harness off)."""
+    if is_frozen or not config.get("_harness_enabled"):
+        return ""
+    progress_tracker: ProgressTracker | None = config.get("_progress_tracker")
+    if progress_tracker is None:
+        return ""
+    try:
+        return progress_tracker.get_classifier_context()
+    except Exception as exc:
+        name = config.get("name", "Agent")
+        logger.warning(f"[{name}] harness bootstrap failed ({exc!r}) — proceeding")
+        return ""
+
+
+async def _build_skill_context_for_classify(config: dict[str, Any], *, processed_query: str) -> str:
+    """Skill injector + delegation targets merged for the classifier."""
+    skill_ctx = ""
+    skill_injector = config.get("skill_injector")
+    if skill_injector:
+        try:
+            skill_ctx = await skill_injector.get_context(processed_query)
+        except Exception as exc:
+            name = config.get("name", "Agent")
+            logger.warning(f"[{name}] skill_injector failed ({exc!r}) — proceeding without.")
+
+    handoff_targets = config.get("_handoff_targets") or []
+    delegate_targets = config.get("_delegate_targets") or []
+    delegation_ctx = _build_delegation_context(handoff_targets + delegate_targets)
+    if delegation_ctx and skill_ctx:
+        return f"{skill_ctx}\n\n{delegation_ctx}"
+    if delegation_ctx:
+        return delegation_ctx
+    return skill_ctx
+
+
+def _coerce_unknown_pattern_handler(
+    config: dict[str, Any],
+    analysis: QueryAnalysis,
+    *,
+    registry: dict[PatternType, Any],
+) -> QueryAnalysis:
+    """If the classifier picked a pattern with no handler, coerce to REACT."""
+    if registry.get(analysis.pattern) is not None:
+        return analysis
+    name = config.get("name", "Agent")
+    unknown_pattern = analysis.pattern.value
+    logger.warning(
+        f"[{name}] Classifier returned pattern {unknown_pattern!r} "
+        "with no registered handler — coercing to REACT."
+    )
+    return analysis.model_copy(
+        update={
+            "pattern": PatternType.REACT,
+            "reasoning": (
+                f"{analysis.reasoning or ''} [pattern {unknown_pattern} has no handler; using REACT]"
+            ).strip(),
+        }
+    )
 
 
 async def _execute_analyze_query(
@@ -344,6 +439,8 @@ async def _execute_analyze_query(
     skill_context: str,
 ) -> QueryAnalysis:
     """Invoke :func:`~agloom.classifier.analyze_query` using classifier fields from *cfg*."""
+    fp = cfg.get("fallback_pattern")
+    fallback = fp if isinstance(fp, PatternType) else None
     return await analyze_query(
         llm=cfg["llm"],
         query=augmented_query,
@@ -351,7 +448,7 @@ async def _execute_analyze_query(
         skill_context=skill_context,
         classifier_timeout=float(cfg.get("classifier_timeout", 60.0)),
         structured_max_retries=int(cfg.get("structured_max_retries", 2)),
-        fallback_pattern=cfg.get("fallback_pattern"),
+        fallback_pattern=fallback,
     )
 
 
@@ -372,7 +469,34 @@ RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
-_active_agent_names: dict[tuple[str, int | None], int] = {}
+_active_agent_names_by_store: weakref.WeakKeyDictionary[Any, dict[str, int]] = weakref.WeakKeyDictionary()
+_active_agent_names_no_store: dict[str, int] = {}
+_agent_names_lock = threading.Lock()
+
+_SYNC_BRIDGE_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
+_SYNC_BRIDGE_EXECUTOR_LOCK = threading.Lock()
+
+
+def _sync_bridge_executor() -> concurrent.futures.ThreadPoolExecutor:
+    """Shared pool for ``invoke`` / ``create_agent_sync`` when an event loop is already running."""
+    global _SYNC_BRIDGE_EXECUTOR
+    with _SYNC_BRIDGE_EXECUTOR_LOCK:
+        if _SYNC_BRIDGE_EXECUTOR is None:
+            _SYNC_BRIDGE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+                max_workers=4,
+                thread_name_prefix="agloom-sync",
+            )
+        return _SYNC_BRIDGE_EXECUTOR
+
+
+def _run_coroutine_in_new_loop(coro: Awaitable[Any]) -> Any:
+    if asyncio.iscoroutine(coro):
+        return asyncio.run(coro)
+
+    async def _wrap() -> Any:
+        return await coro
+
+    return asyncio.run(_wrap())
 
 
 def _check_reserved_tool_names(tools: list[BaseTool]) -> None:
@@ -388,14 +512,26 @@ def _check_reserved_tool_names(tools: list[BaseTool]) -> None:
 
 
 def _register_agent_name(agent_name: str, store: Any) -> None:
-    """Track agent name and warn if a duplicate shares the same LongTermStore."""
-    store_id = id(store) if store is not None else None
-    key = (agent_name, store_id)
-    _active_agent_names[key] = _active_agent_names.get(key, 0) + 1
-    if _active_agent_names[key] > 1 and store_id is not None:
+    """Track agent name and warn if a duplicate shares the same LongTermStore.
+
+    Keys on the store **object** (``WeakKeyDictionary``), not ``id(store)``, so a
+    recycled object id after GC does not look like a duplicate registration.
+    """
+    with _agent_names_lock:
+        if store is None:
+            _active_agent_names_no_store[agent_name] = _active_agent_names_no_store.get(agent_name, 0) + 1
+            count = _active_agent_names_no_store[agent_name]
+        else:
+            per = _active_agent_names_by_store.get(store)
+            if per is None:
+                per = {}
+                _active_agent_names_by_store[store] = per
+            per[agent_name] = per.get(agent_name, 0) + 1
+            count = per[agent_name]
+    if count > 1 and store is not None:
         logger.warning(
             f"[agloom] Multiple agents named '{agent_name}' share the same "
-            f"LongTermStore (id={store_id}). They will share feedback records, "
+            f"LongTermStore instance. They will share feedback records, "
             f"correction memory, learned skills, and LT memory namespaces. "
             f"If this is unintentional, use distinct names or separate stores."
         )
@@ -403,13 +539,27 @@ def _register_agent_name(agent_name: str, store: Any) -> None:
 
 def _unregister_agent_name(agent_name: str, store: Any) -> None:
     """Remove an agent from the active name tracker (called on aclose)."""
-    store_id = id(store) if store is not None else None
-    key = (agent_name, store_id)
-    count = _active_agent_names.get(key, 0)
-    if count <= 1:
-        _active_agent_names.pop(key, None)
-    else:
-        _active_agent_names[key] = count - 1
+    with _agent_names_lock:
+        if store is None:
+            c = _active_agent_names_no_store.get(agent_name, 0)
+            if c <= 1:
+                _active_agent_names_no_store.pop(agent_name, None)
+            else:
+                _active_agent_names_no_store[agent_name] = c - 1
+            return
+        per = _active_agent_names_by_store.get(store)
+        if not per:
+            return
+        count = per.get(agent_name, 0)
+        if count <= 1:
+            per.pop(agent_name, None)
+            if not per:
+                try:
+                    del _active_agent_names_by_store[store]
+                except KeyError:
+                    pass
+        else:
+            per[agent_name] = count - 1
 
 
 def _structured_tool_from_callable(
@@ -420,6 +570,8 @@ def _structured_tool_from_callable(
 ) -> StructuredTool:
     """Wrap a sync or async callable so LangChain awaits coroutine tools correctly."""
     nm = name or getattr(fn, "__name__", "tool")
+    if nm == "<lambda>":
+        nm = f"callable_tool_{abs(id(fn)):x}"
     desc = (description or "").strip() or (getattr(fn, "__doc__", None) or "").strip() or f"Tool: {nm}"
     if inspect.iscoroutinefunction(fn):
         return StructuredTool.from_function(coroutine=fn, name=nm, description=desc)
@@ -602,6 +754,128 @@ async def _record_turn(
         logger.warning(f"_record_turn failed (non-fatal): {exc!r}")
 
 
+async def _resolve_new_channel_versions(
+    checkpointer: Any,
+    config: dict,
+    channel_keys: list[str],
+) -> dict[str, Any]:
+    """Build monotonic ``channel_versions`` for :meth:`BaseCheckpointSaver.aput`.
+
+    Re-using version ``1`` for every channel on every save makes LangGraph stores point
+    multiple checkpoints at the same blob keys, so history loads the **latest** values
+    for every past checkpoint. We bump per channel using the checkpointer's own
+    :meth:`get_next_version` when available.
+    """
+    prev_versions: dict[str, Any] = {}
+    try:
+        if hasattr(checkpointer, "aget_tuple"):
+            tup = await checkpointer.aget_tuple(config)
+        elif hasattr(checkpointer, "get_tuple"):
+            tup = await asyncio.to_thread(checkpointer.get_tuple, config)
+        else:
+            tup = None
+        if tup is not None:
+            ch = tup.checkpoint if hasattr(tup, "checkpoint") else None
+            if isinstance(ch, dict):
+                cv = ch.get("channel_versions")
+                if isinstance(cv, dict):
+                    prev_versions = dict(cv)
+            elif ch is not None:
+                cv = getattr(ch, "channel_versions", None)
+                if isinstance(cv, dict):
+                    prev_versions = dict(cv)
+                else:
+                    logger.warning(
+                        "resolve_new_channel_versions_no_dict",
+                        checkpoint_type=type(ch).__name__,
+                    )
+    except Exception as exc:
+        logger.debug(f"_resolve_new_channel_versions: could not read prior tuple ({exc!r})")
+
+    get_next = getattr(checkpointer, "get_next_version", None)
+    out: dict[str, Any] = {}
+    for k in channel_keys:
+        if callable(get_next):
+            out[k] = get_next(prev_versions.get(k), None)
+            continue
+        cur = prev_versions.get(k)
+        if cur is None:
+            out[k] = 1
+        elif isinstance(cur, int):
+            out[k] = cur + 1
+        elif isinstance(cur, str):
+            try:
+                out[k] = int(cur.split(".")[0]) + 1
+            except ValueError:
+                out[k] = 1
+        else:
+            try:
+                out[k] = int(cur) + 1
+            except (TypeError, ValueError):
+                out[k] = 1
+    return out
+
+
+def _analysis_from_checkpoint_values(channel_values: dict[str, Any]) -> QueryAnalysis | None:
+    """Restore ``QueryAnalysis`` saved by :func:`_save_checkpoint` (or graph state)."""
+    raw = channel_values.get("analysis")
+    if raw is None:
+        return None
+    if isinstance(raw, QueryAnalysis):
+        return raw
+    if isinstance(raw, dict):
+        try:
+            return QueryAnalysis.model_validate(raw)
+        except Exception:
+            return None
+    return None
+
+
+def _analysis_from_checkpointer_tuple(checkpoint_tuple: Any) -> QueryAnalysis | None:
+    """Read ``analysis`` from a LangGraph ``CheckpointTuple`` or dict-shaped snapshot."""
+    if checkpoint_tuple is None:
+        return None
+    try:
+        ck = getattr(checkpoint_tuple, "checkpoint", None)
+        if ck is None and isinstance(checkpoint_tuple, dict):
+            ck = checkpoint_tuple.get("checkpoint")
+        if not isinstance(ck, dict):
+            return None
+        cv = ck.get("channel_values")
+        if isinstance(cv, dict):
+            return _analysis_from_checkpoint_values(cv)
+    except Exception:
+        return None
+    return None
+
+
+async def _seed_graph_state_for_resume(
+    compiled: Any,
+    cfg: dict,
+    *,
+    analysis: QueryAnalysis | None,
+    query: str | None,
+) -> None:
+    """Patch graph state via ``aupdate_state`` before ``Command(resume=…)``.
+
+    When ``analysis`` is set, :func:`agloom.graph._make_classify_node` no-ops and routing
+    reuses the pattern chosen before the interrupt.
+    """
+    if analysis is None and not query:
+        return
+    patch: dict[str, Any] = {}
+    if analysis is not None:
+        patch["analysis"] = analysis
+    if query:
+        patch["query"] = query
+    if not patch:
+        return
+    if hasattr(compiled, "aupdate_state"):
+        await compiled.aupdate_state(cfg, patch)
+    elif hasattr(compiled, "update_state"):
+        compiled.update_state(cfg, patch)
+
+
 async def _save_checkpoint(
     checkpointer: Any,
     thread_id: str,
@@ -611,7 +885,11 @@ async def _save_checkpoint(
     event_queue: Any = None,
     label: str | None = None,
 ) -> None:
-    """Best-effort checkpoint write for ``get_state`` / ``get_history``."""
+    """Best-effort checkpoint write for ``get_state`` / ``get_history`` / ``resume``.
+
+    Persists query, output, steps, token usage, and ``result.analysis`` (when set) under
+    ``channel_values`` so interrupted graph runs can skip re-classification.
+    """
     if checkpointer is None:
         return
     try:
@@ -629,7 +907,14 @@ async def _save_checkpoint(
             "token_usage": result.token_usage,
             "message_count": len(result.messages),
         }
-        channel_versions = dict.fromkeys(channel_values, 1)
+        if result.analysis is not None:
+            channel_values["analysis"] = result.analysis.model_dump()
+        config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+        channel_versions = await _resolve_new_channel_versions(
+            checkpointer,
+            config,
+            list(channel_values.keys()),
+        )
         checkpoint = {
             "v": 1,
             "id": checkpoint_id,
@@ -644,7 +929,6 @@ async def _save_checkpoint(
             "parents": {},
             "run_id": result.run_id,
         }
-        config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
         if hasattr(checkpointer, "aput"):
             await checkpointer.aput(config, checkpoint, metadata, channel_versions)
         elif hasattr(checkpointer, "put"):
@@ -870,13 +1154,10 @@ async def _ensure_frozen_analysis(config: dict) -> None:
         name = config.get("name", "Agent")
         logger.event(f"[{name}] frozen agent — classifying template: {config['frozen_template']!r}")
 
-        analysis: QueryAnalysis = await analyze_query(
-            llm=config["llm"],
-            query=config["frozen_template"],
-            tools=config.get("tools", []),
-            classifier_timeout=config.get("classifier_timeout", 60.0),
-            structured_max_retries=config.get("structured_max_retries", 2),
-            fallback_pattern=config.get("fallback_pattern"),
+        analysis = await _execute_analyze_query(
+            config,
+            augmented_query=config["frozen_template"],
+            skill_context="",
         )
 
         registry = config.get("registry", _HANDLERS)
@@ -913,8 +1194,13 @@ def _apply_frozen_substitution(
 
     def _sub(template: str) -> str:
         result = template
-        for k, v in subs.items():
-            result = result.replace(f"{{{k}}}", v)
+        placeholders: dict[str, str] = {}
+        for i, (k, v) in enumerate(subs.items()):
+            token = f"__AGLOOM_SUB_{i}__"
+            placeholders[token] = v
+            result = result.replace(f"{{{k}}}", token)
+        for token, v in placeholders.items():
+            result = result.replace(token, v)
         return result
 
     sub_query = _sub(frozen_template)
@@ -930,13 +1216,18 @@ def _extract_delegate_from_analysis(
     targets: list[HandoffTarget],
 ) -> str | None:
     """Return a delegate name if the classifier reasoning matches a registered target."""
+    import re
+
     if not targets:
         return None
     reasoning = (analysis.reasoning or "").lower()
     matched = (getattr(analysis, "matched_skill", None) or "").lower()
     for t in targets:
         t_lower = t.name.lower()
-        if t_lower in reasoning or t_lower in matched:
+        if not t_lower:
+            continue
+        pat = re.compile(rf"\b{re.escape(t_lower)}\b")
+        if pat.search(reasoning) or pat.search(matched):
             return t.name
     return None
 
@@ -968,6 +1259,10 @@ async def run_fresh(
     _steps: list[AgentStep] = []
     _total_usage: dict[str, int] = {}
 
+    from .wire_tokens import emit_remaining_token_usage, reset_wire_emitted_usage
+
+    reset_wire_emitted_usage(config)
+
     if isinstance(query, str):
         raw_query_str = query
     elif isinstance(query, list):
@@ -977,19 +1272,13 @@ async def run_fresh(
 
     processed_query = await _run_before_agent(config.get("middleware", []), raw_query_str, context)
 
-    sp = config["system_prompt"]
-    if callable(sp) and not isinstance(sp, str):
-        _sp_state = {
-            "messages": [],
-            "query": raw_query_str,
-            "context": context,
-            "thread_id": effective_thread_id,
-            "user_id": user_id,
-        }
-        resolved_sp = await _maybe_await(sp(_sp_state))
-        if isinstance(resolved_sp, SystemMessage):
-            resolved_sp = resolved_sp.content if isinstance(resolved_sp.content, str) else str(resolved_sp.content)
-        config = {**config, "system_prompt": resolved_sp or DEFAULT_SYSTEM_PROMPT}
+    config = await _resolve_system_prompt_for_turn(
+        config,
+        raw_query_str=raw_query_str,
+        context=context,
+        thread_id=effective_thread_id,
+        user_id=user_id,
+    )
 
     memory_ctx = await build_memory_context(
         session=memory,
@@ -1012,21 +1301,17 @@ async def run_fresh(
             injected_chars=injected,
         )
 
-    is_frozen = config.get("frozen") and config.get("frozen_analysis") is not None
+    is_frozen = bool(config.get("frozen") and config.get("frozen_analysis") is not None)
 
-    harness_ctx = ""
-    if config.get("_harness_enabled") and not is_frozen:
+    harness_ctx = await _build_harness_context_for_classify(config, is_frozen=is_frozen)
+    if harness_ctx and not is_frozen:
         progress_tracker: ProgressTracker | None = config.get("_progress_tracker")
-        if progress_tracker:
-            try:
-                harness_ctx = progress_tracker.get_classifier_context()
-                logger.event(
-                    f"[{name}] harness bootstrap: "
-                    f"{len(progress_tracker.artifact.tasks)} tasks, "
-                    f"progress={progress_tracker.artifact.completion_ratio:.0%}"
-                )
-            except Exception as exc:
-                logger.warning(f"[{name}] harness bootstrap failed ({exc!r}) — proceeding")
+        if progress_tracker is not None:
+            logger.event(
+                f"[{name}] harness bootstrap: "
+                f"{len(progress_tracker.artifact.tasks)} tasks, "
+                f"progress={progress_tracker.artifact.completion_ratio:.0%}"
+            )
 
     if is_frozen:
         sub_query, sub_system_prompt, analysis = _apply_frozen_substitution(
@@ -1048,29 +1333,12 @@ async def run_fresh(
             f"[{name}] frozen path — pattern={pattern_val} (skipped skill injection, classify, handler lookup)"
         )
     else:
-        skill_ctx = ""
-        skill_injector = config.get("skill_injector")
-        if skill_injector:
-            try:
-                skill_ctx = await skill_injector.get_context(processed_query)
-            except Exception as exc:
-                logger.warning(f"[{name}] skill_injector failed ({exc!r}) — proceeding without.")
-
         handoff_targets = config.get("_handoff_targets") or []
         delegate_targets = config.get("_delegate_targets") or []
         all_delegation_targets = handoff_targets + delegate_targets
-        delegation_ctx = _build_delegation_context(all_delegation_targets)
-        if delegation_ctx and skill_ctx:
-            skill_ctx = f"{skill_ctx}\n\n{delegation_ctx}"
-        elif delegation_ctx:
-            skill_ctx = delegation_ctx
 
-        harness_block = f"\n\n=== CROSS-SESSION PROGRESS ===\n{harness_ctx}\n" if harness_ctx else ""
-        augmented_query = (
-            f"{memory_ctx}{harness_block}\n{processed_query}"
-            if memory_ctx
-            else (f"{harness_block}\n{processed_query}" if harness_ctx else processed_query)
-        )
+        skill_ctx = await _build_skill_context_for_classify(config, processed_query=processed_query)
+        augmented_query = _build_classifier_augmented_query(memory_ctx, harness_ctx, processed_query)
         eq = config.get("_event_queue")
         if skill_ctx.strip() and eq is not None:
             await eq.put(
@@ -1092,14 +1360,10 @@ async def run_fresh(
             )
         t_classify = time.perf_counter()
         await _emit_graph_node_event(config, "graph_node_enter", node="classify", input_preview=augmented_query)
-        analysis: QueryAnalysis = await analyze_query(
-            llm=config["llm"],
-            query=augmented_query,
-            tools=config.get("tools", []),
+        analysis = await _execute_analyze_query(
+            config,
+            augmented_query=augmented_query,
             skill_context=skill_ctx,
-            classifier_timeout=config.get("classifier_timeout", 60.0),
-            structured_max_retries=config.get("structured_max_retries", 2),
-            fallback_pattern=config.get("fallback_pattern"),
         )
         classify_ms = round((time.perf_counter() - t_classify) * 1000, 1)
         classify_step = _make_step(
@@ -1127,6 +1391,9 @@ async def run_fresh(
             duration_ms=round(classify_ms),
             output_preview=classify_summary,
         )
+        analysis = _coerce_unknown_pattern_handler(config, analysis, registry=registry)
+        # In-process fallback when resume runs before a checkpoint exists for this thread.
+        config["_last_turn_analysis"] = analysis
         logger.event(
             f"[{name}] classify → pattern={analysis.pattern.value} "
             f"complexity={analysis.complexity} "
@@ -1273,6 +1540,9 @@ async def run_fresh(
                     analysis=analysis,
                     worker_results=result.worker_results,
                     run_id=run_id,
+                    steps=list(result.steps),
+                    token_usage=dict(result.token_usage),
+                    messages=list(result.messages),
                 )
 
         result = await _run_after_agent(config.get("middleware", []), result, context)
@@ -1285,9 +1555,17 @@ async def run_fresh(
             except Exception as exc:
                 logger.debug(f"[{name}] cache_set (DIRECT) failed: {exc!r}")
 
-        _maybe_fire_feedback_hooks(config, result, raw_query_str, name, skill_used=analysis.matched_skill)
+        _maybe_fire_feedback_hooks(
+            config, result, raw_query_str, name, skill_used=analysis.matched_skill, user_id=user_id
+        )
 
         logger.event(f"[{name}] DIRECT short-circuit — 1 LLM call total.")
+        await emit_remaining_token_usage(
+            config,
+            result.token_usage,
+            phase=PatternType.DIRECT.value,
+            model=_llm_label(config["llm"]),
+        )
         return result
 
     if not is_frozen:
@@ -1298,11 +1576,43 @@ async def run_fresh(
 
     logger.event(f"[{name}] execute → {pattern_val}")
     assert handler is not None, "handler must be set by frozen or dynamic path"
-    exec_invoke_config = {**(invoke_config or {}), "_steps": _steps}
+    exec_base = dict(invoke_config or {})
+    exec_meta = dict(exec_base.get("metadata") or {})
+    exec_meta.setdefault("max_step_output_length", ml)
+    exec_base["metadata"] = exec_meta
+    exec_invoke_config = {**exec_base, "_steps": _steps}
     t_exec = time.perf_counter()
     await _emit_graph_node_event(config, "graph_node_enter", node=pattern_val, pattern=pattern_val, input_preview=augmented_query)
     handler_user_turn = merge_context_into_user_turn(augmented_query, query)
-    result: ExecutionResult = await handler(config, handler_user_turn, analysis, exec_invoke_config)
+    from .orchestrator import dispatch_pattern, orchestration_enabled
+    from .models import SpawnInstruction
+
+    if orchestration_enabled(config, analysis):
+        if isinstance(handler_user_turn, str):
+            spawn_task = handler_user_turn
+        elif isinstance(handler_user_turn, list):
+            spawn_task = text_from_user_turn(handler_user_turn)
+        elif isinstance(query, list):
+            spawn_task = text_from_user_turn(query)
+        else:
+            spawn_task = raw_query_str
+        instruction = SpawnInstruction(
+            pattern=analysis.pattern,
+            task=spawn_task,
+            system_instruction=str(config.get("system_prompt", "") or ""),
+            required_tools=[getattr(t, "name", str(t)) for t in config.get("tools", [])],
+            escalation_reason="root_query",
+        )
+        result = await dispatch_pattern(
+            config,
+            instruction,
+            parent_ctx=None,
+            analysis=analysis,
+            invoke_config=exec_invoke_config,
+            registry=registry,
+        )
+    else:
+        result = await handler(config, handler_user_turn, analysis, exec_invoke_config)
     exec_ms = round((time.perf_counter() - t_exec) * 1000, 1)
     await _emit_graph_node_event(
         config,
@@ -1412,7 +1722,9 @@ async def run_fresh(
 
         safe_create_task(_bg_gen(), name=f"skill-gen-{name}")
 
-    _maybe_fire_feedback_hooks(config, result, raw_query_str, name, skill_used=analysis.matched_skill)
+    _maybe_fire_feedback_hooks(
+        config, result, raw_query_str, name, skill_used=analysis.matched_skill, user_id=user_id
+    )
 
     for wr in result.worker_results:
         if hasattr(wr, "token_usage") and wr.token_usage:
@@ -1455,6 +1767,12 @@ async def run_fresh(
     logger.event(
         f"[{name}] done — run_id={run_id} frozen={is_frozen} success={result.success} output={len(result.output)} chars"
     )
+    await emit_remaining_token_usage(
+        config,
+        _total_usage,
+        phase=pattern_val,
+        model=_llm_label(config["llm"]),
+    )
     return result
 
 
@@ -1464,8 +1782,16 @@ def _maybe_fire_feedback_hooks(
     query: str,
     name: str,
     skill_used: str | None = None,
+    *,
+    user_id: str | None = None,
 ) -> None:
     """Fire feedback hooks if configured. Failures are swallowed."""
+    if user_id:
+        try:
+            result.metadata.setdefault("user_id", user_id)
+        except Exception:
+            pass
+
     feedback_cfg = config.get("_feedback")
     if not feedback_cfg and not _FEEDBACK_AVAILABLE:
         return
@@ -1513,7 +1839,11 @@ class UnifiedAgent:
         """Release all held resources: MCP connections, thread pools, HTTP clients."""
         if self.config.get("_mcp_client") is not None:
             try:
-                await aclose_mcp_client(self.config["_mcp_client"], log_name=self.name)
+                await aclose_mcp_client(
+                    self.config["_mcp_client"],
+                    log_name=self.name,
+                    client_holder=self.config.get("_mcp_client_holder"),
+                )
             except Exception as exc:
                 logger.debug(f"[{self.name}] MCP client cleanup: {exc!r}")
             self.config["_mcp_client"] = None
@@ -1581,6 +1911,20 @@ class UnifiedAgent:
         }
         return effective_thread_id, effective_ltns, invoke_config
 
+    @staticmethod
+    def _merge_context_into_invoke_config(invoke_config: dict, context: dict | None) -> None:
+        """Allow ``ainvoke(..., context={"configurable": {...}})`` to supply a shared ``signal_queue``."""
+        if not context:
+            return
+        extra = context.get("configurable")
+        if not isinstance(extra, dict):
+            return
+        base = invoke_config.setdefault("configurable", {})
+        if "signal_queue" in extra:
+            base["signal_queue"] = extra["signal_queue"]
+        if "clarification_queues" in extra:
+            base["clarification_queues"] = extra["clarification_queues"]
+
     async def ainvoke(
         self,
         query: str | dict | list,
@@ -1619,6 +1963,7 @@ class UnifiedAgent:
                 )
 
         effective_thread_id, effective_ltns, invoke_config = self.resolve_ids(thread_id, user_id, lt_namespace)
+        self._merge_context_into_invoke_config(invoke_config, context)
 
         await _ensure_mcp_connected(self.config)
         await _ensure_skills_bootstrapped(self.config)
@@ -1672,7 +2017,12 @@ class UnifiedAgent:
         ``stream_mode="tokens"``
             * **DIRECT pattern** (non-frozen, single-LLM call): yields real LLM
               token strings as they arrive from the model, giving true streaming
-              latency.
+              latency. This path **does not** run the full ``run_fresh`` pipeline:
+              semantic cache read/write, session checkpoint persistence,
+              ``_record_turn`` / session transcript, and feedback hooks run only on the
+              :meth:`ainvoke` / ``stream_mode="result"`` path (or after you call
+              :meth:`ainvoke` yourself). Prefer :meth:`astream_events` if you need AGP
+              parity (tokens + ``done`` with a persisted turn).
             * **All other patterns** (SUPERVISOR, SEQUENTIAL, REFLECTION, …):
               ``ainvoke`` is called first and the final answer is then yielded
               word-by-word via ``asyncio.sleep(0)``.  This is *simulated*
@@ -1741,51 +2091,33 @@ class UnifiedAgent:
             raw_query_str = query
             processed_query = await _run_before_agent(self.config.get("middleware", []), raw_query_str, ctx)
 
-            sp = self.config["system_prompt"]
-            resolved_sp = sp
-            if callable(sp) and not isinstance(sp, str):
-                _sp_state = {
-                    "messages": [],
-                    "query": raw_query_str,
-                    "context": ctx,
-                    "thread_id": effective_thread_id,
-                    "user_id": user_id,
-                }
-                resolved_sp = await _maybe_await(sp(_sp_state))
-                if isinstance(resolved_sp, SystemMessage):
-                    resolved_sp = (
-                        resolved_sp.content if isinstance(resolved_sp.content, str) else str(resolved_sp.content)
-                    )
-                resolved_sp = resolved_sp or DEFAULT_SYSTEM_PROMPT
+            cfg = await _resolve_system_prompt_for_turn(
+                self.config,
+                raw_query_str=raw_query_str,
+                context=ctx,
+                thread_id=effective_thread_id,
+                user_id=user_id,
+            )
+            resolved_sp = cfg["system_prompt"]
 
-            memory = self.config.get("memory")
-            store = self.config.get("store")
+            memory = cfg.get("memory")
+            store = cfg.get("store")
             memory_ctx = await build_memory_context(
                 session=memory,
                 store=store,
                 thread_id=effective_thread_id,
                 namespace=effective_ltns,
                 query=processed_query,
-                last_n=_memory_injection_last_n(self.config),
+                last_n=_memory_injection_last_n(cfg),
             )
 
-            skill_ctx = ""
-            skill_injector = self.config.get("skill_injector")
-            if skill_injector:
-                try:
-                    skill_ctx = await skill_injector.get_context(processed_query)
-                except Exception:
-                    pass
-
-            augmented_query = f"{memory_ctx}\n{processed_query}" if memory_ctx else processed_query
-            analysis = await analyze_query(
-                llm=self.config["llm"],
-                query=augmented_query,
-                tools=self.config.get("tools", []),
+            harness_ctx = await _build_harness_context_for_classify(cfg, is_frozen=False)
+            skill_ctx = await _build_skill_context_for_classify(cfg, processed_query=processed_query)
+            augmented_query = _build_classifier_augmented_query(memory_ctx, harness_ctx, processed_query)
+            analysis = await _execute_analyze_query(
+                cfg,
+                augmented_query=augmented_query,
                 skill_context=skill_ctx,
-                classifier_timeout=self.config.get("classifier_timeout", 60.0),
-                structured_max_retries=self.config.get("structured_max_retries", 2),
-                fallback_pattern=self.config.get("fallback_pattern"),
             )
 
             if analysis.pattern != PatternType.DIRECT:
@@ -1878,6 +2210,7 @@ class UnifiedAgent:
         async def _run_and_push() -> None:
             try:
                 effective_thread_id, effective_ltns, invoke_config = self.resolve_ids(thread_id, user_id, lt_namespace)
+                self._merge_context_into_invoke_config(invoke_config, context)
 
                 await _ensure_mcp_connected(self.config)
                 await _ensure_skills_bootstrapped(self.config, event_queue=event_queue)
@@ -1926,17 +2259,25 @@ class UnifiedAgent:
                 await event_queue.put(None)
 
         task = asyncio.create_task(_run_and_push())
-
-        while True:
-            event = await event_queue.get()
-            if event is None:
-                break
-            yield event
-
-        if task.done() and not task.cancelled():
-            exc = task.exception()
-            if exc is not None:
-                raise exc
+        try:
+            while True:
+                if task.done() and event_queue.empty():
+                    break
+                event = await event_queue.get()
+                if event is None:
+                    break
+                yield event
+        finally:
+            with contextlib.suppress(asyncio.QueueFull):
+                event_queue.put_nowait(None)
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            elif not task.cancelled():
+                exc = task.exception()
+                if exc is not None:
+                    raise exc
 
     async def astream_agp_events(
         self,
@@ -1987,7 +2328,7 @@ class UnifiedAgent:
         def _on_emit(evt: Any) -> None:
             agp_queue.put_nowait(evt)
 
-        emitter = SessionEmitter._callback_only(
+        emitter = SessionEmitter.for_callback_only(
             session=eff_session,
             thread=eff_thread,
             on_emit=_on_emit,
@@ -2031,10 +2372,8 @@ class UnifiedAgent:
         finally:
             if not task.done():
                 task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
-                except (asyncio.CancelledError, Exception):
-                    pass
 
         if task.done() and not task.cancelled():
             exc = task.exception()
@@ -2055,11 +2394,8 @@ class UnifiedAgent:
         if loop is None:
             return asyncio.run(self.ainvoke(query, **kwargs))
 
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(asyncio.run, self.ainvoke(query, **kwargs))
-            return future.result()
+        future = _sync_bridge_executor().submit(_run_coroutine_in_new_loop, self.ainvoke(query, **kwargs))
+        return future.result()
 
     async def feedback(
         self,
@@ -2107,35 +2443,65 @@ class UnifiedAgent:
     ) -> ExecutionResult:
         """Resume graph execution after an interrupt using LangGraph ``Command(resume=value)``.
 
-        Unlike ``ainvoke``, this targets the compiled graph. Requires a ``checkpointer``
-        passed to ``create_agent``.
+        Unlike ``ainvoke`` (``run_fresh``), this targets the compiled graph. Requires a
+        ``checkpointer`` passed to ``create_agent``.
+
+        Before invoking the graph, restores ``analysis`` (and ``query`` when present) from the
+        latest checkpoint or ``config["_last_turn_analysis"]`` so the classify node does not
+        re-run and change the selected pattern mid-interrupt.
         """
         from langgraph.types import Command
 
+        if self.config.get("checkpointer") is None:
+            return ExecutionResult(
+                pattern_used=PatternType.REACT,
+                query=str(value),
+                output=(
+                    "Resume requires a checkpointer. "
+                    "Pass checkpointer=InMemorySaver() to create_agent()."
+                ),
+                steps_taken=1,
+                success=False,
+            )
+
         compiled = self.config.get("compiled_graph")
         if compiled is None:
-            try:
-                from .graph import build_agent_graph
+            from .graph import build_agent_graph
 
-                compiled = build_agent_graph(self.config)
-                self.config["compiled_graph"] = compiled
-            except ImportError:
-                return ExecutionResult(
-                    pattern_used=PatternType.REACT,
-                    query=str(value),
-                    output=(
-                        "Resume requires a compiled graph with checkpointer. "
-                        "Pass checkpointer=InMemorySaver() to create_agent()."
-                    ),
-                    steps_taken=1,
-                    success=False,
-                )
+            compiled = build_agent_graph(self.config)
+            self.config["compiled_graph"] = compiled
 
         memory = self.config.get("memory")
         logger.event(f"[{self.name}] resume: thread={thread_id} value={str(value)[:60]}")
         try:
             cfg = invoke_config or {"configurable": {"thread_id": thread_id}}
-            state = await compiled.ainvoke(  # type: ignore[no-matching-overload]
+            ckpt = await self.get_state(thread_id)
+            preserved_analysis = _analysis_from_checkpointer_tuple(ckpt)
+            if preserved_analysis is None:
+                preserved_analysis = self.config.get("_last_turn_analysis")
+            resume_query: str | None = None
+            if ckpt is not None:
+                try:
+                    ck = getattr(ckpt, "checkpoint", None)
+                    if isinstance(ck, dict):
+                        cv = ck.get("channel_values")
+                        if isinstance(cv, dict):
+                            q = cv.get("query")
+                            if isinstance(q, str) and q.strip():
+                                resume_query = q
+                except Exception:
+                    pass
+            await _seed_graph_state_for_resume(
+                compiled,
+                cfg,
+                analysis=preserved_analysis,
+                query=resume_query,
+            )
+            if preserved_analysis is not None:
+                logger.debug(
+                    f"[{self.name}] resume: reusing analysis pattern={preserved_analysis.pattern.value}"
+                )
+            state = await cast(Any, compiled).ainvoke(
                 Command(resume=value),
                 config=cfg,
             )
@@ -2410,6 +2776,17 @@ async def create_agent(
     react_force_tool_choice_on_user_turn: bool = True,
     react_tool_use_failed_auto_retries_hitl: int = 2,
     react_tool_use_failed_user_rounds: int = 3,
+    max_pattern_depth: int = 0,
+    max_orchestration_llm_calls: int = 100,
+    max_orchestration_tokens: int = 0,
+    enable_auto_escalation: bool = False,
+    orchestration_plan_from_classifier: bool = True,
+    escalation_rules: list[str] | None = None,
+    enable_pattern_spawns: bool = True,
+    enable_orchestration_llm_eval: bool = True,
+    enable_dynamic_dag_nodes: bool = True,
+    enable_supervisor_worker_dispatch: bool = True,
+    orchestration_evaluation_llm: Any = None,
 ) -> UnifiedAgent:
     """Construct a configured ``UnifiedAgent`` (async).
 
@@ -2520,6 +2897,17 @@ async def create_agent(
         react_force_tool_choice_on_user_turn=react_force_tool_choice_on_user_turn,
         react_tool_use_failed_auto_retries_hitl=react_tool_use_failed_auto_retries_hitl,
         react_tool_use_failed_user_rounds=react_tool_use_failed_user_rounds,
+        max_pattern_depth=max_pattern_depth,
+        max_orchestration_llm_calls=max_orchestration_llm_calls,
+        max_orchestration_tokens=max_orchestration_tokens,
+        enable_auto_escalation=enable_auto_escalation,
+        orchestration_plan_from_classifier=orchestration_plan_from_classifier,
+        escalation_rules=escalation_rules or ["default"],
+        enable_pattern_spawns=enable_pattern_spawns,
+        enable_orchestration_llm_eval=enable_orchestration_llm_eval,
+        enable_dynamic_dag_nodes=enable_dynamic_dag_nodes,
+        enable_supervisor_worker_dispatch=enable_supervisor_worker_dispatch,
+        orchestration_evaluation_llm=orchestration_evaluation_llm,
         auto_summarize=auto_summarize,
         summarize_threshold=summarize_threshold,
         summarize_max_tokens_budget=summarize_max_tokens_budget,
@@ -2641,8 +3029,12 @@ async def create_agent(
                     name=tool_name,
                     description=fn.__doc__ or "",
                 )
-            except Exception:
-                return fn
+            except Exception as exc:
+                logger.warning(
+                    f"{agent_name}: harness tool {tool_name!r} could not be wrapped as StructuredTool "
+                    f"({exc!r})"
+                )
+                raise
 
         harness_tools = [
             _make_tool(git_status_tool, _git_session),
@@ -2724,6 +3116,17 @@ async def create_agent(
         "_bg_delegation_manager": BackgroundDelegationManager(),
         "_cli_tools": cli_tools_kw,
         "_hitl_tool_allowlist": set(),
+        "max_pattern_depth": max_pattern_depth,
+        "max_orchestration_llm_calls": max_orchestration_llm_calls,
+        "max_orchestration_tokens": max_orchestration_tokens,
+        "enable_auto_escalation": enable_auto_escalation,
+        "orchestration_plan_from_classifier": orchestration_plan_from_classifier,
+        "escalation_rules": list(escalation_rules or ["default"]),
+        "enable_pattern_spawns": enable_pattern_spawns,
+        "enable_orchestration_llm_eval": enable_orchestration_llm_eval,
+        "enable_dynamic_dag_nodes": enable_dynamic_dag_nodes,
+        "enable_supervisor_worker_dispatch": enable_supervisor_worker_dispatch,
+        "orchestration_evaluation_llm": orchestration_evaluation_llm,
     }
 
     if delegates:
@@ -2851,7 +3254,12 @@ def create_agent_sync(
     *args: Any,
     **kwargs: Any,
 ) -> UnifiedAgent:
-    """Synchronous wrapper for ``create_agent`` (``asyncio.run``, or thread pool if a loop runs)."""
+    """Synchronous wrapper for ``create_agent``.
+
+    Uses ``asyncio.run`` when no loop is running; when a loop is already active (Jupyter,
+    IPython, embedded async servers), runs ``create_agent`` in a dedicated thread with its own
+    loop via :func:`_run_coroutine_in_new_loop`. Prefer ``await create_agent(...)`` in async code.
+    """
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -2860,8 +3268,5 @@ def create_agent_sync(
     if loop is None:
         return asyncio.run(create_agent(*args, **kwargs))
 
-    import concurrent.futures
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(asyncio.run, create_agent(*args, **kwargs))
-        return future.result()
+    future = _sync_bridge_executor().submit(_run_coroutine_in_new_loop, create_agent(*args, **kwargs))
+    return future.result()

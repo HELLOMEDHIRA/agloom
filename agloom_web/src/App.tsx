@@ -2,7 +2,7 @@
  * Routes: / → WorkspaceHome (session list / new session) /session/:sessionId → SessionWorkspace (main chat + runtime viz) /sessions → SessionList /settings → Settings (runtime URL, model, etc.)
  */
 
-import React, { useMemo, useEffect } from 'react'
+import React, { useEffect, useRef } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { createAGPClient, AGPClientContext } from './lib/agp/client.js'
 import { WorkspaceHome } from './routes/WorkspaceHome.js'
@@ -15,20 +15,18 @@ import { SessionTrace } from './routes/SessionTrace.js'
 const RUNTIME_URL = import.meta.env['VITE_AGP_WS_URL'] ?? '/agp-ws'
 
 export const App = (): React.ReactElement => {
-  // One AGPClient instance per app lifetime — shared across all routes.
-  const client = useMemo(() => {
+  const clientRef = useRef<ReturnType<typeof createAGPClient> | null>(null)
+  if (clientRef.current === null) {
     const url =
       RUNTIME_URL.startsWith('/')
         ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${RUNTIME_URL}`
         : RUNTIME_URL
-    const c = createAGPClient(url)
-    c.connect()
-    return c
-  }, [])
+    clientRef.current = createAGPClient(url)
+  }
+  const client = clientRef.current
 
-  // Disconnect WebSocket when the component unmounts (e.g. hot-reload, StrictMode double-mount)
-  // to prevent leaked connections and spurious reconnect loops.
   useEffect(() => {
+    client.connect()
     return () => {
       client.disconnect()
     }

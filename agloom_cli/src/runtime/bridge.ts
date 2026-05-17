@@ -8,6 +8,9 @@ import { EventEmitter } from 'node:events'
 import type { AGPEvent, AGPCommand, InvokeAttachment } from '../types/agp.js'
 import { parseInboundAGPEventJSON } from '../types/agp.js'
 
+/** Cap incomplete stdout line buffer — malformed runtime without `\n` must not grow without bound. */
+const MAX_STDOUT_LINE_BUFFER = 8 * 1024 * 1024
+
 export type BridgeStatus = 'starting' | 'ready' | 'error' | 'exited'
 
 export interface BridgeExitInfo {
@@ -27,7 +30,16 @@ export interface AGPBridge {
    * (child stdin/stdout NDJSON). A remote `--transport=ws` server is not wired here;
    * use a WebSocket-capable client or run `agloom-runtime serve --transport=ws` separately.
    */
-  start(extraArgs?: string[], options?: { transport?: 'stdio' }): void
+  start(
+    extraArgs?: string[],
+    options?: {
+      transport?: 'stdio'
+      /** Restart the child after unexpected exit (default false). */
+      autoReconnect?: boolean
+      reconnectMaxAttempts?: number
+      reconnectDelayMs?: number
+    },
+  ): void
 
   send(cmd: AGPCommand): void
   invoke(prompt: string, thread?: string, attachments?: InvokeAttachment[]): void
@@ -94,8 +106,13 @@ export const createAGPBridge = (): AGPBridge => {
   let forceKillTimer: ReturnType<typeof setTimeout> | null = null
   /** Sync child teardown when the Node process exits; single hook avoids duplicate teardown. */
   let syncKillOrphanChild: (() => void) | null = null
-  /** Prevent double ``start()`` (e.g. React Strict Mode re-running effects). */
+  let signalForwarders: Array<{ signal: NodeJS.Signals; handler: () => void }> = []
+  /** Prevent double ``start()`` while a child is alive (e.g. React Strict Mode). */
   let serveStarted = false
+  let lastStartArgs: string[] = []
+  let lastStartOptions: { transport?: 'stdio'; autoReconnect?: boolean; reconnectMaxAttempts?: number; reconnectDelayMs?: number } = {}
+  let reconnectAttempts = 0
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
   const flushEventPreBuffer = (): void => {
     if (eventPreBuffer.length === 0) return
@@ -108,6 +125,7 @@ export const createAGPBridge = (): AGPBridge => {
   const emitOrBufferAgpEvent = (evt: AGPEvent): void => {
     if (evt.type === 'session.opened' || evt.type === 'session.resumed') {
       status = 'ready'
+      reconnectAttempts = 0
     }
     if (emitter.listenerCount('event') > 0) {
       emitter.emit('event', evt)
@@ -128,6 +146,42 @@ export const createAGPBridge = (): AGPBridge => {
       process.removeListener('exit', syncKillOrphanChild)
       syncKillOrphanChild = null
     }
+    for (const { signal, handler } of signalForwarders.splice(0)) {
+      process.removeListener(signal, handler)
+    }
+  }
+
+  const forwardSignalToChild = (signal: NodeJS.Signals): void => {
+    if (!proc) return
+    proc.kill(signal)
+  }
+
+  const attachSignalForwarders = (): void => {
+    detachProcessExitHooks()
+    for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+      const handler = (): void => {
+        forwardSignalToChild(signal)
+      }
+      process.on(signal, handler)
+      signalForwarders.push({ signal, handler })
+    }
+    let syncKillRan = false
+    syncKillOrphanChild = () => {
+      if (syncKillRan) return
+      syncKillRan = true
+      if (!proc) return
+      const childPid = proc.pid
+      if (process.platform === 'win32' && childPid != null) {
+        try {
+          execSync(`taskkill /F /T /PID ${childPid}`, { stdio: 'ignore' })
+        } catch {
+          proc.kill('SIGTERM')
+        }
+        return
+      }
+      proc.kill('SIGTERM')
+    }
+    process.once('exit', syncKillOrphanChild)
   }
 
   const forceKillChild = (childPid: number): void => {
@@ -139,11 +193,7 @@ export const createAGPBridge = (): AGPBridge => {
       }
       return
     }
-    try {
-      process.kill(-childPid, 'SIGKILL')
-    } catch {
-      proc?.kill('SIGKILL')
-    }
+    proc?.kill('SIGKILL')
   }
 
   const send = (cmd: AGPCommand): void => {
@@ -154,11 +204,29 @@ export const createAGPBridge = (): AGPBridge => {
     proc.stdin.write(`${JSON.stringify(cmd)}\n`)
   }
 
-  const start = (extraArgs: string[] = [], options?: { transport?: 'stdio' }): void => {
-    if (serveStarted) {
+  const clearReconnectTimer = (): void => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+  }
+
+  const start = (
+    extraArgs: string[] = [],
+    options?: {
+      transport?: 'stdio'
+      autoReconnect?: boolean
+      reconnectMaxAttempts?: number
+      reconnectDelayMs?: number
+    },
+  ): void => {
+    if (proc) {
       return
     }
+    clearReconnectTimer()
     serveStarted = true
+    lastStartArgs = [...extraArgs]
+    lastStartOptions = { ...options }
     const cmd = process.env['AGLOOM_RUNTIME'] ?? 'agloom-runtime'
     const transport = options?.transport ?? 'stdio'
     const args = ['serve', `--transport=${transport}`, ...extraArgs]
@@ -167,42 +235,26 @@ export const createAGPBridge = (): AGPBridge => {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env },
       shell: false,
-      detached: process.platform !== 'win32',
+      // Stay in the parent's process group; SIGINT/SIGTERM forwarders + exit hook stop the child.
+      detached: false,
       windowsHide: true,
     })
 
     pid = proc.pid
 
-    detachProcessExitHooks()
-    let syncKillRan = false
-    syncKillOrphanChild = () => {
-      if (syncKillRan) return
-      syncKillRan = true
-      if (!proc) return
-      const childPid = proc.pid
-      if (childPid == null) {
-        proc.kill('SIGTERM')
-        return
-      }
-      if (process.platform === 'win32') {
-        try {
-          execSync(`taskkill /F /T /PID ${childPid}`, { stdio: 'ignore' })
-        } catch {
-          proc.kill('SIGTERM')
-        }
-      } else {
-        try {
-          process.kill(-childPid, 'SIGTERM')
-        } catch {
-          proc.kill('SIGTERM')
-        }
-      }
-    }
-    process.once('exit', syncKillOrphanChild)
+    attachSignalForwarders()
 
     proc.stdout?.setEncoding('utf8')
     proc.stdout?.on('data', (chunk: string) => {
       buf += chunk
+      if (buf.length > MAX_STDOUT_LINE_BUFFER) {
+        emitter.emit(
+          'diagnostic',
+          `[stdout] line buffer > ${MAX_STDOUT_LINE_BUFFER} bytes; discarding through last newline (missing newlines?)`,
+        )
+        const nl = buf.lastIndexOf('\n')
+        buf = nl >= 0 ? buf.slice(nl + 1) : ''
+      }
       const lines = buf.split('\n')
       buf = lines.pop() ?? ''
 
@@ -231,8 +283,41 @@ export const createAGPBridge = (): AGPBridge => {
     proc.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
       clearForceKillTimer()
       detachProcessExitHooks()
+      proc = null
+      serveStarted = false
       status = 'exited'
+      const unexpected = code !== 0 && code !== null
+      if (unexpected) {
+        emitter.emit(
+          'diagnostic',
+          `[bridge] agloom-runtime exited (code=${code}${signal ? `, signal=${signal}` : ''}).`,
+        )
+      } else if (signal) {
+        emitter.emit('diagnostic', `[bridge] agloom-runtime stopped (signal=${signal}).`)
+      }
       emitter.emit('exit', { code, signal })
+
+      const envReconnect = (process.env['AGLOOM_BRIDGE_AUTO_RECONNECT'] || '').trim().toLowerCase()
+      const autoReconnect =
+        lastStartOptions.autoReconnect ?? ['1', 'true', 'yes'].includes(envReconnect)
+      const maxAttempts = lastStartOptions.reconnectMaxAttempts ?? 3
+      const delayMs = lastStartOptions.reconnectDelayMs ?? 1500
+      if (autoReconnect && unexpected && reconnectAttempts < maxAttempts) {
+        reconnectAttempts += 1
+        emitter.emit(
+          'diagnostic',
+          `[bridge] Reconnecting in ${delayMs}ms (attempt ${reconnectAttempts}/${maxAttempts})…`,
+        )
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null
+          status = 'starting'
+          start(lastStartArgs, lastStartOptions)
+        }, delayMs)
+      } else if (autoReconnect && unexpected) {
+        emitter.emit('diagnostic', '[bridge] Auto-reconnect exhausted — start a new session to continue.')
+      } else if (unexpected || signal) {
+        emitter.emit('diagnostic', '[bridge] Start a new session to continue.')
+      }
     })
 
     proc.stdin?.on?.('error', (err: NodeJS.ErrnoException) => {
@@ -242,6 +327,8 @@ export const createAGPBridge = (): AGPBridge => {
     proc.on('error', (err: NodeJS.ErrnoException) => {
       clearForceKillTimer()
       detachProcessExitHooks()
+      proc = null
+      serveStarted = false
       const guidance =
         err.code === 'ENOENT'
           ? new Error(
@@ -254,6 +341,8 @@ export const createAGPBridge = (): AGPBridge => {
   }
 
   const kill = (): void => {
+    clearReconnectTimer()
+    reconnectAttempts = 0
     if (!proc) return
     clearForceKillTimer()
     const childPid = proc.pid
@@ -262,11 +351,12 @@ export const createAGPBridge = (): AGPBridge => {
       return
     }
     if (process.platform === 'win32') {
-      try {
-        execSync(`taskkill /F /T /PID ${childPid}`, { stdio: 'ignore' })
-      } catch {
-        proc.kill('SIGTERM')
-      }
+      proc.kill('SIGTERM')
+      forceKillTimer = setTimeout(() => {
+        forceKillTimer = null
+        if (!proc || proc.pid !== childPid) return
+        forceKillChild(childPid)
+      }, 5000)
       return
     }
     try {

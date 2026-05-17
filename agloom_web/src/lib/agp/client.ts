@@ -115,7 +115,9 @@ export const createAGPClient = (
     send(cmd: AGPCommand): void {
       if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(cmd))
+        return
       }
+      emitDiagnostic(`[agp] dropped outbound ${cmd.type}: WebSocket not open (state=${ws?.readyState ?? 'none'})`)
     },
 
     invoke(prompt: string, thread?: string): void {

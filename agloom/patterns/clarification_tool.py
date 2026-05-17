@@ -8,6 +8,7 @@ The tool awaits `Queue.get` inside the tool node so the event loop can still run
 from __future__ import annotations
 
 import asyncio
+import os
 
 from langchain_core.tools import BaseTool
 from langchain_core.tools import tool as make_tool
@@ -18,13 +19,23 @@ from ..models import Signal, SignalType
 logger = get_logger(__name__)
 
 # After timeout the worker gets a fallback string instead of hanging indefinitely.
-CLARIFICATION_TIMEOUT_SECONDS: float = 300.0
+def _default_clarification_timeout() -> float:
+    raw = os.environ.get("AGLOOM_CLARIFICATION_TIMEOUT_S", "300")
+    try:
+        return max(30.0, float(raw))
+    except (TypeError, ValueError):
+        return 300.0
+
+
+CLARIFICATION_TIMEOUT_SECONDS: float = _default_clarification_timeout()
 
 
 def make_clarification_tool(
     worker_id: str,
     signal_queue: asyncio.Queue,
     clarification_queues: dict[str, asyncio.Queue],
+    *,
+    timeout_seconds: float | None = None,
 ) -> BaseTool:
     """
     Create a per-worker ask_for_clarification tool.
@@ -37,11 +48,18 @@ def make_clarification_tool(
     ----------
     worker_id            : this worker's id (e.g. "worker-1", "researcher")
     signal_queue         : outbound queue — tool writes signal here
-    clarification_queues : shared dict — tool registers its queue here;
-                           HITL listener reads from it to route answers
+    clarification_queues : shared dict — one queue per ``worker_id``; reused across tool
+                           recreation so in-flight clarifications are not orphaned.
     """
-    cq: asyncio.Queue[str] = asyncio.Queue()
-    clarification_queues[worker_id] = cq
+    cq = clarification_queues.get(worker_id)
+    if cq is None:
+        cq = asyncio.Queue()
+        clarification_queues[worker_id] = cq
+    wait_s = (
+        timeout_seconds
+        if timeout_seconds is not None
+        else CLARIFICATION_TIMEOUT_SECONDS
+    )
 
     @make_tool
     async def ask_for_clarification(question: str) -> str:
@@ -64,7 +82,7 @@ def make_clarification_tool(
         try:
             answer = await asyncio.wait_for(
                 cq.get(),
-                timeout=CLARIFICATION_TIMEOUT_SECONDS,
+                timeout=wait_s,
             )
             logger.event(f"[Worker:{worker_id}] ▶ Clarification received — answer={answer!r}")
             return f"User clarification: {answer}"
@@ -72,7 +90,7 @@ def make_clarification_tool(
         except TimeoutError:
             logger.warning(
                 f"[Worker:{worker_id}] ⚠ Clarification timed out after "
-                f"{CLARIFICATION_TIMEOUT_SECONDS}s — proceeding without answer."
+                f"{wait_s}s — proceeding without answer."
             )
             return (
                 "Clarification timed out — no user response received. "

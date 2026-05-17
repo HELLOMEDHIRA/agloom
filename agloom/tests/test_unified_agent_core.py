@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from langchain_core.messages import SystemMessage
 
-from agloom.models import DEFAULT_SYSTEM_PROMPT
-from agloom.unified_agent import _wire_query_snapshot, normalize_tools, resolve_system_prompt
+from agloom.models import DEFAULT_SYSTEM_PROMPT, ExecutionResult, PatternType
+from agloom.unified_agent import _wire_query_snapshot, normalize_tools, resolve_model, resolve_system_prompt
 
 
 def test_resolve_system_prompt_none() -> None:
@@ -49,3 +49,33 @@ def test_normalize_tools_from_callable() -> None:
     tools = normalize_tools([add_numbers])
     assert len(tools) == 1
     assert tools[0].name == "add_numbers"
+
+
+def test_resolve_model_passes_through_instance() -> None:
+    class _Fake:
+        model_name = "fake"
+
+    inst = _Fake()
+    assert resolve_model(inst) is inst
+
+
+def test_resolve_model_string_uses_get_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    def _fake_get_model(model_id: str, **kwargs: object) -> object:
+        seen.append(model_id)
+        return object()
+
+    monkeypatch.setattr("agloom.llm.model_resolver.get_model", _fake_get_model)
+    resolve_model("openai:gpt-4o-mini")
+    assert seen == ["openai:gpt-4o-mini"]
+
+
+def test_execution_result_sets_error_from_output_when_failed() -> None:
+    r = ExecutionResult(
+        pattern_used=PatternType.REACT,
+        query="q",
+        output="failure details here",
+        success=False,
+    )
+    assert r.error == "failure details here"

@@ -151,6 +151,17 @@ describe('worker.spawned / worker.completed / worker.failed', () => {
     expect(state().activeTurn?.workers[0]?.outputPreview).toBe('result')
   })
 
+  it('marks worker halted on worker.halted', () => {
+    dispatch({ ...env(), type: 'worker.spawned', data: { worker_id: 'w1', name: 'a' } })
+    dispatch({
+      ...env(),
+      type: 'worker.halted',
+      data: { worker_id: 'w1', reason: 'HALT_ALL', output_preview: 'stopped' },
+    })
+    expect(state().activeTurn?.workers[0]?.status).toBe('halted')
+    expect(state().activeTurn?.workers[0]?.error).toBe('HALT_ALL')
+  })
+
   it('marks worker failed on worker.failed', () => {
     dispatch({ ...env(), type: 'worker.spawned', data: { worker_id: 'w1', name: 'researcher' } })
     dispatch({ ...env(), type: 'worker.failed', data: { worker_id: 'w1', error: 'network error' } })
@@ -230,14 +241,30 @@ describe('message.assistant', () => {
     dispatch({ ...env(), type: 'message.assistant', data: { content: '', pattern: 'DIRECT' } })
     expect(state().completedTurns[0]?.assistantMessage).toBe('streamed answer')
   })
+
+  it('strips agloom tool_result envelopes from assistant text', () => {
+    dispatch({ ...env(), type: 'message.user', data: { content: 'read file' } })
+    dispatch({
+      ...env(),
+      type: 'message.assistant',
+      data: {
+        content:
+          '[agloom:tool_result] complete=true\nname = "tests"\nThe first two lines of the pyproject.toml file are:',
+        pattern: 'REACT',
+      },
+    })
+    expect(state().completedTurns[0]?.assistantMessage).toBe(
+      'name = "tests"\nThe first two lines of the pyproject.toml file are:',
+    )
+  })
 })
 
 // metrics
 
 describe('metric.tokens', () => {
   it('accumulates total token counts', () => {
-    dispatch({ ...env(), type: 'metric.tokens', data: { model: 'gpt-4', input_tokens: 100, output_tokens: 50 } })
-    dispatch({ ...env(), type: 'metric.tokens', data: { model: 'gpt-4', input_tokens: 200, output_tokens: 80 } })
+    dispatch({ ...env({ seq: 1 }), type: 'metric.tokens', data: { model: 'gpt-4', input_tokens: 100, output_tokens: 50 } })
+    dispatch({ ...env({ seq: 2 }), type: 'metric.tokens', data: { model: 'gpt-4', input_tokens: 200, output_tokens: 80 } })
     expect(state().totalInputTokens).toBe(300)
     expect(state().totalOutputTokens).toBe(130)
     expect(state().model).toBe('gpt-4')
@@ -342,5 +369,73 @@ describe('graph.node.exit', () => {
   it('records a protocol note', () => {
     dispatch({ ...env(), type: 'graph.node.exit', data: { node: 'react', duration_ms: 120 } })
     expect(state().protocolNotes.some((n) => n.includes('Graph exit'))).toBe(true)
+  })
+})
+
+describe('runtime.providers / session.renamed / file.staged', () => {
+  it('runtime.providers adds a provider summary note', () => {
+    dispatch({
+      ...env(),
+      type: 'runtime.providers',
+      data: {
+        providers: [
+          { slug: 'openai', label: 'OpenAI', default_model: 'gpt-4o-mini' },
+          { slug: 'anthropic', label: 'Anthropic', default_model: 'claude-3-haiku' },
+        ],
+      },
+    })
+    expect(state().protocolNotes.some((n) => n.includes('Providers (2)') && n.includes('openai'))).toBe(true)
+  })
+
+  it('runtime.session.renamed updates sessionId when it matches from_session_id', () => {
+    dispatch({ ...env(), type: 'session.opened', data: { runtime_version: '0.1.0', protocol_version: '1' } })
+    expect(state().sessionId).toBe('test-session')
+    dispatch({
+      ...env(),
+      type: 'runtime.session.renamed',
+      data: { from_session_id: 'test-session', to_session_id: 'new-id' },
+    })
+    expect(state().sessionId).toBe('new-id')
+    expect(state().protocolNotes.some((n) => n.includes('Session renamed'))).toBe(true)
+  })
+
+  it('runtime.file.staged records path and bytes', () => {
+    dispatch({
+      ...env(),
+      type: 'runtime.file.staged',
+      data: { path: 'foo.txt', bytes: 42 },
+    })
+    expect(state().protocolNotes.some((n) => n.includes('File staged · foo.txt') && n.includes('42'))).toBe(true)
+  })
+})
+
+describe('metric.budget.*', () => {
+  it('metric.budget.approaching sets budgetUi', () => {
+    dispatch({
+      ...env(),
+      type: 'metric.budget.approaching',
+      data: { dimension: 'tokens', used: 80, limit: 100, ratio: 0.8 },
+    })
+    expect(state().budgetUi).toBe('approaching')
+  })
+
+  it('metric.budget.exhausted sets budgetUi', () => {
+    dispatch({
+      ...env(),
+      type: 'metric.budget.exhausted',
+      data: { dimension: 'cost_usd', used: 10, limit: 10 },
+    })
+    expect(state().budgetUi).toBe('exhausted')
+  })
+})
+
+describe('dispatch default / unknown AGP types', () => {
+  it('appends an unhandled-event protocol note', () => {
+    dispatch({
+      ...env(),
+      type: 'zz.custom.unhandled',
+      data: { x: 1 },
+    } as unknown as AGPEvent)
+    expect(state().protocolNotes.some((n) => n.includes('Unknown / unhandled AGP event'))).toBe(true)
   })
 })

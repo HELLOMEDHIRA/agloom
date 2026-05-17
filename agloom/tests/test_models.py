@@ -20,6 +20,8 @@ from agloom.models import (
     SubTask,
     WorkerPlan,
     WorkerResult,
+    _merge_token_usage,
+    _usage_from_metadata,
     query_analysis_from_tool_payload,
 )
 
@@ -83,7 +85,7 @@ def test_pattern_type_values(name: str) -> None:
     assert PatternType(name).value == name
 
 
-@pytest.mark.parametrize("name", ["HALT_ALL", "CLARIFICATION_REQUEST", "SUCCESS", "FAILED"])
+@pytest.mark.parametrize("name", ["HALT_ALL", "CLARIFICATION_REQUEST", "SUCCESS", "FAILED", "HALTED"])
 def test_signal_type_values(name: str) -> None:
     assert SignalType(name).value == name
 
@@ -106,6 +108,43 @@ def test_query_analysis_complexity_coercion() -> None:
 def test_query_analysis_complexity_clamped() -> None:
     qa = QueryAnalysis(pattern=PatternType.DIRECT, complexity=0, reasoning="r")
     assert qa.complexity == 0
+
+
+@pytest.mark.parametrize(
+    ("wire", "expected"),
+    [
+        ("true", True),
+        ("True", True),
+        ("yes", True),
+        ("YES", True),
+        ("1", True),
+        ("on", True),
+        ("y", True),
+        ("false", False),
+        ("no", False),
+        ("0", False),
+        ("off", False),
+        ("n", False),
+    ],
+)
+def test_tool_payload_bool_normalization(wire: str, expected: bool) -> None:
+    raw = QueryAnalysisToolPayload(
+        pattern="REACT",
+        can_parallelize=wire,
+        needs_reflection="false",
+    )
+    assert raw.can_parallelize == ("true" if expected else "false")
+    qa = query_analysis_from_tool_payload(raw)
+    assert qa.can_parallelize is expected
+
+
+def test_tool_payload_bool_int_coercion() -> None:
+    raw = QueryAnalysisToolPayload.model_validate(
+        {"pattern": "REACT", "can_parallelize": 1, "needs_reflection": 0},
+    )
+    qa = query_analysis_from_tool_payload(raw)
+    assert qa.can_parallelize is True
+    assert qa.needs_reflection is False
 
 
 def test_tool_payload_bool_strings() -> None:
@@ -218,3 +257,11 @@ def test_resolved_worker_config_defaults() -> None:
     assert rc.depends_on == []
     assert rc.max_retries == 2
     assert rc.retry_delay == 1.0
+
+
+def test_usage_from_metadata_maps_prompt_completion_tokens() -> None:
+    usage = _usage_from_metadata({"prompt_tokens": 100, "completion_tokens": 40})
+    assert usage == {"input_tokens": 100, "output_tokens": 40, "total_tokens": 140}
+    merged = _merge_token_usage({}, usage)
+    assert merged["input_tokens"] == 100
+    assert merged["output_tokens"] == 40
