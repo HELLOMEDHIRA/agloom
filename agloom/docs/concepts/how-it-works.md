@@ -1,128 +1,140 @@
-# How agloom Works
+# How agloom works
 
-For **turn** vs **run** vs **call** and related terms, see the [Glossary](glossary.md).
+For vocabulary (**turn**, **run**, **thread**, **checkpoint**), see the [Glossary](glossary.md).
 
-## The Pipeline
+---
 
-Every call to `agent.ainvoke(query)` flows through this pipeline:
+## One API, one pipeline
+
+Every turn starts the same way: you call `agent.ainvoke(...)`, `agent.astream(...)`, or a streaming variant. agloom does the rest.
 
 ```mermaid
 flowchart TD
-    A[User Query] --> B[Memory Injection]
-    B --> C[Query Classification]
-    C --> D{Pattern Selected}
-    D -->|DIRECT| E[Single LLM Call]
-    D -->|REACT| F[ReAct Tool Loop]
-    D -->|SUPERVISOR| G[Manager + Parallel Workers]
-    D -->|PIPELINE| H[Sequential Stages]
-    D -->|REFLECTION| I[Generate - Critique - Revise]
-    D -->|Other| J[SWARM / BLACKBOARD / etc.]
-    E --> K[Skill Learning]
-    F --> K
-    G --> K
-    H --> K
-    I --> K
-    J --> K
-    K --> L[Auto-Evaluation]
-    L --> M[Cache Result]
-    M --> N[ExecutionResult]
+    A[Your query] --> B[Load memory for thread]
+    B --> C[Classify intent & complexity]
+    C --> D{Pick execution pattern}
+    D --> E[Run pattern]
+    E --> F[Learn skills optional]
+    F --> G[Score quality optional]
+    G --> H[Cache & return result]
+    H --> I[ExecutionResult]
 ```
 
-## Step by Step
+You choose the **model**, **tools**, and **policies** (timeouts, HITL, memory store). agloom chooses **how** to execute each turn.
 
-### 1. Memory Injection
+---
 
-agloom always injects available memory context before each query:
+## What happens on each turn
 
-- **Session memory** — recent conversation turns from the current `thread_id` (always active; auto-created with ephemeral store if `memory=` is not passed)
-- **Long-term memory** — relevant memories from the user's namespace (requires `store=`)
+### 1. Memory context
 
-These are prepended to the system prompt so the LLM has full context. Pass `thread_id` at call time to enable session continuity across calls.
+If you pass a **`thread_id`**, recent conversation turns are injected into the prompt. With a **`store=`** and **`user_id`**, long-term memories can be retrieved as well. No extra wiring for “session vs long-term” beyond those parameters.
 
-### 2. Query Classification
+### 2. Classification
 
-An LLM-powered classifier analyzes the query and determines:
+A lightweight planning step analyzes the query and decides:
 
-- **Pattern** — which of the 9 execution patterns to use
-- **Complexity** — 0-10 score
-- **Subtasks** — for multi-agent patterns, the decomposition plan
-- **Tools needed** — whether the query requires tool calling
-- **Parallelizable** — whether subtasks can run concurrently
-- **Orchestration plan** (optional) — when `max_pattern_depth > 0`, suggested per-turn depth, token/LLM budgets, and escalation hint (clamped to agent ceilings). See [Recursive orchestration](../features/orchestration.md).
+- Which **execution pattern** fits (DIRECT, REACT, SUPERVISOR, …)
+- Rough **complexity** and whether work can run **in parallel**
+- Optional **subtasks** for multi-agent patterns
+- Optional **orchestration budget** when recursive depth is enabled
 
-The classifier output is available on **`ExecutionResult.analysis`**. If you use a **`checkpointer`**, that result is also persisted so **`resume()`** can continue an interrupted run without picking a different pattern.
+The structured analysis is on **`result.analysis`** (and in streaming events / AGP as `pattern.classified`).
 
-### 3. Cache Check
+### 3. Cache lookup
 
-By default, `create_agent()` uses an in-memory semantic cache (`default_query_cache()`). Pass **`query_cache=False`** to opt out, or pass a dict from `create_cache()` for custom embeddings / Qdrant. When caching is active, agloom checks for semantically similar previous queries using a **vector cache** (**Qdrant** by default; pluggable). On a cache hit, the cached result is returned immediately (saving an LLM call). See [Query Cache](../features/memory.md#query-cache) for setup.
+If semantic caching is enabled, a similar past query can return immediately — useful for FAQs and repeated analytics questions.
 
-### 4. HITL Interrupts (if configured)
+### 4. Human approval (optional)
 
-If `interrupt_before=` includes the selected pattern, execution pauses and calls `user_callback` for approval before proceeding.
+If you configured interrupts and a **`user_callback`**, agloom can pause before a sensitive pattern, tool, or worker runs. See [Human-in-the-Loop](../features/hitl.md).
 
-### 5. Pattern Execution
+### 5. Pattern execution
 
-The selected pattern handler runs the query. Each pattern is optimized for different query types (see [Execution Patterns](patterns.md)).
+The selected pattern runs with your tools and model. Examples:
 
-When **`max_pattern_depth > 0`**, execution goes through **`dispatch_pattern`**: the root pattern runs with optional bounded sub-spawns (recovery, escalation, dynamic DAG nodes). When depth is `0` for that turn (simple classifier plan), behavior matches the legacy single-pass path.
+| Pattern | Typical use |
+| ------- | ----------- |
+| **DIRECT** | Short answers, no tools |
+| **REACT** | Tool-heavy research or coding |
+| **SUPERVISOR** | Parallel subtasks with a manager |
+| **PIPELINE** | Fixed multi-stage workflows |
+| **REFLECTION** | Draft → critique → revise |
 
-### 6. Skill Learning
+Full catalog: [Execution patterns](patterns.md).
 
-After a successful run, the skill learner extracts reusable patterns and stores them for future use (requires `store=`).
+With **`max_pattern_depth > 0`**, agloom can recover or escalate within the same turn (bounded budgets). See [Recursive orchestration](../features/orchestration.md).
 
-### 7. Auto-Evaluation
+### 6. Skill learning (optional)
 
-The `AutoEvaluator` scores the result on relevance, completeness, and accuracy. This feeds into trend detection and skill lifecycle management.
+Successful runs can be distilled into reusable **skills** when a **`store=`** is configured. Similar queries later get hints in the system prompt.
 
-### 8. Cache & Return
+### 7. Quality feedback (optional)
 
-The result is cached (if `query_cache=` is set) and returned as an `ExecutionResult` containing:
+When persistence is enabled, each run can be scored on relevance and completeness. Trends over time inform skill lifecycle (boost what works, decay what does not). See [Feedback & evaluation](../features/feedback.md).
 
-- `output` — the response text
-- `pattern_used` — which pattern was selected
-- `analysis` — full classifier output (pattern, complexity, subtasks, orchestration hints)
-- `steps` — step-by-step execution trace
-- `token_usage` — aggregated token counts
-- `run_id` — unique identifier for feedback/tracing
-- `worker_results` — individual worker outputs (for multi-agent patterns)
+### 8. Result
 
-## Architecture Diagram
+You receive an **`ExecutionResult`**:
+
+| Field | Meaning |
+| ----- | ------- |
+| `output` | Final assistant text |
+| `pattern_used` | Pattern that ran |
+| `analysis` | Classifier output |
+| `steps` | Trace of steps (tools, workers, timings) |
+| `token_usage` | Aggregated token counts for the turn |
+| `run_id` | Id for feedback or tracing |
+| `worker_results` | Per-worker outputs when applicable |
+
+---
+
+## How this scales with you
 
 ```mermaid
-graph LR
-    subgraph CA["create_agent"]
-        direction TB
-        A[Classifier] --> B[Pattern Router]
-        B --> C[Pattern Handlers]
-        C --> D[Worker Pool]
+graph TB
+    subgraph app["Your application"]
+        API[HTTP / queue / CLI wrapper]
     end
 
-    subgraph INFRA["Infrastructure"]
-        direction TB
-        E[Circuit Breaker]
-        F[Rate Limiter]
-        G[LLM Semaphore]
-        H[Retry Engine]
+    subgraph agloom["agloom agent"]
+        CL[Classifier]
+        PH[Pattern handlers]
+        GU[Guardrails]
     end
 
-    subgraph DATA["Data Layer"]
-        direction TB
-        I[Session Memory]
-        J[Long-Term Store]
-        K[Skill Registry]
-        L[Feedback Store]
-        M[Query Cache]
+    subgraph data["Optional persistence"]
+        SM[Session memory]
+        LT[Long-term store]
+        SK[Skills]
     end
 
-    CA --> INFRA
-    CA --> DATA
+    API --> agloom
+    agloom --> data
 ```
 
-## Thread Safety
+| Stage | What changes | What stays the same |
+| ----- | ------------ | ------------------- |
+| Prototype | `create_agent` in a script | Same `ainvoke` / `astream` API |
+| Product | Add `thread_id`, tools, HITL | Classification still automatic |
+| Platform | Run `agloom-runtime`, multiple UIs on AGP | Same event types on the wire |
+| Fleet | Remote workers behind runtime (future) | AGP session + thread model |
 
-agloom is fully async and thread-safe:
+Concurrency is **async-first**: many turns can run in parallel with isolated state; configure **`max_concurrent_llm_calls`** and rate limits when load grows.
 
-- **`asyncio.Lock`** protects lazy initialization (MCP, skills)
-- **`asyncio.Semaphore`** gates concurrent LLM calls
-- **`ThreadPoolExecutor`** offloads sync I/O (Qdrant, disk)
-- Each `ainvoke` call is isolated — no shared mutable state between calls
+---
+
+## Thread safety
+
+- Lazy resources (MCP, skills) are initialized safely under load.
+- LLM calls can be capped with a semaphore.
+- Each **`ainvoke`** uses isolated turn state — no accidental cross-talk between requests when you use distinct **`thread_id`** values.
+
+---
+
+## Next steps
+
+- [Quick start](../getting-started/quickstart.md) — runnable minimal agent
+- [The `create_agent` API](create-agent.md) — methods and parameters
+- [Streaming & events](../features/streaming.md) — build responsive UIs
+- [Production integration](../guides/production.md) — deploy with confidence

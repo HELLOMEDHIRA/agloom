@@ -30,18 +30,18 @@ The default stack uses SQLite only. Heavier analytics backends can be layered on
 
 ## 2. Observability Platform Components
 
-### 2.1 `agloom.observability` Python package
+### 2.1 Python observability module
 
-```text
-agloom/observability/
-├── __init__.py            # Public API: ObservabilityStore, MetricsAggregator, ReplayEngine
-├── store/
-│   ├── __init__.py
-│   └── sqlite.py          # SQLiteObservabilityStore — append + query
-├── metrics.py             # MetricsAggregator — per-session aggregates
-├── replay.py              # ReplayEngine — replay at wall-clock or 1x speed
-└── api.py                 # FastAPI app — REST + SSE; mounted into runtime serve
-```
+Public API (import from **`agloom.observability`**):
+
+| Component | Role |
+| ----------- | ---- |
+| **ObservabilityStore** | Append AGP envelopes; query by session |
+| **MetricsAggregator** | Per-session token / turn aggregates |
+| **ReplayEngine** | Re-emit stored events (real-time or accelerated) |
+| **HTTP router** | FastAPI routes mounted when `agloom-runtime serve --obs` |
+
+Default backing store is **SQLite** (async via aiosqlite). Swap implementations only if you need shared analytics storage — the AGP event shape stays the same.
 
 ### 2.2 Storage schema (SQLite)
 
@@ -207,18 +207,15 @@ Today the observability store is **SQLite** suitable for single-process and loca
 
 ---
 
-## 8. Runtime Integration
+## 8. Runtime integration
 
-```python
-# agloom/runtime/node.py — extend create_local()
-from agloom.observability import ObservabilityStore
+Enable observability when starting the bridge:
 
-node = await RuntimeNode.create_local(
-    obs_store=ObservabilityStore.open("sessions.db"),
-    ...
-)
-# RuntimeNode calls obs_store.ingest(envelope) after every emit
+```bash
+agloom-runtime serve --obs --obs-db ./obs.sqlite --obs-port 8766
 ```
+
+Custom embedders can attach an **`ObservabilityStore`** to **`RuntimeNode.create_local(...)`** — envelopes are ingested in-process after each emit. See [Observability API (Python)](../guides/observability-python.md).
 
 ---
 

@@ -1,15 +1,23 @@
 /** Live in-flight turn (re-renders on token deltas). */
 import React from 'react'
 import type { ActiveTurnState } from '../../store/session.js'
-import { cn, fmtDuration } from '../../lib/utils/cn.js'
+import { cn } from '../../lib/utils/cn.js'
+import { stripStrayToolJsonFromStream } from '../../lib/utils/strayToolJson.js'
+import { stripAgloomToolResultEnvelope } from '../../lib/utils/assistantText.js'
 import { workerLineClass } from '../../lib/workerStatus.js'
-import { Loader2, Users, Brain, Octagon } from 'lucide-react'
+import { Loader2, Users, Octagon } from 'lucide-react'
 import { ToolCallRow } from './ToolCallRow.js'
+import { ThinkingTrace } from './ThinkingTrace.js'
 
 interface Props { turn: ActiveTurnState }
 
 export const StreamingTurn = ({ turn }: Props): React.ReactElement => {
   const { userMessage, thinkingSteps, toolCalls, workers, streamedTokens, pattern } = turn
+  const displayStream = stripStrayToolJsonFromStream(
+    stripAgloomToolResultEnvelope(streamedTokens),
+    new Set(),
+    { permissive: true },
+  )
 
   return (
     <article className="flex flex-col gap-4">
@@ -23,13 +31,7 @@ export const StreamingTurn = ({ turn }: Props): React.ReactElement => {
         <div className="flex flex-col gap-1.5 pl-3 border-l-2 border-indigo-900/60 ml-1">
           {pattern && <span className="text-xs text-indigo-400 font-medium">▸ {pattern}</span>}
 
-          {thinkingSteps.slice(-4).map((s) => (
-            <div key={s.id} className="flex items-center gap-1.5 text-xs text-neutral-500">
-              <Brain size={9} className="text-neutral-600" />
-              {s.label ?? s.step}
-              {s.elapsedMs && <span className="text-neutral-700">{fmtDuration(s.elapsedMs)}</span>}
-            </div>
-          ))}
+          <ThinkingTrace steps={thinkingSteps} />
 
           {workers.map((w) => (
             <div key={w.id} className={cn('flex items-center gap-1.5 text-xs', workerLineClass(w.status))}>
@@ -39,7 +41,7 @@ export const StreamingTurn = ({ turn }: Props): React.ReactElement => {
               {w.name} {w.pattern && `[${w.pattern}]`}
               {w.status === 'running' && <Loader2 size={9} className="animate-spin" />}
               {w.status === 'halted' && w.outputPreview && (
-                <span className="text-cyan-500/80 truncate max-w-48">{w.outputPreview}</span>
+                <span className="text-cyan-500/80 whitespace-pre-wrap">{w.outputPreview}</span>
               )}
             </div>
           ))}
@@ -53,8 +55,8 @@ export const StreamingTurn = ({ turn }: Props): React.ReactElement => {
       <div className="flex gap-3">
         <div className="w-7 h-7 rounded-full bg-linear-to-br from-indigo-500 to-purple-600 shrink-0 mt-0.5 flex items-center justify-center text-xs font-bold">A</div>
         <div className="flex-1 min-w-0">
-          {streamedTokens ? (
-            <p className="text-sm text-neutral-100 leading-relaxed whitespace-pre-wrap">{streamedTokens}<span className="inline-block w-0.5 h-4 bg-indigo-400 ml-0.5 animate-pulse align-text-bottom" /></p>
+          {displayStream ? (
+            <p className="text-sm text-neutral-100 leading-relaxed whitespace-pre-wrap">{displayStream}<span className="inline-block w-0.5 h-4 bg-indigo-400 ml-0.5 animate-pulse align-text-bottom" /></p>
           ) : (
             <div className="flex items-center gap-2 text-sm text-neutral-500">
               <Loader2 size={13} className="animate-spin text-indigo-400" />

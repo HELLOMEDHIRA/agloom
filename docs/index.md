@@ -28,18 +28,18 @@ from agloom import create_agent
 async def main():
     agent = await create_agent(model=llm, tools=[search, calculate], name="analyst")
     result = await agent.ainvoke("Analyze Q3 sales across 3 regions and recommend strategy")
+    print(result.output)
 ```
 
 ### What happened behind those calls
 
-1. Query classified → SUPERVISOR pattern (multi-faceted, parallelizable)
-2. Decomposed into 3 regional subtasks
-3. 3 workers executed in parallel
-4. Results synthesized into a unified recommendation
-5. Pattern saved as a reusable skill
-6. Quality auto-evaluated and trend-tracked
+1. **Classified** the question → chose a multi-agent pattern (e.g. SUPERVISOR)
+2. **Planned** regional subtasks and ran them in parallel
+3. **Synthesized** one recommendation from worker outputs
+4. **Recorded** the run (tokens, steps, pattern) on `ExecutionResult`
+5. Optionally **learned a skill** and **scored quality** if you enabled a store
 
-No routing logic. No worker management. No feedback pipeline. **Just your query and your tools.**
+No hand-written router. No worker pool code. **Model, tools, and `ainvoke`.**
 
 ---
 

@@ -205,8 +205,7 @@ class ToolCallStart(Envelope):
 
 
 class ToolCallResultData(_DataBase):
-    """Tool finished successfully. ``output_preview`` is truncated; full content lives in
-    :class:`ToolCallStart` via correlation by ``tool_call_id``.
+    """Tool finished successfully. ``output_preview`` carries the full tool return body on the wire.
 
     Optional ``diff`` carries file before/after for edit tools (wire + UI).
     """

@@ -4,7 +4,7 @@ import React, { useMemo } from 'react'
 import { Box, Text } from 'ink'
 import { Badge } from '@inkjs/ui'
 import { useSessionStore, type MetricTokensSlice, type ToolCall } from '../store/session.js'
-import { fmtDuration, fmtTokens, fmtUsd, shortenMiddle, truncate } from '../utils/format.js'
+import { fmtDuration, fmtTokens, fmtUsd } from '../utils/format.js'
 import { ScrollableColumn } from './ScrollableColumn.js'
 
 const rollupPhases = (history: MetricTokensSlice[]): Map<string, { input: number; output: number }> => {
@@ -33,7 +33,7 @@ const collectRecentTools = (
     const label = `${completedCount + 1}`
     for (const tc of activeToolCalls) rows.push({ turnLabel: label, tc })
   }
-  return rows.slice(-max)
+  return max > 0 ? rows.slice(-max) : rows
 }
 
 type RunStatus = 'idle' | 'running' | 'thinking' | 'hitl' | 'error' | 'exited'
@@ -108,9 +108,8 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
   const uptimeMsRaw = sessionOpenedAtMs ? nowMs - sessionOpenedAtMs : 0
   const uptimeMs = sessionOpenedAtMs ? Math.max(0, uptimeMsRaw) : 0
   const turnCount = completedTurns.length + (activeTurn ? 1 : 0)
-  const innerW = Math.max(18, width - 4)
-  const sid = sessionId ? shortenMiddle(sessionId, Math.min(28, width - 2)) : '—'
-  const th = shortenMiddle(thread, Math.min(24, width - 2))
+  const sid = sessionId ?? '—'
+  const th = thread || '—'
 
   const phaseRows = useMemo(() => {
     const rollup = rollupPhases(metricsHistory)
@@ -119,11 +118,11 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
       const tb = b[1].input + b[1].output
       return tb - ta
     })
-    return sorted.slice(0, 6)
+    return sorted
   }, [metricsHistory])
 
   const toolRows = useMemo(
-    () => collectRecentTools(completedTurns, activeTurn?.toolCalls, completedTurns.length, 12),
+    () => collectRecentTools(completedTurns, activeTurn?.toolCalls, completedTurns.length, 0),
     [completedTurns, activeTurn?.toolCalls],
   )
 
@@ -181,19 +180,19 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
       </Text>,
     )
     lines.push(
-      <Text key="session" wrap="truncate-end">
+      <Text key="session" wrap="wrap">
         <Text color="gray">session </Text>
         <Text color="white">{sid}</Text>
       </Text>,
     )
     lines.push(
-      <Text key="thread" wrap="truncate-end">
+      <Text key="thread" wrap="wrap">
         <Text color="gray">thread </Text>
         <Text color="white">{th}</Text>
       </Text>,
     )
     lines.push(
-      <Text key="times" wrap="truncate-end">
+      <Text key="times" wrap="wrap">
         <Text color="gray">started </Text>
         <Text color="white">{fmtTime(sessionStartedAt)}</Text>
         <Text color="gray"> · updated </Text>
@@ -208,13 +207,13 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
       </Text>,
     )
     lines.push(
-      <Text key="memory" wrap="truncate-end">
+      <Text key="memory" wrap="wrap">
         <Text color="gray">memory </Text>
         <Text color={memoryColor}>{memoryLabel}</Text>
       </Text>,
     )
     lines.push(
-      <Text key="skills" wrap="truncate-end">
+      <Text key="skills" wrap="wrap">
         <Text color="gray">skills </Text>
         <Text color={skillsEnabled === true ? 'green' : skillsEnabled === false ? 'red' : 'gray'}>
           {skillsEnabled === true ? '✓ ON (LT store)' : skillsEnabled === false ? '✗ OFF' : '—'}
@@ -222,7 +221,7 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
       </Text>,
     )
     lines.push(
-      <Text key="cli" wrap="truncate-end">
+      <Text key="cli" wrap="wrap">
         <Text color="gray">cli tools </Text>
         <Text color={cliToolsCount != null && cliToolsCount > 0 ? 'green' : cliToolsEnabled === false ? 'red' : 'gray'}>
           {cliToolsCount != null && cliToolsCount > 0
@@ -236,7 +235,7 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
       </Text>,
     )
     lines.push(
-      <Text key="harness" wrap="truncate-end">
+      <Text key="harness" wrap="wrap">
         <Text color="gray">harness </Text>
         <Text color={harnessEnabled === true ? 'green' : harnessEnabled === false ? 'red' : 'gray'}>
           {harnessEnabled === true ? '✓ ON' : harnessEnabled === false ? '✗ OFF' : '—'}
@@ -244,7 +243,7 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
       </Text>,
     )
     lines.push(
-      <Text key="mcp" wrap="truncate-end">
+      <Text key="mcp" wrap="wrap">
         <Text color="gray">mcp </Text>
         {mcpRollup.kind === 'live' ? (
           <>
@@ -273,7 +272,7 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
       </Text>,
     )
     lines.push(
-      <Text key="activity" wrap="truncate-end">
+      <Text key="activity" wrap="wrap">
         <Text color="gray">uptime </Text>
         <Text color="yellow">{sessionOpenedAtMs ? fmtDuration(uptimeMs) : '—'}</Text>
         <Text color="gray"> · turns </Text>
@@ -290,7 +289,7 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
       </Text>,
     )
     lines.push(
-      <Text key="tokens-sess" wrap="truncate-end">
+      <Text key="tokens-sess" wrap="wrap">
         <Text color="gray">session </Text>
         <Text color="green">{fmtTokens(totalIn)}↑</Text>
         <Text color="gray"> </Text>
@@ -303,7 +302,7 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
     )
     if (activeTurn) {
       lines.push(
-        <Text key="tokens-turn" wrap="truncate-end">
+        <Text key="tokens-turn" wrap="wrap">
           <Text color="gray">this turn </Text>
           <Text color="green">{fmtTokens(turnIn)}↑</Text>
           <Text color="gray"> </Text>
@@ -313,9 +312,9 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
     }
     if (completedTurns.length > 0) {
       lines.push(
-        <Text key="tokens-last" color="gray" dimColor wrap="truncate-end">
+        <Text key="tokens-last" color="gray" dimColor wrap="wrap">
           last answer ·{' '}
-          {completedTurns.at(-1)?.tokens != null ? `${completedTurns.at(-1)!.tokens} tok` : '—'}
+          {completedTurns.at(-1)?.tokens ?? '—'}
         </Text>,
       )
     }
@@ -327,7 +326,7 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
       </Text>,
     )
     lines.push(
-      <Text key="cost" color={totalCostUsd > 0 ? 'yellow' : 'gray'} dimColor={totalCostUsd <= 0} wrap="truncate-end">
+      <Text key="cost" color={totalCostUsd > 0 ? 'yellow' : 'gray'} dimColor={totalCostUsd <= 0} wrap="wrap">
         {fmtUsd(totalCostUsd)}
         {totalCostUsd > 0 ? ' (session)' : ''}
       </Text>,
@@ -342,8 +341,8 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
       )
       for (const [phase, v] of phaseRows) {
         lines.push(
-          <Text key={`phase-${phase}`} wrap="truncate-end">
-            <Text color="magenta">{truncate(phase, 14).padEnd(14)}</Text>
+          <Text key={`phase-${phase}`} wrap="wrap">
+            <Text color="magenta">{phase}</Text>
             <Text color="green">{fmtTokens(v.input)}↑</Text>
             <Text color="gray"> </Text>
             <Text color="blue">{fmtTokens(v.output)}↓</Text>
@@ -362,11 +361,11 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
       if (mcpServerRows.length > 0) {
         mcpServerRows.forEach((r, i) => {
           lines.push(
-            <Text key={`mcp-${r.name}-${i}`} wrap="truncate-end">
+            <Text key={`mcp-${r.name}-${i}`} wrap="wrap">
               <Text color={r.ok ? 'green' : 'red'}>{r.ok ? '● ' : '○ '}</Text>
-              <Text color="cyan">{truncate(r.name, 18)}</Text>
+              <Text color="cyan">{r.name}</Text>
               <Text color="gray">
-                {r.ok ? ` · ${r.toolCount} tools` : ` · ${truncate(String(r.error ?? 'error'), innerW - 22)}`}
+                {r.ok ? ` · ${r.toolCount} tools` : ` · ${String(r.error ?? 'error')}`}
               </Text>
             </Text>,
           )
@@ -374,9 +373,9 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
       } else {
         mcpServerNames.forEach((n, i) => {
           lines.push(
-            <Text key={`mcp-pend-${i}`} wrap="truncate-end">
+            <Text key={`mcp-pend-${i}`} wrap="wrap">
               <Text color="yellow">○ </Text>
-              <Text color="cyan">{truncate(n, 18)}</Text>
+              <Text color="cyan">{n}</Text>
               <Text color="gray" dimColor>
                 {' '}
                 · pending (first message)
@@ -394,10 +393,10 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
           Files updated
         </Text>,
       )
-      filesUpdated.slice(-6).forEach((f, i) => {
+      filesUpdated.forEach((f, i) => {
         lines.push(
-          <Text key={`file-${i}`} color="green" dimColor wrap="truncate-end">
-            ✓ {truncate(f, innerW - 2)}
+          <Text key={`file-${i}`} color="green" dimColor wrap="wrap">
+            ✓ {f}
           </Text>,
         )
       })
@@ -411,7 +410,7 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
         </Text>,
       )
       lines.push(
-        <Text key="auto-list" color="gray" dimColor wrap="truncate-end">
+        <Text key="auto-list" color="gray" dimColor wrap="wrap">
           {autoApprovedTools.join(', ')}
         </Text>,
       )
@@ -432,10 +431,10 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
     } else {
       for (const { turnLabel, tc } of toolRows) {
         lines.push(
-          <Text key={tc.id} wrap="truncate-end">
+          <Text key={tc.id} wrap="wrap">
             <Text color="gray">T{turnLabel} </Text>
             <Badge color={TOOL_STATUS_BADGE_COLOR[tc.status]}>{tc.status}</Badge>
-            <Text bold> {truncate(tc.tool, 18)}</Text>
+            <Text bold> {tc.tool}</Text>
             {tc.durationMs !== undefined ? (
               <Text color="gray" dimColor>
                 {' '}
@@ -459,10 +458,10 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
           Wire notes
         </Text>,
       )
-      protocolNotes.slice(-8).forEach((line, i) => {
+      protocolNotes.forEach((line, i) => {
         lines.push(
-          <Text key={`wire-${i}-${line.slice(0, 12)}`} color="gray" dimColor wrap="truncate-end">
-            {truncate(line, innerW)}
+          <Text key={`wire-${i}`} color="gray" dimColor wrap="wrap">
+            {line}
           </Text>,
         )
       })
@@ -477,7 +476,6 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
     completedTurns,
     filesUpdated,
     harnessEnabled,
-    innerW,
     mcpRollup,
     mcpServerNames,
     mcpServerRows,
@@ -502,34 +500,44 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
     uptimeMs,
   ])
 
-  /** Title (2) + border/pad (2) + optional scroll hint (1). */
-  const scrollBodyLines = Math.max(4, maxHeight - 5)
+  /** Border (2) + title block (~3) — remainder is scroll viewport. */
+  const headerRows = 3
+  const scrollBodyLines = Math.max(6, maxHeight - headerRows - 2)
 
   return (
     <Box
       flexDirection="column"
       width={width}
       height={maxHeight}
+      minHeight={maxHeight}
+      flexGrow={1}
       flexShrink={0}
+      alignSelf="stretch"
       borderStyle="round"
       borderColor="cyan"
       paddingX={1}
-      paddingY={1}
+      paddingY={0}
     >
-      <Text bold color="cyan">
-        Session
-      </Text>
-      <Text color="gray" dimColor wrap="truncate-end">
-        {runtimeVersion ? `rt ${runtimeVersion}` : ' '}
-        {model ? ` · ${truncate(model, innerW - 12)}` : ''}
-      </Text>
+      <Box flexShrink={0} paddingY={1}>
+        <Text bold color="cyan">
+          Session
+        </Text>
+        <Text color="gray" dimColor wrap="wrap">
+          {runtimeVersion ? `rt ${runtimeVersion}` : ' '}
+          {model ? ` · ${model}` : ''}
+        </Text>
+      </Box>
 
-      <ScrollableColumn
-        maxLines={scrollBodyLines}
-        lines={bodyLines}
-        pinToBottomOnGrow
-        allowBracketScroll={false}
-      />
+      <Box flexDirection="column" flexGrow={1} minHeight={scrollBodyLines} height={scrollBodyLines}>
+        <ScrollableColumn
+          maxLines={scrollBodyLines}
+          lines={bodyLines}
+          pinToBottomOnGrow={false}
+          allowBracketScroll
+          fillHeight
+          showScrollHint={bodyLines.length > scrollBodyLines}
+        />
+      </Box>
     </Box>
   )
 }

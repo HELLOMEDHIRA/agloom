@@ -8,7 +8,7 @@ from typing import Any, cast
 from ..multimodal import content_blocks_to_text, text_from_user_turn
 
 from langchain.agents import create_agent
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.errors import GraphRecursionError
 
@@ -35,8 +35,7 @@ from ..models import (
     _make_step,
     _trunc,
 )
-from .hitl_read_file_dedupe import ReadFileHitlDeduper
-from .hitl_tool_coalesce import CompositeToolHitlCoalescer
+from .hitl_tool_coalesce import build_default_hitl_coalescer
 from .middleware import HumanApprovalMiddleware, ReactUserTurnToolChoiceMiddleware, UserAbort
 from .react_tool_recovery import (
     exception_indicates_tool_use_failed as _exception_indicates_tool_use_failed,
@@ -49,6 +48,9 @@ from .react_tool_recovery import (
 )
 from .react_tool_recovery import (
     human_message_after_tool_use_failed as _human_message_after_tool_use_failed,
+)
+from .react_tool_recovery import (
+    is_stray_tool_json_text as _is_stray_tool_json_text,
 )
 from .react_tool_recovery import (
     last_ai_message_is_stray_tool_json as _last_ai_message_is_stray_tool_json,
@@ -180,7 +182,7 @@ def _hitl_middleware_extras(agent: dict) -> list[Any]:
         return []
     coalescer = agent.get("_hitl_tool_coalescer")
     if coalescer is None:
-        coalescer = CompositeToolHitlCoalescer([ReadFileHitlDeduper()])
+        coalescer = build_default_hitl_coalescer()
         agent["_hitl_tool_coalescer"] = coalescer
     return [
         HumanApprovalMiddleware(
@@ -483,7 +485,16 @@ async def _run_react_ainvoke_with_retries(
                 )
                 await asyncio.sleep(_react_retry_delay(attempt))
                 state = {
-                    "messages": list(msgs) + [HumanMessage(content=_human_message_after_stray_tool_json())]
+                    "messages": list(msgs)
+                    + [
+                        HumanMessage(
+                            content=_human_message_after_stray_tool_json(
+                                tool_result_already_present=any(
+                                    isinstance(m, ToolMessage) for m in msgs
+                                )
+                            )
+                        )
+                    ]
                 }
                 continue
 
@@ -667,6 +678,7 @@ async def _handle_react_streaming(
     final_response = None
     _tool_run_ids: dict[str, str] = {}
     _tool_arg_dicts: dict[str, dict[str, Any]] = {}
+    tool_names = _react_tool_names(tools)
 
     try:
         async for event in react_agent.astream_events(state, config=invoke_config, version="v2"):
@@ -677,6 +689,12 @@ async def _handle_react_streaming(
                 content = getattr(chunk, "content", "")
                 if content:
                     content = content_blocks_to_text(content)
+                    if (
+                        content.strip()
+                        and tool_names
+                        and _is_stray_tool_json_text(content.strip(), tool_names)
+                    ):
+                        continue
                     if event_queue:
                         await event_queue.put(AgentEvent(type="token", data={"content": content}))
 
@@ -722,7 +740,7 @@ async def _handle_react_streaming(
                 if isinstance(raw_out, dict) and isinstance(raw_out.get("summary"), str):
                     out_payload: str | dict[str, object] = raw_out
                 else:
-                    out_payload = _trunc(str(raw_out or ""), ml)
+                    out_payload = _tool_output_to_wire_text(raw_out)
                 if event_queue:
                     await event_queue.put(
                         AgentEvent(
@@ -739,7 +757,7 @@ async def _handle_react_streaming(
                 step_out = (
                     raw_out["summary"]
                     if isinstance(raw_out, dict) and isinstance(raw_out.get("summary"), str)
-                    else str(raw_out or "")
+                    else _tool_output_to_wire_text(raw_out)
                 )
                 steps.append(
                     _make_step(
@@ -758,16 +776,29 @@ async def _handle_react_streaming(
                     final_response = output_data
 
         dur = round((time.perf_counter() - t0) * 1000, 1)
-        tool_names = _react_tool_names(tools)
-        output = _extract_last_ai_message(final_response)
-        if not output:
-            output = "No output produced."
-
-        msgs = (final_response or {}).get("messages", [])
-        if tool_names and _last_ai_message_is_stray_tool_json(msgs, tool_names):
-            logger.warning(f"[React|stream] Stray tool JSON — one follow-up ainvoke (agent={name}).")
+        msgs = list((final_response or {}).get("messages", []))
+        output = _extract_last_ai_message(final_response, tool_names=tool_names)
+        stray_remaining = _STRAY_TOOL_JSON_RETRIES
+        while (
+            stray_remaining > 0
+            and tool_names
+            and _last_ai_message_is_stray_tool_json(msgs, tool_names)
+        ):
+            stray_remaining -= 1
+            logger.warning(
+                f"[React|stream] Stray tool JSON after tool run — recovery ainvoke "
+                f"(retries left={stray_remaining}, agent={name})."
+            )
+            has_tool_result = any(isinstance(m, ToolMessage) for m in msgs)
             recovery_state = {
-                "messages": list(msgs) + [HumanMessage(content=_human_message_after_stray_tool_json())]
+                "messages": msgs
+                + [
+                    HumanMessage(
+                        content=_human_message_after_stray_tool_json(
+                            tool_result_already_present=has_tool_result
+                        )
+                    )
+                ]
             }
             _wall_timeout = max(
                 _AINVOKE_TIMEOUT,
@@ -777,9 +808,20 @@ async def _handle_react_streaming(
                 cast(Any, react_agent).ainvoke(recovery_state, config=invoke_config),
                 timeout=_wall_timeout if hitl_active else _AINVOKE_TIMEOUT,
             )
-            output = _extract_last_ai_message(final_response) or output
-            if not output:
-                output = "No output produced."
+            msgs = list((final_response or {}).get("messages", []))
+            recovered = _extract_last_ai_message(final_response, tool_names=tool_names)
+            if recovered and event_queue:
+                await event_queue.put(AgentEvent(type="token", data={"content": recovered}))
+            output = recovered or output
+
+        if not output or (tool_names and _is_stray_tool_json_text(output.strip(), tool_names)):
+            output = (
+                "I ran the tool but could not produce a final summary. "
+                "Expand the tool row above for the raw result, or send another message to retry."
+            )
+
+        if not output:
+            output = "No output produced."
 
         usage = _extract_token_usage(final_response)
         llm_step = _make_step(
@@ -944,7 +986,7 @@ async def _handle_react_hitl(
     """
     coalescer = agent.get("_hitl_tool_coalescer")
     if coalescer is None:
-        coalescer = CompositeToolHitlCoalescer([ReadFileHitlDeduper()])
+        coalescer = build_default_hitl_coalescer()
         agent["_hitl_tool_coalescer"] = coalescer
     approval_middleware = HumanApprovalMiddleware(
         interrupt_before_tools=interrupt_before_tools,
@@ -1022,7 +1064,15 @@ async def _handle_react_hitl(
                     f"retries left={stray_remaining} (agent={name})."
                 )
                 await asyncio.sleep(_react_retry_delay(attempt))
-                messages = list(msgs) + [HumanMessage(content=_human_message_after_stray_tool_json())]
+                messages = list(msgs) + [
+                    HumanMessage(
+                        content=_human_message_after_stray_tool_json(
+                            tool_result_already_present=any(
+                                isinstance(m, ToolMessage) for m in msgs
+                            )
+                        )
+                    )
+                ]
                 continue
 
             hitl_tool_steps: list = []
@@ -1213,6 +1263,52 @@ def _collect_tool_steps(response: dict | None, steps: list, *, max_length: int =
             )
 
 
+def _tool_output_to_wire_text(raw_out: Any, *, max_length: int = 0) -> str:
+    """Serialize tool return values for wire previews (never ``str(ToolMessage)`` repr)."""
+    from langchain_core.messages import ToolMessage
+
+    if raw_out is None:
+        text = ""
+    elif isinstance(raw_out, str):
+        text = raw_out
+    elif isinstance(raw_out, ToolMessage):
+        text = _ai_message_content_to_text(raw_out.content)
+    elif isinstance(raw_out, dict) and isinstance(raw_out.get("summary"), str):
+        return raw_out["summary"] if not max_length else _trunc(raw_out["summary"], max_length)
+    elif hasattr(raw_out, "content"):
+        text = _ai_message_content_to_text(getattr(raw_out, "content"))
+    else:
+        text = str(raw_out or "")
+    return _trunc(text, max_length) if max_length else text
+
+
+def _strip_agloom_tool_result_envelope(text: str) -> str:
+    import re
+
+    t = text
+    pat = re.compile(r"^\[agloom:tool_result\]\s*complete=(?:true|false)\s*\n?", re.IGNORECASE)
+    while pat.match(t):
+        t = pat.sub("", t, count=1)
+    return t.strip()
+
+
+def _fallback_output_from_messages(messages: list[Any], *, tool_names: frozenset[str]) -> str | None:
+    """When the model ends on stray JSON, surface the last ``read_file`` tool body for the user."""
+    if "read_file" not in tool_names:
+        return None
+    from langchain_core.messages import ToolMessage
+
+    for msg in reversed(messages):
+        if not isinstance(msg, ToolMessage):
+            continue
+        if (msg.name or "") != "read_file":
+            continue
+        body = _strip_agloom_tool_result_envelope(_ai_message_content_to_text(msg.content))
+        if body:
+            return body
+    return None
+
+
 def _ai_message_content_to_text(content: Any) -> str:
     """Normalize ``AIMessage.content`` (str, None, or LC multimodal blocks) to plain text."""
     if content is None:
@@ -1259,12 +1355,17 @@ def _message_tool_like_calls(msg: Any) -> tuple[list | None, list | None]:
     return (None, None)
 
 
-def _extract_last_ai_message(response: dict | None) -> str:
+def _extract_last_ai_message(
+    response: dict | None,
+    *,
+    tool_names: frozenset[str] | None = None,
+) -> str:
     """Walk messages in reverse — last AIMessage with user-visible text.
 
     Skips **tool-only** assistant turns (``tool_calls`` present and no extractable text).
     When the model sends **prose and tool_calls in the same** ``AIMessage`` (e.g. a short
     preamble before calling tools), the preamble is treated as valid output.
+    Skips stray JSON tool blobs (Groq/Llama text-mode tool intent).
 
     Handles multimodal ``content`` lists and LangChain ``type: "ai"`` dict messages.
     """
@@ -1294,6 +1395,8 @@ def _extract_last_ai_message(response: dict | None) -> str:
             continue
         text = _ai_message_content_to_text(content)
         if tool_calls and not text:
+            continue
+        if text and tool_names and _is_stray_tool_json_text(text, tool_names):
             continue
         if text:
             return text

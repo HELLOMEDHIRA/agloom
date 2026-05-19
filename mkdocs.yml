@@ -91,8 +91,8 @@ nav:
       - Installation: _packages/agloom/getting-started/installation.md
       - Quick Start (API): _packages/agloom/getting-started/quickstart.md
       - Requirements: _packages/agloom/getting-started/requirements.md
-  - For package developers:
-      - Overview (two doors): _packages/agloom/guides/developer-overview.md
+  - Integrating & extending:
+      - Integration overview: _packages/agloom/guides/developer-overview.md
       - Embedding the runtime: _packages/agloom/guides/embedding-runtime.md
       - AGP from Python: _packages/agloom/guides/agp-python.md
       - Observability API: _packages/agloom/guides/observability-python.md

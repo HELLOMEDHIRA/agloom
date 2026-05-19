@@ -156,3 +156,23 @@ def test_circuit_breaker_id_fallback_isolates_bare_objects() -> None:
     a = object()
     b = object()
     assert _circuit_breaker_for(a) is not _circuit_breaker_for(b)
+
+
+class _UnhashableChatLike:
+    """Mimics LangChain chat models (e.g. ChatNVIDIA) that are weakref-able but not hashable."""
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+
+def test_circuit_breaker_unhashable_chat_model_uses_id_fallback() -> None:
+    """``ChatNVIDIA``-style models must not be used as ``WeakKeyDictionary`` keys."""
+    import weakref
+
+    a = _UnhashableChatLike()
+    b = _UnhashableChatLike()
+    weakref.ref(a)
+    with pytest.raises(TypeError):
+        hash(a)
+    assert _circuit_breaker_for(a) is _circuit_breaker_for(a)
+    assert _circuit_breaker_for(a) is not _circuit_breaker_for(b)

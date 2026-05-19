@@ -215,7 +215,7 @@ async def main():
 
 ```python
 HandoffTarget(
-    agent,                              # UnifiedAgent instance
+    agent,                              # child agent from create_agent
     name=None,                          # Display name (defaults to agent.name)
     description="",                     # What this delegate specializes in
     filter_fn=None,                     # Optional (query) → bool predicate
@@ -223,7 +223,7 @@ HandoffTarget(
 )
 ```
 
-### UnifiedAgent delegation methods
+### Delegation methods on the agent
 
 | Method                                | Returns            | Description                           |                              |
 | ------------------------------------- | ------------------ | ------------------------------------- | ---------------------------- |

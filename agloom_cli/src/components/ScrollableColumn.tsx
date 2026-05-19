@@ -12,6 +12,8 @@ interface Props {
   showScrollHint?: boolean
   /** When false, only PgUp/PgDn scroll (avoids duplicate Ctrl+[/] handlers in split layout). */
   allowBracketScroll?: boolean
+  /** Pad with blank rows so the viewport always consumes *maxLines* (fills fixed-height panels). */
+  fillHeight?: boolean
 }
 
 export const ScrollableColumn = ({
@@ -20,6 +22,7 @@ export const ScrollableColumn = ({
   pinToBottomOnGrow = true,
   showScrollHint = true,
   allowBracketScroll = true,
+  fillHeight = false,
 }: Props): React.ReactElement => {
   const total = lines.length
   const maxScroll = Math.max(0, total - maxLines)
@@ -57,10 +60,17 @@ export const ScrollableColumn = ({
   )
 
   const canScroll = total > maxLines
+  const padRows = fillHeight ? Math.max(0, maxLines - visible.length) : 0
 
   return (
-    <Box flexDirection="column" flexGrow={1} minHeight={0}>
-      <Box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden">
+    <Box flexDirection="column" flexGrow={1} minHeight={0} height={fillHeight ? maxLines : undefined}>
+      <Box
+        flexDirection="column"
+        flexGrow={1}
+        minHeight={0}
+        height={fillHeight ? maxLines : undefined}
+        overflow="hidden"
+      >
         {visible.length > 0 ? (
           visible.map((line, i) => (
             <Box key={`${scrollTop + i}-${i}`} flexShrink={0}>
@@ -72,6 +82,13 @@ export const ScrollableColumn = ({
             {' '}
           </Text>
         )}
+        {padRows > 0
+          ? Array.from({ length: padRows }, (_, i) => (
+              <Text key={`pad-${i}`} color="gray" dimColor>
+                {' '}
+              </Text>
+            ))
+          : null}
       </Box>
       {showScrollHint && canScroll && (
         <Text color="gray" dimColor wrap="truncate-end">
@@ -79,7 +96,7 @@ export const ScrollableColumn = ({
           {' '}
           rows {scrollTop + 1}-{Math.min(scrollTop + maxLines, total)}/{total}
           {' · '}
-          Ctrl+[/] scroll
+          {allowBracketScroll ? 'Ctrl+[/] · PgUp/PgDn' : 'PgUp/PgDn'}
         </Text>
       )}
     </Box>

@@ -1,55 +1,83 @@
 # Quickstart (5 minutes)
 
+A minimal path from install to a working terminal session, then one scripted command.
+
+---
+
 ## 1. Install
 
 ```bash
 pip install agloom
 npm install -g agloom-cli
+agloom-runtime providers list | head   # verify Python bridge
 ```
 
-Verify Python bridge:
-
-```bash
-agloom-runtime providers list | head
-```
+---
 
 ## 2. Set an API key
-
-Example with Groq (free tier):
 
 ```bash
 export GROQ_API_KEY=gsk_...
 ```
 
-Other providers: see [Models & providers](models.md).
+Other providers: [Models & providers](models.md).
 
-## 3. Ask a one-shot question (direct mode)
+---
+
+## 3. One-shot question (direct mode)
 
 ```bash
-agloom -m groq:meta-llama/llama-3.3-70b-versatile "Summarize pyproject.toml in one paragraph"
+agloom -m groq:meta-llama/llama-3.3-70b-versatile \
+  "Summarize pyproject.toml in one paragraph"
 ```
 
-If CLI tools are enabled (default), the agent may ask to **read files** — approve in the terminal when prompted.
+**What happens**
 
-## 4. Open the full TUI
+1. CLI starts `agloom-runtime` with your model and working directory
+2. Runtime classifies the task and runs the agent (often **REACT** if it reads files)
+3. You may see **HITL prompts** before `read_file` — approve or deny in the terminal
+4. Assistant text prints to stdout (unless you use `--json`)
+
+---
+
+## 4. Full interactive UI
 
 ```bash
 agloom -m groq:meta-llama/llama-3.3-70b-versatile
 ```
 
-(with no positional prompt). Type `/help` for slash commands.
+- **Main column** — your messages, live assistant stream, **full tool output**, and **reasoning** steps
+- **Right sidebar** (`/stats`) — tokens, wire notes, MCP status
+- **Composer** — type messages; `/help` for slash commands
 
-## 5. Pipe and JSON (scripting)
+Reasoning and tool results are **always visible** — no toggle required.
+
+---
+
+## 5. Pipe and JSON (automation)
 
 ```bash
-agloom -m groq:meta-llama/llama-3.3-70b-versatile -q "list all .py files under agloom" --json | head -5
+git diff --staged | agloom -q \
+  -m groq:meta-llama/llama-3.3-70b-versatile \
+  "write a conventional commit message"
 ```
 
-Without `--json`, quiet mode (`-q`) keeps stdout focused on assistant text and trims extra stderr. With `--json`, stdout is **only** NDJSON AGP events (no plain-text assistant stream); use `--json` alone when piping to `jq` or log processors — combining `-q` and `--json` is for silencing stderr, not for switching `--json` back to plain text.
+| Flag | Effect |
+| ---- | ------ |
+| `-q` | Quieter stderr; stdout focused on the answer |
+| `--json` | stdout is **only** AGP NDJSON (for `jq`, log pipelines) |
 
-## Next steps
+See [Direct mode](direct-mode.md) for exit codes.
 
-- [Models & providers](models.md) — prefixes and catalogs
-- [Config & environment](config.md) — `agloom.yaml`
-- [Recipes](recipes.md) — PR review, tests, logs
-- [Direct mode](direct-mode.md) — exit codes and automation
+---
+
+## What to try next
+
+| Goal | Page |
+| ---- | ---- |
+| Script CI or bots | [Direct mode](direct-mode.md) · [Recipes](recipes.md) |
+| Tune model and keys | [Models](models.md) · [Config](config.md) |
+| Safer file/shell tools | [Tools & HITL](tools-hitl.md) |
+| Long multi-session coding | [MCP, memory & harness](mcp-memory-harness.md) |
+
+**Library-only (no terminal UI):** [Python quick start](../agloom/getting-started/quickstart.md)

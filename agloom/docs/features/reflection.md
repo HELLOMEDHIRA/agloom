@@ -7,7 +7,7 @@ Conceptual overview and diagram: [Execution patterns — REFLECTION](../concepts
 ## What happens at runtime
 
 1. **Generator** produces a draft for the user goal.
-2. **Critic** scores the draft (**1–10**) and returns structured **`PASSED`** / **`FEEDBACK`** (see **`agloom/patterns/reflection.py`** prompts).
+2. **Critic** scores the draft (**1–10**) and returns **PASSED** or **FEEDBACK** with revision notes.
 3. If the score is below **`reflection_threshold`** or the critic did not pass the draft, a **revision** turn runs with the feedback; repeat up to **`max_reflection_iterations`**.
 4. Between iterations the runtime respects global halt signals (same as other patterns).
 
@@ -25,7 +25,7 @@ Full table: [All parameters](../configuration/parameters.md).
 ## When you might not see REFLECTION
 
 - The **classifier** must route to **`PatternType.REFLECTION`** — prompts that look like quick factual questions usually land on **DIRECT** or **REACT**.
-- **Subtasks**: the reflection handler expects classifier output with a usable goal in **`analysis.subtasks`**; if empty, you get a short fallback message (see source).
+- **Subtasks**: the pattern works best when the classifier provides a clear goal in **`analysis.subtasks`**; if missing, you may get a short fallback message instead of a full critique loop.
 
 ## Human-in-the-loop
 

@@ -1,38 +1,51 @@
-# LLM resolution (`agloom.llm`)
+# LLM resolution
 
-**`create_agent`** accepts a LangChain chat model instance **or** a string descriptor (`"groq:meta-llama/..."`, `"openai:gpt-4o"`, …). When you build **your own** factory (custom YAML loader, runtime bootstrap, tests), use the same resolver the library uses.
+**`create_agent`** accepts either a LangChain chat model **or** a string like `"groq:meta-llama/llama-3.3-70b-versatile"`. Use the same resolution rules when you load models from YAML, CI, or a custom runtime bootstrap.
 
-## Primary entry points
+---
 
-| Symbol                              | Use                                                                                                  |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| **`get_model`**                     | Resolve a provider/model string (and optional patch dict) to a chat model instance                   |
-| **`try_resolve_llm_from_api_keys`** | Pick a default model from environment keys (TTY vs non-interactive behavior differs — see docstring) |
-| **`describe_llm`**                  | Human-readable description of a bound model                                                          |
-| **`split_provider_prefix`**         | Split `"provider:rest"` tokens                                                                       |
-
-Errors: **`MissingProviderApiKey`**, **`MissingProviderDependency`** — raised when keys or optional extras are absent.
-
-## Conventions
-
-Resolution semantics match **`create_agent`** and **`agloom-runtime`**: explicit **`provider:model_id`** prefixes, LiteLLM / `init:` / `lc:` bridges, and **`pyproject.toml`** optional extras (`agloom[groq]`, etc.). The module docstring in **`agloom/llm/model_resolver.py`** lists provider tables and links to LangChain integration docs.
+## Resolve a model string
 
 ```python
 from agloom.llm import get_model
 
 llm = await get_model("groq:meta-llama/llama-4-scout-17b-16e-instruct")
+agent = await create_agent(model=llm, name="demo")
 ```
 
-For patching temperature, base URL, or API keys from config dicts, use the same **`normalize_provider_slug`** / **`spread_llm_options_for_provider`** pipeline internally consumed by **`get_model`** (see **`agloom.llm.llm_provider_params`** if you extend YAML loaders).
+| Helper | Use |
+| ------ | --- |
+| `get_model` | Turn a descriptor into a chat model instance |
+| `try_resolve_llm_from_api_keys` | Pick a default from environment keys (interactive vs CI behavior differs) |
+| `describe_llm` | Log-friendly description of a bound model |
+| `split_provider_prefix` | Split `provider:model_id` tokens |
+
+Missing keys or optional extras raise clear errors (`MissingProviderApiKey`, `MissingProviderDependency`).
+
+---
+
+## Naming conventions
+
+| Style | Example |
+| ----- | ------- |
+| **Recommended** | `groq:meta-llama/llama-3.3-70b-versatile`, `openai:gpt-4o` |
+| LiteLLM bridge | `litellm:provider/model` |
+| LangChain init | `lc:package:ClassName` |
+
+Install provider extras as needed: `pip install agloom[groq]`, `agloom[openai]`, etc.
+
+**Temperature and sampling** are set on the model instance (e.g. `ChatGroq(temperature=0.2)`), not on `create_agent`.
+
+---
 
 ## Unprefixed `org/model` ids
 
-When you omit a `provider:` prefix, **`get_model`** can infer the backend from the first path segment:
+Omitting the provider prefix works in some environments (e.g. `deepseek/deepseek-chat` when `DEEPSEEK_API_KEY` is set). Production configs should use explicit **`provider:model`** prefixes to avoid ambiguous routing when multiple keys are present.
 
-| Model id | When it auto-routes |
-| -------- | ------------------- |
-| `deepseek/deepseek-chat` | `DEEPSEEK_API_KEY` set and `langchain-deepseek` installed |
-| `meta-llama/llama-…` | Often Groq when `GROQ_API_KEY` is set (alias) |
-| `mistralai/mistral-…` | `MISTRAL_API_KEY` set |
+---
 
-If both Groq and Ollama env hints are set, or no org match applies, resolution fails with an explicit error — use `groq:…`, `ollama:…`, or `AGLOOM_PROVIDER`. Prefer **`provider:model`** prefixes in production configs.
+## See also
+
+- [All parameters — `model`](../configuration/parameters.md#core)
+- [CLI models & providers](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/models/)
+- [Installation](../getting-started/installation.md)

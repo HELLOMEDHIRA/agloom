@@ -29,9 +29,9 @@ These apply to both **stdio** and **WebSocket** transports (the runtime passes t
 
 ## Library / AGP
 
-When embedding **`agloom-runtime`** or building a custom AGP driver, wire **`tool_allowlist=`** (initial allowed tool names) and **`allowlist_persist_path=`** (optional JSON backing path) into the helper that bridges human approvals over AGP — same semantics as the CLI flags above.
+When embedding **`agloom-runtime`** or building a custom AGP driver, pass the same path and persistence flags the CLI uses — approved tool names are loaded at startup and updated when the user chooses **allowlist** in the HITL UI.
 
-Approval middleware consults that allowlist and **skips the prompt** when the invoked tool name is already allowed (other safeguards unchanged).
+Subsequent invocations of those tools **skip the prompt** (other safeguards unchanged).
 
 ## See also
 

@@ -188,11 +188,21 @@ def test_translate_error_emits_fatal() -> None:
 
 
 def test_translate_unknown_event_forwarded_as_thinking() -> None:
-    """Forward-compat: unknown ``AgentEvent.type`` strings must surface as ``thinking.step``."""
+    """Forward-compat: unknown types with output surface as a truncated ``thinking.step``."""
     em = capture_emitter()
-    translate(AgentEvent(type="some_future_kind", data={"name": "x"}), em)
+    translate(
+        AgentEvent(type="some_future_kind", data={"name": "x", "output": "probe"}),
+        em,
+    )
     assert em.calls and em.calls[0][0] == "emit_thinking_step"
     assert em.calls[0][1]["step"] == "some_future_kind"
+    assert em.calls[0][1]["detail"] == "probe"
+
+
+def test_translate_unknown_event_without_output_skipped_by_default() -> None:
+    em = capture_emitter()
+    translate(AgentEvent(type="some_future_kind", data={"name": "x"}), em)
+    assert em.calls == []
 
 
 def test_translate_thinking_event_carries_elapsed_ms() -> None:
@@ -738,7 +748,7 @@ async def test_bridge_cancellation_closes_session_with_user_aborted() -> None:
 
 @pytest.mark.asyncio
 async def test_bridge_shutdown_cancel_emits_prompt_shutdown() -> None:
-    """Runtime shutdown path: ``prepare_invocation_cancel(..., shutdown)`` → ``prompt.cancelled`` + ``session.closed`` use ``shutdown``."""
+    """Forked invocation cancel: ``prompt.cancelled`` with ``shutdown``; no per-turn ``session.closed``."""
 
     async def _slow():
         await asyncio.sleep(10)
@@ -773,8 +783,7 @@ async def test_bridge_shutdown_cancel_emits_prompt_shutdown() -> None:
     pc = [e for e in events if isinstance(e, PromptCancelled)]
     assert pc and pc[-1].data.reason == "shutdown"
     assert pc[-1].data.detail == "runtime_shutdown"
-    assert isinstance(events[-1], SessionClosed)
-    assert events[-1].data.reason == "shutdown"
+    assert not any(isinstance(e, SessionClosed) for e in events)
 
 
 @pytest.mark.asyncio

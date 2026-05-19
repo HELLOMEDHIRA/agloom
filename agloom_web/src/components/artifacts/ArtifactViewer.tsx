@@ -7,7 +7,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import { useSessionStore } from '../../store/session.js'
-import { cn, truncate } from '../../lib/utils/cn.js'
+import { cn } from '../../lib/utils/cn.js'
 import { Package, Copy, Check } from 'lucide-react'
 
 export const ArtifactViewer = (): React.ReactElement => {
@@ -50,7 +50,7 @@ export const ArtifactViewer = (): React.ReactElement => {
             >
               <span className="text-neutral-600 font-mono">{a.type}</span>
               {a.language && <span className="text-indigo-400">.{a.language}</span>}
-              <span className="truncate flex-1">{truncate(a.content.split('\n')[0] ?? '', 40)}</span>
+              <span className="flex-1 whitespace-pre-wrap break-words">{a.content.split('\n')[0] ?? ''}</span>
             </button>
           ))}
         </div>

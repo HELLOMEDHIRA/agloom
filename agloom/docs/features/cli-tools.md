@@ -14,9 +14,9 @@ All keys are optional when using a dict (defaults match `cli_tools=True`):
 | `allow_shell`   | `True`  | Expose `execute`, `bash`, and `bash_background*` tools.                                                    |
 | `allow_network` | `True`  | Expose `fetch_url`, `read_url_markdown`, `web_search`.                                                     |
 | `sandbox`       | `True`  | Restrict filesystem paths under `working_dir`; block obvious `..` escape.                                  |
-| `task_tool`     | `True`  | Expose `task` (delegates to [`UnifiedAgent.adelegate`](../features/delegation.md)); requires `delegates=`. |
+| `task_tool`     | `True`  | Expose `task` for [delegating to child agents](../features/delegation.md); requires `delegates=`. |
 
-**SafetyContext** (internal) tracks **`recently_read_paths`** (for `write_file` / `notebook_edit` overwrite policy), **`background_shell_jobs`** (for `bash_background_*`), and the flags above.
+The toolkit enforces sandbox rules (path allowlist, shell/network flags) and tracks background jobs when shell tools are enabled.
 
 ## Filesystem & search
 
@@ -72,7 +72,7 @@ Shell tools are included in **`interrupt_before_tools`** by default when `allow_
 
 ## Names
 
-The canonical set matches **`CLI_TOOL_NAMES`** in `agloom.cli_tools` (25 tools). Count may appear on **`runtime.ready`** as `cli_tools_count`.
+There are **25** built-in tools when fully enabled. The runtime reports how many are active on **`runtime.ready`** (`cli_tools_count`).
 
 ## See also
 

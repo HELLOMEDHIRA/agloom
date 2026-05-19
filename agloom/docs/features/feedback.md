@@ -1,123 +1,99 @@
 # Feedback & Evaluation
 
-## Auto-Evaluation
+agloom can **score every run**, accept **user ratings**, and **adjust skills over time** when you provide a persistent **`store=`**.
 
-Every `ainvoke` run is automatically scored by the `AutoEvaluator` on relevance, completeness, and accuracy. This happens transparently when `store=` is provided.
+---
+
+## Automatic quality scoring
+
+When a store is configured, each completed turn is scored on relevance, completeness, and accuracy in the background — no extra API calls from your app.
 
 ```python
-async def main():
-    agent = await create_agent(model=llm, store=store, name="eval-agent")
-    result = await agent.ainvoke("Explain black holes")
-    # Auto-evaluation runs in the background after every call
+agent = await create_agent(model=llm, store=store, name="eval-agent")
+result = await agent.ainvoke("Explain black holes")
+# Scoring runs after the turn; use result.run_id for user feedback
 ```
 
-## User Feedback
+---
 
-Capture explicit user ratings and corrections:
+## User feedback
+
+Capture explicit ratings and corrections:
 
 ```python
 result = await agent.ainvoke("Explain quantum entanglement")
 
-# User rates the response
 await agent.feedback(
     run_id=result.run_id,
-    rating="positive",              # "positive" | "negative" | "neutral"
-    comment="Good but could be simpler",
+    rating="positive",
+    comment="Clear explanation",
 )
 
-# Submit a correction when the response was wrong
 await agent.feedback(
     run_id=result.run_id,
     rating="negative",
-    comment="Incorrect explanation of Bell's theorem",
-    correct="Bell's theorem proves that...",  # correction text
+    comment="Wrong about Bell's theorem",
+    correct="Bell's theorem shows that...",
 )
 ```
 
 !!! info "Non-fatal"
-    If `feedback()` fails (e.g., store unavailable), it logs a warning and continues:
-    `[agent-name] feedback() failed (...) — non-fatal.`
+    If `feedback()` fails (e.g. store unavailable), agloom logs a warning and continues — your app is not interrupted.
 
-## Feedback Handlers
+---
 
-Control where feedback goes using handlers:
+## Where feedback is stored
 
-### LTSFeedbackHandler (default when store is provided)
-
-Saves feedback to the long-term store. Signals skill decay for low-rated runs.
-
-```python
-from agloom.feedback.user_feedback import LTSFeedbackHandler
-
-async def main():
-    agent = await create_agent(
-        model=llm,
-        store=store,
-        feedback_handler=LTSFeedbackHandler(),
-    )
-```
-
-### WebhookFeedbackHandler
-
-Posts feedback as JSON to an external URL (`httpx` is a core dependency of `agloom`):
+| Handler | Behavior |
+| ------- | -------- |
+| **Default with `store=`** | Persists to long-term storage; low ratings can decay related skills |
+| **Webhook** | POST JSON to your URL for CRM or analytics |
+| **Composite** | Run multiple handlers in parallel |
 
 ```python
-from agloom.feedback.user_feedback import WebhookFeedbackHandler
-
-async def main():
-    agent = await create_agent(
-        model=llm,
-        store=store,
-        feedback_handler=WebhookFeedbackHandler(url="https://hooks.example.com/feedback"),
-    )
-```
-
-### CompositeHandler
-
-Chain multiple handlers — they run concurrently:
-
-```python
-from agloom.feedback.user_feedback import CompositeHandler, LTSFeedbackHandler, WebhookFeedbackHandler
+from agloom.feedback import CompositeHandler, LTSFeedbackHandler, WebhookFeedbackHandler
 
 handler = CompositeHandler([
     LTSFeedbackHandler(),
     WebhookFeedbackHandler(url="https://hooks.example.com/feedback"),
 ])
 
-async def main():
-    agent = await create_agent(model=llm, store=store, feedback_handler=handler)
+agent = await create_agent(model=llm, store=store, feedback_handler=handler)
 ```
 
-!!! info "Error isolation"
-    If one handler in a `CompositeHandler` fails, the others still run. The error is logged:
-    `CompositeHandler: HandlerName failed for run run_id: error message`
+Without a **`store=`** and without a custom **`feedback_handler`**, feedback is a no-op with zero overhead.
 
-### No feedback (default)
+---
 
-When no `feedback_handler` is provided and no `store` is set, feedback is silently disabled with zero overhead.
+## Trends and skill lifecycle
 
-## Trend Detection
+| Setting | Default | Effect |
+| ------- | ------- | ------ |
+| `review_every_n_runs` | `25` | Periodic quality review |
+| `trend_every_n_runs` | `100` | Detect regressions over time |
+| `low_score_threshold` | `0.40` | Scores below this decay skills |
 
-agloom tracks auto-eval scores over time and detects quality trends:
+When quality trends down, affected skills are down-weighted or pruned so the agent does not keep repeating weak strategies.
 
-| Parameter             | Default | What it does                          |
-| --------------------- | ------- | ------------------------------------- |
-| `review_every_n_runs` | `25`    | Run auto-review every N runs          |
-| `trend_every_n_runs`  | `100`   | Run trend analysis every N runs       |
-| `low_score_threshold` | `0.40`  | Scores below this trigger skill decay |
+---
 
-When a negative trend is detected, affected skills are decayed and eventually pruned from the registry.
-
-## Feedback Flow
+## How it fits together
 
 ```mermaid
 flowchart TD
-    R[ainvoke result] --> AE[Auto-Evaluator]
-    AE -->|score| FS[Feedback Store]
-    R --> UF{User Feedback?}
-    UF -->|yes| FH[Feedback Handler]
+    R[Turn completes] --> AE[Automatic scoring]
+    AE --> FS[(Feedback store)]
+    R --> UF{User rating?}
+    UF -->|yes| FH[Your handler]
     FH --> FS
-    FS --> TD[Trend Detector]
-    TD -->|negative trend| SL[Skill Lifecycle]
-    SL -->|decay/prune| SR[Skill Registry]
+    FS --> TD[Trend detection]
+    TD --> SL[Skill lifecycle]
 ```
+
+---
+
+## Related
+
+- [Skill learning](skills.md)
+- [Memory](memory.md)
+- [All parameters — feedback](../configuration/parameters.md)

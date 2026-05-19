@@ -63,7 +63,12 @@ export const BootstrapGate = ({
         if (cancelled) return
 
         process.stderr.write('Starting agloom-runtime…\n')
-        bridge.start(runtimeArgs, { transport: 'stdio' })
+        bridge.start(runtimeArgs, {
+          transport: 'stdio',
+          autoReconnect: true,
+          reconnectMaxAttempts: 8,
+          reconnectDelayMs: 1200,
+        })
         setPhase('ready')
       } catch (e) {
         if (cancelled) return

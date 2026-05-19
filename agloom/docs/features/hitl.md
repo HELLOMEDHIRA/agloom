@@ -1,6 +1,8 @@
 # Human-in-the-Loop (HITL)
 
-## 4 Levels of Control
+Pause before risky **patterns**, **tools**, or **workers**, or inject **signals** mid-run. HITL is **opt-in** — omit interrupt parameters for fully automatic execution.
+
+## 4 levels of control
 
 agloom provides layered interrupt control — from coarse-grained pattern pauses to fine-grained tool-level approval:
 
@@ -39,8 +41,7 @@ async def main():
 **When it fires:** After classification, before the pattern handler starts (for `interrupt_before`) or after it completes (for `interrupt_after`).
 
 !!! warning "Callback required"
-    If you set `interrupt_before`/`interrupt_after` without `user_callback`, agloom logs a warning and all gates are **transparent** (fail-open):
-    `AgentConfig: interrupt lists are set but user_callback=None — all gates will be transparent (fail-open). Pass user_callback=async_fn to activate HITL.`
+    If you set interrupt lists without `user_callback`, agloom logs a warning and all gates are **transparent** (fail-open) — execution continues without pausing. Pass `user_callback=async_fn` to activate real approvals.
 
 ## L2: Tool Interrupts
 

@@ -330,9 +330,11 @@ class SessionEmitter:
         _write_lock: threading.Lock | None = None,
         _sub_filter: _SubscriptionFilter | None = None,
         _store_append_inflight: _SharedStoreAppendInflight | None = None,
+        _invocation_only: bool = False,
     ) -> None:
         self._session = session
         self._thread = thread
+        self._invocation_only = _invocation_only
         # Default to stdout when no writer is given. Pass ``None`` explicitly only via the
         # ``_callback_only`` classmethod which sets ``_writer`` directly after construction.
         self._writer: WriterLike | None = writer if writer is not None else sys.stdout
@@ -382,6 +384,7 @@ class SessionEmitter:
         inst._sub_filter = _sub_filter if _sub_filter is not None else _SubscriptionFilter()
         inst._opened = False
         inst._closed = False
+        inst._invocation_only = False
         return inst
 
     _callback_only = for_callback_only  # backward-compatible alias
@@ -418,10 +421,17 @@ class SessionEmitter:
         duration_ms: int | None = None,
         error: str | None = None,
     ) -> SessionClosed | None:
-        """Emit ``session.closed``. Idempotent — second call returns ``None``."""
+        """Emit ``session.closed``. Idempotent — second call returns ``None``.
+
+        Forked emitters from :meth:`fork_for_thread` are *invocation-only*: they mark closed
+        locally but do **not** emit ``session.closed`` (the long-lived stdio/WebSocket session
+        stays open for the next ``command.invoke``).
+        """
         if self._closed:
             return None
         self._closed = True
+        if self._invocation_only:
+            return None
         evt = SessionClosed(
             session=self._session,
             thread=self._thread,
@@ -1740,6 +1750,7 @@ class SessionEmitter:
             _write_lock=self._write_lock,
             _sub_filter=self._sub_filter,
             _store_append_inflight=self._store_append_inflight,
+            _invocation_only=True,
         )
         # Mark as already open so the child doesn't re-emit session.opened.
         child._opened = True

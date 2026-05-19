@@ -104,7 +104,7 @@ The `calculate` helper above is intentionally tiny for docs — use a stricter e
 
 Don't make your users stare at a loading spinner.
 
-- **`astream()`** yields **text chunks**. For a plain string query it may stream real model tokens when the run stays on the **DIRECT** fast path; other patterns usually buffer the final answer and then yield it in chunks (same iterator shape — see `UnifiedAgent.astream`).
+- **`astream()`** yields **text chunks**. For a plain string query it may stream real model tokens when the run stays on the **DIRECT** fast path; other patterns usually buffer the final answer and then yield it in chunks (same iterator shape).
 - **`astream_events()`** yields in-process **`AgentEvent`** objects (`thinking`, `tool_call`, `token`, `done`, …) for dashboards and custom UIs.
 - **`astream_agp_events()`** yields the **typed AGP wire events** (e.g. `token.delta`, `session.opened`) — the same shapes `agloom-runtime` would serialize to NDJSON.
 

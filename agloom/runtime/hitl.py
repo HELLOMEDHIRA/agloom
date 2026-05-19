@@ -38,7 +38,13 @@ from uuid import uuid4
 from ..hitl_contract import HITLEvent
 from ..logging_utils import get_logger
 from ..protocol import HITLDecision, HITLKind, SessionEmitter
-from .hitl_allowlist import save_allowlist_to_session_marker, save_tool_allowlist
+from .hitl_allowlist import (
+    HitlAllowlistPolicy,
+    apply_hitl_allowlist_decision,
+    save_allowlist_to_session_marker,
+    save_policy_to_session_marker,
+    save_tool_allowlist,
+)
 
 logger = get_logger(__name__)
 
@@ -110,12 +116,19 @@ class HITLBridge:
         self,
         emitter: SessionEmitter,
         *,
-        tool_allowlist: set[str] | None = None,
+        tool_allowlist: HitlAllowlistPolicy | set[str] | None = None,
         allowlist_persist_path: Path | str | None = None,
         allowlist_session_marker: Path | str | None = None,
     ) -> None:
         self._default_emitter = emitter
-        self._tool_allowlist: set[str] = tool_allowlist if tool_allowlist is not None else set()
+        if tool_allowlist is None:
+            self._tool_allowlist: HitlAllowlistPolicy | set[str] = HitlAllowlistPolicy()
+        elif isinstance(tool_allowlist, HitlAllowlistPolicy):
+            self._tool_allowlist = tool_allowlist
+        elif isinstance(tool_allowlist, set):
+            self._tool_allowlist = tool_allowlist
+        else:
+            self._tool_allowlist = set(tool_allowlist)
         self._allowlist_persist_path = (
             Path(allowlist_persist_path).expanduser().resolve() if allowlist_persist_path else None
         )
@@ -268,11 +281,22 @@ class HITLBridge:
         )
         if kind == "tool_approval" and decision == "allowlist":
             tn = params.get("tool_name")
+            raw_args = params.get("args")
+            tool_args = dict(raw_args) if isinstance(raw_args, dict) else {}
             if isinstance(tn, str) and tn.strip():
-                self._tool_allowlist.add(tn.strip())
+                apply_hitl_allowlist_decision(self._tool_allowlist, tn.strip(), tool_args)
                 if self._allowlist_session_marker is not None:
                     try:
-                        save_allowlist_to_session_marker(self._allowlist_session_marker, self._tool_allowlist)
+                        if isinstance(self._tool_allowlist, HitlAllowlistPolicy):
+                            save_policy_to_session_marker(
+                                self._allowlist_session_marker,
+                                self._tool_allowlist,
+                            )
+                        else:
+                            save_allowlist_to_session_marker(
+                                self._allowlist_session_marker,
+                                self._tool_allowlist,
+                            )
                     except OSError:
                         pass
                     except Exception as exc:
@@ -282,7 +306,13 @@ class HITLBridge:
                         )
                 elif self._allowlist_persist_path is not None:
                     try:
-                        save_tool_allowlist(self._allowlist_persist_path, self._tool_allowlist)
+                        if isinstance(self._tool_allowlist, HitlAllowlistPolicy):
+                            save_tool_allowlist(
+                                self._allowlist_persist_path,
+                                self._tool_allowlist.global_tools(),
+                            )
+                        else:
+                            save_tool_allowlist(self._allowlist_persist_path, self._tool_allowlist)
                     except OSError:
                         pass
                     except Exception as exc:

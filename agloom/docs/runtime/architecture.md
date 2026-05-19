@@ -1,6 +1,9 @@
 # agloom-runtime Architecture
 
-**Status**: Stable (foundations shipped) | **AGP protocol**: v1 (see protocol docs) | **agloom package**: tracks [PyPI `agloom`](https://pypi.org/project/agloom/) (not a separate “runtime 1.0” release line)  
+**Audience:** operators and integrators running **`agloom-runtime serve`** or building custom AGP transports.  
+If you only embed `create_agent` in Python, start with [Integration overview](../guides/developer-overview.md) instead.
+
+**Status**: Stable (foundations shipped) | **AGP protocol**: v1 | **Package**: [PyPI `agloom`](https://pypi.org/project/agloom/)  
 **Last updated**: May 2026
 
 ---
@@ -33,9 +36,9 @@ local ↔ remote workers, runtime ↔ frontend, runtime ↔ observability, runti
 | **Transport layer**         | ❌                            | ✅ stdio / ws / HTTP |
 | **Execution observability** | emits AgentEvents             | ✅ translates → AGP  |
 
-The boundary is clean: `agloom-core` produces `AsyncGenerator[AgentEvent]`;
-`agloom-runtime` wraps that in a `Worker`, routes tasks to it, and translates
-the resulting events onto the AGP wire.
+The boundary is clean: the **agent library** produces an internal event stream;
+**agloom-runtime** schedules work, maps those events to **AGP envelopes**, and
+writes them to your transport (stdio, WebSocket, etc.).
 
 ---
 
@@ -116,7 +119,7 @@ class BaseWorker(ABC):
 
 | Type            | Description                                          |
 | --------------- | ---------------------------------------------------- |
-| `LocalAIWorker` | Wraps `UnifiedAgent.astream_events`, runs in-process |
+| Local AI worker | Runs `create_agent` invocations in-process, streams progress to AGP |
 | `ToolWorker`    | Executes a single tool call in isolation             |
 
 Additional worker kinds (remote brokers, GPU pools, browsers, etc.) are **extension points** for integrators building on the same AGP contracts.
@@ -159,35 +162,31 @@ Heavier deployments may introduce pluggable schedulers (Redis, brokers) behind t
 
 ---
 
-## 6. AGP Runtime Messaging Flow
+## 6. AGP runtime messaging flow
 
 ```text
-Frontend (agloom CLI)
+Client (CLI / web / your service)
   │
-  │  command.invoke {prompt, thread, session}
+  │  command.invoke { prompt, thread, session }
   ▼
-RuntimeNode._dispatch_command()
-  │
-  ├── wrap as WorkerTask {task_type="agent.invoke", required_caps=["agent:*"]}
+Runtime receives command
   │
   ▼
-Scheduler.submit(task)
-  │
-  ├── pop task when worker available
+Scheduler queues an agent invocation
   │
   ▼
-WorkerPool.route(task) → LocalAIWorker.execute(task, emitter)
+In-process agent runs (classify → pattern → tools / workers)
   │
-  │  AgentEvent stream (classify / thinking / token / tool / done)
+  │  Internal progress events
   ▼
-Translator.translate(event) → AGP Envelope
-  │
-  ▼
-AsyncSessionEmitter._write(envelope) → stdout NDJSON / WebSocket frame
+Runtime maps each step → AGP envelope
   │
   ▼
-Frontend receives: pattern.classified / thinking.step / token.delta /
-                   tool.call / tool.result / message.assistant
+NDJSON line or WebSocket frame to client
+  │
+  ▼
+Client renders: pattern.classified, thinking.step, token.delta,
+                tool.call.*, message.assistant, session.closed
 ```
 
 **Worker assignment** for distributed execution uses two new AGP commands:
@@ -346,7 +345,7 @@ Rough **current** sizing assumptions for the in-process runtime:
 | Event throughput  | ~1k/s order of magnitude        |
 | State store       | in-process / SQLite             |
 
-**Bottleneck note**: the `Translator` runs in the asyncio loop; very high event rates may need a dedicated translation path.
+**Bottleneck note**: event translation runs in the asyncio loop; very high event rates may need a dedicated outbound path.
 
 Multi-node coordination, broker-backed queues, and hosted control planes are **not** part of this baseline document.
 
@@ -373,4 +372,4 @@ The runtime is a single Python package: transport, AGP bridging, translation int
 | AGP `astream_events()` is a public hook      | Medium   | Already behind `Translator` layer; keep Translator as the only consumer |
 | Single-node EventStore                       | Low      | Acceptable for local dev; scale-out swaps storage behind the same API   |
 | Over-engineering distributed infra too early | High     | Ship asyncio-first; add brokers only when measured need exists          |
-| Thread-safety of `Translator` in async pool  | Low      | Each worker gets its own `AsyncSessionEmitter` instance; no sharing     |
+| Thread-safety of emitters in async pool      | Low      | Each worker gets its own emitter instance; no sharing                     |

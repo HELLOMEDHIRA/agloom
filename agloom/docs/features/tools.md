@@ -1,5 +1,13 @@
 # Tool Calling
 
+Give your agent **LangChain-compatible tools**; when a question needs them, agloom routes the turn through the **REACT** pattern (plan → call tools → answer).
+
+!!! tip "Quick start"
+    ```python
+    agent = await create_agent(model=llm, tools=[my_tool], name="assistant")
+    result = await agent.ainvoke("What is 15 * 7?")
+    ```
+
 ## Adding Tools
 
 Pass any LangChain-compatible tools to `create_agent`:
@@ -144,7 +152,7 @@ for step in result.steps:
     tc_id = step.metadata.get("id", "")
     id_str = f" [{tc_id[:8]}]" if tc_id else ""
     print(f"[{step.type.value:12s}] {step.name}{id_str}")
-# [classify    ] analyze_query
+# [classify    ] query_classifier
 # [tool_call   ] calculate [tc_abc12]
 # [tool_result ] calculate [tc_abc12]  ← same id links call to result
 # [llm_call    ] react_agent

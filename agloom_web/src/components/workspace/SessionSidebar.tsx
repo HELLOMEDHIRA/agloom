@@ -19,7 +19,7 @@ export const SessionSidebar = (): React.ReactElement => {
           <span className="text-xs font-medium text-neutral-300">Session</span>
         </div>
         {sessionId && (
-          <p className="text-[10px] text-neutral-600 mt-0.5 font-mono truncate">{sessionId}</p>
+          <p className="text-[10px] text-neutral-600 mt-0.5 font-mono whitespace-pre-wrap break-all">{sessionId}</p>
         )}
       </div>
 
@@ -38,8 +38,8 @@ export const SessionSidebar = (): React.ReactElement => {
                 className="px-3 py-2 hover:bg-neutral-900 transition-colors group"
               >
                 {/* User message preview */}
-                <p className="text-xs text-neutral-300 truncate leading-snug">
-                  {turn.userMessage.slice(0, 80)}
+                <p className="text-xs text-neutral-300 whitespace-pre-wrap break-words leading-snug">
+                  {turn.userMessage}
                 </p>
                 {/* Meta row */}
                 <div className="flex items-center gap-2 mt-0.5">

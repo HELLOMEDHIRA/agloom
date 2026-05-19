@@ -1,6 +1,9 @@
 # All Parameters
 
-Complete reference for every `create_agent` parameter. All parameters except `model` are optional.
+Complete reference for **`create_agent`**. Only **`model`** is required; everything else tunes memory, safety, orchestration, and production guardrails.
+
+!!! info "Call-time options"
+    **`thread_id`**, **`user_id`**, and **`context`** are passed to **`ainvoke`** / streaming methods — not to `create_agent`. See [Runtime parameters](#runtime-parameters-method-signatures) below.
 
 ## Core
 
@@ -118,7 +121,7 @@ See [Timeouts & Retries](reliability.md) for details.
 
 | Parameter   | Type                                  | Default | Description                                                                           |
 | ----------- | ------------------------------------- | ------- | ------------------------------------------------------------------------------------- |
-| `delegates` | list of `UnifiedAgent` or `HandoffTarget` | `None`  | Child agents for hierarchical delegation. See [Delegation](../features/delegation.md) |
+| `delegates` | list of agents or `HandoffTarget` | `None`  | Child agents for hierarchical delegation. See [Delegation](../features/delegation.md) |
 
 Delegation can also be configured at runtime:
 
@@ -136,7 +139,7 @@ Delegation can also be configured at runtime:
 | `checkpointer`            | `Checkpointer`            | `None`      | LangGraph checkpointer for `get_state` / `get_history` / `resume`. Checkpoints store query, output, steps, and **`analysis`** when classified. See [Checkpointer](../guides/production.md#checkpointer-state-persistence-and-inspection) |
 | `mcp_servers`             | `list[MCPServerConfig]`   | `None`      | MCP server connections. See [MCP Servers](../features/mcp.md)                                                                                                                                                          |
 | `max_step_output_length`  | `int`                     | `0`         | Max chars for step input/output in traces. `0` = no truncation (default — full output preserved). Set to e.g. `500` to limit memory usage                                                                               |
-| `fallback_pattern`        | `PatternType` or `None`   | `None`      | **Internal** classifier hint; not set by CLI/YAML. `None` lets routing follow classifier defaults (e.g. REACT with tools, DIRECT without).                                                                            |
+| `fallback_pattern`        | `PatternType` or `None`   | `None`      | Advanced override for pattern routing. Leave `None` so the classifier chooses (typical: REACT with tools, DIRECT without). Not exposed in CLI/YAML.                                                                            |
 | `harness`                 | `bool`                    | `False`     | Inject progress + git tools (`initialize_project`, `bootstrap_progress`, task CRUD, `git_*`). **Requires `store=`**; ignored without a store. See [Harness](../features/harness.md)                                      |
 | `harness_project_name`    | `str`                     | `"project"` | Scopes the `ProgressTracker` / artifact key together with `name`                                                                                                                                                       |
 | `cli_tools`               | `bool`, `dict`, or `None` | `None`      | Built-in sandboxed CLI tools (`read_file`, `bash`, …). `True` uses defaults; dict overrides `working_dir`, `allow_shell`, `allow_network`, `sandbox`, `task_tool`. See [CLI tools](../features/cli-tools.md)           |
@@ -152,15 +155,15 @@ Optional self-healing execution: spawn follow-up patterns inside one turn with d
 | `max_orchestration_tokens` | `int` | `0` | Ceiling for total orchestration tokens across spawns (`0` = unlimited). |
 | `max_orchestration_llm_calls` | `int` | `100` | Ceiling for orchestration LLM calls (`0` = unlimited). |
 | `enable_auto_escalation` | `bool` | `False` | Master switch: when `True`, post-step evaluation may spawn follow-up patterns (subject to per-turn plan). |
-| `orchestration_plan_from_classifier` | `bool` | `True` | When `True` and `max_pattern_depth > 0`, `analyze_query()` sets per-turn depth/budgets (clamped to ceilings). When `False`, agent ceilings apply directly every turn. |
+| `orchestration_plan_from_classifier` | `bool` | `True` | When `True` and `max_pattern_depth > 0`, the classifier sets per-turn depth/budgets (clamped to ceilings). When `False`, agent ceilings apply directly every turn. |
 | `escalation_rules` | `list[str]` | `["default"]` | Escalation rule set: `default`, `conservative`, or `aggressive`. |
 | `enable_pattern_spawns` | `bool` | `True` | Pattern handlers may spawn sub-patterns when orchestration is on. |
 | `enable_orchestration_llm_eval` | `bool` | `True` | LLM quality evaluation on each dispatch step; `False` = minimal structural fallback only. |
 | `enable_dynamic_dag_nodes` | `bool` | `True` | HYBRID_DAG: reclassify/dispatch only for tool nodes or `complexity >= 7`. |
-| `enable_supervisor_worker_dispatch` | `bool` | `True` | SUPERVISOR: per-worker `dispatch_pattern` when orchestration is on (no worker HITL on that path). |
+| `enable_supervisor_worker_dispatch` | `bool` | `True` | SUPERVISOR: per-worker sub-patterns when orchestration is on (no worker HITL on that path). |
 | `orchestration_evaluation_llm` | `BaseChatModel` or `str` or `None` | `None` | Optional separate LLM for orchestration evaluation; defaults to main model. |
 
-### Classifier fields (`QueryAnalysis`)
+### Classifier fields (on `result.analysis`)
 
 When orchestration is enabled, the classifier may also return (optional, clamped at runtime):
 
@@ -217,6 +220,9 @@ async def main():
 ## Example: Production
 
 ```python
+from agloom.feedback import LTSFeedbackHandler
+from langgraph.store.memory import InMemoryStore
+
 async def main():
     agent = await create_agent(
         model=llm,

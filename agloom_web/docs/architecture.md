@@ -14,20 +14,17 @@ This guarantees AGP remains the single stable runtime abstraction across all fro
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │                             agloom ecosystem                                      │
 │                                                                                   │
-│  agloom-core (Python)          agloom-runtime (Python)                            │
-│  ┌─────────────────────┐      ┌──────────────────────────────────────────────┐   │
-│  │ LangGraph workflows │  AGP │ RuntimeNode · WorkerPool · Scheduler         │   │
-│  │ Memory / tools      │──────│ serve --transport=ws  (WebSocket)            │   │
-│  │ UnifiedAgent        │      │ serve --transport=stdio (agloom CLI)        │   │
-│  └─────────────────────┘      └──────────┬───────────────────────────────────┘   │
-│                                          │ AGP (Envelopes over WS / stdio)        │
-│                 ┌────────────────────────┼────────────────────────────────┐        │
-│                 │                        │                                │        │
-│                 │  agloom_cli · AGPBridge (stdio)                         │        │
-│                 │  agloom_web · AGPClient (WebSocket)                     │        │
-│                 │  Zustand stores                                        │        │
-│                 │                        │                                │        │
-│                 └────────────────────────┴────────────────────────────────┘        │
+│  Python agent library              agloom-runtime (bridge process)              │
+│  ┌─────────────────────┐          ┌──────────────────────────────────────────┐  │
+│  │ Patterns · memory   │   AGP    │ Maps agent progress → wire events        │  │
+│  │ Tools · streaming   │ ────────►│ serve --transport=ws  (this web app)   │  │
+│  │ create_agent        │          │ serve --transport=stdio (CLI)            │  │
+│  └─────────────────────┘          └──────────┬───────────────────────────────┘  │
+│                                              │ typed JSON events                 │
+│                 ┌────────────────────────────┼────────────────────────────┐      │
+│                 │  agloom_cli (terminal)     │  agloom_web (browser)      │      │
+│                 │  session store · HITL UI   │  same event vocabulary     │      │
+│                 └────────────────────────────┴────────────────────────────┘      │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -72,7 +69,9 @@ agloom_web/
     │   ├── hooks/
     │   │   └── useAGPStream.ts       # Wire AGPClient events → Zustand dispatch
     │   └── utils/
-    │       └── cn.ts                 # cn(), truncate(), fmtDuration(), fmtTokens()
+    │       ├── cn.ts                 # cn(), fmtDuration(), fmtTokens()
+    │       ├── assistantText.ts      # Final assistant text + token rollup display
+    │       └── strayToolJson.ts      # Hide stray tool JSON in streamed assistant text
     │
     ├── store/
     │   └── session.ts                # Zustand store; reducer over AGP events
@@ -159,6 +158,13 @@ store.dispatch(evt)
       └── return next state (immutable)
 ```
 
+### Display rules (parity with CLI)
+
+- **Tool calls** — render full `tool.call.result` `output_preview` (wrap/scroll; no collapse toggle).
+- **Reasoning** — `thinking.step` and plan/orchestration steps stay visible in the turn card.
+- **Assistant text** — accumulate `token.delta`, then **`finalizeAssistantMessage`** when `message.assistant` arrives; strip `[agloom:tool_result]` envelopes and stray tool JSON blobs.
+- **Tokens** — session totals from **`metric.tokens`** only; format as `↑input ↓output` via `formatTurnTokenRollup`.
+
 ---
 
 ## 6. Rendering Architecture
@@ -206,14 +212,14 @@ npm run dev           # → http://localhost:3000
 ## 8. Extension Points
 
 The web platform is designed to remain an **AGP consumer**.  
-New capabilities are added by:
+New UI capabilities usually follow this flow:
 
-1. Adding AGP event types in `agloom/protocol/events.py`
-2. Mirroring them in `agloom_cli/src/types/agp.ts` and `agloom_web/src/lib/agp/types.ts` (the two files must stay identical)
-3. Adding a `case` in `store/session.ts`'s `dispatch` reducer
-4. Adding a new component or extending an existing panel
+1. Define or extend an **AGP event type** in the Python protocol (see [AGP specification](../agloom/protocol/agp.md))
+2. Regenerate or sync TypeScript types for CLI and web clients
+3. Handle the event in each client's **session store** reducer
+4. Render with a new or existing panel component
 
-No changes to AGP transport, WebSocket server, or Python runtime are needed.
+Transport and `agloom-runtime` stay unchanged when the wire contract is backward compatible.
 
 ---
 

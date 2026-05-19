@@ -52,12 +52,12 @@ export const ExecutionTrace = (): React.ReactElement => {
           <span className="text-neutral-700 w-7 text-right shrink-0 pt-px">{te.seq}</span>
 
           {/* Event type */}
-          <span className={cn('shrink-0 w-36 truncate', EVENT_COLOR[te.type] ?? 'text-neutral-400')}>
+          <span className={cn('shrink-0 min-w-36 max-w-48 break-all', EVENT_COLOR[te.type] ?? 'text-neutral-400')}>
             {te.type}
           </span>
 
           {/* Summary */}
-          <span className="text-neutral-400 flex-1 truncate group-hover:whitespace-normal">
+          <span className="text-neutral-400 flex-1 whitespace-pre-wrap break-words">
             {te.summary}
           </span>
 

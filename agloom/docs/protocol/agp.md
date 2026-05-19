@@ -40,7 +40,7 @@ One JSON object per line (NDJSON over stdio; one frame per WebSocket message whe
 | `type`    | `string`        | yes      | Dotted namespace (`<domain>.<entity>.<phase>`).                 |                                                 |
 | `data`    | `object`        | yes      | Type-specific payload.                                          |                                                 |
 
-**Forward compatibility**: consumers MUST forward unknown `type` values (and unknown fields on `data`) rather than crash. The Pydantic discriminated union (`agloom.protocol.event_adapter`) only recognizes the **v1 catalog** below — UIs that must accept future event types should parse the envelope generically, then dispatch on `type` themselves.
+**Forward compatibility**: consumers MUST forward unknown `type` values (and unknown fields on `data`) rather than crash. Strict parsers may validate against the **v1 catalog** below; production UIs should parse the envelope generically, then dispatch on `type`.
 
 ### Capabilities
 
@@ -52,7 +52,7 @@ Optionally, **`session.opened`** / **`session.resumed`** may include `data.capab
 
 ## Event types (v1 catalog)
 
-Implemented in `agloom.protocol.events` — session lifecycle, execution graph, classification, reasoning, tokens, messages, tools, HITL, workers, memory, checkpoints, feedback, metrics, and errors.
+The catalog below covers session lifecycle, execution graph, classification, reasoning, tokens, messages, tools, HITL, workers, memory, checkpoints, feedback, metrics, and errors.
 
 ### `session.opened`
 
@@ -163,7 +163,7 @@ Only emitted when orchestration runs; omitted for legacy single-pass agents (`ma
 
 ### `pattern.classified`
 
-Emitted by the agloom classifier after `analyze_query`. Tells the UI which of the 9 patterns will execute (REACT, SUPERVISOR, etc.).
+Emitted after the classifier runs (`thinking.step` with `step: "analyze_query"`). Tells the UI which of the 9 patterns will execute (REACT, SUPERVISOR, etc.).
 
 ```jsonc
 { "type": "pattern.classified",
@@ -275,7 +275,7 @@ Agent decided to call a tool. Pre-execution; the matching `tool.call.result` or 
 
 ### `tool.call.result`
 
-Tool succeeded. `output_preview` is truncated to 1024 chars on the wire; `output_bytes` carries the original size; `truncated=true` signals more data exists.
+Tool succeeded. **`output_preview`** carries the **full tool return body** on the wire (current runtime). **`output_bytes`** is the byte length of that string. **`truncated`** is **`false`** when the entire body is inline; reserve **`truncated: true`** for future optional caps or very large payloads.
 
 ```jsonc
 { "type": "tool.call.result",
@@ -283,10 +283,10 @@ Tool succeeded. `output_preview` is truncated to 1024 chars on the wire; `output
   "data": {
     "tool": "read_file",
     "tool_call_id": "tc_42",
-    "output_preview": "[project]\nname = \"agloom\"...",
+    "output_preview": "[project]\nname = \"agloom\"\n...",
     "output_bytes": 4218,
     "duration_ms": 12,
-    "truncated": true
+    "truncated": false
   } }
 ```
 
@@ -363,7 +363,7 @@ Emitted by SUPERVISOR / SWARM / BLACKBOARD / HYBRID_DAG patterns so frontends ca
 
 { "type": "worker.completed",
   "parent": "evt_spawn_id",
-  "data": { "worker_id": "w_1", "output_preview": "…", "output_bytes": 4218, "duration_ms": 2400, "truncated": true } }
+  "data": { "worker_id": "w_1", "output_preview": "…", "output_bytes": 4218, "duration_ms": 2400, "truncated": false } }
 
 { "type": "worker.failed",
   "parent": "evt_spawn_id",
@@ -376,7 +376,7 @@ Emitted by SUPERVISOR / SWARM / BLACKBOARD / HYBRID_DAG patterns so frontends ca
 
 ### `metric.tokens` / `metric.cost`
 
-Per-LLM-call **delta** updates. Frontends sum across the session for the sidebar's "≈ est. tokens" / "≈ cost" rollup. `phase` distinguishes classifier / react / reflection / synthesizer billing; `worker_id` is set when the metric belongs to a specific worker (SUPERVISOR / SWARM).
+Per-invocation **rollup** suitable for status bars — prefer this over summing every `token.delta` (avoids double-counting). `phase` distinguishes classifier / react / reflection / synthesizer billing; `worker_id` is set when the metric belongs to a specific worker (SUPERVISOR / SWARM). See [Wire tokens](../features/wire-tokens.md).
 
 ```jsonc
 { "type": "metric.tokens",
@@ -676,18 +676,23 @@ Each connecting client gets its own AGP session. The same inbound NDJSON command
 
 ---
 
-## Python API reference (emitters, stores, runtime)
+## Python SDK (integrators)
 
-Pointers to the code that implements AGP on the Python side (this is **not** a second list of inbound commands; see [Inbound commands (frontend → runtime)](#agp-inbound-commands) above for `command.*` shapes).
+For application authors, prefer **`agent.astream_agp_events()`** — see [AGP from Python](../guides/agp-python.md).
 
-- Python emitter: `agloom.protocol.SessionEmitter` (`agloom/protocol/emitter.py`)
-- Async emitter: `agloom.protocol.AsyncSessionEmitter` (WebSocket / non-blocking)
-- Pydantic event models: `agloom.protocol.events` (`agloom/protocol/events.py`)
-- Pydantic command models: `agloom.protocol.commands` (`agloom/protocol/commands.py`)
-- EventStore: `agloom.protocol.store` (`agloom/protocol/store.py`) — `MemoryEventStore`, `SqliteEventStore`
-- Bridge / translator: `agloom.runtime` (`agloom/runtime/__init__.py`)
-- Stdio entry point: `agloom-runtime serve --transport=stdio` (also `python -m agloom.runtime serve`)
-- WebSocket entry point: `agloom-runtime serve --transport=ws [--host …] [--port …]`
+For custom transports and replay stores, the Python package provides:
+
+| Capability | Module / command |
+| ---------- | ---------------- |
+| Emit NDJSON from Python | `agloom.protocol` (`SessionEmitter`, `AsyncSessionEmitter`) |
+| Parse inbound lines | `event_adapter`, `command_adapter` |
+| Persist sessions | `MemoryEventStore`, `SqliteEventStore` |
+| Bridge one invocation | `agloom.runtime.run_invocation` |
+| Stdio server | `agloom-runtime serve --transport=stdio` |
+| WebSocket server | `agloom-runtime serve --transport=ws` |
+
+Full walkthrough: [Embedding the runtime](../guides/embedding-runtime.md).  
+Inbound `command.*` shapes: [Inbound commands](#agp-inbound-commands) above.
 
 ```python
 # Programmatic emit

@@ -1,5 +1,7 @@
 # Installation
 
+Install the **`agloom`** Python package, add the provider extra you need, set an API key, then follow the [Quickstart](quickstart.md).
+
 ## Install from PyPI
 
 === "pip"
@@ -99,3 +101,12 @@ export LANGSMITH_TRACING=false
 ```
 
 See [Observability & LangSmith](../features/observability.md) for details.
+
+## Next steps
+
+| Goal | Doc |
+| ---- | --- |
+| First agent in 5 minutes | [Quickstart](quickstart.md) |
+| Why teams use agloom | [Why agloom?](why-agloom.md) |
+| Terminal UI | [CLI on Read the Docs](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/) |
+| Production API | [Production integration](../guides/production.md) |

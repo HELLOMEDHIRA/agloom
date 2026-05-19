@@ -8,7 +8,6 @@ import { useInput } from 'ink'
 import { useSessionStore } from '../store/session.js'
 import { SLASH_HINTS } from '../utils/slashCommands.js'
 import { useAgloomTheme } from '../themeContext.js'
-import { isCtrlY } from '../utils/keys.js'
 
 interface Props {
   value: string
@@ -23,8 +22,6 @@ interface Props {
   suggestions?: string[]
   /** Match main column width so the composer spans the chat pane. */
   composerWidth?: number
-  /** Ctrl+Y / hide or show dim reasoning trace — runs even while the agent is busy. */
-  onThinkingHotkey?: () => void
 }
 
 export const InputBar = ({
@@ -36,7 +33,6 @@ export const InputBar = ({
   onRecallNext,
   suggestions,
   composerWidth,
-  onThinkingHotkey,
 }: Props): React.ReactElement => {
   const theme = useAgloomTheme()
   const accent = theme === 'light' ? 'blue' : 'cyan'
@@ -74,10 +70,6 @@ export const InputBar = ({
   }
 
   useInput((_input, key) => {
-    if (isCtrlY(_input, key)) {
-      onThinkingHotkey?.()
-      return
-    }
     if (isDisabled) return
 
     if (showHistorySuggestions && suggestions) {
@@ -122,7 +114,6 @@ export const InputBar = ({
         <Box flexDirection="column" marginX={2} marginBottom={0}>
           {Object.entries(SLASH_HINTS)
             .filter(([cmd]) => cmd.startsWith(value))
-            .slice(0, 6)
             .map(([cmd, hint]) => (
               <Box key={cmd}>
                 <Text bold color={accent}>
@@ -140,12 +131,11 @@ export const InputBar = ({
         <Box flexDirection="column" marginX={2} marginBottom={0}>
           {suggestions.map((s, i) => {
             const picked = i === selectedSuggestion
-            const label = s.length > 140 ? `${s.slice(0, 137)}…` : s
             return (
-              <Text key={`${i}-${s.slice(0, 40)}`} wrap="truncate-end">
+              <Text key={`${i}-${s}`} wrap="wrap">
                 <Text color={picked ? accent : 'gray'} bold={picked} dimColor={!picked}>
                   {picked ? '▸ ' : '  '}
-                  {label}
+                  {s}
                 </Text>
               </Text>
             )
@@ -159,11 +149,11 @@ export const InputBar = ({
       {ml && pendingLines.length > 0 && (
         <Box flexDirection="column" marginX={2} marginBottom={0}>
           {pendingLines.map((ln, i) => (
-            <Text key={`${i}-${ln.slice(0, 24)}`} dimColor>
-              {ln.length > 160 ? `${ln.slice(0, 157)}…` : ln}
+            <Text key={`${i}-${ln}`} dimColor wrap="wrap">
+              {ln}
             </Text>
           ))}
-          <Text dimColor>── blank line + Enter sends · Ctrl+P/N history · Ctrl+Y or /think reasoning</Text>
+          <Text dimColor>── blank line + Enter sends · Ctrl+P/N history</Text>
         </Box>
       )}
 

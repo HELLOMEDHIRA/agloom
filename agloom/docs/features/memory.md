@@ -1,6 +1,9 @@
 # Memory
 
-agloom provides three layers of memory — all configured through `create_agent`.
+Session continuity, long-term recall, and automatic context injection — configured through **`create_agent`** and call-time **`thread_id`** / **`user_id`**.
+
+!!! tip "Remember one rule"
+    Pass the **same `thread_id`** on every call in a conversation. Without it, each turn starts fresh.
 
 ## Memory Architecture
 

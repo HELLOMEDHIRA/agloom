@@ -4,36 +4,38 @@ import React from 'react'
 import { Box, Text } from 'ink'
 import type { ThinkingStep } from '../store/session.js'
 import { useSessionStore } from '../store/session.js'
-import { truncate } from '../utils/format.js'
+import { wrapTextLines } from '../utils/wrapLines.js'
 
 interface Props {
   steps: ThinkingStep[]
-  /** Cap detail width for in-flight turns; completed turns show full detail. */
-  maxDetailChars?: number
 }
 
-export const ThinkingTrace = ({ steps, maxDetailChars }: Props): React.ReactElement | null => {
+export const ThinkingTrace = ({ steps }: Props): React.ReactElement | null => {
   if (steps.length === 0) return null
 
   const mainColumnWidth = useSessionStore((s) => s.mainColumnWidth)
-  const detailCap = maxDetailChars ?? Math.max(120, mainColumnWidth * 3)
+  const detailCols = Math.max(40, mainColumnWidth - 4)
 
   return (
     <Box flexDirection="column" marginLeft={2} marginTop={0} marginBottom={0}>
+      <Text color="gray" dimColor bold>
+        Reasoning
+      </Text>
       {steps.map((s) => {
         const head = s.label ?? s.step
         const timing = s.elapsedMs != null ? ` · ${s.elapsedMs}ms` : ''
+        const detailRows = s.detail ? wrapTextLines(s.detail, detailCols) : []
         return (
           <Box key={s.id} flexDirection="column">
-            <Text color="gray" dimColor>
+            <Text color="gray" dimColor wrap="wrap">
               {head}
               {timing}
             </Text>
-            {s.detail ? (
-              <Text color="gray" dimColor wrap="truncate-end">
-                {maxDetailChars != null ? truncate(s.detail, detailCap) : s.detail}
+            {detailRows.map((row, i) => (
+              <Text key={`${s.id}-d-${i}`} color="gray" dimColor wrap="wrap">
+                {row}
               </Text>
-            ) : null}
+            ))}
           </Box>
         )
       })}

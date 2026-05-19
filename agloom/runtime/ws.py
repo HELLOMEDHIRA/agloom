@@ -241,7 +241,8 @@ async def _session_loop(
             await mem_cleanup()
         return
 
-    agent.config["_hitl_tool_allowlist"] = prepared.allowlist
+    agent.config["_hitl_tool_allowlist"] = hitl_bridge._tool_allowlist
+    agent.config["_hitl_tool_coalescer"] = prepared.coalescer
     attach_session_memory_to_session_marker(
         agent.config.get("memory"),
         prepared.sessions_dir,

@@ -9,30 +9,36 @@ import { flattenCompletedTurnLines } from './transcriptLines.js'
 
 interface Props {
   turns: CompletedTurn[]
-  hideThinkingTrace: boolean
   width: number
   maxLines: number
+  /** When false, chat scroll uses PgUp/PgDn only (sidebar owns Ctrl+[/] in split layout). */
+  allowBracketScroll?: boolean
 }
 
 export const ChatTranscript = ({
   turns,
-  hideThinkingTrace,
   width,
   maxLines,
+  allowBracketScroll = true,
 }: Props): React.ReactElement => {
-  const toolCallExpandedById = useSessionStore((s) => s.toolCallExpandedById)
+  const toolNames = useSessionStore((s) => s.toolNames)
 
   const lines = useMemo(() => {
     const out: React.ReactElement[] = []
     for (const turn of turns) {
-      out.push(...flattenCompletedTurnLines(turn, { hideThinkingTrace, width, toolCallExpandedById }))
+      out.push(...flattenCompletedTurnLines(turn, { width, toolNames }))
     }
     return out
-  }, [turns, hideThinkingTrace, width, toolCallExpandedById])
+  }, [turns, width, toolNames])
 
   return (
     <Box flexGrow={1} minHeight={0} flexDirection="column">
-      <ScrollableColumn maxLines={maxLines} lines={lines} pinToBottomOnGrow />
+      <ScrollableColumn
+        maxLines={maxLines}
+        lines={lines}
+        pinToBottomOnGrow
+        allowBracketScroll={allowBracketScroll}
+      />
     </Box>
   )
 }

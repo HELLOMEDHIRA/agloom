@@ -13,12 +13,20 @@ _TOOL_USE_FAILED = "tool_use_failed"
 _STRAY_TOOL_JSON_KEYS = frozenset({"type", "name", "parameters", "arguments", "function", "id"})
 
 
-def human_message_after_stray_tool_json() -> str:
+def human_message_after_stray_tool_json(*, tool_result_already_present: bool = False) -> str:
     """Nudge after the model put tool arguments in plain assistant text (no structured tool_calls)."""
+    if tool_result_already_present:
+        return (
+            "Your last message was JSON describing a tool call, but that tool already ran and its "
+            "result is in the conversation above.\n"
+            "Do **not** output JSON tool blobs or call the same tool again unless the user asked for "
+            "something new.\n"
+            "Reply to the user in normal prose only — summarize or quote the tool result you already have."
+        )
     return (
         "Your last reply was JSON that *describes* a tool call, but this runtime only runs tools "
         "through the model's **native tool-calling channel** — not as raw JSON in the message body.\n"
-        "Call the tool again using the provider's structured tool API only. "
+        "Call the tool using the provider's structured tool API only. "
         "After the tool result arrives, answer in normal prose (no JSON tool blobs)."
     )
 
@@ -47,12 +55,30 @@ def _stray_dict_looks_like_tool_call(d: dict[str, Any]) -> bool:
     return False
 
 
+def is_stray_tool_json_text(text: str, allowed_tool_names: frozenset[str]) -> bool:
+    """True when *text* is a lone JSON object describing a tool (no native ``tool_calls``)."""
+    if not text or not allowed_tool_names:
+        return False
+    trimmed = text.strip()
+    if not (trimmed.startswith("{") and trimmed.endswith("}")):
+        return False
+    try:
+        data = json.loads(trimmed)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(data, dict):
+        return False
+    if not _stray_dict_looks_like_tool_call(data):
+        return False
+    tname = _tool_name_from_stray_dict(data)
+    return bool(tname and tname in allowed_tool_names)
+
+
 def last_ai_message_is_stray_tool_json(messages: list[Any], allowed_tool_names: frozenset[str]) -> bool:
     """True if the latest assistant turn is JSON tool-shaped text but has no ``tool_calls``."""
     if not allowed_tool_names or not messages:
         return False
-    last = messages[-1]
-    if isinstance(last, ToolMessage):
+    if isinstance(messages[-1], ToolMessage):
         return False
     for msg in reversed(messages):
         if not isinstance(msg, AIMessage):
@@ -62,19 +88,7 @@ def last_ai_message_is_stray_tool_json(messages: list[Any], allowed_tool_names: 
         raw = msg.content
         if not raw or not isinstance(raw, str):
             return False
-        text = raw.strip()
-        if not (text.startswith("{") and text.endswith("}")):
-            return False
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            return False
-        if not isinstance(data, dict):
-            return False
-        if not _stray_dict_looks_like_tool_call(data):
-            return False
-        tname = _tool_name_from_stray_dict(data)
-        return bool(tname and tname in allowed_tool_names)
+        return is_stray_tool_json_text(raw, allowed_tool_names)
     return False
 
 

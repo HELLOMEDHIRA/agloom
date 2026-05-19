@@ -1,116 +1,136 @@
-# Timeouts & Retries
+# Timeouts & retries
 
-## Built-In Reliability
+Production agents need bounded latency, retries on transient failures, and protection when upstream LLMs degrade. agloom ships these controls on **`create_agent`** — no custom middleware required.
 
-agloom includes production-grade reliability features that would normally take weeks to build:
+## Quick reference
+
+| Parameter | Default | Purpose |
+| --------- | ------- | ------- |
+| `llm_timeout` | `120.0` s | Max time per LLM call |
+| `classifier_timeout` | `60.0` s | Max time for query classification |
+| `max_retries` | `2` | Worker retries (0–10) |
+| `retry_delay` | `1.0` s | Pause between worker retries |
+| `structured_max_retries` | `2` | Retries for `response_format` formatting |
+| `max_concurrent` | `4` | Parallel LLM calls cap (1–32) |
+| `rate_limit` | `None` | Max LLM calls per second (token bucket) |
+
+---
 
 ## Timeouts
 
-| Parameter            | Default  | Controls                          |
-| -------------------- | -------- | --------------------------------- |
-| `llm_timeout`        | `120.0s` | Max time for a single LLM call    |
-| `classifier_timeout` | `60.0s`  | Max time for query classification |
-
 ```python
 async def main():
     agent = await create_agent(
         model=llm,
-        llm_timeout=60.0,         # 60s per LLM call
-        classifier_timeout=15.0,   # 15s for classification
+        llm_timeout=60.0,
+        classifier_timeout=15.0,
     )
 ```
 
-If a timeout is exceeded, the call fails with a `TimeoutError` — no hanging forever.
+When a timeout fires, the call raises **`TimeoutError`** — the run does not hang indefinitely. Tighten **`classifier_timeout`** in latency-sensitive APIs; keep **`llm_timeout`** generous for long tool-heavy ReAct turns.
+
+---
 
 ## Retries
 
-| Parameter                | Default | Controls                  |
-| ------------------------ | ------- | ------------------------- |
-| `max_retries`            | `2`     | Worker retry count (0-10) |
-| `retry_delay`            | `1.0s`  | Delay between retries     |
-| `structured_max_retries` | `2`     | Structured output retries |
+```python
+async def main():
+    agent = await create_agent(
+        model=llm,
+        max_retries=3,
+        retry_delay=2.0,
+        structured_max_retries=3,
+    )
+```
+
+| Retry scope | What it covers |
+| ----------- | -------------- |
+| **`max_retries` / `retry_delay`** | Failed **workers** in supervisor-style patterns |
+| **`structured_max_retries`** | Post-run formatting when **`response_format=`** is set |
+
+Retries do **not** infinitely loop the whole agent — only the scoped step above.
+
+---
+
+## Concurrency and rate limiting
 
 ```python
 async def main():
     agent = await create_agent(
         model=llm,
-        max_retries=3,            # retry failed workers up to 3 times
-        retry_delay=2.0,          # wait 2s between retries
-        structured_max_retries=3, # retry structured output 3 times
+        max_concurrent=8,
+        rate_limit=10.0,
     )
 ```
 
-## Concurrency Control
+- **`max_concurrent`** — semaphore across all in-flight LLM calls (workers + main loop).
+- **`rate_limit`** — token-bucket cap on **calls per second**; `None` disables limiting.
 
-| Parameter        | Default | Controls                    |
-| ---------------- | ------- | --------------------------- |
-| `max_concurrent` | `4`     | Max parallel workers (1-32) |
-| `rate_limit`     | `None`  | Max LLM calls per second    |
+Use both when your provider enforces concurrent connections **and** requests-per-second.
 
-```python
-async def main():
-    agent = await create_agent(
-        model=llm,
-        max_concurrent=8,   # up to 8 workers in parallel
-        rate_limit=10.0,    # max 10 LLM calls per second
-    )
-```
+---
 
-## Circuit Breaker
+## Circuit breaker (automatic)
 
-agloom includes an automatic circuit breaker that fast-fails after consecutive LLM API failures. This prevents cascading failures when your LLM provider is down.
+After consecutive LLM API failures, agloom **opens** a circuit:
 
-### Behavior
+1. **Open** — new calls fail fast (no hammering a dead endpoint).
+2. **Half-open** — after cooldown, one probe call is allowed.
+3. **Closed** — success resumes normal traffic; failure reopens the circuit.
 
-1. After N consecutive failures, the circuit **opens** — all calls fail immediately
-2. After a cooldown period, the circuit enters **half-open** — one call is allowed through
-3. If it succeeds, the circuit **closes** — normal operation resumes
-4. If it fails, the circuit stays **open** for another cooldown
+No configuration required — it protects cascading outages during provider incidents.
 
-This is automatic — no configuration needed.
+---
 
-## Rate Limiter
+## Structured output resilience
 
-Token-bucket rate limiting prevents hitting your LLM provider's rate limits:
+With **`response_format=`**, a formatting pass runs after the main answer:
 
-```python
-async def main():
-    agent = await create_agent(
-        model=llm,
-        rate_limit=5.0,  # max 5 LLM calls per second
-    )
-```
+1. Primary structured-output path (provider-native when available).
+2. On failure, retry with JSON-schema style binding.
+3. After **`structured_max_retries`**, return raw assistant text and log a warning.
 
-With `rate_limit=None` (default), no rate limiting is applied.
-
-## LLM Semaphore
-
-The `max_concurrent` parameter controls how many LLM calls can run simultaneously across all workers. This prevents overloading your LLM API quota.
-
-## Robust Structured Output
-
-When `response_format=` is set, agloom uses `robust_structured_call()` internally:
-
-1. Tries the primary structured output method (`with_structured_output`)
-2. On failure, retries with `method="json_schema"`
-3. On further failure, falls back to raw output and logs a warning
+You will see log lines like:
 
 ```text
 response_format: structured call returned None — using raw output.
 response_format failed (Error) — using raw output.
 ```
 
-## Summary
+Design schemas that tolerate one retry; do not rely on formatting for safety-critical validation without checking **`result.output`** parses.
+
+---
+
+## Request path (mental model)
 
 ```mermaid
 flowchart LR
-    REQ[LLM Request] --> RL{Rate Limiter}
-    RL -->|allowed| CB{Circuit Breaker}
-    CB -->|closed| SEM{Semaphore}
-    SEM -->|slot available| LLM[LLM Call]
-    LLM -->|timeout?| TO{Timeout}
-    TO -->|failed| RETRY{Retry?}
-    RETRY -->|yes| LLM
-    RETRY -->|no| FAIL[Return Error]
-    LLM -->|success| OK[Return Result]
+    REQ[LLM request] --> RL{Rate limiter}
+    RL -->|ok| CB{Circuit breaker}
+    CB -->|closed| SEM[Concurrency semaphore]
+    SEM --> TO[Timeout wrapper]
+    TO --> LLM[Provider API]
+    LLM -->|fail| RET{Worker retry?}
+    RET -->|yes| LLM
+    RET -->|no| ERR[Error to caller]
+    LLM -->|ok| OUT[Result]
 ```
+
+---
+
+## Tuning for production
+
+| Scenario | Suggested starting point |
+| -------- | ------------------------ |
+| Interactive API | `llm_timeout=90`, `classifier_timeout=20`, `max_concurrent=4` |
+| Batch analytics | `max_concurrent=8–16`, `rate_limit` = provider quota ÷ safety factor |
+| Strict JSON APIs | `structured_max_retries=3`, validate output in your handler |
+| Degraded provider | Circuit breaker + lower `max_concurrent` to avoid retry storms |
+
+---
+
+## See also
+
+- [Production integration](../guides/production.md)
+- [Parameters](parameters.md) — full `create_agent` table
+- [Errors](errors.md) — exception messages

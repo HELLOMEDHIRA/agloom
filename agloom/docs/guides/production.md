@@ -1,10 +1,24 @@
-# Production Integration Guide
+# Production integration
 
-How to deploy agloom agents in production applications.
+Ship agloom agents behind APIs, workers, and multi-tenant products. This guide covers streaming, persistence, structured output, scaling knobs, and operational hygiene — without requiring you to wire orchestration by hand.
+
+## Production checklist
+
+| Concern | What to configure |
+| -------- | ----------------- |
+| **Secrets** | Provider API keys via env / secret store — never bake into images |
+| **Persistence** | `checkpointer` + durable `store` for threads; SQLite or your own `BaseStore` backend |
+| **Timeouts** | `llm_timeout`, `classifier_timeout` — see [Timeouts & retries](../configuration/reliability.md) |
+| **Concurrency** | `max_concurrent`, optional `rate_limit` for provider quotas |
+| **HITL** | `interrupt_before` / `user_callback` for destructive tools — see [Human-in-the-loop](../features/hitl.md) |
+| **Observability** | LangSmith env vars, `debug=True` in staging, `agloom-runtime serve --obs` for dashboards |
+| **Wire UI** | `astream_events` or AGP via `agloom-runtime` — see [Streaming](../features/streaming.md) |
+
+---
 
 ## FastAPI with Server-Sent Events (SSE)
 
-The most common production pattern — a REST API that streams agent events to the frontend:
+A common pattern: REST endpoint that streams agent events to the browser.
 
 ```python
 import asyncio
@@ -83,9 +97,13 @@ eventSource.onmessage = (e) => {
 };
 ```
 
-## Persistent Storage
+For the **AGP wire** (CLI, web workspace, custom clients), run [`agloom-runtime serve`](../runtime/cli.md) and consume NDJSON/WebSocket events — same semantics, standardized envelope. See [Deployment](deployment.md).
 
-By default, agloom uses `InMemoryStore` which loses all data on restart. For production, use a persistent store:
+---
+
+## Persistent storage
+
+By default, in-process stores lose data on restart. For production:
 
 ### SQLite (single server)
 
@@ -102,7 +120,7 @@ async def main():
     )
 ```
 
-### Session memory persistence
+### Session memory
 
 ```python
 from agloom import SessionMemory
@@ -115,12 +133,14 @@ async def main():
     )
 ```
 
-!!! info "InMemoryStore for long-term features"
-    `InMemoryStore` still works for skills, feedback, and long-term memory during the process lifetime. For true persistence across restarts, implement a `BaseStore`-compatible backend or use LangGraph's persistence options.
+!!! info "Long-term memory vs process lifetime"
+    Skills, feedback, and long-term memory need a durable **`store=`** across restarts. Session turns are keyed by **`thread_id`**; tenant isolation uses **`user_id`** and **`lt_namespace`**.
 
-## Structured Output
+---
 
-Force the agent to return data in a specific schema using `response_format`:
+## Structured output
+
+Force responses into a Pydantic schema with **`response_format`**:
 
 ```python
 from pydantic import BaseModel
@@ -139,21 +159,21 @@ async def main():
     )
 
     result = await agent.ainvoke("Analyze this customer review: Great product, fast shipping!")
-    print(result.output)  # JSON string matching AnalysisResult schema
+    print(result.output)  # JSON matching AnalysisResult
 ```
 
-!!! info "How it works"
-    `response_format` adds a **post-processing step** after the main pipeline. The raw output is reformatted into the Pydantic model via an additional LLM call using `with_structured_output`. If formatting fails after `structured_max_retries` attempts, the raw output is returned with a warning logged.
+After the main pipeline completes, agloom runs a **formatting pass** (extra LLM call with structured output). If formatting fails after **`structured_max_retries`**, the raw assistant text is returned and a warning is logged. Tune retries in [Timeouts & retries](../configuration/reliability.md).
 
-## Dynamic System Prompts
+---
 
-Pass a callable as `system_prompt` to generate prompts based on runtime context:
+## Dynamic system prompts
+
+Pass a callable as **`system_prompt`** to adapt instructions per user or query:
 
 ```python
 async def dynamic_prompt(state: dict) -> str:
     user_id = state.get("user_id")
     query = state.get("query", "")
-    thread_id = state.get("thread_id", "")
 
     base = "You are a helpful assistant."
     if user_id:
@@ -171,21 +191,21 @@ async def main():
     )
 ```
 
-The callable receives a state dict with these keys:
+Callable **`state`** keys:
 
-| Key         | Type   | Description                              |                                  |
-| ----------- | ------ | ---------------------------------------- | -------------------------------- |
-| `query`     | `str`  | The raw user query                       |                                  |
-| `thread_id` | `str`  | Current thread ID                        |                                  |
-| `user_id`   | `str \ | None`                                    | User ID (if passed at call time) |
-| `context`   | `dict` | Context dict from `ainvoke(context=...)` |                                  |
-| `messages`  | `list` | Always `[]` (reserved for future use)    |                                  |
+| Key | Description |
+| --- | ----------- |
+| `query` | Raw user message |
+| `thread_id` | Conversation thread |
+| `user_id` | Caller id when passed to `ainvoke` / `astream_events` |
+| `context` | Dict from `ainvoke(context=...)` |
+| `messages` | Reserved (empty today) |
 
-## Worker Details (SUPERVISOR / PIPELINE)
+---
+
+## Multi-worker patterns (supervisor / pipeline)
 
 ### Per-worker token usage
-
-Each worker's token usage is available in `result.worker_results`:
 
 ```python
 result = await agent.ainvoke("Compare solar, wind, and hydro energy")
@@ -196,31 +216,26 @@ if result.worker_results:
     print(f"Total: {result.token_usage}")
 ```
 
-### Partial failure handling
+### Partial failure
 
-In SUPERVISOR pattern, some workers can fail while others succeed. The synthesis step still runs with available results:
+In supervisor-style runs, some workers can fail while synthesis still completes:
 
 ```python
 result = await agent.ainvoke("Research 3 complex topics")
-print(f"Success: {result.success}")  # True even with partial failures
 
 for wr in result.worker_results:
     if wr.signal and wr.signal.signal_type.value == "FAILED":
         print(f"Worker '{wr.worker_id}' failed")
-    else:
-        print(f"Worker '{wr.worker_id}' succeeded")
 ```
 
-!!! warning "Check worker_results"
-    `result.success = True` means the synthesis completed, not that all workers succeeded. Always inspect `result.worker_results` when reliability matters.
+!!! warning "success does not mean every worker succeeded"
+    **`result.success`** means the top-level run finished (including synthesis). Inspect **`worker_results`** when you need per-subtask guarantees.
 
-### All workers share the agent's LLM
+Workers share the same **`model`** passed to **`create_agent`** — per-worker model overrides are not supported today.
 
-Workers use the same `model` passed to `create_agent`. Per-worker model customization is not currently supported — all workers run against the same LLM.
+---
 
-## Checkpointer: State Persistence and Inspection
-
-Pass a `checkpointer` to automatically persist execution state after every `ainvoke()` and `astream_events()` call:
+## Checkpointer: state and resume
 
 ```python
 from langgraph.checkpoint.memory import MemorySaver
@@ -232,7 +247,6 @@ async def main():
         name="persistent-agent",
     )
 
-    # Every call writes a checkpoint keyed by thread_id
     result = await agent.ainvoke("Explain RLHF", thread_id="session-1")
 ```
 
@@ -241,31 +255,23 @@ async def main():
 ```python
 state = await agent.get_state(thread_id="session-1")
 if state:
-    checkpoint = state.checkpoint
-    data = checkpoint["channel_values"]
+    data = state.checkpoint["channel_values"]
     print(f"Query: {data['query']}")
     print(f"Pattern: {data['pattern']}")
-    print(f"Output: {data['output'][:100]}")
-    print(f"Steps: {len(data['steps'])}")
-    if data.get("analysis"):
-        print(f"Classifier pattern: {data['analysis'].get('pattern')}")
+    print(f"Output: {data['output']}")
 ```
 
-When a turn completes, checkpoints also store the classifier result (**`analysis`**) alongside output and steps so **`resume()`** can continue with the same pattern after an interrupt.
+Checkpoints store the classifier decision (**`analysis`**) so **`resume()`** after HITL does not re-route to a different pattern mid-interrupt.
 
-### State history (time travel)
-
-Multiple calls to the same `thread_id` create a history of checkpoints:
+### History
 
 ```python
 async for snapshot in await agent.get_history(thread_id="session-1"):
     data = snapshot.checkpoint["channel_values"]
-    print(f"[{snapshot.checkpoint['ts']}] {data['query'][:60]} → {data['pattern']}")
+    print(f"{data['query']} → {data['pattern']}")
 ```
 
-### Resuming interrupted runs {#resuming-interrupted-runs}
-
-`resume()` is for **LangGraph interrupt/resume** (not the usual `ainvoke` path). Use it when `interrupt_before` / `interrupt_after` paused a graph node and you need to supply the user's decision:
+### Graph interrupt resume
 
 ```python
 result = await agent.resume(
@@ -274,21 +280,44 @@ result = await agent.resume(
 )
 ```
 
-Before continuing, agloom reloads the saved classifier result from the checkpoint so the agent does **not** re-classify and switch patterns mid-interrupt.
+Use **`resume()`** only with **`interrupt_before` / `interrupt_after`** and a checkpointer — not for ordinary chat turns.
 
-!!! note "Checkpoint vs resume"
-    `get_state()` and `get_history()` reflect checkpoints written after each `ainvoke()` / `astream_events()` call. `resume()` is only for graph interrupt flows with a **`checkpointer`** configured — not for normal turn-by-turn chat.
+---
 
-## Testing Agents
+## Multi-tenancy
 
-### Mock LLM for deterministic tests
+Isolate tenants with **`thread_id`**, **`user_id`**, and **`lt_namespace`**:
+
+```python
+@app.post("/chat/{tenant_id}")
+async def chat(tenant_id: str, query: str, user_id: str):
+    result = await agent.ainvoke(
+        query,
+        thread_id=f"{tenant_id}:{user_id}:session",
+        user_id=user_id,
+        lt_namespace=(tenant_id, user_id),
+        context={"tenant_id": tenant_id},
+    )
+    return {"output": result.output}
+```
+
+| Data | Isolation key |
+| ---- | ------------- |
+| Session memory | `thread_id` |
+| Long-term memory | `lt_namespace` or `user_id` |
+| Skills / feedback | Agent `name` + `store` |
+| Query cache | Shared process-wide (plan tenant boundaries accordingly) |
+
+---
+
+## Testing agents
+
+### Deterministic mock LLM
 
 ```python
 from langchain_core.language_models.fake import FakeListChatModel
 
-mock_llm = FakeListChatModel(
-    responses=["The answer is 42."]
-)
+mock_llm = FakeListChatModel(responses=["The answer is 42."])
 
 async def main():
     agent = await create_agent(model=mock_llm, name="test-agent")
@@ -296,32 +325,19 @@ async def main():
     assert "42" in result.output
 ```
 
-### Testing with tools
-
-```python
-from langchain_core.tools import tool
-
-@tool
-def search(query: str) -> str:
-    """Search the web."""
-    return "Mock search result for: " + query
-
-async def main():
-    agent = await create_agent(model=mock_llm, tools=[search], name="test-tool-agent")
-```
-
-### Asserting step traces
+### Step traces
 
 ```python
 async def test_steps(agent):
     result = await agent.ainvoke("Calculate 2+2")
-
     step_types = [s.type.value for s in result.steps]
     assert "classify" in step_types
     assert result.pattern_used.value in ("DIRECT", "REACT")
 ```
 
-## Docker Deployment
+---
+
+## Docker deployment
 
 ```dockerfile
 FROM python:3.12-slim
@@ -336,7 +352,7 @@ EXPOSE 8000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-### Health check
+### Health and shutdown
 
 ```python
 @app.get("/health")
@@ -344,33 +360,15 @@ async def health():
     return {"status": "ok", "agent": agent.name if agent else "not initialized"}
 ```
 
-### Graceful shutdown
+Use FastAPI **`lifespan`** (above) so MCP connections and feedback handlers close cleanly on SIGTERM.
 
-The `lifespan` context manager pattern (shown in the FastAPI section above) ensures MCP connections and feedback handlers are properly closed on shutdown.
+For **runtime + web** stacks, see [Production deployment](deployment.md).
 
-## Multi-Tenancy
+---
 
-Isolate data between tenants using `user_id` and `lt_namespace`:
+## See also
 
-```python
-@app.post("/chat/{tenant_id}")
-async def chat(tenant_id: str, query: str, user_id: str):
-    result = await agent.ainvoke(
-        query,
-        thread_id=f"{tenant_id}:{user_id}:session",
-        user_id=user_id,
-        lt_namespace=(tenant_id, user_id),  # explicit tenant isolation
-        context={"tenant_id": tenant_id},
-    )
-    return {"output": result.output}
-```
-
-Key isolation points:
-
-| Data             | Isolated by                            |
-| ---------------- | -------------------------------------- |
-| Session memory   | `thread_id`                            |
-| Long-term memory | `lt_namespace` or `user_id`            |
-| Skills           | Agent `name` + `store`                 |
-| Feedback         | Agent `name` + `store`                 |
-| Query cache      | Not isolated (shared across all users) |
+- [Timeouts & retries](../configuration/reliability.md)
+- [Parameters](../configuration/parameters.md)
+- [Patterns](../concepts/patterns.md) — what the classifier picks
+- [Embedding the runtime](embedding-runtime.md) — custom AGP servers

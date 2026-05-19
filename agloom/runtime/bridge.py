@@ -83,6 +83,10 @@ async def run_invocation(
     emitter.emit_prompt_requested(kind="user_turn", preview=_preview)
     emitter.emit_agent_busy(thread=thread)
 
+    from ..patterns.hitl_tool_coalesce import reset_hitl_turn_coalescer
+
+    reset_hitl_turn_coalescer(agent)
+
     started = time.perf_counter()
     saw_message = False
 

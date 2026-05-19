@@ -1,6 +1,14 @@
 # Streaming & Events
 
-## Why Streaming Matters
+Build responsive chat UIs with **token streaming**, **live step events**, or **AGP wire envelopes** — same turn, three levels of detail.
+
+| API | Best for |
+| --- | -------- |
+| `astream()` | Simple chat bubbles (text chunks) |
+| `astream_events()` | Thinking spinners, tool rows, worker progress |
+| `astream_agp_events()` | CLI/web-compatible NDJSON types |
+
+## Why streaming matters
 
 Without streaming, users stare at a loading spinner for 5-30 seconds, then see a wall of text. With streaming, they see the response being generated in real time — and can even watch the agent "think."
 
@@ -50,13 +58,13 @@ async for token in agent.astream(
 
 ## 2. Event Streaming — `astream_events()`
 
-For building ChatGPT-style "thinking" UIs that show the agent's internal steps **and** stream tokens in real-time.
+For building ChatGPT-style UIs that show **live progress** (classification, tools, workers) **and** stream tokens in real time.
 
 ### AGP-shaped events — `astream_agp_events()`
 
-If you are building a **custom CLI, web UI, or test harness** that should consume the same **Agloom Protocol (AGP)** event model as `agloom-runtime` (typed envelopes, not ad-hoc `AgentEvent` dicts), use `UnifiedAgent.astream_agp_events()`. It runs the same pipeline as `astream_events()`, but each item is a Pydantic :class:`~agloom.protocol.Envelope` subclass (`TokenDelta`, `PatternClassified`, `ToolCallStart`, …) produced via :func:`agloom.runtime.translator.translate`.
+If you are building a **custom CLI, web UI, or test harness** that should speak the same **Agloom Protocol (AGP)** as `agloom-runtime`, use **`astream_agp_events()`**. It runs the same pipeline as `astream_events()`, but each item is a **typed wire envelope** (`token.delta`, `pattern.classified`, `tool.call.start`, …).
 
-The stream is bracketed by **`session.opened`** at the start and **`session.closed`** at the end, so you can treat one call as a self-contained AGP session without constructing a :class:`~agloom.protocol.SessionEmitter` yourself.
+The stream is bracketed by **`session.opened`** at the start and **`session.closed`** at the end, so one call is a complete AGP session — no manual emitter setup required.
 
 ```python
 async for evt in agent.astream_agp_events(
@@ -196,7 +204,7 @@ for step in result.steps:
 Example output:
 
 ```text
-[classify    ] analyze_query — 450ms
+[classify    ] query_classifier — 450ms
 [llm_call    ] supervisor_plan — 320ms
 [worker_start] researcher
 [tool_call   ] search_api            (worker: researcher)

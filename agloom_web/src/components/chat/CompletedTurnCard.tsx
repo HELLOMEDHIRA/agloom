@@ -8,6 +8,7 @@ import { cn } from '../../lib/utils/cn.js'
 import { workerIconClass, workerNameClass } from '../../lib/workerStatus.js'
 import { Users, Octagon } from 'lucide-react'
 import { ToolCallRow } from './ToolCallRow.js'
+import { ThinkingTrace } from './ThinkingTrace.js'
 
 interface Props { turn: CompletedTurn }
 
@@ -25,12 +26,7 @@ export const CompletedTurnCard = memo(({ turn }: Props) => {
           {turn.pattern && (
             <span className="text-xs text-indigo-400 font-medium">▸ {turn.pattern}</span>
           )}
-          {turn.thinkingSteps.slice(0, 3).map((s) => (
-            <span key={s.id} className="text-xs text-neutral-500">▸ {s.label ?? s.step}</span>
-          ))}
-          {turn.thinkingSteps.length > 3 && (
-            <span className="text-xs text-neutral-600">▸ +{turn.thinkingSteps.length - 3} more steps</span>
-          )}
+          <ThinkingTrace steps={turn.thinkingSteps} />
           {turn.workers.map((w) => (
             <div key={w.id} className="flex items-center gap-1.5 text-xs">
               {w.status === 'halted' ? (
@@ -43,7 +39,7 @@ export const CompletedTurnCard = memo(({ turn }: Props) => {
               </span>
               {w.pattern && <span className="text-neutral-600">[{w.pattern}]</span>}
               {w.status === 'halted' && w.outputPreview && (
-                <span className="text-cyan-500/80 truncate max-w-56">{w.outputPreview}</span>
+                <span className="text-cyan-500/80 whitespace-pre-wrap">{w.outputPreview}</span>
               )}
             </div>
           ))}
@@ -68,7 +64,7 @@ export const CompletedTurnCard = memo(({ turn }: Props) => {
           </div>
 
           <div className="flex items-center gap-3 mt-2">
-            {turn.tokens && <span className="text-xs text-neutral-600">{turn.tokens} tok</span>}
+            {turn.tokens && <span className="text-xs text-neutral-600">{turn.tokens}</span>}
             {turn.pattern && <span className="text-xs text-neutral-600">{turn.pattern}</span>}
             {turn.artifacts.length > 0 && (
               <span className="text-xs text-indigo-500">{turn.artifacts.length} artifact{turn.artifacts.length > 1 ? 's' : ''}</span>

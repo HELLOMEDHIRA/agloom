@@ -96,6 +96,22 @@ def extend_invoke_config_with_event_queue(
         if conf.get("clarification_queues") is None and agent.get("clarification_queues") is not None:
             conf["clarification_queues"] = agent["clarification_queues"]
         base["configurable"] = conf
+        ibt = agent.get("interrupt_before_tools") or []
+        ucb = agent.get("user_callback")
+        if ibt and ucb:
+            coalescer = agent.get("_hitl_tool_coalescer")
+            if coalescer is None:
+                from agloom.patterns.hitl_tool_coalesce import build_default_hitl_coalescer
+
+                coalescer = build_default_hitl_coalescer()
+                agent["_hitl_tool_coalescer"] = coalescer
+            base["_hitl_parent"] = {
+                "interrupt_before_tools": list(ibt),
+                "user_callback": ucb,
+                "_hitl_tool_allowlist": agent.get("_hitl_tool_allowlist"),
+                "_hitl_tool_coalescer": coalescer,
+                "name": agent.get("name", "UnifiedAgent"),
+            }
     return base
 
 
@@ -272,6 +288,36 @@ async def _react_graph_astream_to_result(
     return final_response
 
 
+def _hitl_middleware_for_invoke(invoke_config: dict | None, worker_id: str) -> list[Any]:
+    """Share parent L2 HITL (allowlist + coalescer) for supervisor/swarm worker ReAct agents."""
+    if not invoke_config:
+        return []
+    parent = invoke_config.get("_hitl_parent")
+    if not isinstance(parent, dict):
+        return []
+    ibt = parent.get("interrupt_before_tools") or []
+    ucb = parent.get("user_callback")
+    if not ibt or not ucb:
+        return []
+    from agloom.patterns.middleware import HumanApprovalMiddleware
+    from agloom.patterns.hitl_tool_coalesce import build_default_hitl_coalescer
+
+    coalescer = parent.get("_hitl_tool_coalescer")
+    if coalescer is None:
+        coalescer = build_default_hitl_coalescer()
+        parent["_hitl_tool_coalescer"] = coalescer
+    parent_name = parent.get("name") or "Agent"
+    return [
+        HumanApprovalMiddleware(
+            interrupt_before_tools=list(ibt),
+            user_callback=ucb,
+            agent_name=f"{parent_name}:{worker_id}",
+            tool_allowlist=parent.get("_hitl_tool_allowlist"),
+            hitl_coalescer=coalescer,
+        )
+    ]
+
+
 async def _run_react(
     config: ResolvedWorkerConfig,
     llm: Any,
@@ -294,12 +340,14 @@ async def _run_react(
                     f"with the text to process, then reply with the final answer as plain text."
                 )
 
+            hitl_middleware = _hitl_middleware_for_invoke(invoke_config, config.worker_id)
             agent = lc_create_agent(
                 model=llm,
                 tools=config.tools,
                 system_prompt=config.system_prompt.rstrip() + "\n" + REACT_DISCIPLINE + single_tool_hint,
                 name=config.worker_id,
                 checkpointer=InMemorySaver(),
+                middleware=hitl_middleware,
             )
 
             task_content = config.task

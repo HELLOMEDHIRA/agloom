@@ -201,15 +201,23 @@ async def _read_stdin_lines(
             transport = None
 
     if transport is None:
+        pipe_stdin = not sys.stdin.isatty()
+        spurious_eof_retries = 0
         while True:
             try:
                 line = await loop.run_in_executor(None, sys.stdin.readline)
             except asyncio.CancelledError:
                 raise
             if not line:
+                # Windows + Node pipe: readline() can return "" before data arrives (not true EOF).
+                if sys.platform == "win32" and pipe_stdin and spurious_eof_retries < 40:
+                    spurious_eof_retries += 1
+                    await asyncio.sleep(0.05)
+                    continue
                 _eprint("[agloom-runtime] stdin closed (EOF); exiting serve loop")
                 await queue.put(None)
                 return
+            spurious_eof_retries = 0
             raw = line.encode("utf-8", errors="replace")
             if _stdin_line_too_long(raw, max_line_bytes=max_line_bytes):
                 _eprint(f"[agloom-runtime] stdin line exceeds {max_line_bytes} bytes; dropped")
@@ -290,7 +298,8 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
     initial_thread = prepared.initial_thread
     _sd = prepared.sessions_dir
     _marker_json = prepared.marker_path
-    _al_set = prepared.allowlist
+    _al_policy = prepared.allowlist
+    _hitl_coalescer = prepared.coalescer
     args = prepared.working_args
     if prepared.yaml_created:
         _eprint("[agloom-runtime] wrote starter .agloom/agloom.yaml (no project config found).")
@@ -345,7 +354,7 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             transport="stdio",
             thread=initial_thread,
             record_cwd=_cwd,
-            hitl_tool_allowlist=sorted(_al_set),
+            hitl_tool_allowlist=sorted(_al_policy.global_tools()),
             extra=extra,
         )
 
@@ -403,7 +412,8 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             for fn in mem_cleanup_acc:
                 await fn()
             raise
-        agent.config["_hitl_tool_allowlist"] = _al_set
+        agent.config["_hitl_tool_allowlist"] = hitl_bridge._tool_allowlist
+        agent.config["_hitl_tool_coalescer"] = _hitl_coalescer
         agent_holder["agent"] = agent
         attach_session_memory_to_session_marker(agent.config.get("memory"), _sd, session_id)
         _ct_en, _ct_ct = runtime_cli_tool_metrics(agent)
@@ -593,6 +603,17 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
                 _eprint(f"[agloom-runtime] {exc}")
             except RuntimeError:
                 pass
+            except Exception as exc:
+                _eprint(f"[agloom-runtime] command dispatch failed: {exc!r}")
+                try:
+                    emitter.emit_error(
+                        severity="transient",
+                        message=str(exc).strip() or repr(exc),
+                        error_class=type(exc).__name__,
+                        stage="dispatch",
+                    )
+                except Exception:
+                    pass
     finally:
         shutdown.set()
         await teardown_runtime_session(

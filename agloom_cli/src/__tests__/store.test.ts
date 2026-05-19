@@ -257,6 +257,44 @@ describe('message.assistant', () => {
       'name = "tests"\nThe first two lines of the pyproject.toml file are:',
     )
   })
+
+  it('prefers wire assistant body over polluted stream', () => {
+    dispatch({ ...env(), type: 'message.user', data: { content: 'read pyproject' } })
+    dispatch({
+      ...env(),
+      type: 'token.delta',
+      data: {
+        text: '{"type":"function","name":"read_file","parameters":{"path":"pyproject.toml"}}',
+      },
+    })
+    dispatch({
+      ...env(),
+      type: 'message.assistant',
+      data: {
+        content: 'Here are the first 20 lines of pyproject.toml:\n\n[project]\nname = "agloom"',
+        pattern: 'REACT',
+      },
+    })
+    expect(state().completedTurns[0]?.assistantMessage).toContain('Here are the first 20 lines')
+    expect(state().completedTurns[0]?.assistantMessage).not.toContain('"type":"function"')
+  })
+
+  it('strips inline stray tool JSON from assistant text', () => {
+    dispatch({ ...env(), type: 'runtime.tools', data: { tools: [{ name: 'read_file' }] } })
+    dispatch({ ...env(), type: 'message.user', data: { content: 'read pyproject' } })
+    const stray = JSON.stringify({
+      type: 'function',
+      name: 'read_file',
+      parameters: { path: 'pyproject.toml', line_cap: 20 },
+    })
+    dispatch({ ...env(), type: 'token.delta', data: { text: `Hello\n${stray}\n` } })
+    dispatch({
+      ...env(),
+      type: 'message.assistant',
+      data: { content: `Hello\n${stray}\nFirst lines below.`, pattern: 'REACT' },
+    })
+    expect(state().completedTurns[0]?.assistantMessage).toBe('Hello\nFirst lines below.')
+  })
 })
 
 // metrics
@@ -278,8 +316,18 @@ describe('metric.tokens', () => {
     expect(state().turnInputTokens).toBe(10)
     expect(state().turnOutputTokens).toBe(5)
     dispatch({ ...env(), type: 'message.assistant', data: { content: 'done', pattern: 'DIRECT' } })
-    expect(state().completedTurns[0]?.tokens).toBe(15)
+    expect(state().completedTurns[0]?.tokens).toBe('↑10 ↓5')
     expect(state().turnInputTokens).toBe(0)
+  })
+
+  it('uses input high-water (not sum) for turn context tokens', () => {
+    dispatch({ ...env(), type: 'message.user', data: { content: 'q' } })
+    dispatch({ ...env({ seq: 1 }), type: 'metric.tokens', data: { input_tokens: 70_000, output_tokens: 100 } })
+    dispatch({ ...env({ seq: 2 }), type: 'metric.tokens', data: { input_tokens: 68_000, output_tokens: 50 } })
+    expect(state().turnInputTokens).toBe(70_000)
+    expect(state().turnOutputTokens).toBe(150)
+    dispatch({ ...env(), type: 'message.assistant', data: { content: 'ok', pattern: 'REACT' } })
+    expect(state().completedTurns[0]?.tokens).toBe('↑70.0k ↓150')
   })
 })
 

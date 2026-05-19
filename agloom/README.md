@@ -1,27 +1,64 @@
 # agloom (Python package)
 
-This directory is the **`agloom`** PyPI package: LangGraph-oriented agents, nine execution patterns, session memory, skills, feedback, and optional harness tooling.
+The **`agloom`** PyPI package is a production-minded agent framework on LangChain/LangGraph: nine execution patterns, automatic routing, memory, streaming, skills, and optional harness tooling.
 
-## Install & docs
+---
 
-- **Install:** `pip install agloom` (optional extras: `agloom[groq]`, `agloom[openai]`, … — see `pyproject.toml`)
-- **Documentation:** [agloom.readthedocs.io](https://agloom.readthedocs.io)
-- **Repository:** [github.com/HELLOMEDHIRA/agloom](https://github.com/HELLOMEDHIRA/agloom)
+## Install
 
-## Two “doors” for developers
+```bash
+pip install agloom
+# optional: pip install agloom[groq]
+```
 
-1. **Application API** — `from agloom import create_agent, UnifiedAgent`. This is what most users need: classify → pattern → tools/memory/streaming. Start at [Quick start](https://agloom.readthedocs.io/_packages/agloom/getting-started/quickstart/) and [Streaming & events](https://agloom.readthedocs.io/_packages/agloom/features/streaming/).
+| Artifact | Role |
+| -------- | ---- |
+| **`agloom` library** | `create_agent`, tools, memory, patterns |
+| **`agloom-runtime`** | AGP bridge for CLI, web, and custom servers |
+| **`agloom` console script** | Points to the npm CLI — not the interactive TUI |
 
-2. **Embedding API** — stable submodules for custom drivers and observability:
-   - **`agloom.runtime`** — bridge one invocation to AGP (`run_invocation`), local `RuntimeNode`, workers, scheduler ([embedding guide](https://agloom.readthedocs.io/_packages/agloom/guides/embedding-runtime/))
-   - **`agloom.protocol`** — typed AGP envelopes, emitters, command parsing, replay stores ([AGP from Python](https://agloom.readthedocs.io/_packages/agloom/guides/agp-python/), [wire spec](https://agloom.readthedocs.io/_packages/agloom/protocol/agp/))
-   - **`agloom.observability`** — SQLite store + FastAPI router + SSE ([Observability API](https://agloom.readthedocs.io/_packages/agloom/guides/observability-python/))
-   - **`agloom.llm`** — programmatic model resolution (`get_model`, env-key routing) ([LLM resolution](https://agloom.readthedocs.io/_packages/agloom/guides/llm-resolution/))
+**Interactive terminal:** [agloom-cli](https://www.npmjs.com/package/agloom-cli) (repo folder `agloom_cli/`).  
+**Browser workspace:** `agloom_web/` in the repo.
 
-For **AGP-shaped streams inside Python** without NDJSON I/O, use **`UnifiedAgent.astream_agp_events()`** (same typed events as the runtime wire path).
+---
 
-## Repo layout note
+## Your first agent
 
-Examples and tests under this tree ship in the **git** repo; the PyPI wheel contents are controlled by `pyproject.toml`. Browse runnable samples under `agloom/examples/` in GitHub.
+```python
+import asyncio
+from langchain_groq import ChatGroq
+from agloom import create_agent
 
-The interactive terminal is the **agloom-cli** npm package (`agloom_cli/` in this repo), not the PyPI console script `agloom`. This wheel provides `create_agent`, `agloom-runtime`, and embedding APIs only.
+async def main():
+    llm = ChatGroq(model="llama-3.3-70b-versatile")
+    agent = await create_agent(model=llm, name="demo")
+    result = await agent.ainvoke("What causes auroras?")
+    print(result.output)
+    print(result.pattern_used)
+
+asyncio.run(main())
+```
+
+**Documentation:** [agloom.readthedocs.io](https://agloom.readthedocs.io)
+
+---
+
+## What agloom automates
+
+| You write | agloom runs |
+| --------- | ----------- |
+| Model + tools | Pattern selection per turn |
+| `thread_id` | Session memory |
+| `store=` | Long-term memory, skills, quality scoring |
+| `astream_events()` | Live “thinking”, tools, tokens |
+| Production knobs | Timeouts, retries, rate limits, circuit breaker |
+
+---
+
+## Integration paths
+
+1. **Application** — embed `create_agent` in your service ([quick start](https://agloom.readthedocs.io/_packages/agloom/getting-started/quickstart/))
+2. **Streaming UI** — `astream_events` or `astream_agp_events` ([streaming guide](https://agloom.readthedocs.io/_packages/agloom/features/streaming/))
+3. **AGP clients** — `agloom-runtime serve` + CLI/web ([integration overview](https://agloom.readthedocs.io/_packages/agloom/guides/developer-overview/))
+
+Examples: `agloom/examples/` on GitHub.

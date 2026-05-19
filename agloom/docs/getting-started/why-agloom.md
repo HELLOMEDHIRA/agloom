@@ -1,6 +1,11 @@
 # Why agloom?
 
-## The Pain of Building Agents Today
+!!! success "Try it in five minutes"
+    [Install](installation.md) → [Quick start](quickstart.md) → paste one `create_agent` snippet. No graph YAML, no router code.
+
+---
+
+## The pain of building agents today
 
 If you've built agents with LangChain, LangGraph, or any other framework, you've hit these walls:
 
@@ -72,3 +77,15 @@ agloom is **not** a competing framework. It's built directly on top of LangChain
 - Auto-detected by **LangSmith** — all traces show up automatically
 
 You keep your existing LangChain ecosystem. agloom just makes it smarter.
+
+---
+
+## What to read next
+
+| Goal | Guide |
+| ---- | ----- |
+| Run code now | [Quick start](quickstart.md) |
+| See the pipeline | [How it works](../concepts/how-it-works.md) |
+| Pick patterns | [Execution patterns](../concepts/patterns.md) |
+| Build a chat UI | [Streaming & events](../features/streaming.md) |
+| Embed in your platform | [Integration overview](../guides/developer-overview.md) |

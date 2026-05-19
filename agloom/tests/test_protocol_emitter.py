@@ -317,6 +317,24 @@ def test_fork_for_thread_same_session_id() -> None:
     assert all(e.session == "sess_shared" for e in events)
 
 
+def test_fork_close_does_not_emit_session_closed() -> None:
+    """Per-invocation forks end locally; only the root emitter closes the AGP session."""
+    buf = io.StringIO()
+    parent = SessionEmitter(session="sess_inv", thread="t_main", writer=buf)
+    parent.open()
+    child = parent.fork_for_thread("t_inv")
+    child.emit_thinking_step(step="work")
+    child.close(reason="completed")
+    assert parent.is_open
+    parent.close(reason="shutdown")
+
+    events = _read_events(buf)
+    closes = [e for e in events if e.type == "session.closed"]
+    assert len(closes) == 1
+    assert closes[0].data.reason == "shutdown"
+    assert closes[0].thread == "t_main"
+
+
 # callback-only mode
 
 

@@ -1347,17 +1347,6 @@ async def run_fresh(
                     data={"phase": "classifier", "injected_chars": len(skill_ctx)},
                 )
             )
-        if eq is not None:
-            await eq.put(
-                AgentEvent(
-                    type="thinking",
-                    data={
-                        "name": "analyze_query",
-                        "input": augmented_query,
-                        "output": "Running classifier…",
-                    },
-                )
-            )
         t_classify = time.perf_counter()
         await _emit_graph_node_event(config, "graph_node_enter", node="classify", input_preview=augmented_query)
         analysis = await _execute_analyze_query(
@@ -1366,30 +1355,43 @@ async def run_fresh(
             skill_context=skill_ctx,
         )
         classify_ms = round((time.perf_counter() - t_classify) * 1000, 1)
+        sub_lines = [f"- {st.worker_id}: {st.task}" for st in analysis.subtasks]
+        sub_block = "\n".join(sub_lines) if sub_lines else "(none)"
+        classify_output = (
+            f"pattern={analysis.pattern.value} complexity={analysis.complexity}\n"
+            f"reasoning:\n{analysis.reasoning or ''}\n"
+            f"subtasks ({len(analysis.subtasks)}):\n{sub_block}"
+        )
         classify_step = _make_step(
             StepType.CLASSIFY,
             "analyze_query",
             input=augmented_query,
-            output=f"pattern={analysis.pattern.value} complexity={analysis.complexity}",
+            output=classify_output,
             max_length=ml,
             duration_ms=classify_ms,
             subtasks=len(analysis.subtasks),
         )
         _steps.append(classify_step)
-        await _emit_step_event(config, classify_step)
-        sub_lines = [f"- {st.worker_id}: {st.task}" for st in analysis.subtasks]
-        sub_block = "\n".join(sub_lines) if sub_lines else "(none)"
-        classify_summary = (
-            f"pattern={analysis.pattern.value} complexity={analysis.complexity}\n"
-            f"reasoning:\n{analysis.reasoning or ''}\n"
-            f"subtasks ({len(analysis.subtasks)}):\n{sub_block}"
-        )
+        if eq is not None:
+            await eq.put(
+                AgentEvent(
+                    type="classify",
+                    data={
+                        "pattern": analysis.pattern.value,
+                        "complexity": analysis.complexity,
+                        "reason": analysis.reasoning or "",
+                        "output": classify_output,
+                        "duration_ms": classify_ms,
+                    },
+                )
+            )
+        else:
+            await _emit_step_event(config, classify_step)
         await _emit_graph_node_event(
             config,
             "graph_node_exit",
             node="classify",
             duration_ms=round(classify_ms),
-            output_preview=classify_summary,
         )
         analysis = _coerce_unknown_pattern_handler(config, analysis, registry=registry)
         # In-process fallback when resume runs before a checkpoint exists for this thread.
@@ -2821,25 +2823,10 @@ async def create_agent(
         if require_tool_approval_for_cli_tools and user_callback:
             ibi_merged.insert(0, "tools")
         else:
-            # Granular list — subprocess tools when ``allow_shell``; destructive FS / notebook edits.
-            if cli_tools_kw.get("allow_shell", True):
-                for token in (
-                    "execute",
-                    "bash",
-                    "bash_background",
-                    "bash_background_status",
-                    "bash_background_stop",
-                ):
-                    if token not in ibi_merged:
-                        ibi_merged.append(token)
-            for token in (
-                "write_file",
-                "edit_file",
-                "multi_edit",
-                "delete_file",
-                "move_file",
-                "rmdir",
-                "notebook_edit",
+            from .cli_tools.safety_metadata import tools_hitl_granular_interrupt
+
+            for token in tools_hitl_granular_interrupt(
+                allow_shell=bool(cli_tools_kw.get("allow_shell", True)),
             ):
                 if token not in ibi_merged:
                     ibi_merged.append(token)

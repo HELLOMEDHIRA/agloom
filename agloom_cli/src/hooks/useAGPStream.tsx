@@ -24,10 +24,14 @@ export const useAGPStream = (bridge: AGPBridge): void => {
     const onExit = (info: BridgeExitInfo) => {
       const code = info.code
       const sig = info.signal
-      useSessionStore.getState().addDiagnostic(
+      const st = useSessionStore.getState()
+      st.addDiagnostic(
         `[runtime] agloom-runtime exited (code=${code === null ? 'null' : String(code)}, signal=${sig ?? 'none'})`,
       )
-      useSessionStore.getState().markExited()
+      st.markExited()
+      st.appendProtocolNote(
+        'Runtime stopped — waiting for auto-reconnect, or start a new `agloom` session (/diag for details)',
+      )
     }
     const onError = (err: Error) => {
       useSessionStore.getState().addDiagnostic(`[bridge error] ${err.message}`)

@@ -11,8 +11,7 @@ from langchain_core.messages import HumanMessage
 
 from ..hitl_contract import HITLEvent, call_user_callback
 from ..logging_utils import get_logger
-from .hitl_read_file_dedupe import ReadFileHitlDeduper
-from .hitl_tool_coalesce import CompositeToolHitlCoalescer
+from .hitl_tool_coalesce import CompositeToolHitlCoalescer, build_default_hitl_coalescer
 
 logger = get_logger(__name__)
 
@@ -73,7 +72,7 @@ class HumanApprovalMiddleware(AgentMiddleware):
         interrupt_before_tools: list[str],
         user_callback: Callable,
         agent_name: str,
-        tool_allowlist: MutableSet[str] | None = None,
+        tool_allowlist: MutableSet[str] | Any | None = None,
         *,
         hitl_coalescer: CompositeToolHitlCoalescer | None = None,
     ) -> None:
@@ -81,7 +80,7 @@ class HumanApprovalMiddleware(AgentMiddleware):
         self.user_callback = user_callback
         self.agent_name = agent_name
         self.tool_allowlist = tool_allowlist
-        self._hitl_coalescer = hitl_coalescer or CompositeToolHitlCoalescer([ReadFileHitlDeduper()])
+        self._hitl_coalescer = hitl_coalescer or build_default_hitl_coalescer()
 
     @staticmethod
     def _extract_tool_call(request: Any) -> tuple[str, dict[str, Any], str | None]:
@@ -116,9 +115,10 @@ class HumanApprovalMiddleware(AgentMiddleware):
             "tools" in self.interrupt_before_tools or tool_name in self.interrupt_before_tools
         )
 
-        if should_pause and self.tool_allowlist is not None and tool_name in self.tool_allowlist:
+        if should_pause and self.tool_allowlist is not None and _is_allowlisted(
+            self.tool_allowlist, tool_name, tool_args
+        ):
             logger.event(f"{self.agent_name}[L2-HITL] Allowlisted — executing '{tool_name}' without prompt")
-            self._hitl_coalescer.record_approval(tool_name, tool_args)
             return await handler(request)
 
         if not should_pause:
@@ -126,8 +126,8 @@ class HumanApprovalMiddleware(AgentMiddleware):
 
         if self._hitl_coalescer.should_skip_hitl(tool_name, tool_args):
             logger.event(
-                f"{self.agent_name}[L2-HITL] Skipping HITL — coalesced with a recent approval "
-                f"(tool-specific safe duplicate for `{tool_name}`)."
+                f"{self.agent_name}[L2-HITL] Skipping HITL — same-turn duplicate after Accept "
+                f"(safe narrower `{tool_name}` call)."
             )
             return await handler(request)
 
@@ -148,11 +148,10 @@ class HumanApprovalMiddleware(AgentMiddleware):
                 f"Tool  : {tool_name}\n"
                 f"Args  : {tool_args}\n"
                 "\n"
-                "Each tool invocation requires approval unless the tool is on your session "
-                "allowlist, or you allowlisted this tool and the runtime detects a safe subset "
-                "duplicate (e.g. a smaller read_file limit on the same path — logged when it happens).\n"
-                "In the agloom TUI: press Y = Accept once, N = Reject, A = Allowlist (this tool name "
-                "for the rest of the session). Esc defaults to Reject."
+                "Each tool invocation requires approval unless it is on your session allowlist (A), "
+                "or you already pressed Y for a broader read_file on this path in this turn only.\n"
+                "Y = Accept once (next turn asks again). N = Reject. A = Allowlist for the session "
+                "(read_file: this path only; other tools: tool name). Esc defaults to Reject."
             ),
         }
 
@@ -172,14 +171,34 @@ class HumanApprovalMiddleware(AgentMiddleware):
             raise UserAbort(f"User aborted tool call: {tool_name}")
 
         if decision_norm in ("allowlist", "a", "3"):
-            if self.tool_allowlist is not None and tool_name and tool_name not in _L2_INVALID_ALLOWLIST_NAMES:
-                self.tool_allowlist.add(tool_name)
-            self._hitl_coalescer.record_approval(tool_name, tool_args)
+            if (
+                self.tool_allowlist is not None
+                and tool_name
+                and tool_name not in _L2_INVALID_ALLOWLIST_NAMES
+            ):
+                _apply_allowlist(self.tool_allowlist, tool_name, tool_args)
             logger.event(
                 f"{self.agent_name}[L2-HITL] Allowlisted — executing '{tool_name}' "
-                f"(future calls skip prompt while allowlist is in effect)."
+                f"(future matching calls skip prompt while allowlist is in effect)."
             )
             return await handler(request)
 
+        # Accept (Y): one-shot for this call; record only for same-turn read_file subset dedupe.
+        self._hitl_coalescer.record_approval(tool_name, tool_args)
         logger.event(f"{self.agent_name}[L2-HITL] Approved — executing '{tool_name}'.")
         return await handler(request)
+
+
+def _is_allowlisted(allowlist: Any, tool_name: str, tool_args: dict[str, Any]) -> bool:
+    allows = getattr(allowlist, "allows", None)
+    if callable(allows):
+        return bool(allows(tool_name, tool_args))
+    return tool_name in allowlist
+
+
+def _apply_allowlist(allowlist: Any, tool_name: str, tool_args: dict[str, Any]) -> None:
+    apply_dec = getattr(allowlist, "apply_allowlist_decision", None)
+    if callable(apply_dec):
+        apply_dec(tool_name, tool_args)
+    else:
+        allowlist.add(tool_name)

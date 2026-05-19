@@ -556,7 +556,7 @@ def write_session_started_json(
     if extra:
         payload.update(extra)
 
-    for pk in ("conversation",):
+    for pk in ("conversation", "hitl_path_allowlist", "hitl_coalesce_grants"):
         if pk in existing and pk not in payload:
             payload[pk] = existing[pk]
 

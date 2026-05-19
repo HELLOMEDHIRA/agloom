@@ -1,57 +1,66 @@
-# Observability API (`agloom.observability`)
+# Observability API
 
-This package persists **AGP envelopes** (SQLite), aggregates **session metrics**, exposes **replay**, and mounts an optional **FastAPI** router for dashboards or internal tools.
+Build **session dashboards**, **replay**, and **live feeds** by persisting AGP events to SQLite and optionally exposing a small HTTP API.
 
-## Store
+---
+
+## Store events
 
 ```python
 from agloom.observability import ObservabilityStore
 
 store = await ObservabilityStore.open("agloom_obs.db")
-await store.ingest(envelope_dict)  # same shape as AGP JSON objects
+await store.ingest(envelope_dict)  # same JSON shape as one AGP NDJSON line
 ```
 
-**`ObservabilityStore`** is the public name for the SQLite implementation; rows surface as **`SessionSummary`**, **`EventRow`**, etc.
+Each ingested envelope is keyed by **session** and **sequence** so you can list sessions, paginate history, and compute rollups.
+
+---
 
 ## Metrics and replay
 
-- **`MetricsAggregator`** — rollups per session (tokens, costs, graph summaries — see source for fields).
-- **`ReplayEngine`** — drives SSE-style replay from stored events.
+| Component | Purpose |
+| --------- | ------- |
+| Metrics aggregator | Per-session token/cost/graph summaries |
+| Replay engine | SSE-style replay of stored events for a session |
 
-## FastAPI router
+Wire these into your own worker after each `agloom-runtime` emit, or call **`push_live_event`** from a FastAPI app for live subscribers.
+
+---
+
+## FastAPI router (optional)
 
 ```python
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
 from agloom.observability import ObservabilityStore, make_obs_router, push_live_event
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     store = await ObservabilityStore.open("agloom_obs.db")
     app.include_router(make_obs_router(store), prefix="/observe")
     yield
-    # optional: await store.close() when exposed by your store version
-
 
 app = FastAPI(lifespan=lifespan)
 
-
-# After each runtime emit, fan out to subscribers of GET /observe/live
 def on_emit(envelope_dict: dict) -> None:
     push_live_event(envelope_dict)
 ```
 
-Endpoints include session listing, paginated events, per-session metrics/graph/workers, **`DELETE`** purge, **`GET /observe/live`** (SSE), and **`POST /observe/ingest`**. Full list is documented in **`agloom/observability/api.py`**.
+Typical routes: session list, paginated events, per-session metrics, graph/worker summaries, live SSE (`GET /observe/live`), ingest (`POST /observe/ingest`), purge.
 
-**Dependency:** FastAPI/Starlette are required only when you import **`make_obs_router`** / run the HTTP surface — keep ingest-only paths lightweight if you prefer not to mount HTTP.
+FastAPI is only required when you mount the HTTP router — ingest-only pipelines stay lightweight.
+
+---
 
 ## Estimated cost on the wire
 
-When a provider omits dollar amounts, the AGP translator fills **`metric.cost`** with a coarse heuristic (`estimated: true` on the wire). Not suitable for billing.
+When a provider omits dollar amounts, **`metric.cost`** may include a coarse estimate (`estimated: true`). Use provider billing APIs for authoritative charges.
+
+---
 
 ## See also
 
 - [Observability architecture](../observability/architecture.md)
-- [Observability & LangSmith](../features/observability.md) — tracing product integration (complementary to this HTTP store)
+- [Observability & LangSmith](../features/observability.md)
+- [AGP specification](../protocol/agp.md)

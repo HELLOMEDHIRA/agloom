@@ -277,7 +277,7 @@ async def dispatch_pattern(
             pattern=instruction.pattern,
             worker_id=instruction.parent_worker_id or "root",
             action="enter",
-            input_preview=instruction.task[:200],
+            input_preview=instruction.task,
             reason=instruction.escalation_reason,
         ),
     )
@@ -310,7 +310,7 @@ async def dispatch_pattern(
                         worker_id=instruction.parent_worker_id or "root",
                         action="escalate",
                         reason=spawn_instr.escalation_reason,
-                        input_preview=spawn_instr.task[:200],
+                        input_preview=spawn_instr.task,
                     ),
                 )
                 try:
@@ -343,7 +343,7 @@ async def dispatch_pattern(
                 pattern=instruction.pattern,
                 worker_id=instruction.parent_worker_id or "root",
                 action="complete",
-                output_preview=(result.output or "")[:200],
+                output_preview=result.output or "",
                 reason=instruction.escalation_reason,
                 duration_ms=duration_ms,
                 token_usage=dict(result.token_usage),

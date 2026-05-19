@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from agloom.hitl_contract import HITLEvent
+from agloom.patterns.hitl_tool_coalesce import build_default_hitl_coalescer, reset_hitl_turn_coalescer
 from agloom.patterns.middleware import HumanApprovalMiddleware, UserAbort
 
 
@@ -200,8 +201,8 @@ def test_awrap_tool_call_aborts_on_user_reject() -> None:
         asyncio.run(mw.awrap_tool_call(req, handler))
 
 
-def test_awrap_tool_call_read_file_second_smaller_limit_prompts_again_after_accept() -> None:
-    """One-time Accept does not coalesce — each call prompts until allowlisted."""
+def test_awrap_tool_call_read_file_second_smaller_limit_coalesces_after_accept() -> None:
+    """Accept (Y) in one turn: a smaller read_file on the same path skips the second prompt."""
     calls: list[int] = []
 
     async def callback(event: str, payload: Any) -> str:
@@ -233,18 +234,51 @@ def test_awrap_tool_call_read_file_second_smaller_limit_prompts_again_after_acce
         assert await mw.awrap_tool_call(r2, handler) == "ok"
 
     asyncio.run(run())
+    assert len(calls) == 1
+
+
+def test_awrap_tool_call_read_file_accept_prompts_again_after_turn_reset() -> None:
+    """After a new user turn, Accept does not carry over — same read_file asks again."""
+    calls: list[int] = []
+
+    async def callback(event: str, payload: Any) -> str:
+        calls.append(1)
+        return "accept"
+
+    agent = {"_hitl_tool_coalescer": None}
+    mw = HumanApprovalMiddleware(
+        interrupt_before_tools=["tools"],
+        user_callback=callback,
+        agent_name="agent_turn_reset",
+        hitl_coalescer=build_default_hitl_coalescer(),
+    )
+    agent["_hitl_tool_coalescer"] = mw._hitl_coalescer
+
+    async def handler(req: Any) -> str:
+        return "ok"
+
+    r = _make_request_v1("read_file", {"path": "pyproject.toml", "limit": 8000}, tool_call_id="a")
+
+    async def run() -> None:
+        assert await mw.awrap_tool_call(r, handler) == "ok"
+        reset_hitl_turn_coalescer(agent)
+        assert await mw.awrap_tool_call(r, handler) == "ok"
+
+    asyncio.run(run())
     assert len(calls) == 2
 
 
 def test_awrap_tool_call_read_file_allowlist_coalesces_subset_read() -> None:
-    """Allowlist + read_file dedupe: second smaller limit on same path skips a second prompt."""
+    """Allowlist (A): second read on allowlisted path skips prompt (session policy, not Accept)."""
     calls: list[int] = []
 
     async def callback(event: str, payload: Any) -> str:
         calls.append(1)
         return "allowlist"
 
-    allowlist: set[str] = set()
+    from agloom.runtime.hitl_allowlist import HitlAllowlistPolicy
+
+    allowlist = HitlAllowlistPolicy()
     mw = HumanApprovalMiddleware(
         interrupt_before_tools=["tools"],
         user_callback=callback,
@@ -271,7 +305,8 @@ def test_awrap_tool_call_read_file_allowlist_coalesces_subset_read() -> None:
         assert await mw.awrap_tool_call(r2, handler) == "ok"
 
     asyncio.run(run())
-    assert "read_file" in allowlist
+    assert "read_file" not in allowlist.global_tools()
+    assert allowlist.allows("read_file", {"path": "pyproject.toml"})
     assert len(calls) == 1
 
 

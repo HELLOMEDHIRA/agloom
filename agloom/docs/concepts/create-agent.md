@@ -1,6 +1,8 @@
 # The create_agent API
 
-`create_agent` is the single entry point for creating agloom agents. It validates core inputs via `AgentConfig`, applies factory-only options (frozen, harness, delegates, …), wires up the full pipeline, and returns a ready-to-use `UnifiedAgent`.
+`create_agent` is the **only entry point** you need for production agents. Pass a LangChain-compatible model (and optional tools, memory store, policies); it returns an agent object with `ainvoke`, streaming helpers, and cleanup.
+
+Under the hood agloom wires classification, pattern handlers, guardrails, and optional MCP — you do not assemble those pieces yourself.
 
 ## Signature
 
@@ -20,7 +22,7 @@ async def create_agent(
     name=None,                      # Optional: agent name
     debug=False,                    # Optional: debug logging
     # ... 30+ more parameters
-) -> UnifiedAgent:
+) -> ...:  # agent instance with the methods below
 ```
 
 See [All Parameters](../configuration/parameters.md) for the complete reference.
@@ -35,7 +37,7 @@ Pass **`max_pattern_depth > 0`** to enable bounded recursive pattern dispatch (s
 
 ## What It Returns
 
-`create_agent` returns a `UnifiedAgent` with these methods:
+The agent object exposes these methods:
 
 | Method                                           | Description                                     |
 | ------------------------------------------------ | ----------------------------------------------- |
@@ -139,9 +141,7 @@ async def example(agent):
 
 ## Validation
 
-`create_agent` validates shared kwargs through `AgentConfig` when you **await** it. Invalid core arguments raise before any LLM runs. Factory-only parameters are checked separately in the factory.
-
-When **awaited** in async code, invalid core kwargs fail immediately with clear messages, for example:
+Invalid options fail **before** any LLM call when you **await** `create_agent`. Examples:
 
 - `await create_agent(model=None)` → `ValueError`: model is required  
 - `await create_agent(model=llm, name="")` → `ValueError`: name must be non-empty  
@@ -160,6 +160,9 @@ async def main():
 Full production setup:
 
 ```python
+from agloom.feedback import LTSFeedbackHandler
+from langgraph.store.memory import InMemoryStore
+
 async def main():
     agent = await create_agent(
         model=llm,
@@ -183,21 +186,21 @@ async def main():
 sequenceDiagram
     participant User
     participant create_agent
-    participant UnifiedAgent
+    participant Agent
     participant LLM
 
     User->>create_agent: create_agent(model, tools, ...)
-    create_agent->>create_agent: Validate via AgentConfig
-    create_agent->>UnifiedAgent: Wire pipeline
+    create_agent->>create_agent: Validate options
+    create_agent->>Agent: Wire pipeline
     create_agent-->>User: Return agent
 
-    User->>UnifiedAgent: await agent.ainvoke("query")
-    UnifiedAgent->>UnifiedAgent: Inject memory
-    UnifiedAgent->>LLM: Classify query
-    UnifiedAgent->>UnifiedAgent: Select pattern
-    UnifiedAgent->>LLM: Execute pattern
-    UnifiedAgent-->>User: ExecutionResult
+    User->>Agent: await agent.ainvoke("query")
+    Agent->>Agent: Inject memory
+    Agent->>LLM: Classify query
+    Agent->>Agent: Select pattern
+    Agent->>LLM: Execute pattern
+    Agent-->>User: ExecutionResult
 
-    User->>UnifiedAgent: async with agent (cleanup)
-    UnifiedAgent->>UnifiedAgent: Close MCP, flush feedback
+    User->>Agent: async with agent (cleanup)
+    Agent->>Agent: Close MCP, flush feedback
 ```

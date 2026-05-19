@@ -1,17 +1,40 @@
 # agloom CLI
 
-The **agloom CLI** (`npm install -g agloom-cli`) is a terminal client with a **React**-based interactive UI. It speaks **AGP** (newline-delimited JSON) over stdio to **`agloom-runtime`** from the PyPI **`agloom`** package.
+The **agloom CLI** is a terminal workspace for agloom agents: live streaming, tool traces, reasoning steps, HITL approvals, and session metrics — powered by the same **AGP** protocol as the web app.
+
+```bash
+pip install agloom          # Python runtime (agloom-runtime)
+npm install -g agloom-cli   # Terminal UI
+agloom -m groq:llama-3.3-70b-versatile
+```
 
 !!! note "Same docs, two paths"
-    **Browsing on GitHub?** These Markdown files live in the repo at [`agloom_cli/docs/`](https://github.com/HELLOMEDHIRA/agloom/tree/main/agloom_cli/docs). **On [Read the Docs](https://agloom.readthedocs.io)**, they are copied into **`_packages/agloom_cli/`** during the docs build so they sit next to the Python package pages — same content, different URL.
+    On [Read the Docs](https://agloom.readthedocs.io), these pages live under **`_packages/agloom_cli/`** after the docs build. On GitHub, they are in [`agloom_cli/docs/`](https://github.com/HELLOMEDHIRA/agloom/tree/main/agloom_cli/docs).
+
+---
+
+## What you get without writing orchestration code
+
+| You do | The CLI does |
+| ------ | ------------- |
+| Type a question or pipe a diff | Classifies the task and picks an execution pattern |
+| Approve or deny tool prompts | Enforces HITL for risky tools (configurable allowlist) |
+| Watch the right sidebar | Streams **tokens**, **wire notes**, and **tool results** in full |
+| Use `/retry`, `/undo`, `/checkpoint` | Session memory + harness workflows when enabled |
+
+The CLI does **not** embed Python in Node — it spawns **`agloom-runtime`** and speaks **newline-delimited JSON (AGP)** on stdio.
+
+---
 
 ## Prerequisites
 
-- **Python 3.12+** with `pip install agloom` so `agloom-runtime` is on your `PATH`.
-- **Node.js >= 24.15** (see `agloom_cli/package.json` engines).
+- **Python 3.12+** with `pip install agloom` (`agloom-runtime` on `PATH`)
+- **Node.js ≥ 24.15** ([`package.json` engines](https://github.com/HELLOMEDHIRA/agloom/blob/main/agloom_cli/package.json))
 
 !!! warning "Install Python first"
-    Without `agloom` from PyPI, the CLI exits with a clear **Cannot find agloom-runtime** message. Set `AGLOOM_RUNTIME` only if you point at a custom interpreter or wrapper.
+    Without the PyPI package, the CLI exits with **Cannot find agloom-runtime**. Set `AGLOOM_RUNTIME` only for a custom interpreter path.
+
+---
 
 ## Install
 
@@ -21,47 +44,61 @@ npm install -g agloom-cli
 agloom
 ```
 
-From a git checkout: `cd agloom_cli && npm install && npm run build && npm start`.
+From a git checkout:
+
+```bash
+cd agloom_cli && npm install && npm run build && npm start
+```
+
+---
 
 ## First run
 
 ```bash
-export GROQ_API_KEY=...   # or another provider — see [Models & providers](models.md)
+export GROQ_API_KEY=gsk_...
 agloom -m groq:meta-llama/llama-3.3-70b-versatile
 ```
 
-- **Interactive TUI** opens when you run `agloom` with no prompt (and stdin is a TTY).
-- **Direct mode** runs when you pass a positional prompt, `-p` / `-q`, or pipe stdin.
+| Mode | When |
+| ---- | ---- |
+| **Interactive TUI** | `agloom` with no prompt (TTY) |
+| **Direct** | Positional prompt, `-p` / `-q`, or stdin pipe |
+
+---
 
 ## Documentation map
 
-| Page                                           | Purpose                                        |
-| ---------------------------------------------- | ---------------------------------------------- |
-| [Quickstart](quickstart.md)                    | 5-minute tour                                  |
-| [Models & providers](models.md)                | `--model` prefixes, env keys, extras, catalogs |
-| [CLI flags](flags.md)                          | Every npm CLI option                           |
-| [Config & environment](config.md)              | `agloom.yaml`, discovery order, env vars       |
-| [Direct mode](direct-mode.md)                  | Scripting, `--json`, exit codes                |
-| [Interactive UI](interactive.md)               | TUI layout, status bar, slash commands         |
-| [Tools & HITL](tools-hitl.md)                  | Built-in CLI tools, approvals, allowlist       |
-| [MCP, memory & harness](mcp-memory-harness.md) | MCP configs, session memory, harness           |
-| [Recipes](recipes.md)                          | Copy-paste workflows                           |
-| [Troubleshooting](troubleshooting.md)          | Common errors                                  |
-| [AGP wire reference](reference.md)             | Stdout/stderr AGP rules for CLI clients        |
+| Page | Purpose |
+| ---- | ------- |
+| [Quickstart](quickstart.md) | Five-minute tour |
+| [Models & providers](models.md) | `--model` prefixes, env keys, catalogs |
+| [CLI flags](flags.md) | Every npm option |
+| [Config & environment](config.md) | `agloom.yaml`, env vars |
+| [Direct mode](direct-mode.md) | Scripts, `--json`, exit codes |
+| [Interactive UI](interactive.md) | Layout, slash commands, metrics sidebar |
+| [Tools & HITL](tools-hitl.md) | Built-in tools and approvals |
+| [MCP, memory & harness](mcp-memory-harness.md) | MCP, session memory, long-running harness |
+| [Recipes](recipes.md) | Copy-paste workflows |
+| [Troubleshooting](troubleshooting.md) | Runtime, models, HITL, tokens, stray JSON |
+| [AGP wire reference](reference.md) | Build custom clients on stdio NDJSON |
 
-**Full docs site:** [agloom.readthedocs.io — CLI section](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/).
+**Python library docs:** [agloom.readthedocs.io — Python package](https://agloom.readthedocs.io/en/latest/_packages/agloom/)
 
-## Provider discovery (Python)
+---
+
+## Provider discovery
 
 ```bash
 agloom --list-providers
 agloom --resolve-model "bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0"
 ```
 
-Same commands as `agloom-runtime providers list` and `agloom-runtime providers resolve <spec>`.
+Same as `agloom-runtime providers list` / `resolve`.
+
+---
 
 ## See also
 
-- [Runtime CLI (Python)](../agloom/runtime/cli.md) — all `agloom-runtime serve` flags
+- [Runtime CLI (Python)](../agloom/runtime/cli.md) — `agloom-runtime serve` flags
 - [AGP specification](../agloom/protocol/agp.md)
-- [LLM resolution (library)](../agloom/guides/llm-resolution.md)
+- [Integration overview (library)](../agloom/guides/developer-overview.md)

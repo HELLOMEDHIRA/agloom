@@ -10,12 +10,12 @@ agloom --help
 
 ## Session / AGP store
 
-| Flag                  | Example      | Meaning                                                   |                  |                                                      |
-| --------------------- | ------------ | --------------------------------------------------------- | ---------------- | ---------------------------------------------------- |
-| `-t, --thread <id>`   | `-t t_dev`   | LangGraph thread id for invocations (default: generated). |                  |                                                      |
-| `-s, --session <id>`  | `-s replay1` | AGP session id (`agloom-runtime --session`).              |                  |                                                      |
-| `--store <none\       | memory\      | sqlite>`                                                  | `--store sqlite` | Event store for replay/resume (CLI default: sqlite). |
-| `--store-path <path>` |              | SQLite path when `--store=sqlite`.                        |                  |                                                      |
+| Flag | Example | Meaning |
+| ---- | ------- | ------- |
+| `-t, --thread <id>` | `-t t_dev` | LangGraph thread id (default: generated). |
+| `-s, --session <id>` | `-s replay1` | AGP session id for replay/resume. |
+| `--store <none\|memory\|sqlite>` | `--store sqlite` | Event store (CLI default: **sqlite**). |
+| `--store-path <path>` | | SQLite path when `--store=sqlite`. |
 
 ## Model / agent
 
@@ -105,6 +105,8 @@ Shows resolved model, store, MCP specs, and which YAML files contributed.
 | `--diag` | Open stderr diagnostic pane on startup. |
 | `--theme <dark\|light>` | Terminal palette hint (default: dark). |
 | `--capture <path>` | Append all AGP events as NDJSON to a file during the session. |
+
+There is **no** tool-expand toggle flag — reasoning traces and tool results are **always shown in full** in the TUI.
 
 ## Subcommands
 

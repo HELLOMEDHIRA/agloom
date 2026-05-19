@@ -6,7 +6,6 @@ import { StatusMessage } from '@inkjs/ui'
 import TextInput from 'ink-text-input'
 import type { HITLRequest } from '../store/session.js'
 import type { AGPBridge } from '../runtime/bridge.js'
-import { truncate } from '../utils/format.js'
 
 interface Props {
   request: HITLRequest
@@ -114,7 +113,7 @@ export const HITLPrompt = ({ request, bridge }: Props): React.ReactElement => {
         <Box marginBottom={0}>
           <StatusMessage variant="warning">{`HITL · ${hitlSummary}`}</StatusMessage>
         </Box>
-        {request.detail && <Box marginLeft={2}><Text color="white">{truncate(request.detail, 300)}</Text></Box>}
+        {request.detail && <Box marginLeft={2}><Text color="white" wrap="wrap">{request.detail}</Text></Box>}
         {request.question && <Box marginLeft={2}><Text color="cyan" italic>{request.question}</Text></Box>}
         <Box marginLeft={2}>
           <Text color="gray" dimColor>Type your answer · Enter to submit · Esc to go back</Text>
@@ -133,7 +132,7 @@ export const HITLPrompt = ({ request, bridge }: Props): React.ReactElement => {
         <StatusMessage variant="warning">{`HITL · ${hitlSummary}`}</StatusMessage>
       </Box>
 
-      {request.detail && <Box marginLeft={2} marginTop={1}><Text color="white">{truncate(request.detail, 300)}</Text></Box>}
+      {request.detail && <Box marginLeft={2} marginTop={1}><Text color="white" wrap="wrap">{request.detail}</Text></Box>}
       {request.question && <Box marginLeft={2} marginTop={1}><Text color="cyan" italic>{request.question}</Text></Box>}
 
       {request.kind === 'tool_approval' && (

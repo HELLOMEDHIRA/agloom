@@ -1,29 +1,47 @@
 # Python package (`agloom`)
 
-Documentation for the **PyPI library**: execution patterns, `create_agent`, memory, skills, configuration, and protocol references.
+Build agents that **route themselves** — one `create_agent` call, nine execution patterns, memory, streaming, and production guardrails included.
 
-## Getting started
+---
 
-- [Why agloom?](getting-started/why-agloom.md)
-- [Installation](getting-started/installation.md)
-- [Quick start (API)](getting-started/quickstart.md)
-- [Requirements](getting-started/requirements.md)
+## Start here
 
-## Concepts & configuration
+| Step | Guide |
+| ---- | ----- |
+| Why teams pick agloom | [Why agloom?](getting-started/why-agloom.md) |
+| Install & API keys | [Installation](getting-started/installation.md) |
+| First working agent | [Quick start](getting-started/quickstart.md) |
+| How a turn flows | [How it works](concepts/how-it-works.md) |
 
-- [Glossary](concepts/glossary.md) — turn, run, thread, checkpoint, orchestration
-- [How it works](concepts/how-it-works.md)
-- [Execution patterns](concepts/patterns.md)
-- [The `create_agent` API](concepts/create-agent.md)
+---
+
+## Build features
+
+| Topic | Guide |
+| ----- | ----- |
+| Tools & ReAct loops | [Tool calling](features/tools.md) |
+| Conversation memory | [Memory](features/memory.md) |
+| Live UIs | [Streaming & events](features/streaming.md) |
+| Approvals | [Human-in-the-loop](features/hitl.md) |
+| Skills that improve | [Skill learning](features/skills.md) |
+| Quality over time | [Feedback & evaluation](features/feedback.md) |
+| Ship to prod | [Production integration](guides/production.md) |
+
+---
+
+## Concepts & reference
+
+- [Glossary](concepts/glossary.md) · [Execution patterns](concepts/patterns.md) · [`create_agent` API](concepts/create-agent.md)
+- [All parameters](configuration/parameters.md) · [Errors & warnings](configuration/errors.md)
+- [AGP protocol](protocol/agp.md) — wire format for CLI, web, and custom clients
+
+---
+
+## Integrate & scale
+
+- [Integration overview](guides/developer-overview.md) — in-process, streaming, or AGP
+- [Embedding the runtime](guides/embedding-runtime.md) · [AGP from Python](guides/agp-python.md)
 - [Recursive orchestration](features/orchestration.md)
-- [All parameters](configuration/parameters.md)
 
-CLI and web clients live in sibling packages; see the **CLI** and **Web** sections of the main docs site.
+**CLI** and **web workspace** are documented in the main site nav — they consume the same AGP events your custom client can use.
 
-## Embedding & AGP (integrators)
-
-- [Package developer overview](guides/developer-overview.md) — Door 1 vs Door 2 (`runtime`, `protocol`, `observability`, `llm`)
-- [Embedding the runtime](guides/embedding-runtime.md)
-- [AGP from Python](guides/agp-python.md)
-- [Observability API](guides/observability-python.md)
-- [LLM resolution](guides/llm-resolution.md)

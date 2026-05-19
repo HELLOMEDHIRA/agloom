@@ -45,6 +45,6 @@ def test_hitl_allowlist_paths_session_scoped(tmp_path: Path) -> None:
         session_scoped=True,
         cwd=tmp_path,
     )
-    assert tools == {"read_file"}
+    assert tools.global_tools() == {"read_file"}
     assert leg is None
     assert sess == marker

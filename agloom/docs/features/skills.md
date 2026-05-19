@@ -1,6 +1,8 @@
 # Skill Learning
 
-## What Are Skills?
+Agents can **remember what worked** and reuse successful strategies on similar questions — enable with a LangGraph **`store=`**.
+
+## What are skills?
 
 Skills are reusable execution patterns extracted from successful agent runs. When your agent handles a query well, the skill learner captures *how* it was done and stores it for future use.
 

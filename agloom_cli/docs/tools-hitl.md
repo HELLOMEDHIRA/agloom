@@ -47,7 +47,12 @@ Default non-TTY behavior often **auto-rejects** gates unless **`--auto-approve`*
 
 `ask_user` delivers **free-text** or choice prompts over AGP — respond in the client when the bridge asks.
 
+## After approval
+
+When tools finish, the UI should show **prose** from **`message.assistant`**, not raw tool-call JSON. If you see JSON in the answer line, rebuild the CLI and see [Troubleshooting — raw tool JSON](troubleshooting.md#assistant-shows-raw-tool-json-instead-of-prose).
+
 ## Further reading
 
 - [HITL tool allowlist](../agloom/features/hitl-allowlist.md)
 - [CLI tools feature doc](../agloom/features/cli-tools.md)
+- [AGP wire reference](reference.md)

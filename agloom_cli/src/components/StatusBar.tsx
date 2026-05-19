@@ -70,8 +70,8 @@ export const StatusBar = ({ thread, layoutWidth }: Props): React.ReactElement =>
   if (budgetUi === 'exhausted') color = 'red'
   else if (budgetUi === 'approaching') color = 'yellow'
 
-  const sessionShort = sessionId ? sessionId.slice(0, 12) : '…'
-  const threadShort = thread.slice(0, 12)
+  const sessionLabel = sessionId ?? '…'
+  const threadLabel = thread || '…'
   const toolNames = useSessionStore((s) => s.toolNames)
   const toolsHint =
     toolNames && toolNames.length > 0 ? `tools:${toolNames.length}` : null
@@ -106,12 +106,12 @@ export const StatusBar = ({ thread, layoutWidth }: Props): React.ReactElement =>
         </Text>
         <Text color="gray" dimColor>
           {' · '}
-          thread:{threadShort}
+          thread:{threadLabel}
         </Text>
         {sessionId ? (
           <Text color="gray" dimColor>
             {' · '}
-            session:{sessionShort}
+            session:{sessionLabel}
           </Text>
         ) : null}
         {toolsHint ? (
@@ -141,7 +141,7 @@ export const StatusBar = ({ thread, layoutWidth }: Props): React.ReactElement =>
         {modelName ? (
           <Text color="gray" dimColor>
             {' · '}
-            model={modelName.length > 20 ? `${modelName.slice(0, 20)}…` : modelName}
+            model={modelName}
           </Text>
         ) : null}
       </Box>
@@ -159,7 +159,7 @@ export const StatusBar = ({ thread, layoutWidth }: Props): React.ReactElement =>
       )}
       <Box paddingX={1} width={termWidth}>
         <Text color="gray" dimColor>
-          Ctrl+C exit · Ctrl+X cancel · Ctrl+T / t tools · /budget raise
+          Ctrl+C exit · Ctrl+X cancel · /budget raise
         </Text>
       </Box>
     </Box>

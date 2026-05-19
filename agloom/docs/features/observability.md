@@ -48,8 +48,8 @@ With `debug=True`, you see detailed logs for every pipeline step:
 
 ```text
 21:04:29 INFO  classifier — [Classifier] Pattern=DIRECT | Complexity=0/10
-21:04:29 INFO  unified_agent — [my-agent] DIRECT short-circuit — 1 LLM call total.
-21:04:29 DEBUG unified_agent — [my-agent] Analysis: {pattern: DIRECT, complexity: 0, ...}
+21:04:29 INFO  agent — [my-agent] DIRECT short-circuit — 1 LLM call total.
+21:04:29 DEBUG agent — [my-agent] Analysis: {pattern: DIRECT, complexity: 0, ...}
 ```
 
 With `debug=False` (default), only INFO-level and above logs are shown.

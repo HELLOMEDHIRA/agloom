@@ -1,35 +1,37 @@
-# Logging & Debug
+# Logging & debug
 
-## Debug Mode
+Understand what your agent is doing in development and staging. Production should rely on structured logs, LangSmith, or the observability API — not verbose console spam.
 
-Enable detailed logging with `debug=True`:
+## Debug mode
 
 ```python
 async def main():
     agent = await create_agent(model=llm, debug=True, name="my-agent")
 ```
 
-### debug=True output
+### With `debug=True`
 
 ```text
-21:04:29 DEBUG unified_agent — [my-agent] Analysis: {pattern: DIRECT, complexity: 0, ...}
+21:04:29 DEBUG agent — [my-agent] Analysis: {pattern: DIRECT, complexity: 0, ...}
 21:04:29 INFO  classifier — [Classifier] Pattern=DIRECT | Complexity=0/10
-21:04:29 INFO  unified_agent — [my-agent] DIRECT short-circuit — 1 LLM call total.
-21:04:29 DEBUG unified_agent — [my-agent] SessionMemory auto-created with ephemeral InMemoryStore.
+21:04:29 INFO  agent — [my-agent] DIRECT short-circuit — 1 LLM call total.
+21:04:29 DEBUG agent — [my-agent] SessionMemory auto-created with ephemeral InMemoryStore.
 ```
 
-### debug=False output (default)
+### Default (`debug=False`)
 
 ```text
 21:04:29 INFO  classifier — [Classifier] Pattern=DIRECT | Complexity=0/10
-21:04:29 INFO  unified_agent — [my-agent] DIRECT short-circuit — 1 LLM call total.
+21:04:29 INFO  agent — [my-agent] DIRECT short-circuit — 1 LLM call total.
 ```
 
-DEBUG-level messages are suppressed, leaving only INFO and above.
+DEBUG lines (full classifier JSON, cache keys, injection detail) are suppressed.
 
-## Log Format
+---
 
-Set the `LOG_FORMAT` environment variable:
+## Log format
+
+Set **`LOG_FORMAT`** for aggregators:
 
 === "Text (default)"
 
@@ -37,53 +39,59 @@ Set the `LOG_FORMAT` environment variable:
     export LOG_FORMAT=text
     ```
 
-    Output:
     ```text
     21:04:29 INFO  classifier — [Classifier] Pattern=DIRECT | Complexity=0/10
     ```
 
-=== "JSON (for log aggregators)"
+=== "JSON"
 
     ```bash
     export LOG_FORMAT=json
     ```
 
-    Output:
     ```json
     {"timestamp": "2026-04-12T21:04:29", "level": "INFO", "logger": "classifier", "message": "[Classifier] Pattern=DIRECT | Complexity=0/10"}
     ```
 
-## Package-Level Control
+---
 
-Control the log level for all agloom loggers programmatically:
+## Package log level
 
 ```python
 from agloom import configure_package_logging
 
-configure_package_logging("DEBUG")    # everything
-configure_package_logging("INFO")     # normal (default)
-configure_package_logging("WARNING")  # suppress info logs
-configure_package_logging("ERROR")    # errors only
-configure_package_logging("CRITICAL") # silent
+configure_package_logging("DEBUG")
+configure_package_logging("INFO")      # default
+configure_package_logging("WARNING")
+configure_package_logging("ERROR")
 ```
 
-## What Gets Logged
+---
 
-| Component     | INFO logs                      | DEBUG logs                         |
-| ------------- | ------------------------------ | ---------------------------------- |
-| Classifier    | Pattern selected, complexity   | Full analysis JSON                 |
-| Unified Agent | Pattern execution, step counts | Memory injection, cache operations |
-| Worker        | Worker start/end               | Worker config, retry attempts      |
-| Feedback      | User feedback applied          | Score calculations                 |
-| Skills        | Skill injected                 | Skill matching, lifecycle events   |
-| Memory        | Trim warnings                  | Context build, injection           |
+## What gets logged
 
-## Suppressing Third-Party Logs
+| Area | INFO (typical) | DEBUG (extra) |
+| ---- | -------------- | ------------- |
+| Classifier | Pattern + complexity score | Full analysis payload |
+| Agent run | Pattern start, step counts | Memory injection, cache hits |
+| Workers | Start / end, retries | Worker config |
+| Feedback | Score applied | Handler details |
+| Skills | Skill injected | Match scores, lifecycle |
+| Memory | Trim warnings | Context assembly |
 
-agloom uses `httpx`, `langchain`, and other libraries that may produce their own logs. To suppress them:
+---
+
+## Quiet third-party loggers
 
 ```python
 import logging
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("langchain").setLevel(logging.WARNING)
 ```
+
+---
+
+## See also
+
+- [Observability](../features/observability.md) — LangSmith, step traces, tokens
+- [Observability metrics](../guides/observability-metrics.md) — `/observe/healthz`, Prometheus

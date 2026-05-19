@@ -125,7 +125,7 @@ export const WorkspaceLayout = ({ leftSlot, centerSlot, rightSlot, rightTab, onR
       {lastProtocolNote ? (
         <div
           className={cn(
-            'shrink-0 px-4 py-1.5 text-xs truncate border-b',
+            'shrink-0 px-4 py-1.5 text-xs whitespace-pre-wrap break-words border-b',
             theme === 'light'
               ? 'text-amber-900 bg-amber-100 border-amber-200'
               : 'text-amber-300/90 bg-amber-950/30 border-amber-900/40',

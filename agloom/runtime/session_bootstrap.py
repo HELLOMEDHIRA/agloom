@@ -15,7 +15,11 @@ from ..protocol import SessionEmitter
 from ..protocol.store import EventStore
 from .bridge import new_session_id
 from .hitl import HITLBridge, InvocationCancelReason
-from .hitl_allowlist import hitl_allowlist_paths_for_runtime
+from .hitl_allowlist import (
+    HitlAllowlistPolicy,
+    build_session_hitl_coalescer,
+    hitl_allowlist_paths_for_runtime,
+)
 from .serve_cli import (
     inject_api_key_secret_from_session_marker,
     merge_api_key_env_from_session_marker,
@@ -45,7 +49,8 @@ class PreparedRuntimeSession:
     sessions_dir: Path
     marker_path: Path | None
     working_args: Namespace
-    allowlist: frozenset[str]
+    allowlist: HitlAllowlistPolicy
+    coalescer: Any
     allowlist_persist_path: str | None
     allowlist_session_marker: Path | None = None
     yaml_created: bool = False
@@ -82,6 +87,7 @@ def prepare_runtime_session(
         session_scoped=marker_path is not None,
         cwd=root,
     )
+    coalescer = build_session_hitl_coalescer(session_marker)
 
     write_session_started_json(
         sessions_dir,
@@ -89,7 +95,7 @@ def prepare_runtime_session(
         transport=transport,
         thread=thread,
         record_cwd=root,
-        hitl_tool_allowlist=sorted(allowlist),
+        hitl_tool_allowlist=sorted(allowlist.global_tools()),
         extra=session_started_snapshot_from_args(working_args),
     )
 
@@ -100,7 +106,8 @@ def prepare_runtime_session(
         sessions_dir=sessions_dir,
         marker_path=marker_path,
         working_args=working_args,
-        allowlist=frozenset(allowlist),
+        allowlist=allowlist,
+        coalescer=coalescer,
         allowlist_persist_path=str(persist_path) if persist_path is not None else None,
         allowlist_session_marker=session_marker,
         yaml_created=yaml_created,
@@ -110,7 +117,7 @@ def prepare_runtime_session(
 def make_hitl_bridge(emitter: SessionEmitter, prepared: PreparedRuntimeSession) -> HITLBridge:
     return HITLBridge(
         emitter,
-        tool_allowlist=set(prepared.allowlist),
+        tool_allowlist=prepared.allowlist,
         allowlist_persist_path=prepared.allowlist_persist_path,
         allowlist_session_marker=prepared.allowlist_session_marker,
     )

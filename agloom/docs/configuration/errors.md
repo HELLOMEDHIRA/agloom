@@ -49,7 +49,7 @@ These are warnings logged during execution. They don't crash your agent — aglo
 
 | Warning                                                                                       | Cause                                  | Action                        |
 | --------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------- |
-| `AgentConfig: interrupt lists are set but user_callback=None — all gates will be transparent` | Interrupts configured without callback | Pass `user_callback=async_fn` |
+| Interrupt lists set but `user_callback` is missing — gates are transparent | HITL configured without a callback | Pass `user_callback=async_fn` |
 | `[HITL-L1] user_callback raised Error — continuing (fail-open)`                               | Your callback threw an exception       | Fix your callback function    |
 
 ### Skill Warnings

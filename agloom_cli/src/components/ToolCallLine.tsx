@@ -1,21 +1,13 @@
-/** One tool call row (summary + optional expanded body). */
+/** One tool call row — summary plus full result body (always visible, untruncated). */
 import React from 'react'
 import { Box, Text } from 'ink'
 import { Badge } from '@inkjs/ui'
 import type { ToolCall } from '../store/session.js'
-import { useSessionStore } from '../store/session.js'
 import { fmtArgs, fmtDuration, stripAgloomToolResultEnvelope } from '../utils/format.js'
-
-const MAX_PLAIN_RESULT_LINES = 200
-
-const clipLine = (line: string, maxCols: number): string => {
-  if (line.length <= maxCols) return line
-  return `${line.slice(0, Math.max(8, maxCols - 1))}…`
-}
 
 const looksLikeUnifiedDiff = (text: string): boolean => {
   if (text.length < 40) return false
-  const head = text.slice(0, 8000)
+  const head = text
   if (/^diff --git /m.test(head)) return true
   if (/^--- [^\n]+\n\+\+\+ /m.test(head)) return true
   let plus = 0
@@ -49,31 +41,29 @@ const STATUS_BADGE_COLOR: Record<ToolCall['status'], 'yellow' | 'green' | 'red'>
 
 interface Props {
   tc: ToolCall
-  /** When true, render full (truncated) result / error body below the summary line. */
-  expanded: boolean
 }
 
-export const ToolCallLine = ({ tc, expanded }: Props): React.ReactElement => {
-  const mainColumnWidth = useSessionStore((s) => s.mainColumnWidth)
+export const ToolCallLine = ({ tc }: Props): React.ReactElement => {
   const icon = STATUS_ICON[tc.status]
   const badgeColor = STATUS_BADGE_COLOR[tc.status]
   const displayResult = tc.result ? stripAgloomToolResultEnvelope(tc.result) : tc.result
-  const argsStr = fmtArgs(tc.args, 72)
-  const chevron = expanded ? '▼' : '▶'
+  const argsStr = fmtArgs(tc.args, 10_000)
   const nChars = displayResult?.length ?? tc.error?.length ?? 0
   const summary =
     tc.status === 'error'
-      ? `${chevron} ${tc.tool}(${argsStr})`
+      ? `${tc.tool}(${argsStr})`
       : nChars > 0
-        ? `${chevron} ${tc.tool}(${argsStr}) · ${nChars} chars`
-        : `${chevron} ${tc.tool}(${argsStr})`
+        ? `${tc.tool}(${argsStr}) · ${nChars} chars`
+        : `${tc.tool}(${argsStr})`
 
   return (
     <Box flexDirection="column" marginLeft={2}>
       <Box flexDirection="row" flexWrap="wrap" gap={1}>
         <Text color={badgeColor}>{icon} </Text>
         <Badge color={badgeColor}>{tc.status}</Badge>
-        <Text dimColor>{summary}</Text>
+        <Text dimColor wrap="wrap">
+          {summary}
+        </Text>
         {tc.durationMs !== undefined && (
           <Text color="gray" dimColor>
             {' '}
@@ -82,44 +72,32 @@ export const ToolCallLine = ({ tc, expanded }: Props): React.ReactElement => {
         )}
       </Box>
 
-      {expanded && tc.status === 'done' && displayResult && looksLikeUnifiedDiff(displayResult) && (
+      {tc.status === 'done' && displayResult && looksLikeUnifiedDiff(displayResult) && (
         <Box marginLeft={3} flexDirection="column">
-          {displayResult.split('\n').slice(0, 120).map((line, i) => {
+          {displayResult.split('\n').map((line, i) => {
             const c = diffLineColor(line)
-            const shown = line.length > 200 ? `${line.slice(0, 197)}…` : line
             return (
-              <Text key={i} color={c} dimColor={c === 'gray'}>
-                {shown}
+              <Text key={i} color={c} dimColor={c === 'gray'} wrap="wrap">
+                {line}
               </Text>
             )
           })}
         </Box>
       )}
-      {expanded && tc.status === 'done' && displayResult && !looksLikeUnifiedDiff(displayResult) && (() => {
-        const cols = Math.max(40, mainColumnWidth - 4)
-        const lines = displayResult.split('\n')
-        const slice = lines.slice(0, MAX_PLAIN_RESULT_LINES)
-        const omitted = lines.length - slice.length
-        return (
-          <Box marginLeft={3} flexDirection="column">
-            {slice.map((line, i) => (
-              <Text key={i} color="gray" dimColor wrap="truncate-end">
-                {clipLine(line, cols)}
-              </Text>
-            ))}
-            {omitted > 0 ? (
-              <Text color="gray" dimColor>
-                … {omitted} more line{omitted === 1 ? '' : 's'} (Ctrl+T / /tools to collapse)
-              </Text>
-            ) : null}
-          </Box>
-        )
-      })()}
-      {expanded && tc.status === 'error' && tc.error && (
+      {tc.status === 'done' && displayResult && !looksLikeUnifiedDiff(displayResult) && (
         <Box marginLeft={3} flexDirection="column">
-          {tc.error.split('\n').slice(0, 40).map((line, i) => (
-            <Text key={i} color="red" dimColor wrap="truncate-end">
-              {clipLine(line, Math.max(40, mainColumnWidth - 4))}
+          {displayResult.split('\n').map((line, i) => (
+            <Text key={i} color="gray" dimColor wrap="wrap">
+              {line}
+            </Text>
+          ))}
+        </Box>
+      )}
+      {tc.status === 'error' && tc.error && (
+        <Box marginLeft={3} flexDirection="column">
+          {tc.error.split('\n').map((line, i) => (
+            <Text key={i} color="red" dimColor wrap="wrap">
+              {line}
             </Text>
           ))}
         </Box>

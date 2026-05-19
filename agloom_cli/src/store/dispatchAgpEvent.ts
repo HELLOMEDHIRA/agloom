@@ -12,19 +12,28 @@ import type {
 } from './session.js'
 import type { AGPEvent } from '../types/agp.js'
 import { isAgpKnownEvent } from '../types/agpEventGuards.js'
-import { finalizeAssistantMessage, stripAgloomToolResultEnvelope } from '../utils/format.js'
+import {
+  finalizeAssistantMessage,
+  formatTurnTokenRollup,
+  stripAgloomToolResultEnvelope,
+} from '../utils/format.js'
+import { isStrayToolJsonText, stripStrayToolJsonFromStream } from '../utils/strayToolJson.js'
+
+const sanitizeAssistantText = (text: string, allowed: Set<string>): string => {
+  if (!text.trim()) return text
+  const stripped = stripStrayToolJsonFromStream(text, allowed, { permissive: allowed.size === 0 })
+  return stripped.trim()
+}
 
 export { isAgpKnownEvent } from '../types/agpEventGuards.js'
 
-const PROTOCOL_NOTES_CAP = 28
 const COMPLETED_TURNS_CAP = 200
 
 let _seq = 0
 const uid = (): string => `${Date.now().toString(36)}_${(++_seq).toString(36)}_${Math.random().toString(36).slice(2, 8)}`
 
 export const pushProtocolNotes = (notes: string[], line: string): string[] => {
-  if (notes.length < PROTOCOL_NOTES_CAP) return [...notes, line]
-  return [...notes.slice(notes.length - (PROTOCOL_NOTES_CAP - 1)), line]
+  return [...notes, line]
 }
 
 /** Resolve filesystem path arguments from tool calls (wire uses `path`, `file_path`, etc.). */
@@ -38,16 +47,18 @@ const toolCallTargetPath = (args: Record<string, unknown> | undefined): string =
   return ''
 }
 
-const stringifyWireResultPreview = (v: unknown, max = 520): string => {
+const stringifyWireResultPreview = (v: unknown): string => {
   if (v == null) return ''
-  if (typeof v === 'string') return v.length > max ? `${v.slice(0, max - 1)}…` : v
+  if (typeof v === 'string') return v
   try {
-    const j = JSON.stringify(v)
-    return j.length > max ? `${j.slice(0, max - 1)}…` : j
+    return JSON.stringify(v)
   } catch {
-    return String(v).slice(0, max)
+    return String(v)
   }
 }
+
+const toolNameSet = (names: string[] | null | undefined): Set<string> =>
+  new Set((names ?? []).map((n) => n.trim()).filter(Boolean))
 
 const newActiveTurn = (userMessage: string): ActiveTurnState => ({
   id: uid(),
@@ -108,12 +119,22 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
 
     case 'session.closed': {
       const isError = evt.data.reason === 'error'
+      const reason = evt.data.reason ?? 'completed'
+      const turnNote =
+        reason === 'completed'
+          ? 'Turn completed — ready for another message'
+          : reason === 'user_aborted'
+            ? 'Turn cancelled'
+            : reason === 'shutdown'
+              ? 'Runtime session closed'
+              : `Session closed (${reason})`
       return {
         ...s,
-        status: isError ? 'error' : 'idle',
+        status: isError ? 'error' : reason === 'shutdown' ? 'idle' : s.status === 'exited' ? 'exited' : 'idle',
         errorMessage: isError ? (evt.data.error ?? 'Unknown error') : null,
         activeTurn: null,
         outboundPrompt: null,
+        protocolNotes: pushProtocolNotes(s.protocolNotes, turnNote),
       }
     }
 
@@ -125,7 +146,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
       return {
         ...s,
         status: s.status === 'idle' ? 'running' : s.status,
-        protocolNotes: pushProtocolNotes(s.protocolNotes, `Agent busy${evt.data.thread ? ` (${evt.data.thread.slice(0, 12)}…)` : ''}`),
+        protocolNotes: pushProtocolNotes(s.protocolNotes, `Agent busy${evt.data.thread ? ` (${evt.data.thread})` : ''}`),
       }
 
     case 'agent.idle':
@@ -236,7 +257,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         })
       const parts = mcpServerRows.map((r) => {
         if (r.ok) return `${r.name}:ok(${r.toolCount} tools)`
-        return `${r.name}:FAIL${r.error ? `(${r.error.slice(0, 120)})` : ''}`
+        return `${r.name}:FAIL${r.error ? `(${r.error})` : ''}`
       })
       const detail = parts.length ? ` · ${parts.join(' · ')}` : ''
       return {
@@ -338,7 +359,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         ...s,
         protocolNotes: pushProtocolNotes(
           s.protocolNotes,
-          `Sessions · ${evt.data.sessions.length}: ${evt.data.sessions.slice(0, 6).join(', ') || '—'}${evt.data.sessions.length > 6 ? ' …' : ''}`,
+          `Sessions · ${evt.data.sessions.length}: ${evt.data.sessions.join(', ') || '—'}`,
         ),
       }
 
@@ -363,12 +384,12 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
       }
 
     case 'prompt.requested': {
-      const pv = (evt.data.preview ?? '').slice(0, 72)
+      const pv = evt.data.preview ?? ''
       return {
         ...s,
         protocolNotes: pushProtocolNotes(
           s.protocolNotes,
-          `Prompt · ${evt.data.kind ?? '?'}${pv ? ` · ${pv}${evt.data.preview && evt.data.preview.length > 72 ? '…' : ''}` : ''}`,
+          `Prompt · ${evt.data.kind ?? '?'}${pv ? ` · ${pv}` : ''}`,
         ),
       }
     }
@@ -394,7 +415,6 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         turnOutputTokens: 0,
         toolCallExpandedById: {},
         budgetUi: 'ok',
-        hideThinkingTrace: false,
       }
 
     case 'pattern.classified':
@@ -406,10 +426,27 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
 
     case 'plan.preview': {
       const steps = evt.data.steps ?? []
-      const joined = steps.slice(0, 8).join(' · ')
-      const more = steps.length > 8 ? ` …+${steps.length - 8}` : ''
-      const line = `plan.preview · ${evt.data.pattern} · c=${evt.data.complexity ?? 0}${joined ? ` · ${joined}${more}` : ''}`
-      return { ...s, protocolNotes: pushProtocolNotes(s.protocolNotes, line) }
+      const joined = steps.join('\n')
+      const line = `plan.preview · ${evt.data.pattern} · c=${evt.data.complexity ?? 0}${joined ? `\n${joined}` : ''}`
+      const next = { ...s, protocolNotes: pushProtocolNotes(s.protocolNotes, line) }
+      if (!s.activeTurn) return next
+      const planDetail = [evt.data.reasoning, joined].filter(Boolean).join('\n')
+      return {
+        ...next,
+        activeTurn: {
+          ...s.activeTurn,
+          thinkingSteps: [
+            ...s.activeTurn.thinkingSteps,
+            {
+              id: uid(),
+              step: 'plan',
+              label: `plan · ${evt.data.pattern}`,
+              detail: planDetail || undefined,
+              elapsedMs: undefined,
+            },
+          ],
+        },
+      }
     }
 
     case 'thinking.step': {
@@ -431,16 +468,29 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
       }
     }
 
-    case 'token.delta':
+    case 'token.delta': {
       if (!s.activeTurn) return s
+      const chunk = evt.data.text ?? ''
+      const allowed = toolNameSet(s.toolNames)
+      const combined = s.activeTurn.streamedTokens + chunk
+      let streamedTokens = combined
+      if (combined.trim().length > 0) {
+        const permissive = allowed.size === 0
+        if (isStrayToolJsonText(combined.trim(), allowed, { permissive })) {
+          streamedTokens = s.activeTurn.streamedTokens
+        } else {
+          streamedTokens = sanitizeAssistantText(combined, allowed)
+        }
+      }
       return {
         ...s,
         status: 'running',
         activeTurn: {
           ...s.activeTurn,
-          streamedTokens: s.activeTurn.streamedTokens + (evt.data.text ?? ''),
+          streamedTokens,
         },
       }
+    }
 
     case 'tool.call.start': {
       if (!s.activeTurn) return s
@@ -559,20 +609,50 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         },
       }
 
-    case 'graph.node.enter':
+    case 'graph.node.enter': {
       if (!s.activeTurn) return s
+      const preview = evt.data.input_preview ?? evt.data.pattern ?? evt.data.node
       return {
         ...s,
         activeTurn: {
           ...s.activeTurn,
           graphNodes: [...s.activeTurn.graphNodes, evt.data.node],
+          thinkingSteps: [
+            ...s.activeTurn.thinkingSteps,
+            {
+              id: uid(),
+              step: evt.data.node,
+              label: `graph → ${evt.data.node}`,
+              detail: preview || undefined,
+              elapsedMs: undefined,
+            },
+          ],
         },
       }
+    }
 
     case 'graph.node.exit': {
       const ms = evt.data.duration_ms != null ? `${evt.data.duration_ms}ms` : '?'
       const line = `Graph exit · ${evt.data.node} · ${ms}`
-      return { ...s, protocolNotes: pushProtocolNotes(s.protocolNotes, line) }
+      const next = { ...s, protocolNotes: pushProtocolNotes(s.protocolNotes, line) }
+      if (!s.activeTurn) return next
+      const detail = evt.data.output_preview ?? evt.data.error ?? undefined
+      return {
+        ...next,
+        activeTurn: {
+          ...s.activeTurn,
+          thinkingSteps: [
+            ...s.activeTurn.thinkingSteps,
+            {
+              id: uid(),
+              step: evt.data.node,
+              label: `graph · ${evt.data.node} · ${ms}`,
+              detail,
+              elapsedMs: evt.data.duration_ms,
+            },
+          ],
+        },
+      }
     }
 
     case 'orchestration.step': {
@@ -654,16 +734,44 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
       const active = s.activeTurn
       if (!active) return s
 
-      const turnTok = s.turnInputTokens + s.turnOutputTokens
+      const allowed = toolNameSet(s.toolNames)
+      const wireBody = sanitizeAssistantText(
+        stripAgloomToolResultEnvelope(evt.data.content ?? ''),
+        allowed,
+      )
+      const streamBody = sanitizeAssistantText(
+        stripAgloomToolResultEnvelope(active.streamedTokens),
+        allowed,
+      )
+      // Done payload (recovery / final prose) wins over polluted stream deltas.
+      let assistantBody =
+        wireBody.trim().length > 0
+          ? wireBody
+          : streamBody.trim().length > 0
+            ? streamBody
+            : finalizeAssistantMessage(evt.data.content ?? '', active.streamedTokens)
+      assistantBody = sanitizeAssistantText(assistantBody, allowed)
+      if (!assistantBody.trim()) {
+        const permissive = allowed.size === 0
+        if (
+          isStrayToolJsonText((evt.data.content ?? '').trim(), allowed, { permissive }) ||
+          isStrayToolJsonText(active.streamedTokens.trim(), allowed, { permissive })
+        ) {
+          assistantBody =
+            '(model emitted invalid tool JSON; runtime recovers via structured tool calls)'
+        }
+      }
+
+      const turnTokLabel = formatTurnTokenRollup(s.turnInputTokens, s.turnOutputTokens)
       const completed: CompletedTurn = {
         id: active.id,
         userMessage: active.userMessage,
-        assistantMessage: finalizeAssistantMessage(evt.data.content ?? '', active.streamedTokens),
+        assistantMessage: assistantBody,
         thinkingSteps: [...active.thinkingSteps],
         toolCalls: [...active.toolCalls],
         workers: [...active.workers],
         pattern: evt.data.pattern ?? active.pattern ?? undefined,
-        tokens: turnTok > 0 ? turnTok : undefined,
+        tokens: turnTokLabel,
         runId: evt.data.run_id ?? evt.id,
       }
 
@@ -701,7 +809,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         totalInputTokens: s.totalInputTokens + inTok,
         totalOutputTokens: s.totalOutputTokens + outTok,
         lastMetricTokensSeq: evt.seq,
-        turnInputTokens: s.activeTurn ? s.turnInputTokens + inTok : s.turnInputTokens,
+        turnInputTokens: s.activeTurn ? Math.max(s.turnInputTokens, inTok) : s.turnInputTokens,
         turnOutputTokens: s.activeTurn ? s.turnOutputTokens + outTok : s.turnOutputTokens,
         model: sessionModel,
         metricsHistory: hist,
@@ -737,12 +845,11 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
 
     case 'feedback.scored': {
       const rid = evt.data.run_id
-      const short = rid.length > 14 ? `${rid.slice(0, 12)}…` : rid
       return {
         ...s,
         protocolNotes: pushProtocolNotes(
           s.protocolNotes,
-          `Feedback scored · ${evt.data.rating} · run ${short}`,
+          `Feedback scored · ${evt.data.rating} · run ${rid}`,
         ),
       }
     }

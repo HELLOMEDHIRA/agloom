@@ -526,16 +526,25 @@ Skills with model_reset_at set recently had their stats reset due to a model cha
 
 
 _fingerprint_cache: WeakKeyDictionary[Any, str] = WeakKeyDictionary()
+_fingerprint_by_id: dict[Any, str] = {}
 
 
 def _compute_model_fingerprint(llm: Any) -> str:
     """Config-level identity string (class + model name + provider) for drift detection.
 
-    Cached per live ``llm`` instance via weak references (avoids stale hits after ``id`` reuse).
+    Cached per live ``llm`` instance via weak references when hashable; otherwise :class:`~agloom.llm.instance_key.LlmInstanceKey`.
     """
-    cached = _fingerprint_cache.get(llm)
-    if cached is not None:
-        return cached
+    from agloom.llm.instance_key import llm_cache_key
+    from agloom.llm_utils import llm_weak_dict_key_ok
+
+    if llm_weak_dict_key_ok(llm):
+        cached = _fingerprint_cache.get(llm)
+        if cached is not None:
+            return cached
+    else:
+        cached = _fingerprint_by_id.get(llm_cache_key(llm))
+        if cached is not None:
+            return cached
 
     parts = [type(llm).__name__]
     for attr in ("model_name", "model", "model_id"):
@@ -549,7 +558,10 @@ def _compute_model_fingerprint(llm: Any) -> str:
             parts.append(str(val)[:50])
             break
     result = "|".join(parts)
-    _fingerprint_cache[llm] = result
+    if llm_weak_dict_key_ok(llm):
+        _fingerprint_cache[llm] = result
+    else:
+        _fingerprint_by_id[llm_cache_key(llm)] = result
     return result
 
 

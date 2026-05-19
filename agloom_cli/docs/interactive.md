@@ -4,9 +4,9 @@ Running **`agloom`** without a one-shot prompt (and with stdin as a TTY) opens t
 
 ## Layout
 
-- **Main pane** — active turn (streaming assistant + tool traces) and completed turn history; **composer** (message input) is pinned to the **bottom** of the main column with the status strip directly above it.
-- **Status bar** — session/thread hints, model label, token/cost summaries when available (from runtime metrics).
-- **Metrics sidebar** (`/stats`) — structured counters and **Wire notes** (one-line AGP highlights).
+- **Main pane** — active turn (streaming assistant, **full reasoning trace**, **full tool output**) and completed turn history; **composer** is pinned to the bottom with the status strip above it.
+- **Status bar** — session/thread, model, token and cost summaries when the runtime emits metrics.
+- **Metrics sidebar** (`/stats`) — identity, features, token rollups, MCP status, recent tools, and **Wire notes** (protocol highlights).
 - **Diagnostic pane** (`--diag` or `/diag`) — **`agloom-runtime` stderr** (Python logs), kept off stdout so AGP stays parseable.
 
 ## Banner
@@ -24,8 +24,7 @@ Before the main transcript appears, the UI shows a **spinner** while the workspa
 - **Esc** — cancel inline overlays where applicable.
 - **Ctrl+C** — shutdown sequence (runtime exit).
 - **Ctrl+X** — cancel current run (same idea as `/cancel`). The input field ignores this chord so **x** is not inserted.
-- **Ctrl+T** — expand/collapse tool rows for the active turn (same as `/tools`).
-- **Slash hints** — when your message starts with `/`, matching commands are listed under the input as you type (no separate Tab overlay).
+- **Slash hints** — when your message starts with `/`, matching commands are listed under the input as you type.
 
 Navigation follows common terminal conventions (focusable regions, overlays, and readline-style input where applicable).
 
@@ -53,14 +52,19 @@ Typed at the input bar. The list below matches what **`/help`** shows in the UI.
 | `/system <text>`     | Inline system prompt update                            |
 | `/session list`      | List sessions (**requires `--store`** on runtime)      |
 | `/diag`              | Toggle stderr diagnostic pane                          |
-| `/stats`             | Toggle metrics sidebar                                 |
-| `/tools`             | Toggle expand/collapse for all tool results            |
+| `/stats`             | Toggle metrics sidebar (full-height when open)       |
 | `/budget raise …`    | Raise token/USD caps (`--tokens N`, `--usd N`)        |
 | `/feedback <1-5>`    | Score last completed turn                              |
 | `/save <path.md>`    | Export transcript as Markdown to disk                  |
 | `/exit`, `/quit`     | Shutdown runtime and exit                              |
 
-Many AGP events append short lines under **Wire notes** (config applied, sessions, feedback, …).
+Many AGP events append lines under **Wire notes** (config applied, sessions, feedback, …). Notes are **not capped** — long payloads wrap in the sidebar.
+
+## Transcript rendering
+
+- **Reasoning** (`thinking.step`, plan steps) — always expanded in the main column.
+- **Tools** — each call shows args and the **full** `tool.call.result` body (no expand/collapse toggle).
+- **Assistant answer** — streamed via `token.delta`; the final text comes from **`message.assistant`** (preferred over deltas alone). Stray tool-shaped JSON in the stream is filtered so you see prose, not raw `{"name":"read_file",…}`.
 
 ## Live model switch
 

@@ -53,7 +53,8 @@ export interface CompletedTurn {
   toolCalls: ToolCall[]
   workers: Worker[]
   pattern?: string
-  tokens?: number
+  /** Per-turn token rollup label (e.g. ``↑71.2k ↓286``). */
+  tokens?: string
   runId?: string
 }
 
@@ -131,7 +132,7 @@ export interface SessionStore {
   // Diagnostic lines from stderr (shown in a scrollable log if /diag is open)
   diagnostics: string[]
 
-  /** Per `tool_call_id`: explicit expand/collapse; omitted → default from tool status. */
+  /** @deprecated Tool results are always shown; kept for replay compat. */
   toolCallExpandedById: Record<string, boolean>
 
   /** From `metric.budget.*`. */
@@ -161,46 +162,22 @@ export interface SessionStore {
   /** Shared wall clock (ms) for uptime displays — one interval in ``App``. */
   wallClockMs: number
 
-  /** When true, reasoning steps are hidden (Ctrl+Y / ``/think`` toggles). Default: show dim inline trace. */
-  hideThinkingTrace: boolean
-
   dispatch: (evt: AGPEvent) => void
   addDiagnostic: (line: string) => void
   clearError: () => void
   markExited: () => void
   reset: () => void
-  toggleActiveTurnToolExpandBulk: () => void
   /** Slash/UI helpers — append one line to the metrics sidebar wire notes. */
   appendProtocolNote: (line: string) => void
-  /** Ctrl+Y / ``/think``: show or hide dim reasoning trace in the transcript. */
-  toggleHideThinkingTrace: () => void
   setMainColumnWidth: (width: number) => void
   setWallClockMs: (ms: number) => void
 }
 
-/** Read-oriented tools: show full result by default when done (still toggle with Ctrl+T / ``/tools``). */
-const TOOL_RESULTS_EXPAND_WHEN_DONE = new Set<string>([
-  'read_file',
-  'grep_files',
-  'glob_files',
-  'list_dir',
-  'notebook_read',
-  'fetch_url',
-  'read_url_markdown',
-  'which',
-])
-
+/** Tool call bodies are always visible in the transcript (no expand/collapse). */
 export const effectiveToolCallExpanded = (
-  tc: ToolCall,
-  expandedById: Record<string, boolean>,
-): boolean => {
-  if (Object.prototype.hasOwnProperty.call(expandedById, tc.toolCallId)) {
-    return expandedById[tc.toolCallId]!
-  }
-  if (tc.status === 'error' || tc.status === 'pending') return true
-  if (tc.status === 'done' && TOOL_RESULTS_EXPAND_WHEN_DONE.has(tc.tool)) return true
-  return false
-}
+  _tc: ToolCall,
+  _expandedById: Record<string, boolean>,
+): boolean => true
 
 export const useSessionStore = create<SessionStore>((set) => ({
   completedTurns: [],
@@ -241,7 +218,6 @@ export const useSessionStore = create<SessionStore>((set) => ({
   providerRows: [],
   autoApprovedTools: [],
   filesUpdated: [],
-  hideThinkingTrace: false,
   mainColumnWidth: 80,
   wallClockMs: Date.now(),
 
@@ -263,25 +239,11 @@ export const useSessionStore = create<SessionStore>((set) => ({
       protocolNotes: pushProtocolNotes(s.protocolNotes, line),
     })),
 
-  toggleHideThinkingTrace: () => set((s) => ({ ...s, hideThinkingTrace: !s.hideThinkingTrace })),
-
   setMainColumnWidth: (width: number) =>
     set((s) => (s.mainColumnWidth === width ? s : { ...s, mainColumnWidth: width })),
 
   setWallClockMs: (ms: number) =>
     set((s) => (s.wallClockMs === ms ? s : { ...s, wallClockMs: ms })),
-
-  toggleActiveTurnToolExpandBulk: () =>
-    set((s) => {
-      const at = s.activeTurn
-      if (!at || at.toolCalls.length === 0) return s
-      const next: Record<string, boolean> = { ...s.toolCallExpandedById }
-      for (const tc of at.toolCalls) {
-        const cur = effectiveToolCallExpanded(tc, next)
-        next[tc.toolCallId] = !cur
-      }
-      return { ...s, toolCallExpandedById: next }
-    }),
 
   reset: () =>
     set((s) => ({
@@ -293,7 +255,6 @@ export const useSessionStore = create<SessionStore>((set) => ({
       capabilities: null,
       protocolNotes: [],
       todos: [],
-      hideThinkingTrace: false,
       totalInputTokens: 0,
       totalOutputTokens: 0,
       lastMetricTokensSeq: 0,

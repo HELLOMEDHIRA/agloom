@@ -10,7 +10,7 @@
 
 ## Runtime Dependencies
 
-These are installed automatically with `pip install agloom` (see `[project] dependencies` in `pyproject.toml` for exact minimum versions):
+These are installed automatically with `pip install agloom`:
 
 | Package                       | Purpose                                                                                          |
 | ----------------------------- | ------------------------------------------------------------------------------------------------ |

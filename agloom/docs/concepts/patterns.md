@@ -1,8 +1,8 @@
-# Execution Patterns
+# Execution patterns
 
-agloom auto-selects the optimal pattern per query. You don't choose — the classifier does.
+agloom **routes each query automatically**. You do not pick ReAct vs supervisor vs planner on every turn — a **classifier** analyzes complexity, tool need, and parallelism, then runs one of **nine built-in patterns**.
 
-## Pattern Selection Flow
+## How routing works
 
 ```mermaid
 flowchart TD
@@ -18,39 +18,42 @@ flowchart TD
     C -->|Complex dependencies| HYBRID
 ```
 
-## The 9 Patterns
+The classifier runs once per turn (bounded by **`classifier_timeout`**). Its decision is visible in logs, **`result.pattern_used`**, AGP **`thinking.step`** / **`pattern.selected`** events, and LangSmith traces.
 
-### DIRECT — Single LLM Call
+!!! tip "You stay in control of tools and policy"
+    Patterns control **orchestration shape**, not your business rules. Tools, HITL gates, memory, and skills apply regardless of which pattern runs.
 
-**When selected:** Simple factual queries, greetings, straightforward instructions.
+---
+
+## The nine patterns
+
+### DIRECT — single LLM call
+
+**When:** Greetings, facts, short instructions — no tools required.
 
 ```text
 Query → LLM → Response
 ```
 
-**Example queries:** "What is the capital of France?", "Hello!", "Summarize this in one line."
-
-No tools, no workers, no overhead. One LLM call, one response.
+**Examples:** “What is the capital of France?”, “Hello!”, “Summarize in one line.”
 
 ---
 
-### REACT — Tool Calling Loop
+### REACT — tool loop
 
-**When selected:** Queries that require tools (calculator, search, API calls).
+**When:** The model must call tools (search, code, APIs).
 
 ```text
-Query → LLM → Tool Call → Observation → LLM → ... → Response
+Query → LLM → Tool → Observation → LLM → … → Response
 ```
 
-**Example queries:** "Calculate 15 * 7 + 23", "Search for the latest Python release."
-
-The LLM reasons about what to do, calls a tool, observes the result, and repeats until done.
+**Examples:** “Calculate 15 × 7 + 23”, “Search for the latest Python release.”
 
 ---
 
-### SUPERVISOR — Manager + Parallel Workers
+### SUPERVISOR — parallel workers + synthesis
 
-**When selected:** Multi-faceted queries with independent subtasks.
+**When:** Independent subtasks that can run in parallel.
 
 ```mermaid
 flowchart TD
@@ -64,110 +67,123 @@ flowchart TD
     SYN --> R[Response]
 ```
 
-**Example queries:** "Compare solar, wind, and hydro energy", "Analyze marketing, sales, and support metrics."
+**Examples:** “Compare solar, wind, and hydro energy”, “Analyze marketing, sales, and support metrics.”
+
+Partial worker failures may still yield a synthesized answer — check **`worker_results`** in production ([Production guide](../guides/production.md)).
 
 ---
 
-### PIPELINE — Sequential Chain
+### PIPELINE — ordered stages
 
-**When selected:** Queries requiring ordered transformations.
+**When:** Fixed sequence of transformations.
 
 ```text
 Query → Stage 1 → Stage 2 → Stage 3 → Response
 ```
 
-**Example queries:** "Extract data from this text, format it as a table, then translate to Spanish."
-
-Each stage's output feeds into the next.
+**Examples:** “Extract data, format as a table, translate to Spanish.”
 
 ---
 
-### PLANNER_EXECUTOR — Plan Then Execute
+### PLANNER_EXECUTOR — plan then execute with full history
 
-**When selected:** Multi-step reasoning where later steps depend on all prior context.
+**When:** Later steps need everything that happened before.
 
 ```text
 Query → Plan → Step 1 → Step 2 (+history) → Step 3 (+history) → Synthesis
 ```
 
-**Example queries:** "Research, draft, review, and finalize a project proposal."
+**Examples:** “Research, draft, review, and finalize a project proposal.”
 
-Unlike PIPELINE, each step sees the full history of all previous steps.
+Unlike PIPELINE, each step sees **all prior step outputs**, not only the previous stage.
 
 ---
 
-### REFLECTION — Generate, Critique, Revise
+### REFLECTION — generate, critique, revise
 
-**When selected:** Quality-critical outputs that benefit from self-review.
+**When:** Quality matters more than latency.
 
 ```mermaid
 flowchart TD
     Q[Query] --> G[Generator]
     G --> C{Critic}
-    C -->|Score < threshold| G
-    C -->|Score >= threshold| R[Response]
+    C -->|Score below threshold| G
+    C -->|Score OK| R[Response]
 ```
 
-**Example queries:** "Write a professional cover letter", "Create a detailed technical specification."
+**Examples:** “Write a professional cover letter”, “Create a detailed technical specification.”
 
-Configurable via `max_reflection_iterations` (default: 3) and `reflection_threshold` (default: 7/10).
-
-Walkthrough (runtime behaviour, parameters, HITL): [Reflection pattern](../features/reflection.md).
+Tune with **`max_reflection_iterations`** (default 3) and **`reflection_threshold`** (default 7/10). Details: [Reflection](../features/reflection.md).
 
 ---
 
-### SWARM — Parallel Perspectives
+### SWARM — parallel perspectives
 
-**When selected:** Queries benefiting from debate or multiple viewpoints.
+**When:** Debate or multiple viewpoints help.
 
 ```text
 Query → [Expert A, Expert B, Expert C] → Synthesis → Response
 ```
 
-**Example queries:** "What are the pros and cons of microservices vs monolith?"
+**Examples:** “Pros and cons of microservices vs monolith?”
 
 ---
 
-### BLACKBOARD — Shared-State Specialists
+### BLACKBOARD — shared specialist state
 
-**When selected:** Complex problems requiring collaborative expert contributions.
+**When:** Experts contribute to a evolving shared context.
 
 ```text
-Query → Expert 1 (board) → Expert 2 (board+) → ... → Synthesis (full board)
+Query → Expert 1 (board) → Expert 2 (board+) → … → Synthesis
 ```
-
-Each specialist reads and writes to a shared "blackboard" state.
 
 ---
 
-### HYBRID_DAG — Mixed Parallel + Sequential
+### HYBRID_DAG — mixed parallel and sequential
 
-**When selected:** Queries with complex dependency graphs.
+**When:** Some subtasks parallelize, then feed sequential steps.
 
 ```text
-Query → [Parallel A, Parallel B] → Sequential C (combined) → Response
+Query → [Parallel A, Parallel B] → Sequential C → Response
 ```
-
-Some subtasks run in parallel; their outputs feed into sequential steps.
 
 ---
 
-## Overriding the Classifier
+## Biasing routing (without forking the library)
 
-The classifier is automatic, but you can register custom handlers:
+| Mechanism | Use case |
+| --------- | -------- |
+| **Tools & system prompt** | Steer toward REACT when tools are registered |
+| **`command.config.set` (AGP)** | Live pattern hint from CLI / web when supported |
+| **Simpler queries** | Classifier often picks DIRECT — fewer tokens |
+| **Custom pattern handler** | Replace behavior for one pattern (advanced) |
+
+There is **no** public `fallback_pattern` YAML knob — if a pattern has no handler, agloom falls back to **REACT** and logs a warning.
+
+---
+
+## Advanced: custom pattern handlers
+
+Framework authors can register a replacement handler for a pattern:
 
 ```python
 from agloom import create_agent, ExecutionResult, PatternType
 
-async def my_handler(agent, query, analysis, config):
-    # Custom logic here
+async def my_react(agent, query, analysis, config):
     return ExecutionResult(output="Custom result", pattern_used=analysis.pattern)
 
 async def main():
     agent = await create_agent(model=llm, name="custom")
-    agent.register_pattern(PatternType.REACT, my_handler)
+    agent.register_pattern(PatternType.REACT, my_react)
 ```
 
-!!! note "Fallback Behavior"
-    If the classifier selects a pattern with no registered handler, agloom falls back to **REACT** and logs a warning:
-    `[agent-name] No handler for pattern 'X' — falling back to REACT.`
+Most applications should **not** override handlers — use tools, memory, and HITL instead.
+
+---
+
+## See also
+
+- [Choosing a pattern](../guides/choosing-a-pattern.md) — practical shortcuts
+- [Orchestration](../features/orchestration.md) — workers, delegation, limits
+- [Production integration](../guides/production.md) — worker failures and tokens
+- [Parameters](../configuration/parameters.md) — timeouts, concurrency, reflection

@@ -1,52 +1,100 @@
-# AGP from Python (`agloom.protocol`)
+# AGP from Python
 
-The [**AGP specification**](../protocol/agp.md) describes the JSON wire format. This page shows how to work with that contract **in Python** using the shipped Pydantic models.
+The [**AGP specification**](../protocol/agp.md) describes the JSON wire format (event types, commands, versioning). This page shows how to **use that contract in Python** without reimplementing parsers.
 
-## Emitting AGP
+---
 
-- **`SessionEmitter`** — synchronous writer (e.g. **`sys.stdout.write`**). Each **`emit_*`** appends one NDJSON line when a **`writer`** is set; tests often capture bytes on a **`StringIO`**.
-- **`AsyncSessionEmitter`** — asyncio queue + flush loop; used by **`RuntimeNode`** and WebSocket transports.
+## Three integration levels
 
-Low-level helpers: **`Envelope`**, **`new_event_id`**, **`now_utc`**, **`event_to_dict`**.
+| Level | When to use | API |
+| ----- | ----------- | --- |
+| **Easiest** | You already have an agent; want typed events | `agent.astream_agp_events()` |
+| **Bridge** | You own stdout/WebSocket and one prompt per invocation | `run_invocation` + `SessionEmitter` |
+| **Full control** | Custom servers, replay stores, schema export | `agloom.protocol` models + stores |
 
-## Consuming AGP
+Most application code should stop at **`astream_agp_events`** unless you are building a new client.
 
-- **`event_adapter`** — **`TypeAdapter`** for the discriminated union of all Phase-0 event types. Parse a decoded **`dict`** after JSON loading:
+---
+
+## Level 1 — Stream AGP from an existing agent
+
+```python
+async for evt in agent.astream_agp_events(
+    "Explain Mars",
+    thread_id="demo",
+    session_id="sess_demo",
+):
+    if evt.type == "token.delta":
+        print(evt.data.text, end="", flush=True)
+    elif evt.type == "session.closed":
+        break
+```
+
+Each `evt` is a typed envelope (`token.delta`, `tool.call.start`, `metric.tokens`, …).  
+No manual session lifecycle — the stream opens and closes the session for you.
+
+Guide: [Streaming & events](../features/streaming.md).
+
+---
+
+## Level 2 — Emit NDJSON yourself
+
+```python
+from agloom.protocol import SessionEmitter
+
+emitter = SessionEmitter(session="s1", thread="t1", writer=sys.stdout.write)
+emitter.emit_session_opened(runtime_version="0.1.0", protocol_version="1")
+# ... run agent, translate progress to emit_* calls ...
+emitter.emit_session_closed(reason="completed")
+```
+
+For a full turn wired to `create_agent`, prefer **`run_invocation`** — see [Embedding the runtime](embedding-runtime.md).
+
+---
+
+## Level 3 — Parse inbound lines
+
+After `json.loads(line)`:
 
 ```python
 import json
 from agloom.protocol import event_adapter
 
-line = '{"v":"1","id":"evt_...","type":"token.delta", ...}'
 env = event_adapter.validate_python(json.loads(line))
+print(env.type, env.data)
 ```
 
-- **`command_adapter`** — same idea for inbound **`Command`** variants (`command.invoke`, `command.session.resume`, …).
+Inbound **commands** (`command.invoke`, `command.hitl.respond`, …) use the parallel **`command_adapter`**.
 
-When handling **`command.invoke`** with file attachments in your own transport, decode and stage files with **`agloom.runtime.attachment_stage.prepare_invoke_command`** (same logic as stdio/WebSocket serve).
+**Forward compatibility:** unknown `type` values should be ignored or logged, not crash your UI.
+
+---
 
 ## Replay and persistence
 
-- **`MemoryEventStore`** — in-process ring buffer for tests.
-- **`SqliteEventStore`** — durable store for **`command.session.resume`** style replay (used by the runtime when configured).
+| Store | Use case |
+| ----- | -------- |
+| In-memory | Unit tests, short demos |
+| SQLite | Resume sessions, observability dashboards |
 
-Schema export for external code generators: **`build_schema`**, **`write_schema`** in **`agloom.protocol.schema`**; the checked-in artifact is **`agloom/docs/protocol/agp-schema.json`**.
+Attach a store to `SessionEmitter` when clients need **`command.session.resume`**.
 
-### Maintaining client parsers
+---
 
-When you add a wire field that **clients must parse**, update in lockstep:
+## Schema for other languages
 
-1. Pydantic models in **`agloom.protocol.events`** / **`commands`**
-2. **`agloom/tests/fixtures/agp_wire_required_keys.json`** (minimal required `data` keys)
-3. **`agp-schema.json`** via `python -m agloom.protocol.schema`
-4. TypeScript **`AGP_WIRE_DATA_SCHEMAS`** in **`agloom_cli`** and **`agloom_web`** (see each package’s `agpCatalogSync` test)
+Export the machine-readable catalog:
 
-The [AGP specification](../protocol/agp.md) stays the human-readable contract; avoid duplicating implementation names there.
+```bash
+python -m agloom.protocol.schema --out agp-schema.json
+```
 
-## In-process parity with the wire
+The checked-in **`agp-schema.json`** in the repo is the source of truth for code generators. Human-readable field docs remain in [AGP — Agloom Protocol](../protocol/agp.md).
 
-If you do **not** want to manage an emitter but need **typed `Envelope` instances** (same classes as NDJSON lines), use **`UnifiedAgent.astream_agp_events()`** — see [Streaming & events](../features/streaming.md).
+---
 
 ## See also
 
-- [Embedding the runtime](embedding-runtime.md) — **`run_invocation`** ties **`UnifiedAgent`** to **`SessionEmitter`**
+- [Embedding the runtime](embedding-runtime.md) — `run_invocation` lifecycle  
+- [Wire tokens & metric.tokens](../features/wire-tokens.md) — token accounting on the wire  
+- [Observability API](observability-python.md) — FastAPI + SSE replay

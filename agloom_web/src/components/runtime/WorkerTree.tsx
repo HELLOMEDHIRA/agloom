@@ -45,7 +45,7 @@ export const WorkerTree = (): React.ReactElement => {
               <span className="text-sm font-medium text-white">{w.name}</span>
               {w.pattern && <span className="text-xs text-indigo-400 ml-auto">{w.pattern}</span>}
             </div>
-            {w.task && <p className="text-xs text-neutral-500 leading-relaxed truncate">{w.task}</p>}
+            {w.task && <p className="text-xs text-neutral-500 leading-relaxed whitespace-pre-wrap break-words">{w.task}</p>}
             {w.outputPreview && <p className="text-xs text-neutral-400 leading-relaxed line-clamp-2">{w.outputPreview}</p>}
             {w.error && (
               <p className={cn('text-xs', w.status === 'halted' ? 'text-cyan-400' : 'text-red-400')}>

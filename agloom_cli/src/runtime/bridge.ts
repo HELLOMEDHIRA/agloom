@@ -266,8 +266,7 @@ export const createAGPBridge = (): AGPBridge => {
           emitOrBufferAgpEvent(evt)
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e)
-          const preview = trimmed.length > 160 ? `${trimmed.slice(0, 157)}…` : trimmed
-          emitter.emit('diagnostic', `[stdout] ${msg} | ${preview}`)
+          emitter.emit('diagnostic', `[stdout] ${msg} | ${trimmed}`)
         }
       }
     })

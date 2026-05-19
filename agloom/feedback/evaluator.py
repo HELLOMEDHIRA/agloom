@@ -192,7 +192,7 @@ class AutoEvaluator:
                     query=query,
                     skill_used=skill_used,
                     success=getattr(result, "success", False),
-                    output_preview=str(getattr(result, "output", ""))[:200],
+                    output_preview=str(getattr(result, "output", "")),
                     user_id=str(uid) if uid is not None else None,
                 )
                 await self._store.save(minimal)

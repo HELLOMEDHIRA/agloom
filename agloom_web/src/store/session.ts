@@ -3,6 +3,12 @@
 import { create } from 'zustand'
 import type { AGPEvent, AGPKnownEvent } from '../lib/agp/types.js'
 import { isAgpKnownEvent } from '../lib/agp/agpEventGuards.js'
+import {
+  finalizeAssistantMessage,
+  formatTurnTokenRollup,
+  stripAgloomToolResultEnvelope,
+} from '../lib/utils/assistantText.js'
+import { isStrayToolJsonText, stripStrayToolJsonFromStream } from '../lib/utils/strayToolJson.js'
 
 export interface ThinkingStep {
   id: string; step: string; label?: string; detail?: string; elapsedMs?: number
@@ -42,7 +48,7 @@ export interface CompletedTurn {
   id: string; userMessage: string; assistantMessage: string
   thinkingSteps: ThinkingStep[]; toolCalls: ToolCall[]
   workers: Worker[]; graphNodes: GraphNode[]
-  pattern?: string; tokens?: number; runId?: string
+  pattern?: string; tokens?: string; runId?: string
   artifacts: Artifact[]
   timestamp: Date
 }
@@ -137,20 +143,17 @@ export interface SessionStore {
 let _seq = 0
 const uid = () => `${Date.now().toString(36)}_${(++_seq).toString(36)}`
 
-const PROTOCOL_NOTES_CAP = 28
-
 const pushProtocolNotes = (notes: string[], line: string): string[] => {
-  return [...notes, line].slice(-PROTOCOL_NOTES_CAP)
+  return [...notes, line]
 }
 
-const stringifyWireResultPreview = (v: unknown, max = 520): string => {
+const stringifyWireResultPreview = (v: unknown): string => {
   if (v == null) return ''
-  if (typeof v === 'string') return v.length > max ? `${v.slice(0, max - 1)}…` : v
+  if (typeof v === 'string') return v
   try {
-    const j = JSON.stringify(v)
-    return j.length > max ? `${j.slice(0, max - 1)}…` : j
+    return JSON.stringify(v)
   } catch {
-    return String(v).slice(0, max)
+    return String(v)
   }
 }
 
@@ -158,16 +161,19 @@ const newActiveTurn = (userMessage: string): ActiveTurnState => {
   return { id: uid(), userMessage, thinkingSteps: [], toolCalls: [], workers: [], graphNodes: [], streamedTokens: '', pattern: null }
 }
 
-/** Expanded for error/pending unless overridden in the map. */
-export const effectiveToolCallExpanded = (
-  tc: ToolCall,
-  expandedById: Record<string, boolean>,
-): boolean => {
-  if (Object.prototype.hasOwnProperty.call(expandedById, tc.toolCallId)) {
-    return expandedById[tc.toolCallId]!
-  }
-  return tc.status === 'error' || tc.status === 'pending'
+const toolNameSet = (names: string[] | null | undefined): Set<string> =>
+  new Set((names ?? []).map((n) => n.trim()).filter(Boolean))
+
+const sanitizeAssistantText = (text: string, allowed: Set<string>): string => {
+  if (!text.trim()) return text
+  return stripStrayToolJsonFromStream(text, allowed, { permissive: allowed.size === 0 }).trim()
 }
+
+/** Tool bodies are always visible in the transcript (no expand/collapse). */
+export const effectiveToolCallExpanded = (
+  _tc: ToolCall,
+  _expandedById: Record<string, boolean>,
+): boolean => true
 
 const summarise = (evt: AGPKnownEvent): string => {
   switch (evt.type) {
@@ -183,9 +189,9 @@ const summarise = (evt: AGPKnownEvent): string => {
     case 'session.heartbeat':
       return `session heartbeat (${evt.data.uptime_ms ?? '?'}ms uptime)`
     case 'stream.heartbeat':
-      return `stream heartbeat${evt.data.thread ? ` · ${evt.data.thread.slice(0, 16)}` : ''}`
+      return `stream heartbeat${evt.data.thread ? ` · ${evt.data.thread}` : ''}`
     case 'agent.busy':
-      return `agent busy${evt.data.thread ? ` · ${evt.data.thread.slice(0, 16)}` : ''}`
+      return `agent busy${evt.data.thread ? ` · ${evt.data.thread}` : ''}`
     case 'agent.idle':
       return 'agent idle'
     case 'runtime.ready':
@@ -226,13 +232,13 @@ const summarise = (evt: AGPKnownEvent): string => {
       return `pattern: ${evt.data.pattern} (complexity ${evt.data.complexity ?? '?'})`
     case 'plan.preview': {
       const steps = evt.data.steps ?? []
-      const joined = steps.slice(0, 6).join(' · ')
-      return `plan.preview · ${evt.data.pattern} · ${joined}${steps.length > 6 ? ' …' : ''}`
+      const joined = steps.join(' · ')
+      return `plan.preview · ${evt.data.pattern} · ${joined}`
     }
     case 'thinking.step':
       return `thinking: ${evt.data.label ?? evt.data.step}`
     case 'token.delta':
-      return `token: "${evt.data.text.slice(0, 20)}"`
+      return `token: "${evt.data.text}"`
     case 'message.user':
       return 'message.user'
     case 'message.tool':
@@ -298,7 +304,7 @@ const summarise = (evt: AGPKnownEvent): string => {
     case 'skill.learned':
       return `skill learned: ${evt.data.skill_name}`
     case 'prompt.requested':
-      return `prompt requested (${evt.data.preview?.slice(0, 40) ?? ''})`
+      return `prompt requested (${evt.data.preview ?? ''})`
     case 'prompt.cancelled':
       return `prompt cancelled (${evt.data.reason})`
     case 'todos.updated':
@@ -452,7 +458,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
           ...s,
           executionTrace: trace,
           status: s.status === 'idle' ? 'running' : s.status,
-          protocolNotes: pushProtocolNotes(s.protocolNotes, `Agent busy${evt.data.thread ? ` (${evt.data.thread.slice(0, 12)}…)` : ''}`),
+          protocolNotes: pushProtocolNotes(s.protocolNotes, `Agent busy${evt.data.thread ? ` (${evt.data.thread})` : ''}`),
         }
 
       case 'agent.idle':
@@ -515,7 +521,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
             const n = r.tool_count ?? r.tool_names?.length ?? 0
             return `${r.name}:ok(${n} tools)`
           }
-          return `${r.name}:FAIL${r.error ? `(${String(r.error).slice(0, 120)})` : ''}`
+          return `${r.name}:FAIL${r.error ? `(${String(r.error)})` : ''}`
         })
         const detail = parts.length ? ` · ${parts.join(' · ')}` : ''
         return {
@@ -577,7 +583,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
           sessionCatalogIds: [...evt.data.sessions],
           protocolNotes: pushProtocolNotes(
             s.protocolNotes,
-            `Sessions · ${evt.data.sessions.length}: ${evt.data.sessions.slice(0, 6).join(', ') || '—'}${evt.data.sessions.length > 6 ? ' …' : ''}`,
+            `Sessions · ${evt.data.sessions.length}: ${evt.data.sessions.join(', ') || '—'}`,
           ),
         }
 
@@ -661,10 +667,27 @@ export const useSessionStore = create<SessionStore>((set) => ({
 
       case 'plan.preview': {
         const steps = evt.data.steps ?? []
-        const joined = steps.slice(0, 8).join(' · ')
-        const more = steps.length > 8 ? ` …+${steps.length - 8}` : ''
-        const line = `plan.preview · ${evt.data.pattern} · c=${evt.data.complexity ?? 0}${joined ? ` · ${joined}${more}` : ''}`
-        return { ...s, executionTrace: trace, protocolNotes: pushProtocolNotes(s.protocolNotes, line) }
+        const joined = steps.join('\n')
+        const line = `plan.preview · ${evt.data.pattern} · c=${evt.data.complexity ?? 0}${joined ? `\n${joined}` : ''}`
+        const next = { ...s, executionTrace: trace, protocolNotes: pushProtocolNotes(s.protocolNotes, line) }
+        if (!s.activeTurn) return next
+        const planDetail = [evt.data.reasoning, joined].filter(Boolean).join('\n')
+        return {
+          ...next,
+          activeTurn: {
+            ...s.activeTurn,
+            thinkingSteps: [
+              ...s.activeTurn.thinkingSteps,
+              {
+                id: uid(),
+                step: 'plan',
+                label: `plan · ${evt.data.pattern}`,
+                detail: planDetail || undefined,
+                elapsedMs: undefined,
+              },
+            ],
+          },
+        }
       }
 
       case 'thinking.step': {
@@ -673,9 +696,27 @@ export const useSessionStore = create<SessionStore>((set) => ({
         return { ...s, executionTrace: trace, status: 'thinking', activeTurn: { ...s.activeTurn, thinkingSteps: [...s.activeTurn.thinkingSteps, step] } }
       }
 
-      case 'token.delta':
+      case 'token.delta': {
         if (!s.activeTurn) return { ...s, executionTrace: trace }
-        return { ...s, executionTrace: trace, status: 'running', activeTurn: { ...s.activeTurn, streamedTokens: s.activeTurn.streamedTokens + evt.data.text } }
+        const chunk = evt.data.text ?? ''
+        const allowed = toolNameSet(s.toolNames)
+        const combined = s.activeTurn.streamedTokens + chunk
+        let streamedTokens = combined
+        if (combined.trim().length > 0) {
+          const permissive = allowed.size === 0
+          if (isStrayToolJsonText(combined.trim(), allowed, { permissive })) {
+            streamedTokens = s.activeTurn.streamedTokens
+          } else {
+            streamedTokens = sanitizeAssistantText(combined, allowed)
+          }
+        }
+        return {
+          ...s,
+          executionTrace: trace,
+          status: 'running',
+          activeTurn: { ...s.activeTurn, streamedTokens },
+        }
+      }
 
       case 'tool.call.start': {
         if (!s.activeTurn) return { ...s, executionTrace: trace }
@@ -755,23 +796,54 @@ export const useSessionStore = create<SessionStore>((set) => ({
       case 'graph.node.enter': {
         if (!s.activeTurn) return { ...s, executionTrace: trace }
         const gn: GraphNode = { nodeId: evt.data.node, pattern: evt.data.pattern, enterAt: evt.ts }
-        return { ...s, executionTrace: trace, activeTurn: { ...s.activeTurn, graphNodes: [...s.activeTurn.graphNodes, gn] } }
+        const preview = evt.data.input_preview ?? evt.data.pattern ?? evt.data.node
+        return {
+          ...s,
+          executionTrace: trace,
+          activeTurn: {
+            ...s.activeTurn,
+            graphNodes: [...s.activeTurn.graphNodes, gn],
+            thinkingSteps: [
+              ...s.activeTurn.thinkingSteps,
+              {
+                id: uid(),
+                step: evt.data.node,
+                label: `graph → ${evt.data.node}`,
+                detail: preview || undefined,
+                elapsedMs: undefined,
+              },
+            ],
+          },
+        }
       }
 
       case 'graph.node.exit': {
         const ms = evt.data.duration_ms != null ? `${evt.data.duration_ms}ms` : '?'
         const noteLine = `Graph exit · ${evt.data.node} · ${ms}`
-        const next = !s.activeTurn
+        const detail = evt.data.output_preview ?? evt.data.error ?? undefined
+        const nextTurn = !s.activeTurn
           ? s.activeTurn
           : {
               ...s.activeTurn,
-              graphNodes: s.activeTurn.graphNodes.map((n) => n.nodeId === evt.data.node ? { ...n, exitAt: evt.ts, durationMs: evt.data.duration_ms } : n),
+              graphNodes: s.activeTurn.graphNodes.map((n) =>
+                n.nodeId === evt.data.node ? { ...n, exitAt: evt.ts, durationMs: evt.data.duration_ms } : n,
+              ),
+              thinkingSteps: [
+                ...s.activeTurn.thinkingSteps,
+                {
+                  id: uid(),
+                  step: evt.data.node,
+                  label: `graph · ${evt.data.node} · ${ms}`,
+                  detail,
+                  elapsedMs: evt.data.duration_ms,
+                },
+              ],
             }
         return {
           ...s,
           executionTrace: trace,
           protocolNotes: pushProtocolNotes(s.protocolNotes, noteLine),
-          activeTurn: next,
+          activeTurn: nextTurn,
         }
       }
 
@@ -828,19 +900,44 @@ export const useSessionStore = create<SessionStore>((set) => ({
       case 'message.assistant': {
         const active = s.activeTurn
         if (!active) return { ...s, executionTrace: trace }
-        const content = evt.data.content || active.streamedTokens
-        const newArtifacts = extractArtifacts(content, evt.data.run_id ?? evt.id)
-        const turnTok = s.turnInputTokens + s.turnOutputTokens
+        const allowed = toolNameSet(s.toolNames)
+        const wireBody = sanitizeAssistantText(
+          stripAgloomToolResultEnvelope(evt.data.content ?? ''),
+          allowed,
+        )
+        const streamBody = sanitizeAssistantText(
+          stripAgloomToolResultEnvelope(active.streamedTokens),
+          allowed,
+        )
+        let assistantBody =
+          wireBody.trim().length > 0
+            ? wireBody
+            : streamBody.trim().length > 0
+              ? streamBody
+              : finalizeAssistantMessage(evt.data.content ?? '', active.streamedTokens)
+        assistantBody = sanitizeAssistantText(assistantBody, allowed)
+        if (!assistantBody.trim()) {
+          const permissive = allowed.size === 0
+          if (
+            isStrayToolJsonText((evt.data.content ?? '').trim(), allowed, { permissive }) ||
+            isStrayToolJsonText(active.streamedTokens.trim(), allowed, { permissive })
+          ) {
+            assistantBody =
+              '(model emitted invalid tool JSON; runtime recovers via structured tool calls)'
+          }
+        }
+        const newArtifacts = extractArtifacts(assistantBody, evt.data.run_id ?? evt.id)
+        const turnTokLabel = formatTurnTokenRollup(s.turnInputTokens, s.turnOutputTokens)
         const turn: CompletedTurn = {
           id: active.id,
           userMessage: active.userMessage,
-          assistantMessage: content,
+          assistantMessage: assistantBody,
           thinkingSteps: [...active.thinkingSteps],
           toolCalls: [...active.toolCalls],
           workers: [...active.workers],
           graphNodes: [...active.graphNodes],
           pattern: evt.data.pattern ?? active.pattern ?? undefined,
-          tokens: turnTok > 0 ? turnTok : undefined,
+          tokens: turnTokLabel,
           runId: evt.data.run_id ?? evt.id,
           artifacts: newArtifacts,
           timestamp: new Date(),
@@ -928,13 +1025,12 @@ export const useSessionStore = create<SessionStore>((set) => ({
 
       case 'feedback.scored': {
         const rid = evt.data.run_id
-        const short = rid.length > 14 ? `${rid.slice(0, 12)}…` : rid
         return {
           ...s,
           executionTrace: trace,
           protocolNotes: pushProtocolNotes(
             s.protocolNotes,
-            `Feedback scored · ${evt.data.rating} · run ${short}`,
+            `Feedback scored · ${evt.data.rating} · run ${rid}`,
           ),
         }
       }
@@ -1044,13 +1140,13 @@ export const useSessionStore = create<SessionStore>((set) => ({
         }
 
       case 'prompt.requested': {
-        const pv = (evt.data.preview ?? '').slice(0, 72)
+        const pv = evt.data.preview ?? ''
         return {
           ...s,
           executionTrace: trace,
           protocolNotes: pushProtocolNotes(
             s.protocolNotes,
-            `Prompt · ${evt.data.kind ?? '?'}${pv ? ` · ${pv}${evt.data.preview && evt.data.preview.length > 72 ? '…' : ''}` : ''}`,
+            `Prompt · ${evt.data.kind ?? '?'}${pv ? ` · ${pv}` : ''}`,
           ),
         }
       }

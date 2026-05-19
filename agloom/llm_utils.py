@@ -37,6 +37,13 @@ _GROQ_JSON_SCHEMA_MODEL_IDS: frozenset[str] = frozenset(
         "gpt-oss-safeguard-20b",
     }
 )
+# Prefix allowlist for new Groq structured-output models (see Groq structured-outputs docs).
+_GROQ_JSON_SCHEMA_ID_PREFIXES: tuple[str, ...] = (
+    "meta-llama/llama-4",
+    "llama-4-",
+    "openai/gpt-oss",
+    "gpt-oss",
+)
 
 
 def _is_groq_chat_llm(llm: Any) -> bool:
@@ -64,7 +71,11 @@ def _groq_allows_json_schema_first(llm: Any) -> bool:
     if key in _GROQ_JSON_SCHEMA_MODEL_IDS:
         return True
     tail = key.split("/")[-1]
-    return tail in _GROQ_JSON_SCHEMA_MODEL_IDS
+    if tail in _GROQ_JSON_SCHEMA_MODEL_IDS:
+        return True
+    return any(key.startswith(p) for p in _GROQ_JSON_SCHEMA_ID_PREFIXES) or any(
+        tail.startswith(p) for p in _GROQ_JSON_SCHEMA_ID_PREFIXES
+    )
 
 
 def _env_skip_json_schema_first() -> bool:
@@ -221,15 +232,56 @@ _structured_by_llm: weakref.WeakKeyDictionary[Any, OrderedDict[tuple[type[Any], 
     weakref.WeakKeyDictionary()
 )
 _STRUCTURED_CACHE_MAX_PER_LLM = 64
+_structured_by_id: OrderedDict[Any, OrderedDict[tuple[type[Any], str | None], Any]] = OrderedDict()
+_MAX_ID_STRUCTURED_LLMS = 64
 _cache_lock = threading.Lock()
 
 
-def _llm_allows_structured_cache(llm: Any) -> bool:
+def llm_weak_dict_key_ok(llm: Any) -> bool:
+    """True when *llm* can be a ``WeakKeyDictionary`` key (hashable and weakref-able).
+
+    LangChain chat models such as ``ChatNVIDIA`` often support ``weakref.ref`` but define
+  ``__eq__`` without ``__hash__``, which raises ``TypeError: unhashable type`` on lookup.
+    """
     try:
+        hash(llm)
         weakref.ref(llm)
     except TypeError:
         return False
     return True
+
+
+def _structured_inner_get(llm: Any) -> OrderedDict[tuple[type[Any], str | None], Any] | None:
+    if llm_weak_dict_key_ok(llm):
+        with _cache_lock:
+            return _structured_by_llm.get(llm)
+    from agloom.llm.instance_key import llm_cache_key
+
+    with _cache_lock:
+        return _structured_by_id.get(llm_cache_key(llm))
+
+
+def _structured_inner_get_or_create(llm: Any) -> OrderedDict[tuple[type[Any], str | None], Any]:
+    if llm_weak_dict_key_ok(llm):
+        with _cache_lock:
+            inner = _structured_by_llm.get(llm)
+            if inner is None:
+                inner = OrderedDict()
+                _structured_by_llm[llm] = inner
+            return inner
+    from agloom.llm.instance_key import llm_cache_key
+
+    key = llm_cache_key(llm)
+    with _cache_lock:
+        inner = _structured_by_id.get(key)
+        if inner is None:
+            if len(_structured_by_id) >= _MAX_ID_STRUCTURED_LLMS:
+                _structured_by_id.popitem(last=False)
+            inner = OrderedDict()
+            _structured_by_id[key] = inner
+        else:
+            _structured_by_id.move_to_end(key)
+        return inner
 
 
 def _build_structured[T: BaseModel](
@@ -239,18 +291,14 @@ def _build_structured[T: BaseModel](
 ) -> Any | None:
     """Build a structured LLM, returning None if the method is unsupported.
 
-    Cached per LLM instance (``WeakKeyDictionary``) so ``id(llm)`` reuse after GC
+    Cached per LLM instance (weak dict when hashable, else ``id(llm)``) so GC/id reuse
     cannot return a structured runnable bound to a different model.
     """
     inner_key = (schema, method)
-    cache_ok = _llm_allows_structured_cache(llm)
-
-    if cache_ok:
-        with _cache_lock:
-            inner = _structured_by_llm.get(llm)
-            if inner is not None and inner_key in inner:
-                inner.move_to_end(inner_key)
-                return inner[inner_key]
+    inner = _structured_inner_get(llm)
+    if inner is not None and inner_key in inner:
+        inner.move_to_end(inner_key)
+        return inner[inner_key]
 
     kwargs: dict[str, Any] = {"include_raw": False}
     if method is not None:
@@ -260,17 +308,27 @@ def _build_structured[T: BaseModel](
     except (NotImplementedError, TypeError, ValueError):
         result = None
 
-    if cache_ok:
-        with _cache_lock:
-            inner = _structured_by_llm.get(llm)
-            if inner is None:
-                inner = OrderedDict()
-                _structured_by_llm[llm] = inner
-            if len(inner) >= _STRUCTURED_CACHE_MAX_PER_LLM:
-                inner.popitem(last=False)
-            inner[inner_key] = result
+    inner = _structured_inner_get_or_create(llm)
+    if len(inner) >= _STRUCTURED_CACHE_MAX_PER_LLM:
+        inner.popitem(last=False)
+    inner[inner_key] = result
 
     return result
+
+
+def exercise_llm_weak_dict_paths(llm: Any) -> None:
+    """Touch every LLM-keyed cache path (tests / provider probes). Must not raise."""
+    _circuit_breaker_for(llm)
+
+    class _ProbeSchema(BaseModel):
+        ok: bool = True
+
+    _build_structured(llm, _ProbeSchema, None)
+    _build_structured(llm, _ProbeSchema, None)
+
+    from agloom.skills.lifecycle import _compute_model_fingerprint
+
+    _compute_model_fingerprint(llm)
 
 
 async def _try_invoke[T: BaseModel](
@@ -490,7 +548,7 @@ class CircuitBreaker:
 DEFAULT_CIRCUIT_BREAKER = CircuitBreaker(failure_threshold=5, recovery_timeout=30.0)
 
 _breakers_by_llm: weakref.WeakKeyDictionary[Any, CircuitBreaker] = weakref.WeakKeyDictionary()
-_breakers_by_id: OrderedDict[int, CircuitBreaker] = OrderedDict()
+_breakers_by_id: OrderedDict[Any, CircuitBreaker] = OrderedDict()
 _MAX_ID_BREAKERS = 64
 _breakers_lock = threading.Lock()
 
@@ -500,8 +558,10 @@ def _new_circuit_breaker() -> CircuitBreaker:
 
 
 def _circuit_breaker_for_id(llm: Any) -> CircuitBreaker:
-    """Fallback when ``llm`` cannot be a weak dict key (e.g. bare ``object()`` on Python 3.14)."""
-    key = id(llm)
+    """Fallback when ``llm`` cannot be a weak dict key (uses :func:`~agloom.llm.instance_key.llm_cache_key`)."""
+    from agloom.llm.instance_key import llm_cache_key
+
+    key = llm_cache_key(llm)
     with _breakers_lock:
         br = _breakers_by_id.get(key)
         if br is not None:
@@ -516,9 +576,7 @@ def _circuit_breaker_for_id(llm: Any) -> CircuitBreaker:
 
 def _circuit_breaker_for(llm: Any) -> CircuitBreaker:
     """Per-LLM breaker so classifier failures do not trip structured calls on other models."""
-    try:
-        weakref.ref(llm)
-    except TypeError:
+    if not llm_weak_dict_key_ok(llm):
         return _circuit_breaker_for_id(llm)
     with _breakers_lock:
         br = _breakers_by_llm.get(llm)

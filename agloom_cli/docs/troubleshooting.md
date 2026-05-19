@@ -56,7 +56,19 @@ The npm CLI uses **stdio** only. If stdout corrupts NDJSON (filters, accidental 
 
 Some providers omit usage metadata on streamed chunks.
 
-**Fix:** upgrade the LangChain integration package; fall back to provider dashboards.
+**Fix:** use **`metric.tokens`** for rollups (status bar / `/cost`), not a naive sum of every **`token.delta`**. Upgrade the LangChain integration package if totals stay zero; fall back to provider dashboards.
+
+Display format in the TUI is typically **`↑input ↓output`** when both directions are present.
+
+## Assistant shows raw tool JSON instead of prose
+
+After HITL or a tool-heavy turn, you may see `{"name":"read_file",…}` in the transcript if the client only rendered streamed deltas.
+
+**Fix:** prefer **`message.assistant`** `data.content` as the final answer; strip `[agloom:tool_result]` envelopes. Rebuild the CLI after pulling UI fixes: `cd agloom_cli && npm run build`. See [AGP wire reference](reference.md#assistant-text-wire-vs-stream).
+
+## Tool output looks cut off
+
+Tool rows should show the full **`tool.call.result`** `output_preview`. If you use a custom client, do not cap preview text unless you set `truncated: true` handling yourself.
 
 ## Vertex / Bedrock auth errors
 

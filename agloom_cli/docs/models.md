@@ -1,6 +1,8 @@
 # Models & providers
 
-agloom-cli drives LangChain chat models through **`agloom-runtime`**. Specify a model with **`-m` / `--model`** using `"<provider>:<model-id>"`. Only the **first** colon separates provider from model; model ids may contain `/`, `:`, `@`, etc.
+Pick a backend with **`-m provider:model-id`**. The CLI forwards resolution to **`agloom-runtime`** — you get the same catalog as `agloom --list-providers` and dry-run checks with **`--resolve-model`**.
+
+Only the **first** colon separates provider from model; ids may contain `/`, `:`, `@`, etc.
 
 **LiteLLM**, **OpenRouter**, and **`lc:` / `init:`** routing are documented under [Broad-routing prefixes](#broad-routing-prefixes) below (they use aggregator or unified-initializer flows rather than the curated slug table).
 

@@ -7,6 +7,7 @@ wire stream stays a complete trace without silently dropping data.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 from uuid import uuid4
 
@@ -17,6 +18,12 @@ from ..protocol.emitter import _lit_token_role
 
 logger = get_logger(__name__)
 
+_TRANSLATOR_VERBOSE_THINKING = os.environ.get("AGLOOM_TRANSLATOR_VERBOSE_THINKING", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 # Event-type strings from ``UnifiedAgent.astream_events`` (opaque to callers). New types get a
 # dedicated branch when needed; unknown names still flow through as ``thinking.step``.
 _AGENT_EVENT_THINKING_TYPES: frozenset[str] = frozenset(
@@ -131,9 +138,8 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
             pattern=pattern,
             complexity=_int(data.get("complexity")),
             confidence=_float(data.get("confidence")),
-            reason=_str(data.get("reason")) or _str(data.get("output")),
+            reason=None,
         )
-        # Also surface as a thinking step so UIs that only consume thinking.* still see it.
         emitter.emit_thinking_step(
             step="analyze_query",
             label=f"pattern={pattern}",
@@ -277,10 +283,10 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
         emitter.emit_tool_call_result(
             tool=tool,
             tool_call_id=tcid,
-            output_preview=out[:1024] if out else "",
+            output_preview=out or "",
             output_bytes=len(out) if out else 0,
             duration_ms=_int(data.get("duration_ms")),
-            truncated=bool(out and len(out) > 1024),
+            truncated=False,
             diff=diff_payload,
         )
         skill_name = _str(data.get("skill_name"))
@@ -404,7 +410,7 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
             emitter.emit_worker_halted(
                 worker_id=worker_id,
                 reason=err or "HALT_ALL",
-                output_preview=out[:1024] if out else "",
+                output_preview=out or "",
                 duration_ms=_int(data.get("duration_ms")),
             )
             return
@@ -419,10 +425,10 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
         out = _str(data.get("output")) or _str(data.get("content")) or ""
         emitter.emit_worker_completed(
             worker_id=worker_id,
-            output_preview=out[:1024] if out else "",
+            output_preview=out or "",
             output_bytes=len(out) if out else 0,
             duration_ms=_int(data.get("duration_ms")),
-            truncated=bool(out and len(out) > 1024),
+            truncated=False,
         )
         return
 
@@ -534,16 +540,20 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
         )
         return
 
-    # Forward-compat: unknown event types still surface as a thinking step so nothing is lost.
-    # When new categories ship (tool.*, hitl.*, …) we add explicit branches above this line.
+    # Forward-compat: unknown types — emit full output as ``thinking.step`` when present.
     if et not in _TRANSLATED_AGENT_EVENT_TYPES:
-        logger.warning(
-            f"translate: unmapped AgentEvent type {et!r} — forwarding as thinking.step"
-        )
+        msg = f"translate: unmapped AgentEvent type {et!r}"
+        if _TRANSLATOR_VERBOSE_THINKING:
+            logger.warning(msg)
+        else:
+            logger.debug(msg)
+    detail = _str(data.get("output"))
+    if not detail:
+        return
     emitter.emit_thinking_step(
         step=et,
         label=_str(data.get("name")) or et,
-        detail=_str(data.get("output")),
+        detail=detail,
         elapsed_ms=_int(data.get("duration_ms")),
     )
 

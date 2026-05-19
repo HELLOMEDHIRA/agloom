@@ -1,28 +1,64 @@
 # Web workspace (`agloom_web`)
 
-Vite + React Router SPA that consumes **AGP** over WebSocket — same event contract as **agloom-cli** (stdio bridge).
+Browser workspace for agloom agents — same **AGP** event vocabulary as the terminal CLI, delivered over **WebSocket**.
 
 ## Quick start
 
-1. `cd agloom_web && npm install && npm run dev`
-2. Run **`agloom-runtime serve --transport=ws`** (default port **8765** matches the Vite proxy for `/agp-ws`).
-3. Open [http://localhost:3000](http://localhost:3000).
+```bash
+# Terminal 1 — Python bridge
+agloom-runtime serve --transport=ws --port 8765
 
-Production build: **`npm run build`** → static **`dist/`**. Set **`VITE_AGP_WS_URL`** at build time for your runtime WebSocket URL (see **`.env.example`**).
+# Terminal 2 — web dev server
+cd agloom_web && npm install && npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). Vite proxies **`/agp-ws`** → `ws://localhost:8765` in development.
+
+Production: **`npm run build`** → serve **`dist/`** with **`VITE_AGP_WS_URL=wss://your-runtime.example.com`** at build time (see **`.env.example`**).
+
+---
+
+## What you get
+
+| Surface | Purpose |
+| ------- | ------- |
+| **Chat** | Streaming assistant, full tool rows, inline HITL |
+| **Runtime panel** | Graph, workers, execution trace, artifacts |
+| **Observability** | `/observe` dashboard and per-session replay |
+
+The web app is an **AGP consumer** — it does not run Python in the browser.
+
+---
 
 ## Routes
 
-| Path                      | Screen                                                                                     |
-| ------------------------- | ------------------------------------------------------------------------------------------ |
-| **`/`**                   | Home — sessions list / navigation                                                          |
-| **`/session/:id`**        | Chat + right-hand runtime panel (graph, workers, trace, artifacts)                         |
-| **`/observe`**            | Observability dashboard (live metrics / sessions; uses proxied **`/observe`** HTTP in dev) |
-| **`/sessions/:id/trace`** | Per-session trace & replay                                                                 |
-| **`/settings`**           | Runtime connection hints (WS URL is primarily **`VITE_AGP_WS_URL`**)                       |
+| Path | Screen |
+| ---- | ------ |
+| **`/`** | Home — sessions / navigation |
+| **`/session/:id`** | Chat + runtime sidebar |
+| **`/observe`** | Live metrics and sessions |
+| **`/sessions/:id/trace`** | Trace viewer & replay |
+| **`/settings`** | Connection hints |
+
+---
 
 ## Documentation
 
-- **[architecture.md](architecture.md)** — stack, proxies, state (`dispatch` reducer parity with CLI), deployment & CSP notes.
-- **Python / AGP protocol** — canonical spec in the main repo at `agloom/docs/protocol/agp.md` (published under MkDocs **Protocol**).
+| Page | Content |
+| ---- | ------- |
+| [architecture.md](architecture.md) | Stack, state reducer, display rules, deployment |
+| [AGP protocol](../agloom/protocol/agp.md) | Wire contract (MkDocs **Protocol**) |
+| [Production deployment](../agloom/guides/deployment.md) | Docker, reverse proxy, `VITE_AGP_WS_URL` |
 
-The Zustand **`dispatch`** reducer handles inbound AGP events so wire traffic is not silently dropped; runtime, tool, and memory feedback surfaces in the execution trace panel.
+---
+
+## Parity with the CLI
+
+Both clients:
+
+- Dispatch AGP events through a **Zustand `dispatch` reducer**
+- Prefer **`message.assistant`** for final text (not raw tool JSON)
+- Show **full** tool results and reasoning traces
+- Roll up tokens from **`metric.tokens`** (`↑` / `↓` display)
+
+Differences: CLI uses **stdio**; web uses **WebSocket** + optional **`/observe`** HTTP in dev.

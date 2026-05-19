@@ -6,7 +6,7 @@ import React from 'react'
 import { Box, Text, useWindowSize } from 'ink'
 import { Badge } from '@inkjs/ui'
 import { useSessionStore } from '../store/session.js'
-import { fmtTokens, truncate } from '../utils/format.js'
+import { fmtTokens } from '../utils/format.js'
 
 interface HeaderProps {
   /**
@@ -28,10 +28,6 @@ export const Header = ({ layoutWidth }: HeaderProps): React.ReactElement => {
   /** Explicit split-layout width overrides raw terminal columns (see `HeaderProps.layoutWidth`). */
   const termWidth = layoutWidth ?? columns ?? 80
   const tokenStr = totalIn + totalOut > 0 ? `${fmtTokens(totalIn)}↑ ${fmtTokens(totalOut)}↓` : ''
-  /** Keep the bar on one row: long ``provider:model`` ids must not wrap over the chat / sidebar. */
-  const modelBudget = Math.max(12, termWidth - (tokenStr ? 34 : 22) - (pattern ? String(pattern).length + 4 : 0))
-  const modelLabel = model ? truncate(model, modelBudget) : ''
-
   return (
     <Box
       width={termWidth}
@@ -52,9 +48,11 @@ export const Header = ({ layoutWidth }: HeaderProps): React.ReactElement => {
       <Text> </Text>
 
       {/* Model id */}
-      {modelLabel && (
+      {model && (
         <Box marginRight={1}>
-          <Badge color="blue">{modelLabel}</Badge>
+          <Text color="blue" wrap="wrap">
+            {model}
+          </Text>
         </Box>
       )}
 

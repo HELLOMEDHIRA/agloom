@@ -1,6 +1,6 @@
 /** Root terminal UI layout: AGP-driven state via `useSessionStore.dispatch`; completed turns render in the live tree (replay-safe). */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { Alert } from '@inkjs/ui'
 import { Box, Text, useApp, useInput, useWindowSize } from 'ink'
@@ -18,7 +18,6 @@ import { SLASH_HELP_LINES } from '../utils/slashCommands.js'
 import { appendHistory, defaultHistoryPath, loadHistory } from '../utils/promptHistory.js'
 import { suggestFromHistory } from '../utils/fuzzySuggest.js'
 import { splitPastedMultilineWhenSingleLineMode } from '../utils/pasteCompose.js'
-import { isCtrlY } from '../utils/keys.js'
 import { resolveAgloomProjectRoot } from '../config.js'
 
 interface AppProps {
@@ -70,8 +69,6 @@ export const App = ({
   const reset = useSessionStore((s) => s.reset)
   const clearError = useSessionStore((s) => s.clearError)
   const appendProtocolNote = useSessionStore((s) => s.appendProtocolNote)
-  const toggleHideThinkingTrace = useSessionStore((s) => s.toggleHideThinkingTrace)
-  const hideThinkingTrace = useSessionStore((s) => s.hideThinkingTrace)
 
   const activeThreadId = useSessionStore((s) => s.activeThreadId)
   const thread = activeThreadId ?? initialThread
@@ -103,14 +100,6 @@ export const App = ({
   /** Multiline compose from ``agloom.yaml`` ``multiline`` (default on when omitted), or auto after pasting newlines when false. */
   const ml = multilineOpt || pasteCompose
 
-  const fireThinkingHotkey = useCallback(() => {
-    toggleHideThinkingTrace()
-    const after = useSessionStore.getState()
-    appendProtocolNote(
-      after.hideThinkingTrace ? 'Reasoning trace hidden (Ctrl+Y or /think to show)' : 'Reasoning trace visible (dim)',
-    )
-  }, [toggleHideThinkingTrace, appendProtocolNote])
-
   const { columns, rows } = useWindowSize()
   const termWidth = columns ?? 80
   /** Prefer Ink-reported rows; fall back to TTY rows so the composer stays at the physical bottom in narrow hosts. */
@@ -133,23 +122,22 @@ export const App = ({
   const statusRows = 2
   const inputRows = status !== 'hitl' ? 4 : 0
   const hitlRows = status === 'hitl' ? 7 : 0
+  /** Pinned footer dock (status + composer / HITL) — reserved from the bottom of the terminal. */
+  const footerRows = statusRows + (status === 'hitl' ? hitlRows : inputRows)
+  /** Middle pane height (header + footer are outside this row). */
+  const middleRowHeight = Math.max(10, termHeight - headerRows - footerRows)
+  /** Rows inside the middle pane above the scrollable transcript (footer rows are not subtracted again). */
   const activeTurnRows = activeTurn ? 8 : 0
   const diagRows = diagOpen ? 9 : 0
   const slashRows = slashHelpOpen ? SLASH_HELP_LINES.length + 4 : 0
   const outboundRows = outboundPrompt && !activeTurn ? 2 : 0
-  const scrollHintRows = 1
-  const consumedAboveTranscript =
-    headerRows +
-    statusRows +
-    inputRows +
-    hitlRows +
+  const middleOverhead =
+    (slashHelpOpen ? slashRows : 0) +
     activeTurnRows +
-    diagRows +
-    slashRows +
+    (diagOpen ? diagRows : 0) +
     outboundRows +
-    scrollHintRows +
-    2
-  const chatScrollLines = Math.max(4, Math.max(0, termHeight - consumedAboveTranscript))
+    1
+  const chatScrollLines = Math.max(4, middleRowHeight - middleOverhead)
 
   useInput((char, key) => {
     if (slashHelpOpen) {
@@ -170,15 +158,6 @@ export const App = ({
     }
     if (key.ctrl && char === 'x') {
       bridge.cancel(thread)
-      return
-    }
-    if (isCtrlY(char, key) && status === 'hitl') {
-      fireThinkingHotkey()
-      return
-    }
-    if (key.ctrl && char === 't') {
-      useSessionStore.getState().toggleActiveTurnToolExpandBulk()
-      appendProtocolNote('Tools: toggled expand/collapse for current turn (Ctrl+T)')
       return
     }
   })
@@ -300,7 +279,7 @@ export const App = ({
         }
         bridge.invoke(last.userMessage, thread)
         appendHistory(histPath, last.userMessage)
-        appendProtocolNote(`/retry · re-running: "${last.userMessage.slice(0, 60)}${last.userMessage.length > 60 ? '…' : ''}"`)
+        appendProtocolNote(`/retry · re-running: "${last.userMessage}"`)
         setHistRefresh((n) => n + 1)
         break
       }
@@ -392,21 +371,6 @@ export const App = ({
             `/stats · metrics sidebar needs terminal width ≥ ${SPLIT_MIN_TERM_WIDTH} cols (currently ${termWidth}); widen terminal or shrink font.`,
           )
         }
-        break
-      }
-
-      case '/tools': {
-        useSessionStore.getState().toggleActiveTurnToolExpandBulk()
-        appendProtocolNote('/tools · toggled expand/collapse for current turn (same as t / Ctrl+T)')
-        break
-      }
-
-      case '/think': {
-        toggleHideThinkingTrace()
-        const st = useSessionStore.getState()
-        appendProtocolNote(
-          st.hideThinkingTrace ? '/think · reasoning hidden' : '/think · reasoning visible (dim inline)',
-        )
         break
       }
 
@@ -528,7 +492,14 @@ export const App = ({
         <Header layoutWidth={termWidth} />
       </Box>
 
-      <Box flexDirection="row" flexGrow={1} minHeight={0} width={termWidth}>
+      <Box
+        flexDirection="row"
+        flexGrow={1}
+        minHeight={0}
+        height={middleRowHeight}
+        width={termWidth}
+        alignItems="stretch"
+      >
         <Box flexDirection="column" width={mainColumnWidth} flexGrow={1} minHeight={0}>
         {slashHelpOpen && (
           <Box
@@ -553,17 +524,13 @@ export const App = ({
         <Box flexDirection="column" flexGrow={1} minHeight={0} marginX={1}>
           <ChatTranscript
             turns={completedTurns}
-            hideThinkingTrace={hideThinkingTrace}
             width={mainColumnWidth}
             maxLines={chatScrollLines}
+            allowBracketScroll={!showMetricsSidebar}
           />
         </Box>
 
         <ActiveTurn />
-
-        {status === 'hitl' && hitlQueue[0] !== undefined && (
-          <HITLPrompt request={hitlQueue[0]} bridge={bridge} />
-        )}
 
         {status === 'error' && errorMessage && (
           <Box marginX={1} marginBottom={0}>
@@ -601,18 +568,36 @@ export const App = ({
               </Text>
               <Text color="gray"> · </Text>
               <Text dimColor>
-                {outboundPrompt.length > 2000 ? `${outboundPrompt.slice(0, 1997)}…` : outboundPrompt}
+                {outboundPrompt}
               </Text>
             </Text>
           </Box>
         )}
 
-        <Box flexShrink={0}>
-          <StatusBar thread={thread} layoutWidth={mainColumnWidth} />
         </Box>
 
-        {status !== 'hitl' && (
-          <Box flexShrink={0} flexDirection="column" width={mainColumnWidth}>
+      {showMetricsSidebar && (
+        <Box
+          marginLeft={1}
+          flexDirection="column"
+          width={SIDEBAR_WIDTH}
+          height={middleRowHeight}
+          minHeight={middleRowHeight}
+          flexGrow={1}
+          alignSelf="stretch"
+          flexShrink={0}
+        >
+          <MetricsPanel thread={thread} width={SIDEBAR_WIDTH} maxHeight={middleRowHeight} />
+        </Box>
+      )}
+      </Box>
+
+      <Box flexShrink={0} flexDirection="row" width={termWidth}>
+        <Box flexDirection="column" width={mainColumnWidth} flexShrink={0}>
+          <StatusBar thread={thread} layoutWidth={mainColumnWidth} />
+          {status === 'hitl' && hitlQueue[0] !== undefined ? (
+            <HITLPrompt request={hitlQueue[0]} bridge={bridge} />
+          ) : status !== 'hitl' ? (
             <InputBar
               value={input}
               onChange={handleInputChange}
@@ -622,28 +607,10 @@ export const App = ({
               onRecallNext={recallNext}
               suggestions={fuzzySuggestions}
               composerWidth={mainColumnWidth}
-              onThinkingHotkey={fireThinkingHotkey}
             />
-          </Box>
-        )}
+          ) : null}
         </Box>
-
-      {showMetricsSidebar && (
-        <Box
-          marginLeft={1}
-          flexDirection="column"
-          width={SIDEBAR_WIDTH}
-          flexGrow={1}
-          minHeight={0}
-          flexShrink={0}
-        >
-          <MetricsPanel
-            thread={thread}
-            width={SIDEBAR_WIDTH}
-            maxHeight={Math.max(10, termHeight - 3)}
-          />
-        </Box>
-      )}
+        {showMetricsSidebar ? <Box width={SIDEBAR_WIDTH + 1} flexShrink={0} /> : null}
       </Box>
     </Box>
   )

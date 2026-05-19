@@ -33,13 +33,13 @@ const summarise = (evt: AGPEvent): string => {
   switch (evt.type) {
     case 'session.opened':    return `session opened`
     case 'session.closed':    return `${d['reason'] ?? '?'}`
-    case 'message.user':      return `user: ${String(d['content'] ?? '').slice(0, 40)}`
+    case 'message.user':      return `user: ${String(d['content'] ?? '')}`
     case 'message.assistant': return `response`
     case 'tool.call.start':   return `tool: ${d['tool'] ?? '?'}()`
     case 'worker.spawned':    return `worker: ${d['name'] ?? '?'}`
     case 'worker.halted':     return `halt: ${d['worker_id'] ?? '?'}`
     case 'hitl.request':      return `HITL: ${d['kind'] ?? '?'}`
-    case 'error.fatal':       return `fatal: ${String(d['message'] ?? '').slice(0, 40)}`
+    case 'error.fatal':       return `fatal: ${String(d['message'] ?? '')}`
     default:                  return evt.type
   }
 }
@@ -68,7 +68,7 @@ export const LiveFeed = (): React.ReactElement => {
           const next = [...prev, {
             id: ++_counter,
             type: envelope.type,
-            session: (envelope.session ?? '').slice(0, 10),
+            session: envelope.session ?? '',
             ts: envelope.ts,
             summary: summarise(envelope),
           }]
@@ -98,11 +98,11 @@ export const LiveFeed = (): React.ReactElement => {
       <div className="flex-1 overflow-y-auto font-mono text-[11px]">
         {events.map((ev) => (
           <div key={ev.id} className="flex items-start gap-2 px-3 py-1 hover:bg-neutral-900/50">
-            <span className="text-neutral-700 shrink-0">{ev.session}</span>
+            <span className="text-neutral-700 shrink-0 max-w-24 break-all">{ev.session}</span>
             <span className={cn('shrink-0', TYPE_COLOR[ev.type] ?? 'text-neutral-400')}>
               {ev.type.split('.').slice(-1)[0]}
             </span>
-            <span className="text-neutral-500 flex-1 truncate">{ev.summary}</span>
+            <span className="text-neutral-500 flex-1 whitespace-pre-wrap break-words">{ev.summary}</span>
             <span className="text-neutral-700 shrink-0">{format(new Date(ev.ts), 'HH:mm:ss')}</span>
           </div>
         ))}
