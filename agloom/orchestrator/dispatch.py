@@ -51,6 +51,14 @@ async def _reclassify_if_needed(
     ctx: OrchestrationContext,
     analysis: QueryAnalysis | None,
 ) -> QueryAnalysis:
+    if agent.get("_frozen_replay"):
+        if analysis is not None:
+            return analysis
+        return QueryAnalysis(
+            pattern=instruction.pattern,
+            complexity=5,
+            reasoning=instruction.escalation_reason or "frozen_replay",
+        )
     if analysis is not None and not instruction.reclassify:
         return analysis
     if not instruction.reclassify:
@@ -299,7 +307,7 @@ async def dispatch_pattern(
 
         evaluation = await evaluate_execution(agent, result, instruction, ctx)
         escalations: list[SpawnInstruction] = []
-        if ctx.auto_escalation:
+        if ctx.auto_escalation and not agent.get("_frozen_replay"):
             escalations = await check_escalation(agent, result, evaluation, instruction, ctx)
             for spawn_instr in escalations:
                 record_step(

@@ -131,7 +131,7 @@ nav:
       - Production Integration: _packages/agloom/guides/production.md
       - Production deployment: _packages/agloom/guides/deployment.md
       - LCEL / callables as tools: _packages/agloom/guides/lcel-as-tools.md
-      - Migrating from LangChain: _packages/agloom/guides/migration-from-langchain.md
+      - "LangChain create_agent → agloom": _packages/agloom/guides/migration-from-langchain.md
   - Examples:
       - Python examples (repo): _packages/agloom/examples/python-examples.md
   - Architecture:

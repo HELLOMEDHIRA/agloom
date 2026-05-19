@@ -173,6 +173,28 @@ def test_strip_deprecated_memory_skills_enabled_lines() -> None:
     assert "max_skills: 3" in out
 
 
+def test_ensure_migrates_legacy_system_prompt(tmp_path: Path) -> None:
+    import yaml as pyyaml
+
+    from agloom.prompts.yaml_sync import extract_system_prompt_from_yaml, is_canonical_cli_system_prompt
+
+    dot = tmp_path / ".agloom"
+    dot.mkdir(parents=True)
+    y = dot / "agloom.yaml"
+    y.write_text(
+        "ai:\n  model: auto\n  system_prompt: |\n"
+        "    You are an autonomous AI programming assistant built with agloom.\n"
+        "    ## Your Capabilities\n",
+        encoding="utf-8",
+    )
+    args = SimpleNamespace(rewrite_workspace_yaml=True)
+    ensure_agloom_workspace(tmp_path, args=args)
+    data = pyyaml.safe_load(y.read_text(encoding="utf-8"))
+    sp = extract_system_prompt_from_yaml(data)
+    assert sp is not None
+    assert is_canonical_cli_system_prompt(sp)
+
+
 def test_ensure_agloom_workspace_strips_memory_skills_enabled(tmp_path: Path) -> None:
     dot = tmp_path / ".agloom"
     dot.mkdir(parents=True)

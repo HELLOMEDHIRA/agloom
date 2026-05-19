@@ -24,7 +24,10 @@ async def main():
     model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
     llm = ChatGroq(model=model, api_key=key)
     agent = await create_agent(model=llm, name="my-first-agent")
-    result = await agent.ainvoke("What is the capital of Japan?")
+    result = await agent.ainvoke({
+        "messages": [{"role": "user", "content": "What is the capital of Japan?"}],
+    })
+    # Or: await agent.ainvoke("What is the capital of Japan?")
     print(result.output)
 
 asyncio.run(main())
@@ -33,6 +36,8 @@ asyncio.run(main())
 ### What happened
 
 1. `create_agent` wired up the full pipeline — classifier, pattern handlers, error handling
+
+If you are porting from **LangChain’s** `create_agent`, see [Migrating from LangChain](../guides/migration-from-langchain.md#from-langchain-create_agent).
 2. `ainvoke` classified the query and routed it to a pattern (often **DIRECT** for short factual questions — the exact pattern depends on the model and tools)
 3. The handler ran and returned the result
 

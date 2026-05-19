@@ -15,6 +15,7 @@ That is the **application path**: you supply a model and tools; agloom classifie
 | You provide | agloom handles automatically |
 | ----------- | ---------------------------- |
 | LangChain-compatible **model** | Per-turn **pattern** selection (nine strategies) |
+| LangChain **`create_agent` invoke shape** | Same `{"messages": [...]}` input — see [migration guide](migration-from-langchain.md#from-langchain-create_agent) |
 | Optional **tools** | Tool loops, worker pools, pipelines, reflection |
 | Optional **`thread_id`** | Session memory injection |
 | Optional **`store=`** | Long-term memory, skills, quality scoring |

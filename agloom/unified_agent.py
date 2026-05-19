@@ -19,7 +19,7 @@ import weakref
 from collections import OrderedDict
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, overload
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -59,6 +59,7 @@ from .models import (
     _merge_token_usage,
 )
 from .multimodal import merge_context_into_user_turn, text_from_user_turn
+from .turn_input import TurnInput
 from .patterns.blackboard import handle_blackboard
 from .patterns.hybrid_dag import handle_hybrid_dag
 from .patterns.pipeline import handle_pipeline
@@ -603,14 +604,36 @@ def normalize_tools(tools: Sequence[Any]) -> list[BaseTool]:
     return normalised
 
 
-def resolve_system_prompt(system_prompt: Any) -> str | Callable:
+@overload
+def resolve_system_prompt(
+    system_prompt: Callable[..., Any],
+    *,
+    cli_tools: bool = False,
+) -> Callable[..., Any]: ...
+
+
+@overload
+def resolve_system_prompt(
+    system_prompt: str | SystemMessage | None,
+    *,
+    cli_tools: bool = False,
+) -> str: ...
+
+
+def resolve_system_prompt(
+    system_prompt: Any,
+    *,
+    cli_tools: bool = False,
+) -> str | Callable[..., Any]:
     """Accept str, SystemMessage, Callable, or None. Callables are deferred to per-run resolution."""
+    from agloom.prompts import compose_agent_system_prompt
+
     if callable(system_prompt) and not isinstance(system_prompt, str):
         return system_prompt
     if isinstance(system_prompt, SystemMessage):
         content = system_prompt.content
-        return content if isinstance(content, str) else str(content)
-    return system_prompt or DEFAULT_SYSTEM_PROMPT
+        system_prompt = content if isinstance(content, str) else str(content)
+    return cast(str, compose_agent_system_prompt(system_prompt, cli_tools=cli_tools))
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -1098,69 +1121,51 @@ async def _ensure_harness_bootstrapped(
         logger.warning(f"[{config.get('name', 'Agent')}] harness bootstrap failed ({exc!r}) — proceeding")
 
 
-def _validate_frozen_params(
-    frozen: bool,
-    frozen_template: str | None,
-    input_key: str | list[str],
-) -> None:
-    """Validate frozen-mode params at construction time; raises ValueError on invalid input."""
-    if not frozen:
-        return
-    if not frozen_template or not frozen_template.strip():
-        raise ValueError(
-            "frozen=True requires frozen_template. "
-            "Provide a template string with {placeholder} for each input_key.\n"
-            "Example:\n"
-            "  create_agent(\n"
-            "    frozen=True,\n"
-            "    frozen_template='Classify this email: {input}',\n"
-            "  )"
-        )
-    keys: list = [input_key] if isinstance(input_key, str) else list(input_key)
-    if not keys:
-        raise ValueError("input_key must be a non-empty str or non-empty list[str].")
-    for k in keys:
-        if not isinstance(k, str) or not k.strip():
-            raise ValueError(f"Every value in input_key must be a non-empty string. Got: {k!r}")
-
-
-async def _ensure_frozen_analysis(config: dict) -> None:
-    """Lazy classify for frozen agents with TTL-based invalidation. Double-check locking via asyncio.Lock."""
+async def _ensure_frozen_plan(config: dict, turn: TurnInput) -> None:
+    """Classify once and lock classifier-derived execution plan (TTL + fingerprint aware)."""
     import time as _time
 
+    from .frozen import (
+        build_execution_plan,
+        classify_text_for_freeze,
+        clear_frozen_plan,
+        get_frozen_plan,
+    )
+    from .orchestrator import orchestration_enabled
     frozen_ttl = config.get("frozen_analysis_ttl", 0)
-    existing = config.get("frozen_analysis")
-
-    if existing is not None:
+    if get_frozen_plan(config) is not None:
         if frozen_ttl <= 0:
             return
         elapsed = _time.monotonic() - config.get("_frozen_analysis_ts", 0)
         if elapsed < frozen_ttl:
             return
         logger.event(
-            f"[{config.get('name', 'Agent')}] frozen analysis expired "
+            f"[{config.get('name', 'Agent')}] frozen plan expired "
             f"({elapsed:.0f}s > TTL {frozen_ttl}s) — re-classifying"
         )
+        clear_frozen_plan(config)
 
     async with config["_frozen_lock"]:
-        existing = config.get("frozen_analysis")
-        if existing is not None:
+        if get_frozen_plan(config) is not None:
             if frozen_ttl <= 0:
                 return
             elapsed = _time.monotonic() - config.get("_frozen_analysis_ts", 0)
             if elapsed < frozen_ttl:
                 return
+            clear_frozen_plan(config)
 
         name = config.get("name", "Agent")
-        logger.event(f"[{name}] frozen agent — classifying template: {config['frozen_template']!r}")
+        classify_input = classify_text_for_freeze(config, turn)
+        logger.event(f"[{name}] frozen agent — classifying: {classify_input[:120]!r}")
 
         analysis = await _execute_analyze_query(
             config,
-            augmented_query=config["frozen_template"],
+            augmented_query=classify_input,
             skill_context="",
         )
 
         registry = config.get("registry", _HANDLERS)
+        analysis = _coerce_unknown_pattern_handler(config, analysis, registry=registry)
         handler = registry.get(analysis.pattern)
         if handler is None:
             logger.warning(
@@ -1168,47 +1173,26 @@ async def _ensure_frozen_analysis(config: dict) -> None:
             )
             handler = handle_react
 
-        config["frozen_analysis"] = analysis
-        config["_frozen_handler"] = handler
-        config["_frozen_analysis_ts"] = _time.monotonic()
+        mode = "dispatch" if orchestration_enabled(config, analysis) else "handler"
+        build_execution_plan(
+            config,
+            analysis=analysis,
+            handler=handler,
+            classify_text=classify_input,
+            execution_mode=mode,
+        )
+        config["_frozen_replay"] = False
 
+        locked_plan = get_frozen_plan(config)
+        orch_depth = locked_plan.orchestration.max_depth if locked_plan is not None else 0
         logger.event(
             f"[{name}] frozen agent locked — "
             f"pattern={analysis.pattern.value} "
+            f"mode={mode} "
             f"handler={handler.__name__} "
             f"subtasks={len(analysis.subtasks)} "
-            f"(this analysis is reused for ALL subsequent calls)"
+            f"orch_depth={orch_depth}"
         )
-
-
-def _apply_frozen_substitution(
-    query: str | dict,
-    frozen_template: str,
-    system_prompt: str,
-    analysis: QueryAnalysis,
-    input_key: str | list[str],
-) -> tuple[str, str, QueryAnalysis]:
-    """Replace {input_key} placeholders in query, system_prompt, and subtask texts via model_copy."""
-    keys: list = [input_key] if isinstance(input_key, str) else list(input_key)
-    subs: dict = {keys[0]: query} if isinstance(query, str) else {k: str(v) for k, v in query.items()}
-
-    def _sub(template: str) -> str:
-        result = template
-        placeholders: dict[str, str] = {}
-        for i, (k, v) in enumerate(subs.items()):
-            token = f"__AGLOOM_SUB_{i}__"
-            placeholders[token] = v
-            result = result.replace(f"{{{k}}}", token)
-        for token, v in placeholders.items():
-            result = result.replace(token, v)
-        return result
-
-    sub_query = _sub(frozen_template)
-    sub_system_prompt = _sub(system_prompt)
-    sub_analysis = analysis.model_copy(
-        update={"subtasks": [st.model_copy(update={"task": _sub(st.task)}) for st in analysis.subtasks]}
-    )
-    return sub_query, sub_system_prompt, sub_analysis
 
 
 def _extract_delegate_from_analysis(
@@ -1240,6 +1224,8 @@ async def run_fresh(
     invoke_config: dict,
     context: dict,
     user_id: str | None = None,
+    *,
+    turn: Any | None = None,
 ) -> ExecutionResult:
     """Execute one user turn: middleware, memory, classify (unless frozen), handlers, skills, feedback hooks.
 
@@ -1252,6 +1238,8 @@ async def run_fresh(
     memory = config.get("memory")
     store = config.get("store")
     cache = config.get("query_cache")
+    if config.get("frozen"):
+        cache = None
     registry = config.get("registry", _HANDLERS)
     ml = config.get("max_step_output_length", 0)
 
@@ -1263,12 +1251,19 @@ async def run_fresh(
 
     reset_wire_emitted_usage(config)
 
-    if isinstance(query, str):
-        raw_query_str = query
-    elif isinstance(query, list):
-        raw_query_str = text_from_user_turn(query)
-    else:
-        raw_query_str = " ".join(str(v) for v in query.values())
+    from .frozen import apply_frozen_turn, frozen_replay_active
+    from .turn_input import TurnInput, normalize_turn_input
+
+    if turn is None:
+        turn = config.get("_turn_input")
+    if turn is None:
+        turn = normalize_turn_input(query)
+    elif not isinstance(turn, TurnInput):
+        turn = normalize_turn_input(query)
+
+    user_turn = turn.user_turn
+    raw_query_str = turn.user_text
+    config["_frozen_replay"] = False
 
     processed_query = await _run_before_agent(config.get("middleware", []), raw_query_str, context)
 
@@ -1301,7 +1296,7 @@ async def run_fresh(
             injected_chars=injected,
         )
 
-    is_frozen = bool(config.get("frozen") and config.get("frozen_analysis") is not None)
+    is_frozen = frozen_replay_active(config)
 
     harness_ctx = await _build_harness_context_for_classify(config, is_frozen=is_frozen)
     if harness_ctx and not is_frozen:
@@ -1313,24 +1308,18 @@ async def run_fresh(
                 f"progress={progress_tracker.artifact.completion_ratio:.0%}"
             )
 
+    frozen_execution_mode = "handler"
     if is_frozen:
-        sub_query, sub_system_prompt, analysis = _apply_frozen_substitution(
-            query=text_from_user_turn(query) if isinstance(query, list) else query,
-            frozen_template=config["frozen_template"],
-            system_prompt=config["system_prompt"],
-            analysis=config["frozen_analysis"],
-            input_key=config.get("input_key", "input"),
-        )
-        config = {**config, "system_prompt": sub_system_prompt}
+        analysis, handler, sub_query, frozen_execution_mode, _frozen_orch = apply_frozen_turn(config, turn)
         augmented_query = (
             f"{memory_ctx}\n{harness_ctx}\n{sub_query}"
             if memory_ctx
             else (f"{harness_ctx}\n{sub_query}" if harness_ctx else sub_query)
         )
-        handler = config["_frozen_handler"]
         pattern_val = analysis.pattern.value
         logger.event(
-            f"[{name}] frozen path — pattern={pattern_val} (skipped skill injection, classify, handler lookup)"
+            f"[{name}] frozen replay — pattern={pattern_val} mode={frozen_execution_mode} "
+            f"(skipped classify; classifier-derived plan)"
         )
     else:
         handoff_targets = config.get("_handoff_targets") or []
@@ -1585,11 +1574,16 @@ async def run_fresh(
     exec_invoke_config = {**exec_base, "_steps": _steps}
     t_exec = time.perf_counter()
     await _emit_graph_node_event(config, "graph_node_enter", node=pattern_val, pattern=pattern_val, input_preview=augmented_query)
-    handler_user_turn = merge_context_into_user_turn(augmented_query, query)
+    handler_user_turn = merge_context_into_user_turn(augmented_query, user_turn)
     from .orchestrator import dispatch_pattern, orchestration_enabled
     from .models import SpawnInstruction
 
-    if orchestration_enabled(config, analysis):
+    use_dispatch = (
+        frozen_execution_mode == "dispatch"
+        if is_frozen
+        else orchestration_enabled(config, analysis)
+    )
+    if use_dispatch:
         if isinstance(handler_user_turn, str):
             spawn_task = handler_user_turn
         elif isinstance(handler_user_turn, list):
@@ -1775,6 +1769,7 @@ async def run_fresh(
         phase=pattern_val,
         model=_llm_label(config["llm"]),
     )
+    config["_frozen_replay"] = False
     return result
 
 
@@ -1927,6 +1922,44 @@ class UnifiedAgent:
         if "clarification_queues" in extra:
             base["clarification_queues"] = extra["clarification_queues"]
 
+    def _normalize_invoke_input(self, value: str | dict | list) -> Any:
+        """LangChain-shaped ``{"messages": [...]}``, plain str, or multimodal blocks."""
+        from .turn_input import TurnInput, normalize_turn_input
+
+        turn = normalize_turn_input(value)
+        if self.config.get("frozen") and isinstance(turn.user_turn, list):
+            raise ValueError("frozen=True supports text user messages only (no multimodal blocks).")
+        self.config["_turn_input"] = turn
+        return turn
+
+    async def _prepare_turn(
+        self,
+        query: str | dict | list,
+        *,
+        thread_id: str | None,
+        user_id: str | None,
+        lt_namespace: tuple | None,
+        context: dict | None,
+        event_queue: Any | None = None,
+    ) -> tuple[str, tuple, dict]:
+        """Bootstrap MCP/skills/harness and lock frozen routing before ``run_fresh``."""
+        turn = self._normalize_invoke_input(query)
+        effective_thread_id, effective_ltns, invoke_config = self.resolve_ids(
+            thread_id, user_id, lt_namespace
+        )
+        self._merge_context_into_invoke_config(invoke_config, context)
+        await _ensure_mcp_connected(self.config)
+        await _ensure_skills_bootstrapped(self.config, event_queue=event_queue)
+        await _ensure_harness_bootstrapped(
+            self.config,
+            effective_thread_id,
+            effective_ltns,
+            turn.wire_snapshot,
+        )
+        if self.config.get("frozen"):
+            await _ensure_frozen_plan(self.config, turn)
+        return effective_thread_id, effective_ltns, invoke_config
+
     async def ainvoke(
         self,
         query: str | dict | list,
@@ -1938,46 +1971,22 @@ class UnifiedAgent:
     ) -> ExecutionResult:
         """Run a single agent turn and return ``ExecutionResult`` (includes ``run_id`` for ``feedback``).
 
-        ``query`` is normally a string. A ``dict`` is allowed only for frozen agents and
-        must contain every ``input_key`` field. A ``list`` of OpenAI-style content blocks
-        is allowed when ``frozen=False`` (multimodal user turns).
+        Input (LangChain ``create_agent`` shape)::
 
-        Raises:
-            ValueError: dict ``query`` with ``frozen=False``, or missing frozen input keys.
+            await agent.ainvoke({"messages": [{"role": "user", "content": "..."}]})
+            await agent.ainvoke("plain string")  # sugar
+
+        With ``frozen=True``, the first call classifies once and locks the classifier-derived
+        execution plan (pattern, subtasks, orchestration). Later calls reuse that plan with
+        new user messages only. ``system_prompt`` at ``create_agent`` carries fixed instructions.
         """
-        if isinstance(query, list) and self.config.get("frozen"):
-            raise ValueError("list / multimodal user turns are not supported when frozen=True.")
-        if isinstance(query, dict):
-            if not self.config.get("frozen"):
-                raise ValueError(
-                    "dict queries are only supported when frozen=True. "
-                    "Pass a plain str, or create the agent with "
-                    "frozen=True and input_key=['key1', 'key2']."
-                )
-            keys = self.config.get("input_key", "input")
-            required = [keys] if isinstance(keys, str) else list(keys)
-            missing = [k for k in required if k not in query]
-            if missing:
-                raise ValueError(
-                    f"Frozen agent with input_key={required!r}: "
-                    f"missing keys in query dict: {missing}. "
-                    f"Provide all keys: {required}."
-                )
-
-        effective_thread_id, effective_ltns, invoke_config = self.resolve_ids(thread_id, user_id, lt_namespace)
-        self._merge_context_into_invoke_config(invoke_config, context)
-
-        await _ensure_mcp_connected(self.config)
-        await _ensure_skills_bootstrapped(self.config)
-        await _ensure_harness_bootstrapped(
-            self.config,
-            effective_thread_id,
-            effective_ltns,
-            _wire_query_snapshot(query),
+        effective_thread_id, effective_ltns, invoke_config = await self._prepare_turn(
+            query,
+            thread_id=thread_id,
+            user_id=user_id,
+            lt_namespace=lt_namespace,
+            context=context,
         )
-
-        if self.config.get("frozen"):
-            await _ensure_frozen_analysis(self.config)
 
         run_config = {
             **self.config,
@@ -2036,6 +2045,9 @@ class UnifiedAgent:
         ``stream_mode="result"``
             Yields a single :class:`ExecutionResult` after the invocation
             completes, regardless of pattern.
+
+        ``frozen=True`` uses the same first-call classify / later-call replay rules as
+        :meth:`ainvoke` (no separate fast-path classify in ``stream_mode="tokens"``).
         """
         if stream_mode == "tokens" and isinstance(query, str) and not self.config.get("frozen"):
             streamed = await self._try_direct_stream(
@@ -2211,14 +2223,14 @@ class UnifiedAgent:
 
         async def _run_and_push() -> None:
             try:
-                effective_thread_id, effective_ltns, invoke_config = self.resolve_ids(thread_id, user_id, lt_namespace)
-                self._merge_context_into_invoke_config(invoke_config, context)
-
-                await _ensure_mcp_connected(self.config)
-                await _ensure_skills_bootstrapped(self.config, event_queue=event_queue)
-
-                if self.config.get("frozen"):
-                    await _ensure_frozen_analysis(self.config)
+                effective_thread_id, effective_ltns, invoke_config = await self._prepare_turn(
+                    query,
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    lt_namespace=lt_namespace,
+                    context=context,
+                    event_queue=event_queue,
+                )
 
                 run_config = {
                     **self.config,
@@ -2398,6 +2410,35 @@ class UnifiedAgent:
 
         future = _sync_bridge_executor().submit(_run_coroutine_in_new_loop, self.ainvoke(query, **kwargs))
         return future.result()
+
+    def stream(
+        self,
+        query: str | dict | list,
+        **kwargs: Any,
+    ):
+        """Synchronous iteration over :meth:`astream` chunks (same frozen semantics as :meth:`ainvoke`)."""
+
+        async def _collect() -> list[Any]:
+            out: list[Any] = []
+            async for chunk in self.astream(query, **kwargs):
+                out.append(chunk)
+            return out
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return iter(asyncio.run(_collect()))
+
+        future = _sync_bridge_executor().submit(_run_coroutine_in_new_loop, _collect())
+        return iter(future.result())
+
+    def reset_frozen(self) -> None:
+        """Clear cached frozen execution plan so the next call classifies again."""
+        from .frozen import clear_frozen_plan
+
+        if not self.config.get("frozen"):
+            return
+        clear_frozen_plan(self.config)
 
     async def feedback(
         self,
@@ -2709,7 +2750,7 @@ class UnifiedAgent:
         underlying = getattr(cfg.get("llm"), "bound", cfg.get("llm"))
         model_cls = type(underlying).__name__ if underlying else "None"
         has_feedback = bool(cfg.get("_feedback"))
-        frozen_str = f", frozen=True(input_key={cfg.get('input_key')!r})" if cfg.get("frozen") else ""
+        frozen_str = ", frozen=True" if cfg.get("frozen") else ""
         return (
             f"UnifiedAgent("
             f"name={cfg['name']!r}, "
@@ -2767,8 +2808,6 @@ async def create_agent(
     feedback_handler: Any | None = None,
     delegates: Sequence[Any] | None = None,
     frozen: bool = False,
-    frozen_template: str | None = None,
-    input_key: str | list[str] = "input",
     frozen_analysis_ttl: float = 0,
     harness: bool = False,
     harness_project_name: str = "project",
@@ -2795,7 +2834,9 @@ async def create_agent(
     Kwargs are validated via ``models.AgentConfig`` before wiring. Important combinations:
 
     ``store``: LT memory tools, skill registry, feedback (when enabled).
-    ``frozen`` and ``frozen_template``: one-time classification; dict ``query`` must match ``input_key``.
+    ``frozen``: first ``ainvoke`` / ``astream`` classifies once and locks routing; later calls
+    reuse the plan. Invoke input is ``{"messages": [...]}`` (LangChain shape). Semantic cache is
+    off by default when ``frozen=True``.
     ``harness`` with ``store``: adds progress/git tools; ignored without ``store``.
     ``query_cache``: ``None`` (default) enables an in-memory semantic cache (see
     :func:`agloom.cache.default_query_cache`). Pass ``False`` to disable caching entirely, or pass
@@ -2832,7 +2873,9 @@ async def create_agent(
                     ibi_merged.append(token)
 
     resolved_query_cache: Any = query_cache
-    if resolved_query_cache is None:
+    if frozen and query_cache is None:
+        resolved_query_cache = None
+    elif resolved_query_cache is None:
         try:
             from .cache import default_query_cache as _default_query_cache
 
@@ -2901,12 +2944,14 @@ async def create_agent(
         summarizer_model=summarizer_model,
     )
 
-    _validate_frozen_params(frozen, frozen_template, input_key)
+    from .frozen import validate_frozen_params
+
+    validate_frozen_params(frozen)
 
     skills_mirror_path: Path | None = Path(skills_disk_mirror).resolve() if skills_disk_mirror is not None else None
 
     resolved_llm = resolve_model(model)
-    resolved_prompt = resolve_system_prompt(system_prompt)
+    resolved_prompt = resolve_system_prompt(system_prompt, cli_tools=cli_tools_kw is not None)
     agent_name = (name or "UnifiedAgent").strip()
     resolved_tools = normalize_tools(tools or [])
     _check_reserved_tool_names(resolved_tools)
@@ -3086,13 +3131,15 @@ async def create_agent(
         "_progress_tracker_factory": _progress_tracker_factory,
         "_git_session": _git_session,
         "frozen": frozen,
-        "frozen_template": frozen_template or "",
-        "input_key": input_key,
         "frozen_analysis": None,
+        "_frozen_plan": None,
         "_frozen_handler": None,
+        "_frozen_replay": False,
         "_frozen_lock": asyncio.Lock(),
         "frozen_analysis_ttl": frozen_analysis_ttl,
         "_frozen_analysis_ts": 0,
+        "_frozen_classify_text": "",
+        "_turn_input": None,
         "max_step_output_length": max_step_output_length,
         "fallback_pattern": fallback_pattern,
         "react_force_tool_choice_on_user_turn": react_force_tool_choice_on_user_turn,

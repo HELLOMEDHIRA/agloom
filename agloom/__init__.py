@@ -7,7 +7,9 @@ Quickstart — streaming (recommended)::
     from agloom import create_agent
 
     agent = await create_agent(model="openai:gpt-4o", tools=[...])
-    async for event in agent.astream_events("Hello"):
+    async for event in agent.astream_events(
+        {"messages": [{"role": "user", "content": "Hello"}]},
+    ):
         if event.type == "token":
             print(event.data["content"], end="", flush=True)
         elif event.type == "done":
@@ -15,19 +17,21 @@ Quickstart — streaming (recommended)::
 
 AGP-native streaming (agloom CLI, web workspace, observability dashboards)::
 
-    async for envelope in agent.astream_agp_events("Hello"):
+    async for envelope in agent.astream_agp_events(
+        {"messages": [{"role": "user", "content": "Hello"}]},
+    ):
         if envelope.type == "token.delta":
             print(envelope.data.text, end="", flush=True)
 
-Single-turn result::
+Single-turn result (LangChain invoke shape; plain str is also accepted)::
 
-    result = await agent.ainvoke("Hello")
+    result = await agent.ainvoke({"messages": [{"role": "user", "content": "Hello"}]})
     print(result.output)
 
 Sync entry point::
 
     agent = create_agent_sync(model="openai:gpt-4o", tools=[...])
-    result = agent.invoke("Hello")
+    result = agent.invoke({"messages": [{"role": "user", "content": "Hello"}]})
 
 Use ``async with agent:`` or ``await agent.aclose()`` to release MCP clients and feedback handlers.
 """

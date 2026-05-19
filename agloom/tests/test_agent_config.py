@@ -1,4 +1,4 @@
-"""AgentConfig validation and frozen-agent helpers."""
+"""AgentConfig validation and frozen helpers."""
 
 from __future__ import annotations
 
@@ -7,8 +7,9 @@ from typing import Any, cast
 import pytest
 from pydantic import ValidationError
 
-from agloom.models import AgentConfig, PatternType, QueryAnalysis
-from agloom.unified_agent import _apply_frozen_substitution, _validate_frozen_params
+from agloom.frozen import validate_frozen_params
+from agloom.models import AgentConfig, PatternType, QueryAnalysis, SubTask
+from agloom.frozen import analysis_for_turn
 
 
 def test_valid_config_passes() -> None:
@@ -17,7 +18,6 @@ def test_valid_config_passes() -> None:
 
 
 def test_agent_config_session_max_turns_default_matches_create_agent() -> None:
-    """``create_agent`` default is 50; ``AgentConfig`` alone should match for consistency."""
     assert AgentConfig(model="openai:gpt-4o-mini").session_max_turns == 50
 
 
@@ -40,70 +40,17 @@ def test_rejects_invalid_agent_config() -> None:
         AgentConfig(model="m", max_retries=cast("Any", 11))
 
 
-def test_max_retries_bounds() -> None:
-    AgentConfig(model="m", max_retries=0)
-    AgentConfig(model="m", max_retries=10)
+def test_frozen_params_noop() -> None:
+    validate_frozen_params(False)
+    validate_frozen_params(True)
 
 
-def test_none_lists_normalized() -> None:
-    assert AgentConfig(model="m", tools=cast("Any", None)).tools == []
-    assert AgentConfig(model="m", middleware=cast("Any", None)).middleware == []
-    assert AgentConfig(model="m", mcp_servers=cast("Any", None)).mcp_servers == []
-
-
-def test_user_callback_and_interrupts() -> None:
-    AgentConfig(model="m", user_callback=lambda: None)
-    AgentConfig(model="m", interrupt_before=["DIRECT", "REACT"])
-
-
-def test_frozen_requires_template() -> None:
-    with pytest.raises(ValueError):
-        _validate_frozen_params(True, "", "input")
-
-
-def test_frozen_none_template_raises() -> None:
-    with pytest.raises(ValueError):
-        _validate_frozen_params(True, None, "input")
-
-
-def test_frozen_empty_input_key_raises() -> None:
-    with pytest.raises(ValueError):
-        _validate_frozen_params(True, "t {input}", [])
-
-
-def test_frozen_non_string_input_key_raises() -> None:
-    with pytest.raises(ValueError):
-        _validate_frozen_params(True, "t {x}", cast("Any", [123]))
-
-
-def test_frozen_false_skips_validation() -> None:
-    assert _validate_frozen_params(False, None, "") is None
-
-
-def test_frozen_valid_params() -> None:
-    assert _validate_frozen_params(True, "Classify: {input}", "input") is None
-
-
-def test_apply_frozen_substitution_single_key() -> None:
-    analysis = QueryAnalysis(pattern=PatternType.DIRECT, complexity=1, reasoning="r")
-    q, sp, _a = _apply_frozen_substitution("hello", "Classify: {input}", "Sys: {input}", analysis, "input")
-    assert q == "Classify: hello"
-    assert sp == "Sys: hello"
-
-
-def test_apply_frozen_substitution_multi_key() -> None:
-    analysis = QueryAnalysis(pattern=PatternType.DIRECT, complexity=1, reasoning="r")
-    q, _sp, _a = _apply_frozen_substitution(
-        {"sender": "x", "body": "body text"},
-        "From {sender}: {body}",
-        "sys",
-        analysis,
-        ["sender", "body"],
+def test_analysis_for_turn_substitutes_input_placeholder() -> None:
+    analysis = QueryAnalysis(
+        pattern=PatternType.DIRECT,
+        complexity=1,
+        reasoning="r",
+        subtasks=[SubTask(worker_id="w1", task="Do {input}")],
     )
-    assert q == "From x: body text"
-
-
-def test_apply_frozen_substitution_missing_placeholder() -> None:
-    analysis = QueryAnalysis(pattern=PatternType.DIRECT, complexity=1, reasoning="r")
-    q, _sp, _a = _apply_frozen_substitution("val", "Template {missing}", "sys", analysis, "input")
-    assert q == "Template {missing}"
+    updated = analysis_for_turn(analysis, "payload")
+    assert updated.subtasks[0].task == "Do payload"

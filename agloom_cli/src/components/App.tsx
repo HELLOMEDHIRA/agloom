@@ -1,7 +1,7 @@
 /** Root terminal UI layout: AGP-driven state via `useSessionStore.dispatch`; completed turns render in the live tree (replay-safe). */
 
 import React, { useEffect, useMemo, useState } from 'react'
-import { dirname, isAbsolute, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { Alert } from '@inkjs/ui'
 import { Box, Text, useApp, useInput, useWindowSize } from 'ink'
 import { Header } from './Header.js'
@@ -19,6 +19,7 @@ import { appendHistory, defaultHistoryPath, loadHistory } from '../utils/promptH
 import { suggestFromHistory } from '../utils/fuzzySuggest.js'
 import { splitPastedMultilineWhenSingleLineMode } from '../utils/pasteCompose.js'
 import { resolveAgloomProjectRoot } from '../config.js'
+import { persistUserSystemPromptToYaml } from '../yamlSystemPromptMigrate.js'
 
 interface AppProps {
   bridge: AGPBridge
@@ -460,7 +461,13 @@ export const App = ({
 
       case '/system': {
         const text = rest.join(' ').trim()
-        if (text) bridge.configSet({ system_prompt: text })
+        if (text) {
+          bridge.configSet({ system_prompt: text })
+          const nestedYaml = join(resolveAgloomProjectRoot(process.cwd()), '.agloom', 'agloom.yaml')
+          if (persistUserSystemPromptToYaml(nestedYaml, text)) {
+            appendProtocolNote('Saved ai.system_prompt to .agloom/agloom.yaml (used on next restart)')
+          }
+        }
         break
       }
 

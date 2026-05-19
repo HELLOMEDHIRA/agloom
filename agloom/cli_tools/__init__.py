@@ -22,6 +22,7 @@ CLI_TOOLS_SYSTEM_APPENDIX = """
 
 === Bundled workspace tools ===
 - For each tool you invoke, **parameter names, types, and units** are defined by that tool's own description (the schema bundled with the model). Follow those definitions — do not invent semantics from memory.
+- Tool results appear in the UI separately; your **final** assistant message must still be standalone prose (see answer contract above).
 """
 
 CLI_TOOL_NAMES: frozenset[str] = frozenset(

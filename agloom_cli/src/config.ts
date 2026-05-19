@@ -196,6 +196,18 @@ const AgloomYamlSchema = z.preprocess(
 
 export type AgloomYaml = z.infer<typeof AgloomYamlSchema>
 
+/** Effective ``system_prompt`` after merge — prefers top-level, then ``ai.system_prompt``. */
+export const resolveYamlSystemPrompt = (y: AgloomYaml & Record<string, unknown>): string | undefined => {
+  const top = y.system_prompt
+  if (typeof top === 'string' && top.trim()) return top.trim()
+  const ai = y.ai
+  if (ai && typeof ai === 'object' && !Array.isArray(ai)) {
+    const sp = (ai as Record<string, unknown>).system_prompt
+    if (typeof sp === 'string' && sp.trim()) return sp.trim()
+  }
+  return undefined
+}
+
 /** Walk parents from `startDir` looking for ``.agloom/agloom.yaml`` first, then legacy root ``agloom.yaml``. */
 export const findWalkUpAgloomYaml =(startDir: string): string | null => {
   let dir = resolve(startDir)
@@ -412,7 +424,8 @@ export const applyAgloomConfigLayers = (
     else if (y.presence_penalty !== undefined) next.presencePenalty = y.presence_penalty
   }
   next.multiline = typeof y.multiline === 'boolean' ? y.multiline : true
-  if (fromDefault('systemPrompt') && y.system_prompt) next.systemPrompt = y.system_prompt
+  const yamlSystemPrompt = resolveYamlSystemPrompt(y as AgloomYaml & Record<string, unknown>)
+  if (fromDefault('systemPrompt') && yamlSystemPrompt) next.systemPrompt = yamlSystemPrompt
 
   if (fromDefault('systemPromptFile') && y.system_prompt_file) {
     next.systemPromptFile = resolve(yamlBaseDir, y.system_prompt_file)

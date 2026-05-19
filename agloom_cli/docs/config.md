@@ -11,6 +11,19 @@ Optional YAML layers configure defaults without long command lines. **Precedence
 5. **`--config /path/to/agloom.yaml`** explicit file  
 6. **Other CLI flags** (highest) — except **`multiline`**, which is **YAML-only** (TUI compose). Execution routing pattern is **not** user-configurable; the runtime classifier selects it.
 
+### Tuning `system_prompt` (persists across restarts)
+
+The default persona lives in **`ai.system_prompt`** inside **`.agloom/agloom.yaml`** (synced with `agloom/prompts/cli_workspace_prompt.txt` when the file is first created).
+
+| How you set it | What happens on restart |
+| --- | --- |
+| Edit **`ai.system_prompt`** in YAML | Your text is passed as **`--system-prompt`** to the runtime — **your tune wins** over built-in defaults |
+| Omit **`system_prompt`** entirely | Runtime uses the built-in CLI workspace default for that process only (YAML is not auto-filled) |
+| **`/system <text>`** in the TUI | Updates the live agent **and** saves to **`.agloom/agloom.yaml`** for the next session |
+| **`--system-prompt`** on the CLI | Overrides YAML for that run only (highest precedence) |
+
+Startup migration **only** replaces the old starter template (e.g. `built with agloom`, `## Your Capabilities`). **Custom prompts are never overwritten.**
+
 ### Supported keys
 
 Validated fields (unknown keys are preserved via passthrough for forward compatibility):

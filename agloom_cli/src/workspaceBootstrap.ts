@@ -10,6 +10,7 @@ import { resolveAgloomProjectRoot } from './config.js'
 import { AGSUPERBRAIN_MCP_CONFIG_YAML } from './agsuperbrainMcpConfig.js'
 import { DEFAULT_AGLOOM_YAML } from './defaultAgloomTemplate.js'
 import { TEMPLATE_NODE_YAML, TEMPLATE_PYTHON_YAML } from './templateYaml.js'
+import { migrateLegacySystemPromptInYaml } from './yamlSystemPromptMigrate.js'
 
 export interface EnsureCliWorkspaceResult {
   /** True if ``.agloom/agloom.yaml`` was written this run (starter or migration from root). */
@@ -200,6 +201,11 @@ export const ensureAgloomCliWorkspace = async(
   if (existsSync(nestedYaml)) {
     ensureAgsuperbrainMcpInNestedYaml(nestedYaml)
     rewriteNestedAgloomYamlStripMemorySkills(nestedYaml)
+    if (migrateLegacySystemPromptInYaml(nestedYaml)) {
+      process.stderr.write(
+        '[agloom] updated `.agloom/agloom.yaml` ai.system_prompt to match prompts/cli_workspace_prompt.txt\n',
+      )
+    }
   }
 
   // Bootstrap agsuperbrain knowledge graph if not already initialized (same root Python uses).

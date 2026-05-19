@@ -11,6 +11,7 @@ Build agents that **route themselves** — one `create_agent` call, nine executi
 | Why teams pick agloom | [Why agloom?](getting-started/why-agloom.md) |
 | Install & API keys | [Installation](getting-started/installation.md) |
 | First working agent | [Quick start](getting-started/quickstart.md) |
+| **From LangChain `create_agent`** | **[LangChain → agloom](guides/migration-from-langchain.md#from-langchain-create_agent)** |
 | How a turn flows | [How it works](concepts/how-it-works.md) |
 
 ---
@@ -40,6 +41,7 @@ Build agents that **route themselves** — one `create_agent` call, nine executi
 ## Integrate & scale
 
 - [Integration overview](guides/developer-overview.md) — in-process, streaming, or AGP
+- [LangChain `create_agent` → agloom](guides/migration-from-langchain.md#from-langchain-create_agent) — same `messages` invoke, `ExecutionResult` return
 - [Embedding the runtime](guides/embedding-runtime.md) · [AGP from Python](guides/agp-python.md)
 - [Recursive orchestration](features/orchestration.md)
 

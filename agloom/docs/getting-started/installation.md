@@ -107,6 +107,7 @@ See [Observability & LangSmith](../features/observability.md) for details.
 | Goal | Doc |
 | ---- | --- |
 | First agent in 5 minutes | [Quickstart](quickstart.md) |
+| Port from LangChain `create_agent` | [LangChain → agloom](../guides/migration-from-langchain.md#from-langchain-create_agent) |
 | Why teams use agloom | [Why agloom?](why-agloom.md) |
 | Terminal UI | [CLI on Read the Docs](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/) |
 | Production API | [Production integration](../guides/production.md) |

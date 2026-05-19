@@ -156,14 +156,25 @@ async def test_frozen_agent_skips_live_classify_on_invoke(monkeypatch: pytest.Mo
         name="frozen",
         query_cache=False,
         frozen=True,
-        frozen_template="static {input}",
     )
+    from agloom.frozen import build_execution_plan
+
     agent.config["frozen_analysis"] = frozen_analysis
     agent.config["_frozen_handler"] = _HANDLERS[PatternType.DIRECT]
+    build_execution_plan(
+        agent.config,
+        analysis=frozen_analysis,
+        handler=_HANDLERS[PatternType.DIRECT],
+        classify_text="anything",
+        execution_mode="handler",
+    )
 
     with patch("agloom.unified_agent.analyze_query", classify_mock):
         try:
-            result = await agent.ainvoke("anything", thread_id="frozen-t1")
+            result = await agent.ainvoke(
+                {"messages": [{"role": "user", "content": "anything"}]},
+                thread_id="frozen-t1",
+            )
             assert result.output == "frozen-out"
             classify_mock.assert_not_called()
         finally:

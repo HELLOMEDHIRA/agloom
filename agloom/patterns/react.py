@@ -255,6 +255,7 @@ REACT_TOOL_DISCIPLINE = """
   must include that content **in prose** (quoted or fenced) when it fits; do not substitute with
   “see above” or “call read_file again”.
 - Do not repeat long tool arguments, JSON payloads, or full file bodies unless the user explicitly asked to review them.
+- Do **not** meta-comment about the UI ("shown above", "not long enough to show N lines", "the file is displayed in the trace") — paste the excerpt or give a direct summary in your answer.
 - Default length: a few sentences or a tiny bullet list. Go longer only when the user asks for depth, design, or teaching.
 """
 

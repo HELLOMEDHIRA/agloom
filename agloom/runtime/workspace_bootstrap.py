@@ -22,6 +22,9 @@ from typing import Any
 
 import yaml
 
+from agloom.prompts.core import CLI_WORKSPACE_SYSTEM_PROMPT
+from agloom.prompts.yaml_sync import migrate_agloom_yaml_system_prompt, yaml_indented_block
+
 from .atomic_io import atomic_write_text
 
 SESSION_MARKER_SCHEMA_VERSION = 1
@@ -131,7 +134,7 @@ def rewrite_agloom_yaml_strip_memory_skills_enabled(path: Path) -> bool:
     return True
 
 
-DEFAULT_AGLOOM_YAML = """# Agloom — https://github.com/HELLOMEDHIRA/agloom
+DEFAULT_AGLOOM_YAML = f"""# Agloom — https://github.com/HELLOMEDHIRA/agloom
 # CLI merges layers (see agloom_cli/docs/config.md): ~/.agloom → walk-up → --config → flags.
 #
 # Defaults you usually edit (restart reloads YAML):
@@ -142,57 +145,13 @@ DEFAULT_AGLOOM_YAML = """# Agloom — https://github.com/HELLOMEDHIRA/agloom
 #   • memory.* / skills.* — session memory and skill registry are tied to the store; tune limits below (no toggles).
 #
 # Merge is shallow per layer: a whole top-level `ai:` block replaces prior `ai` from earlier files.
+# system_prompt body: agloom/prompts/cli_workspace_prompt.txt (keep agloom_cli copy in sync)
 
 ai:
   name: agloom
   model: auto
   system_prompt: |
-    You are an autonomous AI programming assistant built with agloom.
-
-    ## Your Capabilities
-
-    You have access to tools for:
-
-    - File operations: read, write, list, search, create, remove files and directories
-    - Shell commands: execute commands in the terminal
-    - Web search: search the web for documentation, bugs, or solutions
-    - HTTP requests: make API calls when needed
-    - Task planning: break down complex tasks into steps
-    - Working directory: navigate and manage project context
-
-    ## Guidelines
-
-    1. Always prefer existing code - Don't suggest rewriting unless necessary
-    2. Be concise - Give focused answers, not lengthy explanations
-    3. Think step-by-step - For complex tasks, plan before executing
-    4. Use tools wisely - Check file context before modifying
-    5. Handle errors - gracefully explain what went wrong
-    6. Respect user privacy - Don't log or store sensitive data
-
-    ## Code Style
-
-    - Follow existing conventions in the codebase
-    - Use meaningful variable names
-    - Add comments for complex logic
-    - Keep functions small and focused
-
-    ## Error Handling
-
-    When you make mistakes or hit dead ends:
-
-    - Acknowledge the error clearly
-    - Explain what happened and why
-    - Show what you tried and the outcome
-    - Offer the next best approach
-
-    ## Communication
-
-    - Use markdown for code blocks
-    - Show actual vs expected behavior for bugs
-    - Suggest specific fixes
-    - Ask clarification when requirements are unclear
-
-    Remember: You're collaborating with a human. They control the session, you assist.
+{yaml_indented_block(CLI_WORKSPACE_SYSTEM_PROMPT)}
 
 mcp:
   servers:
@@ -356,6 +315,13 @@ def ensure_agloom_workspace(cwd: Path | None = None, *, args: Any | None = None)
     if nested_yaml.is_file() and _workspace_yaml_rewrite_allowed(args):
         _ensure_agsuperbrain_mcp_in_nested_yaml(nested_yaml)
         rewrite_agloom_yaml_strip_memory_skills_enabled(nested_yaml)
+        if migrate_agloom_yaml_system_prompt(nested_yaml):
+            print(
+                "[agloom-runtime] updated `.agloom/agloom.yaml` ai.system_prompt "
+                "to match agloom/prompts/cli_workspace_prompt.txt",
+                file=sys.stderr,
+                flush=True,
+            )
 
     return sessions_dir, created
 

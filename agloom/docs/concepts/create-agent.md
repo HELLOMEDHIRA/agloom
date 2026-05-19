@@ -4,6 +4,9 @@
 
 Under the hood agloom wires classification, pattern handlers, guardrails, and optional MCP — you do not assemble those pieces yourself.
 
+!!! tip "Coming from LangChain `create_agent`?"
+    agloom uses the **same invoke shape** (`{"messages": [...]}`) as [LangChain’s `create_agent`](https://docs.langchain.com/oss/python/langchain/agents). The factory is **async**, and `ainvoke` returns an **`ExecutionResult`** (not a raw graph state dict). Full porting guide: **[Migrating from LangChain — `create_agent`](../guides/migration-from-langchain.md#from-langchain-create_agent)**.
+
 ## Signature
 
 ```python
@@ -35,19 +38,52 @@ For agents that keep a **structured task graph**, **verification steps**, and **
 
 Pass **`max_pattern_depth > 0`** to enable bounded recursive pattern dispatch (self-healing recovery, optional auto-escalation). Default is **`0`** (off). Agent parameters are **ceilings**; when **`orchestration_plan_from_classifier=True`** (default), the classifier sets per-turn depth and budgets inside those limits. Details: [Recursive orchestration](../features/orchestration.md).
 
+### Frozen agents (optional)
+
+Pass **`frozen=True`** to classify **once** per agent instance and replay the **classifier-derived plan** (pattern, subtasks, handler vs `dispatch_pattern`, orchestration limits) on every later call with new `messages` only. Same invoke shape as above. Details: [Frozen agents](../features/frozen-agents.md).
+
 ## What It Returns
 
 The agent object exposes these methods:
 
 | Method                                           | Description                                     |
 | ------------------------------------------------ | ----------------------------------------------- |
-| `await agent.ainvoke(query)`                     | Run the full pipeline, return `ExecutionResult` |
-| `async for token in agent.astream(query)`        | Stream tokens as they arrive                    |
-| `async for event in agent.astream_events(query)` | Stream structured events + real-time tokens     |
-| `await agent.abatch(queries)`                    | Process multiple queries in parallel            |
+| `await agent.ainvoke(input)`                     | Run the full pipeline, return `ExecutionResult` |
+| `async for token in agent.astream(input)`        | Stream tokens as they arrive                    |
+| `async for event in agent.astream_events(input)` | Stream structured events + real-time tokens     |
+| `await agent.abatch(inputs)`                   | Process multiple inputs in parallel           |
 | `await agent.feedback(run_id, rating)`           | Submit user feedback for a run                  |
 | `agent.register_pattern(pattern_type, handler)`  | Register a custom pattern handler               |
 | `async with agent:`                              | Context manager for graceful cleanup            |
+
+### Invoke input (LangChain shape)
+
+All runtime methods accept the same **input** as LangChain `create_agent`:
+
+```python
+# Canonical
+await agent.ainvoke({
+    "messages": [{"role": "user", "content": "What is the weather in Tokyo?"}],
+})
+
+# Sugar (wraps a single user message)
+await agent.ainvoke("What is the weather in Tokyo?")
+```
+
+Use `system_prompt=` at `create_agent` for fixed instructions (especially with `frozen=True`). Each invoke supplies a new **user** message.
+
+### Migrating from LangChain `create_agent`
+
+If you already use [LangChain’s `create_agent`](https://docs.langchain.com/oss/python/langchain/agents), the port is small:
+
+| | LangChain | agloom |
+| --- | --- | --- |
+| Import | `langchain.agents.create_agent` | `agloom.create_agent` |
+| Build | `agent = create_agent(...)` | `agent = await create_agent(...)` |
+| Invoke | `{"messages": [...]}` | **Same** (or plain `str`) |
+| Result | `result["messages"]` | `result.output`, `result.messages`, `result.analysis` |
+
+Full walkthrough (streaming, memory, pitfalls): **[Migrating from LangChain](../guides/migration-from-langchain.md#from-langchain-create_agent)**.
 
 ### Full Method Signatures
 
@@ -56,7 +92,7 @@ All runtime methods accept `thread_id`, `user_id`, and `context` for session man
 ```python
 # Primary async entry point
 await agent.ainvoke(
-    query,                      # str | dict (dict only for frozen agents)
+    {"messages": [{"role": "user", "content": "..."}]},  # or plain str
     *,
     thread_id: str | None = None,    # session ID for memory isolation
     user_id: str | None = None,      # stable cross-session identity
@@ -66,7 +102,7 @@ await agent.ainvoke(
 
 # Token streaming (real for DIRECT, simulated for complex patterns)
 async for token in agent.astream(
-    query,
+    {"messages": [{"role": "user", "content": "..."}]},
     *,
     thread_id: str | None = None,
     user_id: str | None = None,
@@ -77,7 +113,7 @@ async for token in agent.astream(
 
 # Combined event + token streaming (real-time for ALL patterns)
 async for event in agent.astream_events(
-    query,
+    {"messages": [{"role": "user", "content": "..."}]},
     *,
     thread_id: str | None = None,
     user_id: str | None = None,
@@ -87,7 +123,7 @@ async for event in agent.astream_events(
 
 # Batch processing
 await agent.abatch(
-    queries,                         # list[str | dict]
+    [{"messages": [{"role": "user", "content": "q1"}]}, "q2"],  # messages dict or str each
     *,
     thread_id: str | None = None,
     user_id: str | None = None,
@@ -194,11 +230,14 @@ sequenceDiagram
     create_agent->>Agent: Wire pipeline
     create_agent-->>User: Return agent
 
-    User->>Agent: await agent.ainvoke("query")
+    User->>Agent: ainvoke(messages) or str sugar
     Agent->>Agent: Inject memory
-    Agent->>LLM: Classify query
-    Agent->>Agent: Select pattern
-    Agent->>LLM: Execute pattern
+    alt frozen=False or first frozen call
+        Agent->>LLM: Classify
+    else frozen replay
+        Agent->>Agent: Use locked plan
+    end
+    Agent->>Agent: Execute pattern (and optional recursive dispatch)
     Agent-->>User: ExecutionResult
 
     User->>Agent: async with agent (cleanup)

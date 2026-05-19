@@ -32,8 +32,7 @@ async def main():
     agent = await create_agent(
         model=_groq_llm(),
         frozen=True,
-        frozen_template="Translate the following text to French: {text}",
-        input_key="text",
+        system_prompt="Translate the following text to French.",
         name="translator",
     )
 
@@ -45,8 +44,7 @@ async def main():
 
     t0 = time.perf_counter()
     for text in inputs:
-        # Frozen agents accept a string when there is a single ``input_key`` — same as ``ainvoke`` elsewhere.
-        result = await agent.ainvoke(text)
+        result = await agent.ainvoke({"messages": [{"role": "user", "content": text}]})
         print(f"  EN: {text}")
         print(f"  FR: {result.output}")
         print(f"  Pattern: {result.pattern_used.value}")

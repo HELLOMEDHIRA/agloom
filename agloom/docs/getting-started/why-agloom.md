@@ -78,6 +78,8 @@ agloom is **not** a competing framework. It's built directly on top of LangChain
 
 You keep your existing LangChain ecosystem. agloom just makes it smarter.
 
+Already on LangChain’s **`create_agent`**? See **[LangChain `create_agent` → agloom](../guides/migration-from-langchain.md#from-langchain-create_agent)** — same `messages` invoke, different return type and routing.
+
 ---
 
 ## What to read next

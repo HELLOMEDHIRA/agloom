@@ -2,7 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
-import { findWalkUpAgloomYaml, mcpSpecsFromYaml, parseAgloomYamlFile, resolveAgloomProjectRoot } from '../config.js'
+import {
+  findWalkUpAgloomYaml,
+  mcpSpecsFromYaml,
+  parseAgloomYamlFile,
+  resolveAgloomProjectRoot,
+  resolveYamlSystemPrompt,
+} from '../config.js'
 
 const writeYaml=(content: string): string => {
   const dir = mkdtempSync(join(tmpdir(), 'agloom-yaml-'))
@@ -113,6 +119,13 @@ mcp:
     expect(y.memory).toBe('sqlite')
     expect(y.mcp).toEqual(['fs:./a.yaml', { name: 'x', config: './b.yaml' }])
     unlinkSync(p)
+  })
+
+  it('resolveYamlSystemPrompt reads ai.system_prompt when top-level absent', () => {
+    const y = {
+      ai: { system_prompt: '  Custom persona for my team.\n' },
+    } as Record<string, unknown>
+    expect(resolveYamlSystemPrompt(y)).toBe('Custom persona for my team.')
   })
 
   it('flattens nested ai / memory / mcp.servers (Rich-era layout)', () => {

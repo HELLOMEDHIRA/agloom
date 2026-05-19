@@ -63,7 +63,7 @@ async def recover_failed_workers(
     recovery_pattern: PatternType = PatternType.REFLECTION,
 ) -> list[WorkerResult]:
     """Replace failed workers with spawned recovery runs when orchestration is active."""
-    if not pattern_spawns_enabled(agent, config):
+    if agent.get("_frozen_replay") or not pattern_spawns_enabled(agent, config):
         return worker_results
     spawn_api = get_spawn_api(config)
     assert spawn_api is not None
@@ -98,7 +98,7 @@ async def maybe_recover_react_failure(
     result: ExecutionResult,
 ) -> ExecutionResult:
     """Spawn REFLECTION when REACT exits unsuccessfully."""
-    if result.success or not pattern_spawns_enabled(agent, config):
+    if result.success or agent.get("_frozen_replay") or not pattern_spawns_enabled(agent, config):
         return result
     spawn_api = get_spawn_api(config)
     assert spawn_api is not None
@@ -135,7 +135,11 @@ async def maybe_spawn_conflict_resolution(
     target_pattern: PatternType = PatternType.BLACKBOARD,
 ) -> ExecutionResult | None:
     """Spawn deliberation pattern when worker outputs likely conflict."""
-    if not detect_perspective_conflict(outputs) or not pattern_spawns_enabled(agent, config):
+    if (
+        agent.get("_frozen_replay")
+        or not detect_perspective_conflict(outputs)
+        or not pattern_spawns_enabled(agent, config)
+    ):
         return None
     spawn_api = get_spawn_api(config)
     assert spawn_api is not None
@@ -168,8 +172,11 @@ async def run_dag_node_or_dispatch(
     from ..worker import extend_invoke_config_with_event_queue
     from ..patterns.hitl import run_workers_with_hitl
 
+    if agent.get("_frozen_replay"):
+        dynamic = False
+    else:
+        dynamic = bool(agent.get("enable_dynamic_dag_nodes", True))
     spawn_api = get_spawn_api(invoke_config)
-    dynamic = bool(agent.get("enable_dynamic_dag_nodes", True))
     has_tools = bool(getattr(worker_config, "tools", None))
     use_dynamic = (
         dynamic
@@ -274,7 +281,8 @@ async def run_worker_or_dispatch(
 
     spawn_api = get_spawn_api(invoke_config)
     use_dispatch = (
-        pattern_spawns_enabled(agent, invoke_config)
+        not agent.get("_frozen_replay")
+        and pattern_spawns_enabled(agent, invoke_config)
         and (
             analysis.complexity >= complexity_threshold
             or bool(getattr(worker_config, "tools", None))

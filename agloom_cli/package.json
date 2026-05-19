@@ -11,6 +11,7 @@
   },
   "files": [
     "dist",
+    "prompts",
     "completions",
     "scripts/agloom-completions.mjs",
     "README.md"

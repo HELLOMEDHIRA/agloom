@@ -14,7 +14,7 @@ from .logging_utils import get_logger
 
 _cfg_logger = get_logger(__name__)
 
-DEFAULT_SYSTEM_PROMPT = "You are a helpful, precise AI assistant. Think step by step. Be concise and accurate."
+from agloom.prompts.core import DEFAULT_SYSTEM_PROMPT  # noqa: F401 — public re-export
 
 
 class SignalType(str, Enum):
@@ -914,7 +914,7 @@ class AgentConfig(BaseModel):
     Construction raises ValueError on invalid arguments. Fields mirror the
     subset of create_agent() parameters validated here (interrupt lists, MCP,
     timeouts, memory/store wiring, etc.). Additional factory-only parameters —
-    for example ``delegates``, ``feedback_handler``, ``frozen`` / ``frozen_template``,
+    for example ``delegates``, ``feedback_handler``, ``frozen``,
     ``harness``, ``max_step_output_length``, ``fallback_pattern`` — are checked
     or applied in ``unified_agent.create_agent`` after this model runs.
     """

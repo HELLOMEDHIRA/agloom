@@ -14,9 +14,7 @@ These are `ValueError` exceptions raised immediately when `create_agent` is call
 | `0 ≤ max_retries ≤ 10`                           | `max_retries=-1` or `>10`                       | Use a value between 0 and 10                                             |
 | `unknown pattern in interrupt_before`            | `interrupt_before=["INVALID"]`                  | Use valid pattern names: DIRECT, REACT, SUPERVISOR, etc.                 |
 | `user_callback must be callable`                 | `user_callback=42`                              | Pass an async function                                                   |
-| `frozen=True requires non-empty frozen_template` | `frozen=True` without template                  | Provide `frozen_template="..."`                                          |
-| `frozen=True requires non-empty input_key`       | `input_key=[]`                                  | Provide at least one key                                                 |
-| `query must be a dict for frozen agents`         | Passing `str` to `ainvoke()` when `frozen=True` | Pass a dict matching `input_key` (e.g., `{"input": "text"}`)             |
+| Frozen agent is not locked yet                   | Internal error before first call                | Run one `ainvoke` / `astream` first to classify, or call `reset_frozen()`  |
 | `Tool name(s) X are reserved by agloom`          | Tool name conflicts with internal names         | Rename your tool. Reserved: `save_memory`, `recall_memory`, `load_skill` |
 
 ## Runtime Warnings (logged, non-fatal)
@@ -82,6 +80,16 @@ These are warnings logged during execution. They don't crash your agent — aglo
 | Warning                                                  | Cause                  | Action                                               |
 | -------------------------------------------------------- | ---------------------- | ---------------------------------------------------- |
 | `Multiple agents named 'X' share the same LongTermStore` | Same name + same store | Intentional sharing is fine; rename if unintentional |
+
+## Invoke input errors (at `ainvoke` / `astream` time)
+
+| Error | Cause | Fix |
+| ----- | ----- | --- |
+| `Invoke input must be {"messages": [...]}` | Dict without a `messages` key | Use LangChain shape: `{"messages": [{"role": "user", "content": "..."}]}` or a plain string |
+| `invoke input 'messages' must be a non-empty list` | Empty `messages` | Pass at least one message |
+| `must include at least one user/human message` | No user role in `messages` | Add `{"role": "user", "content": "..."}` |
+
+See [Invoke input](../concepts/create-agent.md#invoke-input-langchain-shape) and [Frozen agents — batch](../features/frozen-agents.md#batch-processing).
 
 ## Fatal Errors (exceptions during execution)
 

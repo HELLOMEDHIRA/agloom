@@ -6,19 +6,27 @@ import pytest
 from langchain_core.messages import SystemMessage
 
 from agloom.models import DEFAULT_SYSTEM_PROMPT, ExecutionResult, PatternType
+from agloom.prompts.core import ANSWER_CONTRACT_MARKER
 from agloom.unified_agent import _wire_query_snapshot, normalize_tools, resolve_model, resolve_system_prompt
 
 
 def test_resolve_system_prompt_none() -> None:
-    assert resolve_system_prompt(None) == DEFAULT_SYSTEM_PROMPT
+    sp = resolve_system_prompt(None)
+    assert isinstance(sp, str)
+    assert DEFAULT_SYSTEM_PROMPT.strip() in sp
+    assert ANSWER_CONTRACT_MARKER in sp
 
 
 def test_resolve_system_prompt_empty_str() -> None:
-    assert resolve_system_prompt("") == DEFAULT_SYSTEM_PROMPT
+    sp = resolve_system_prompt("")
+    assert DEFAULT_SYSTEM_PROMPT.strip() in sp
+    assert ANSWER_CONTRACT_MARKER in sp
 
 
 def test_resolve_system_message() -> None:
-    assert resolve_system_prompt(SystemMessage(content="  X  ")) == "  X  "
+    sp = resolve_system_prompt(SystemMessage(content="  X  "))
+    assert "X" in sp
+    assert ANSWER_CONTRACT_MARKER in sp
 
 
 def test_wire_query_snapshot_str() -> None:

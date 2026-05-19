@@ -112,9 +112,7 @@ See [Timeouts & Retries](reliability.md) for details.
 
 | Parameter             | Type                   | Default   | Description                                        |
 | --------------------- | ---------------------- | --------- | -------------------------------------------------- |
-| `frozen`              | `bool`                 | `False`   | Classify once, reuse forever                       |
-| `frozen_template`     | `str`                  | `None`    | Template with `{key}` placeholders                 |
-| `input_key`           | `str` or `list[str]`   | `"input"` | Placeholder name(s)                                |
+| `frozen`              | `bool`                 | `False`   | Classify once on first call, reuse locked plan     |
 | `frozen_analysis_ttl` | `float`                | `0`       | Cache TTL in seconds (0 = never)                   |
 
 ## Delegation
@@ -180,7 +178,7 @@ These parameters are passed at invocation time to `ainvoke()`, `astream()`, `ast
 
 | Parameter        | Type              | Default    | Description                                                    |
 | ---------------- | ----------------- | ---------- | -------------------------------------------------------------- |
-| `query`          | `str` or `dict`   | **required** | The input query. `dict` only valid for `frozen=True` agents |
+| `query` / input  | `str` or `dict`   | **required** | LangChain shape: `{"messages": [{"role":"user","content":"..."}]}` or plain `str` |
 | `thread_id`      | `str` or `None`   | `None`     | Session ID for memory isolation. `None` = ephemeral           |
 | `user_id`        | `str` or `None`   | `None`     | Stable cross-session identity for LT namespace                 |
 | `lt_namespace`   | `tuple` or `None` | `None`     | Explicit shared namespace (multi-agent)                       |
