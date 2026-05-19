@@ -931,7 +931,8 @@ class RuntimeMCPServersData(_DataBase):
     servers: list[dict[str, Any]] = Field(
         default_factory=list,
         description=(
-            "Per-server summary rows after connect (name, ok, error?, tool_count, tool_names, …). "
+            "Per-server summary rows after connect (name, ok, error?, tool_count, tool_names, "
+            "tool_catalog[{name, description?}], tool_names_truncated, …). "
             "Empty when MCP was not attempted or the wire predates this field."
         ),
     )

@@ -9,6 +9,7 @@ from typing import Any, cast
 
 from langchain_core.tools import tool
 
+from .messages import tool_ok
 from .safety import SafetyContext, resolve_safe_path
 
 
@@ -206,6 +207,6 @@ def make_notebook_tools(ctx: SafetyContext) -> list[Any]:
             rel = p.relative_to(ctx.root.resolve()) if ctx.sandbox else p
         except ValueError:
             rel = p
-        return f"✓ notebook_edit: {len(ops)} operation(s) applied → {rel}"
+        return tool_ok(f"notebook_edit: {len(ops)} operation(s) applied -> {rel}")
 
     return [notebook_read, notebook_edit]

@@ -1,4 +1,4 @@
-/** Canonical CLI workspace system prompt — must match ``agloom/prompts/cli_workspace_prompt.txt``. */
+/** Canonical CLI workspace system prompt (agloom_cli only — wired to runtime via YAML / AGP). */
 
 import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'

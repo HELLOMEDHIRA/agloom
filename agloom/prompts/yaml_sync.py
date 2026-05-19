@@ -1,4 +1,8 @@
-"""Keep ``.agloom/agloom.yaml`` ``system_prompt`` aligned with :data:`CLI_WORKSPACE_SYSTEM_PROMPT`."""
+"""YAML helpers for ``ai.system_prompt`` (extract / classify / persist).
+
+CLI-specific canonical text and legacy migration live in **agloom_cli** (``yamlSystemPromptMigrate``).
+The Python runtime only classifies prompts by markers and persists user edits.
+"""
 
 from __future__ import annotations
 
@@ -6,8 +10,6 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-
-from .core import CLI_WORKSPACE_SYSTEM_PROMPT
 
 _LEGACY_SYSTEM_PROMPT_MARKERS: tuple[str, ...] = (
     "built with agloom",
@@ -39,7 +41,8 @@ def extract_system_prompt_from_yaml(data: dict[str, Any]) -> str | None:
 
 
 def is_canonical_cli_system_prompt(text: str) -> bool:
-    return text.strip() == CLI_WORKSPACE_SYSTEM_PROMPT.strip()
+    """True when YAML carries the agloom-cli workspace persona (marker-based)."""
+    return _CANONICAL_MARKER in text.strip().lower()
 
 
 def is_legacy_cli_system_prompt(text: str) -> bool:
@@ -72,36 +75,8 @@ def set_yaml_system_prompt(data: dict[str, Any], prompt: str) -> None:
 
 
 def migrate_agloom_yaml_system_prompt(path: Path) -> bool:
-    """Rewrite ``ai.system_prompt`` only when an outdated starter template is detected.
-
-    Does **not** inject a default when ``system_prompt`` is missing (runtime supplies the
-    built-in default per process). Does **not** touch user-tuned prompts.
-    """
-    if not path.is_file():
-        return False
-    try:
-        raw = path.read_text(encoding="utf-8")
-        data = yaml.safe_load(raw)
-    except (OSError, yaml.YAMLError):
-        return False
-    if not isinstance(data, dict):
-        return False
-    current = extract_system_prompt_from_yaml(data)
-    if current is None or is_canonical_cli_system_prompt(current):
-        return False
-    if is_user_tuned_system_prompt(current):
-        return False
-    if not is_legacy_cli_system_prompt(current):
-        return False
-    set_yaml_system_prompt(data, CLI_WORKSPACE_SYSTEM_PROMPT)
-    try:
-        path.write_text(
-            yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True),
-            encoding="utf-8",
-        )
-    except OSError:
-        return False
-    return True
+    """No-op in core — legacy → canonical migration is owned by **agloom-cli** on bootstrap."""
+    return False
 
 
 def persist_user_system_prompt_to_yaml(path: Path, prompt: str) -> bool:

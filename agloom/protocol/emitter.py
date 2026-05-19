@@ -22,6 +22,7 @@ from queue import Full as QueueFull
 from collections.abc import Callable
 from typing import IO, Any, Literal, cast
 
+from ..compat import safe_writer_write
 from .envelope import PROTOCOL_MODULE_VERSION, Envelope
 from .events import (
     AgentBusy,
@@ -1789,7 +1790,7 @@ class SessionEmitter:
         if self._writer is not None:
             line = json.dumps(evt_dict, ensure_ascii=False)
             with self._write_lock:
-                self._writer.write(line + "\n")
+                safe_writer_write(self._writer, line + "\n")
                 self._writer.flush()
 
     def _subscription_allows_wire(self, typ: str) -> bool:
@@ -1852,7 +1853,7 @@ class SessionEmitter:
         line = json.dumps(wire_dict, ensure_ascii=False)
         if self._writer is not None and wire_ok:
             with self._write_lock:
-                self._writer.write(line + "\n")
+                safe_writer_write(self._writer, line + "\n")
                 self._writer.flush()
         if self._on_emit is not None:
             try:

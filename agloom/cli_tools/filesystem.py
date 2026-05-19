@@ -13,6 +13,7 @@ from typing import Any
 
 from langchain_core.tools import tool
 
+from .messages import tool_ok
 from .safety import SafetyContext, resolve_safe_path
 
 _DEFAULT_READ_LIMIT = 64_000
@@ -169,7 +170,7 @@ def make_filesystem_tools(ctx: SafetyContext, *, max_read_bytes: int = _DEFAULT_
             rel = p.relative_to(ctx.root.resolve()) if ctx.sandbox else p
         except ValueError:
             rel = p
-        return f"✓ wrote {rel}"
+        return tool_ok(f"wrote {rel}")
 
     def _lang_hint(rel: str) -> str:
         ext = Path(rel).suffix.lower()
@@ -215,7 +216,7 @@ def make_filesystem_tools(ctx: SafetyContext, *, max_read_bytes: int = _DEFAULT_
         except OSError as exc:
             return f"edit_file: {exc}"
         ctx.recently_read_paths.add(str(p.resolve()))
-        summary = f"✓ edit_file: applied replacement ({n} occurrence(s))"
+        summary = tool_ok(f"edit_file: applied replacement ({n} occurrence(s))")
         try:
             rel = str(p.relative_to(ctx.root.resolve()) if ctx.sandbox else p)
         except ValueError:
@@ -273,7 +274,7 @@ def make_filesystem_tools(ctx: SafetyContext, *, max_read_bytes: int = _DEFAULT_
         except OSError as exc:
             return f"multi_edit: {exc}"
         ctx.recently_read_paths.add(str(p.resolve()))
-        summary = f"✓ multi_edit: {applied} replacement(s) across {len(raw)} edit(s)"
+        summary = tool_ok(f"multi_edit: {applied} replacement(s) across {len(raw)} edit(s)")
         try:
             rel = str(p.relative_to(ctx.root.resolve()) if ctx.sandbox else p)
         except ValueError:
@@ -327,7 +328,7 @@ def make_filesystem_tools(ctx: SafetyContext, *, max_read_bytes: int = _DEFAULT_
         except OSError as exc:
             return f"delete_file: {exc}"
         ctx.recently_read_paths.discard(str(p.resolve()))
-        return f"✓ deleted {p}"
+        return tool_ok(f"deleted {p}")
 
     @tool
     def move_file(source_path: str, destination_path: str) -> str:
@@ -349,7 +350,7 @@ def make_filesystem_tools(ctx: SafetyContext, *, max_read_bytes: int = _DEFAULT_
             return f"move_file: {exc}"
         ctx.recently_read_paths.discard(str(src.resolve()))
         ctx.recently_read_paths.add(str(dst.resolve()))
-        return f"✓ moved to {dst}"
+        return tool_ok(f"moved to {dst}")
 
     @tool
     def mkdir(path: str, parents: bool = True, exist_ok: bool = True) -> str:
@@ -368,7 +369,7 @@ def make_filesystem_tools(ctx: SafetyContext, *, max_read_bytes: int = _DEFAULT_
             rel = p.relative_to(ctx.root.resolve()) if ctx.sandbox else p
         except ValueError:
             rel = p
-        return f"✓ mkdir {rel}"
+        return tool_ok(f"mkdir {rel}")
 
     @tool
     def rmdir(path: str, recursive: bool = False) -> str:
@@ -395,7 +396,7 @@ def make_filesystem_tools(ctx: SafetyContext, *, max_read_bytes: int = _DEFAULT_
             hint = " (pass recursive=True to remove non-empty trees)" if not recursive else ""
             return f"rmdir: {exc}{hint}"
         ctx.recently_read_paths.discard(key)
-        return f"✓ rmdir {rel}"
+        return tool_ok(f"rmdir {rel}")
 
     @tool
     def list_dir(path: str = ".") -> str:

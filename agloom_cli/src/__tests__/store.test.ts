@@ -44,6 +44,21 @@ describe('session.opened', () => {
   })
 })
 
+describe('session.closed error with pending tools', () => {
+  it('settles pending tools and keeps active turn visible', () => {
+    dispatch({ ...env(), type: 'message.user', data: { content: 'mkdir' } })
+    dispatch({ ...env(), type: 'tool.call.start', data: { tool_call_id: 'tc-p', tool: 'mkdir', args: {} } })
+    dispatch({
+      ...env(),
+      type: 'session.closed',
+      data: { reason: 'error', duration_ms: 1, error: 'provider failed' },
+    })
+    expect(state().status).toBe('error')
+    expect(state().activeTurn?.toolCalls[0]?.status).toBe('error')
+    expect(state().activeTurn?.toolCalls[0]?.error).toContain('provider')
+  })
+})
+
 describe('session.closed', () => {
   it('sets status idle on completed', () => {
     dispatch({ ...env(), type: 'session.closed', data: { reason: 'completed', duration_ms: 100 } })
@@ -118,6 +133,23 @@ describe('tool.call.start + tool.call.result + tool.call.error', () => {
     expect(tc?.status).toBe('done')
     expect(tc?.result).toBe('ok')
     expect(tc?.durationMs).toBe(42)
+  })
+
+  it('correlates tool.call.result to last pending row when ids differ', () => {
+    dispatch({ ...env(), type: 'message.user', data: { content: 'q' } })
+    dispatch({
+      ...env(),
+      type: 'tool.call.start',
+      data: { tool_call_id: 'langgraph-run-id', tool: 'mkdir', args: { path: 'a/b' } },
+    })
+    dispatch({
+      ...env(),
+      type: 'tool.call.result',
+      data: { tool_call_id: 'call_langchain_xyz', tool: 'mkdir', output_preview: 'OK: mkdir a/b', duration_ms: 3 },
+    })
+    const tc = state().activeTurn?.toolCalls[0]
+    expect(tc?.status).toBe('done')
+    expect(tc?.result).toContain('mkdir')
   })
 
   it('marks the tool call as error on tool.call.error', () => {
@@ -384,6 +416,55 @@ describe('reset', () => {
     expect(s.status).toBe('idle')
     expect(s.protocolNotes).toHaveLength(0)
     expect(s.toolNames).toBeNull()
+  })
+})
+
+describe('runtime.mcp.servers', () => {
+  it('merges MCP tool names into toolNames for metrics and status bar', () => {
+    dispatch({
+      ...env(),
+      type: 'runtime.config',
+      data: { model_id: 'm', tool_names: ['read_file', 'mkdir'], capabilities: [] },
+    })
+    dispatch({
+      ...env(),
+      type: 'runtime.mcp.servers',
+      data: {
+        server_names: ['agsuperbrain'],
+        servers: [
+          {
+            name: 'agsuperbrain',
+            ok: true,
+            tool_count: 2,
+            tool_names: ['search_code', 'read_graph'],
+          },
+        ],
+      },
+    })
+    const s = state()
+    expect(s.mcpServerRows[0]?.toolCount).toBe(2)
+    expect(s.toolNames).toEqual(expect.arrayContaining(['read_file', 'mkdir', 'search_code', 'read_graph']))
+  })
+
+  it('parses tool_catalog with descriptions for /mcp and metrics', () => {
+    dispatch({
+      ...env(),
+      type: 'runtime.mcp.servers',
+      data: {
+        server_names: ['agsuperbrain'],
+        servers: [
+          {
+            name: 'agsuperbrain',
+            ok: true,
+            tool_count: 1,
+            tool_names: ['search_code'],
+            tool_catalog: [{ name: 'search_code', description: 'Semantic repo search.' }],
+          },
+        ],
+      },
+    })
+    const row = state().mcpServerRows[0]
+    expect(row?.toolCatalog).toEqual([{ name: 'search_code', description: 'Semantic repo search.' }])
   })
 })
 

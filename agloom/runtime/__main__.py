@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from ..compat import ensure_langchain_pending_deprecation_suppressed
+from ..compat import configure_stdio_utf8, ensure_langchain_pending_deprecation_suppressed
 from ..mcp_support import MCPConnectionError
 from ..protocol import SessionEmitter
 from ..protocol.commands import command_adapter
@@ -454,6 +454,13 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
                     server_names=[str(r.get("name") or "") for r in rows],
                     servers=rows,
                 )
+            from agloom.runtime.session_bootstrap import emit_agent_tool_catalog
+
+            emit_agent_tool_catalog(
+                emitter,
+                agent,
+                model_id=str(model_id_guess) if model_id_guess else None,
+            )
         # Update session marker with resolved model info
         _rewrite_session_marker(model_id=str(model_id_guess) if model_id_guess else None)
         return agent
@@ -1175,6 +1182,7 @@ async def _providers_verify_async(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_stdio_utf8()
     parser = _build_parser()
     args = parser.parse_args(argv)
     if args.cmd == "providers":

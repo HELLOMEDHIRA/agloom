@@ -73,9 +73,11 @@ interface Props {
   width: number
   /** Total panel height in terminal rows (border + title + scroll body). */
   maxHeight: number
+  scrollActive?: boolean
+  focusHint?: string
 }
 
-export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactElement => {
+export const MetricsPanel = ({ thread, width, maxHeight, scrollActive = true, focusHint }: Props): React.ReactElement => {
   const status = useSessionStore((s) => s.status)
   const nowMs = useSessionStore((s) => s.wallClockMs)
 
@@ -360,6 +362,15 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
       )
       if (mcpServerRows.length > 0) {
         mcpServerRows.forEach((r, i) => {
+          const preview =
+            r.toolCatalog && r.toolCatalog.length > 0
+              ? r.toolCatalog
+                  .slice(0, 4)
+                  .map((t) => (t.description ? `${t.name}: ${t.description.slice(0, 48)}` : t.name))
+                  .join(' · ') + (r.toolCatalog.length > 4 ? ' · …' : '')
+              : r.toolNames && r.toolNames.length > 0
+                ? r.toolNames.slice(0, 6).join(', ') + (r.toolNames.length > 6 ? ', …' : '')
+                : null
           lines.push(
             <Text key={`mcp-${r.name}-${i}`} wrap="wrap">
               <Text color={r.ok ? 'green' : 'red'}>{r.ok ? '● ' : '○ '}</Text>
@@ -369,6 +380,14 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
               </Text>
             </Text>,
           )
+          if (preview) {
+            lines.push(
+              <Text key={`mcp-tools-${r.name}-${i}`} wrap="wrap" color="gray" dimColor>
+                {'    '}
+                {preview}
+              </Text>,
+            )
+          }
         })
       } else {
         mcpServerNames.forEach((n, i) => {
@@ -500,9 +519,9 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
     uptimeMs,
   ])
 
-  /** Border (2) + title block (~3) — remainder is scroll viewport. */
-  const headerRows = 3
-  const scrollBodyLines = Math.max(6, maxHeight - headerRows - 2)
+  /** Border (2) + title (~3) + scroll hint (1) — remainder is scroll viewport. */
+  const chromeRows = 6
+  const scrollBodyLines = Math.max(6, maxHeight - chromeRows)
 
   return (
     <Box
@@ -514,7 +533,7 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
       flexShrink={0}
       alignSelf="stretch"
       borderStyle="round"
-      borderColor="cyan"
+      borderColor={scrollActive ? 'cyan' : 'gray'}
       paddingX={1}
       paddingY={0}
     >
@@ -528,14 +547,22 @@ export const MetricsPanel = ({ thread, width, maxHeight }: Props): React.ReactEl
         </Text>
       </Box>
 
-      <Box flexDirection="column" flexGrow={1} minHeight={scrollBodyLines} height={scrollBodyLines}>
+      <Box
+        flexDirection="column"
+        flexGrow={1}
+        minHeight={scrollBodyLines}
+        height={scrollBodyLines}
+        overflow="hidden"
+      >
         <ScrollableColumn
           maxLines={scrollBodyLines}
           lines={bodyLines}
           pinToBottomOnGrow={false}
           allowBracketScroll
           fillHeight
-          showScrollHint={bodyLines.length > scrollBodyLines}
+          scrollActive={scrollActive}
+          focusHint={focusHint}
+          showScrollHint={bodyLines.length > scrollBodyLines || Boolean(focusHint)}
         />
       </Box>
     </Box>

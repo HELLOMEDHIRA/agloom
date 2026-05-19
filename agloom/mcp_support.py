@@ -369,19 +369,185 @@ async def connect_mcp_servers(
     server_rows: list[dict[str, Any]] = []
     for cap in caps:
         tools = cap.all_tools()
-        names = [getattr(t, "name", "?") for t in tools]
+        catalog = _tool_catalog_entries(tools)
+        names = [e["name"] for e in catalog]
         server_rows.append(
             {
                 "name": cap.server_name,
                 "ok": True,
                 "error": None,
                 "tool_count": len(tools),
-                "tool_names": names[:80],
-                "tool_names_truncated": len(names) > 80,
+                "tool_names": names,
+                "tool_catalog": catalog,
+                "tool_names_truncated": len(tools) > len(catalog),
             }
         )
 
+    append_mcp_system_appendix_to_agent(agent, server_rows)
+
     return client, server_rows
+
+
+MCP_SYSTEM_APPENDIX_MARKER = "=== MCP servers and tools ==="
+_MCP_DESC_MAX = 220
+_MCP_TOOLS_PER_SERVER_APPENDIX = 48
+
+
+def mcp_configured_server_names(agent: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    for s in agent.get("_mcp_servers") or []:
+        nm = getattr(s, "name", None) or (s.get("name") if isinstance(s, dict) else None)
+        if nm:
+            names.append(str(nm))
+    return names
+
+
+def format_mcp_inventory_text(
+    *,
+    configured_names: list[str],
+    server_rows: list[dict[str, Any]] | None,
+) -> str:
+    """Plain-text MCP inventory from agloom session state (no MCP tool / DB calls)."""
+    rows = list(server_rows or [])
+    by_name = {str(r.get("name") or ""): r for r in rows if r.get("name")}
+    names = configured_names or list(by_name.keys())
+    if not names:
+        return "No MCP servers configured (set mcp.servers in .agloom/agloom.yaml)."
+
+    lines: list[str] = ["MCP inventory (from agloom session — not the Super-Brain graph DB):"]
+    for sname in names:
+        row = by_name.get(sname)
+        if row is None:
+            lines.append(f"- {sname}: configured, not connected yet (send a message to connect)")
+            continue
+        if not row.get("ok"):
+            err = row.get("error")
+            lines.append(f"- {sname}: connect failed{(': ' + str(err)) if err else ''}")
+            continue
+        catalog_raw = row.get("tool_catalog")
+        catalog: list[dict[str, str]] = []
+        if isinstance(catalog_raw, list):
+            for item in catalog_raw:
+                if isinstance(item, dict):
+                    n = str(item.get("name") or "").strip()
+                    if n:
+                        catalog.append(
+                            {
+                                "name": n,
+                                "description": str(item.get("description") or "").strip(),
+                            }
+                        )
+        if not catalog:
+            for n in row.get("tool_names") or []:
+                catalog.append({"name": str(n), "description": ""})
+        lines.append(f"- {sname}: connected, {len(catalog)} tool(s)")
+        for entry in catalog[:_MCP_TOOLS_PER_SERVER_APPENDIX]:
+            n = entry["name"]
+            desc = entry.get("description") or ""
+            lines.append(f"    · {n}" + (f" — {desc}" if desc else ""))
+        if len(catalog) > _MCP_TOOLS_PER_SERVER_APPENDIX:
+            lines.append("    · … (more tools in tool schemas)")
+    return "\n".join(lines)
+
+
+def _normalize_tool_description(tool: BaseTool, *, max_len: int = _MCP_DESC_MAX) -> str:
+    raw = getattr(tool, "description", None) or ""
+    text = " ".join(str(raw).split())
+    if not text:
+        return ""
+    if len(text) > max_len:
+        return text[: max_len - 1].rstrip() + "…"
+    return text
+
+
+def _tool_catalog_entries(tools: list[BaseTool], *, max_tools: int = 80) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for t in tools[:max_tools]:
+        name = str(getattr(t, "name", "") or "").strip() or "?"
+        desc = _normalize_tool_description(t)
+        out.append({"name": name, "description": desc})
+    return out
+
+
+def build_mcp_system_appendix(
+    server_rows: list[dict[str, Any]],
+    *,
+    mcp_prompts: dict[str, list[str]] | None = None,
+    mcp_uris: dict[str, list[str]] | None = None,
+) -> str:
+    """Human-readable MCP tool inventory for the model (appended to string ``system_prompt``)."""
+    ok_rows = [r for r in server_rows if r.get("ok")]
+    if not ok_rows:
+        return ""
+
+    server_label = ", ".join(str(r.get("name") or "?") for r in ok_rows)
+    lines = [
+        "",
+        MCP_SYSTEM_APPENDIX_MARKER,
+        f"MCP servers connected this session: {server_label}.",
+        "When the user asks which MCP servers are connected or what each MCP tool does: answer from this section, or call the bundled tool `list_mcp_servers` — do **not** call agsuperbrain `list_modules` / graph tools (those open the Kuzu DB and are for repo modules, not MCP wiring).",
+        "Use MCP tools below for repo/graph search and Super-Brain capabilities after you know what is connected.",
+        "",
+    ]
+    prompts_map = mcp_prompts or {}
+    uris_map = mcp_uris or {}
+    for row in ok_rows:
+        sname = str(row.get("name") or "?")
+        catalog_raw = row.get("tool_catalog")
+        catalog: list[dict[str, str]] = []
+        if isinstance(catalog_raw, list):
+            for item in catalog_raw:
+                if isinstance(item, dict):
+                    n = str(item.get("name") or "").strip()
+                    if n:
+                        catalog.append(
+                            {
+                                "name": n,
+                                "description": str(item.get("description") or "").strip(),
+                            }
+                        )
+        if not catalog:
+            names = [str(n) for n in (row.get("tool_names") or [])]
+            catalog = [{"name": n, "description": ""} for n in names]
+        truncated = bool(row.get("tool_names_truncated"))
+        count_label = f"{len(catalog)}+" if truncated else str(len(catalog))
+        lines.append(f"**{sname}** ({count_label} tool(s)):")
+        for entry in catalog[:_MCP_TOOLS_PER_SERVER_APPENDIX]:
+            n = entry["name"]
+            desc = entry.get("description") or ""
+            if desc:
+                lines.append(f"  - `{n}` — {desc}")
+            else:
+                lines.append(f"  - `{n}`")
+        if truncated and len(catalog) > _MCP_TOOLS_PER_SERVER_APPENDIX:
+            lines.append("  - … additional tools (see tool schemas in the tool list)")
+        prompt_names = prompts_map.get(sname) or []
+        if prompt_names:
+            preview = ", ".join(prompt_names[:24])
+            if len(prompt_names) > 24:
+                preview += ", …"
+            lines.append(f"  Prompt templates: `get_prompt_{sname}` — {preview}")
+        uris = uris_map.get(sname) or []
+        if uris:
+            lines.append(f"  Resources: `read_resource_{sname}` — {len(uris)} URI(s) available")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def append_mcp_system_appendix_to_agent(agent: dict[str, Any], server_rows: list[dict[str, Any]]) -> None:
+    """Extend a string ``system_prompt`` once MCP tools are loaded (callable prompts unchanged)."""
+    sp = agent.get("system_prompt")
+    if not isinstance(sp, str):
+        return
+    if MCP_SYSTEM_APPENDIX_MARKER in sp:
+        return
+    appendix = build_mcp_system_appendix(
+        server_rows,
+        mcp_prompts=agent.get("mcp_prompts"),
+        mcp_uris=agent.get("mcp_uris"),
+    )
+    if appendix:
+        agent["system_prompt"] = sp.rstrip() + appendix
 
 
 async def aclose_mcp_client(

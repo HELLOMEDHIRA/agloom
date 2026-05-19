@@ -83,6 +83,55 @@ When the MCP connection is established, agloom loads:
 - **Resources** — available as resource tools (if the server exposes them)
 - **Prompts** — stored for prompt injection (if the server exposes them)
 
+Each tool's **name** and **description** (from the MCP server's schema) are captured at connect time.
+
+## Session inventory (no graph DB)
+
+agloom keeps an in-memory catalog after connect (`_mcp_server_rows` on the agent config). You do **not** need to call MCP tools such as agsuperbrain **`list_modules`** to answer "what MCP servers are connected?" — that tool queries the Super-Brain **Kuzu graph database**, not agloom's wiring.
+
+### System prompt appendix
+
+For string `system_prompt` values, agloom appends a section marked **`=== MCP servers and tools ===`** with:
+
+- Connected server names
+- Per-tool lines: `` `tool_name` — short description `` (descriptions truncated to ~220 characters)
+
+The model is instructed to answer MCP inventory questions from this section.
+
+### CLI meta tool: `list_mcp_servers`
+
+When **`cli_tools=True`**, the bundled meta tool **`list_mcp_servers`** returns the same inventory from session state (no MCP or DB I/O). Use it when the user asks what MCP tools exist or what each one does.
+
+!!! tip "agsuperbrain"
+    **`list_modules`** lists **repository modules inside the graph** — not MCP servers. For MCP wiring, use the appendix, **`list_mcp_servers`**, or the CLI **`/mcp`** slash command.
+
+### AGP event: `runtime.mcp.servers`
+
+After the first successful MCP connect in a session, the runtime emits:
+
+```jsonc
+{
+  "type": "runtime.mcp.servers",
+  "data": {
+    "server_names": ["agsuperbrain"],
+    "servers": [
+      {
+        "name": "agsuperbrain",
+        "ok": true,
+        "tool_count": 12,
+        "tool_names": ["search_code", "…"],
+        "tool_catalog": [
+          { "name": "search_code", "description": "Semantic search over the repository." }
+        ],
+        "tool_names_truncated": false
+      }
+    ]
+  }
+}
+```
+
+Clients (CLI metrics sidebar, web UI) merge **`tool_names`** into the session tool list and may show **`tool_catalog`** previews. See [AGP specification](../protocol/agp.md).
+
 ## Example: Filesystem + Database
 
 ```python

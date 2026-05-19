@@ -75,7 +75,7 @@ Emitted once per runtime attachment after workspace/bootstrap checks and **befor
   "data": {
     "agent_name": "default",
     "cli_tools_enabled": true,
-    "cli_tools_count": 25,
+    "cli_tools_count": 26,
     "harness_enabled": false,
     "session_memory_mode": "sqlite",
     "agent_store_kind": "sqlite",
@@ -84,6 +84,8 @@ Emitted once per runtime attachment after workspace/bootstrap checks and **befor
 ```
 
 `session_memory_mode` is `sqlite` | `in-memory` | `none` (ephemeral in-process session memory when omitted on the CLI). `mcp_servers_configured` lists names from argv/YAML — servers connect lazily on first invoke.
+
+`cli_tools_count` is the number of bundled workspace tools when `--with-cli-tools` is on (currently **26** including `list_mcp_servers`).
 
 ### `runtime.config`
 
@@ -97,6 +99,43 @@ Emitted in the same startup bundle as `runtime.ready` (immediately after). Carri
     "capabilities": []
   } }
 ```
+
+After MCP connect, **`runtime.config`** may be emitted again with an updated **`tool_names`** list (CLI + MCP tools merged).
+
+### `runtime.mcp.servers`
+
+Emitted after the first successful MCP connect in a session (and when the catalog is re-emitted after lazy connect). Empty or omitted when no MCP servers are configured.
+
+```jsonc
+{ "type": "runtime.mcp.servers",
+  "data": {
+    "server_names": ["agsuperbrain"],
+    "servers": [
+      {
+        "name": "agsuperbrain",
+        "ok": true,
+        "error": null,
+        "tool_count": 12,
+        "tool_names": ["search_code", "read_graph"],
+        "tool_catalog": [
+          { "name": "search_code", "description": "Semantic search over the repository." }
+        ],
+        "tool_names_truncated": false
+      }
+    ]
+  } }
+```
+
+| Field | Meaning |
+| ----- | ------- |
+| `server_names` | Configured server ids (same order as connect attempt) |
+| `servers[].ok` | Whether tools loaded for that server |
+| `servers[].error` | Connect/load error string when `ok` is false |
+| `tool_catalog` | Preferred inventory: `{ name, description? }` per tool |
+| `tool_names` | Name-only fallback (older clients / truncated rows) |
+| `tool_names_truncated` | True when more tools exist than listed |
+
+UIs should render **`tool_catalog`** when present. Inventory for the model also appears in the string **`system_prompt`** appendix (see [MCP Servers](../features/mcp.md)).
 
 ### `session.resumed`
 

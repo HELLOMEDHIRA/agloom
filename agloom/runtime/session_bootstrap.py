@@ -123,6 +123,51 @@ def make_hitl_bridge(emitter: SessionEmitter, prepared: PreparedRuntimeSession) 
     )
 
 
+def _agent_config_dict(agent: Any) -> dict[str, Any]:
+    """``UnifiedAgent`` or bare ``create_agent`` config dict."""
+    if isinstance(agent, dict):
+        return agent
+    inner = getattr(agent, "config", None)
+    return inner if isinstance(inner, dict) else {}
+
+
+def emit_agent_tool_catalog(
+    emitter: SessionEmitter,
+    agent: Any,
+    *,
+    model_id: str | None = None,
+) -> None:
+    """Emit ``runtime.config`` + ``runtime.tools`` with the agent's full tool list (includes MCP after connect)."""
+    from agloom.cli_tools import CLI_TOOL_NAMES
+
+    cfg = _agent_config_dict(agent)
+    tool_objs = cfg.get("tools", []) or []
+    tool_names = [getattr(t, "name", str(t)) for t in tool_objs]
+    rows: list[tuple[str, str | None]] = []
+    for t in tool_objs:
+        nm = getattr(t, "name", "?")
+        desc = getattr(t, "description", None)
+        rows.append((nm, str(desc) if desc else None))
+    names_set = {getattr(t, "name", None) for t in tool_objs}
+    cli_count = sum(1 for n in names_set if n in CLI_TOOL_NAMES)
+    cli_en = cli_count > 0
+    mid = model_id
+    if mid is None:
+        llm_obj = cfg.get("llm")
+        if llm_obj is not None:
+            mid = getattr(llm_obj, "model_name", None) or getattr(llm_obj, "model", None)
+            if mid is None:
+                mid = type(llm_obj).__name__
+    emitter.emit_runtime_config(
+        model_id=str(mid) if mid else None,
+        tool_names=tool_names,
+        cli_tools_enabled=cli_en,
+        cli_tools_count=cli_count,
+    )
+    if rows:
+        emitter.emit_runtime_tools(tools=rows)
+
+
 async def emit_agent_runtime_ready(
     emitter: SessionEmitter,
     agent: Any,
@@ -187,6 +232,7 @@ async def connect_mcp_or_raise(agent: Any, emitter: SessionEmitter) -> None:
             server_names=[str(r.get("name") or "") for r in rows],
             servers=rows,
         )
+    emit_agent_tool_catalog(emitter, agent)
 
 
 async def cancel_runtime_invocations(
@@ -290,6 +336,7 @@ __all__ = [
     "PreparedRuntimeSession",
     "cancel_runtime_invocations",
     "connect_mcp_or_raise",
+    "emit_agent_tool_catalog",
     "emit_agent_runtime_ready",
     "make_hitl_bridge",
     "open_event_store_from_args",

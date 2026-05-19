@@ -233,7 +233,11 @@ export const createAGPBridge = (): AGPBridge => {
 
     proc = spawn(cmd, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env },
+      env: {
+        ...process.env,
+        PYTHONIOENCODING: process.env['PYTHONIOENCODING'] ?? 'utf-8',
+        PYTHONUTF8: process.env['PYTHONUTF8'] ?? '1',
+      },
       shell: false,
       // Stay in the parent's process group; SIGINT/SIGTERM forwarders + exit hook stop the child.
       detached: false,

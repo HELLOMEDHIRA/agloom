@@ -100,7 +100,7 @@ export const flattenCompletedTurnLines = (
   if (turn.thinkingSteps.length > 0) {
     out.push(
       <Text key={`${turn.id}-th-head`} color="gray" dimColor bold>
-        Reasoning
+        Trace
       </Text>,
     )
     pushThinkingLines(out, turn.thinkingSteps, turn.id, detailCols)

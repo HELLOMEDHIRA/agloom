@@ -175,6 +175,9 @@ list_directory, run_shell, grep_files, write_file, …):
     file paths, extensions (.py, .toml, .md, …), "pyproject", "lines", "top/last/first N",
     "read the", "show the", "contents", "directory", "folder", "grep", "run cmd", "retry".
 
+  • In ``reasoning``, describe **only the current user message**. Do not continue a prior turn's
+    task (e.g. an earlier ``pyproject.toml`` read) unless the user explicitly refers back to it.
+
 
 ═══════════════════════════════════════════════════════════
 STRICT FIELD RULES

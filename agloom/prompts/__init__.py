@@ -2,7 +2,6 @@
 
 from .core import (
     ANSWER_CONTRACT_MARKER,
-    CLI_WORKSPACE_SYSTEM_PROMPT,
     DEFAULT_SYSTEM_PROMPT,
     GLOBAL_ANSWER_CONTRACT_APPENDIX,
     compose_agent_system_prompt,
@@ -12,7 +11,6 @@ from .core import (
 
 __all__ = [
     "ANSWER_CONTRACT_MARKER",
-    "CLI_WORKSPACE_SYSTEM_PROMPT",
     "DEFAULT_SYSTEM_PROMPT",
     "GLOBAL_ANSWER_CONTRACT_APPENDIX",
     "compose_agent_system_prompt",

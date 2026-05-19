@@ -63,12 +63,23 @@ def capture_emitter() -> SessionEmitter:
 def test_translate_classify_emits_pattern_then_thinking() -> None:
     em = capture_emitter()
     translate(
-        AgentEvent(type="classify", data={"pattern": "REACT", "complexity": 5, "output": "ok"}),
+        AgentEvent(
+            type="classify",
+            data={
+                "pattern": "REACT",
+                "complexity": 5,
+                "reason": "User wants a file existence check.",
+                "output": "pattern=REACT\nreasoning:\n(stale blob must not appear in trace)",
+            },
+        ),
         em,
     )
     assert [name for name, _ in em.calls] == ["emit_pattern_classified", "emit_thinking_step"]
     assert em.calls[0][1]["pattern"] == "REACT"
     assert em.calls[0][1]["complexity"] == 5
+    assert em.calls[0][1]["reason"] == "User wants a file existence check."
+    assert em.calls[1][1]["label"] == "Routing · REACT"
+    assert em.calls[1][1]["detail"] == "User wants a file existence check."
 
 
 def test_translate_token_preserves_whitespace() -> None:

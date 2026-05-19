@@ -35,7 +35,7 @@ describe('ensureAgloomCliWorkspace', () => {
     rmSync(dir, { recursive: true })
   })
 
-  it('copies root agloom.yaml into .agloom when nested is missing', async () => {
+  it('copies root agloom.yaml into .agloom when nested is missing and removes root', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'agloom-ws-migrate-'))
     mkdirSync(join(dir, '.agsuperbrain'), { recursive: true })
     const rootY = join(dir, 'agloom.yaml')
@@ -45,7 +45,25 @@ describe('ensureAgloomCliWorkspace', () => {
     expect(wroteYaml).toBe(true)
     expect(readFileSync(nestedCfg, 'utf8')).toContain('from-root-only')
     expect(readFileSync(nestedCfg, 'utf8')).toContain('agsuperbrain:mcp/agsuperbrain.yaml')
-    expect(readFileSync(rootY, 'utf8')).toContain('from-root-only')
+    expect(existsSync(rootY)).toBe(false)
+    rmSync(dir, { recursive: true })
+  })
+
+  it('prunes legacy root agloom.yaml when nested config exists', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agloom-ws-prune-'))
+    mkdirSync(join(dir, '.agloom'), { recursive: true })
+    mkdirSync(join(dir, '.agsuperbrain'), { recursive: true })
+    const rootY = join(dir, 'agloom.yaml')
+    const nestedCfg = join(dir, '.agloom', 'agloom.yaml')
+    writeFileSync(
+      rootY,
+      'ai:\n  system_prompt: |\n    You are an autonomous AI programming assistant built with agloom.\n',
+      'utf8',
+    )
+    writeFileSync(nestedCfg, 'ai:\n  model: auto\n', 'utf8')
+    await ensureAgloomCliWorkspace(dir, { configPath: nestedCfg })
+    expect(existsSync(rootY)).toBe(false)
+    expect(existsSync(nestedCfg)).toBe(true)
     rmSync(dir, { recursive: true })
   })
 

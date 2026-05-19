@@ -6,14 +6,16 @@ Optional YAML layers configure defaults without long command lines. **Precedence
 
 1. Built-in CLI defaults  
 2. User file: **`~/.agloom/agloom.yaml`**  
-3. **Walk-up** `./agloom.yaml` from the current working directory (nearest wins toward disk root)  
+3. **Walk-up** from the current working directory (nearest parent toward disk root): **`.agloom/agloom.yaml`** first, then legacy **`./agloom.yaml`** if nested is absent  
 4. **`AGLOOM_*`** environment variables (see below)  
 5. **`--config /path/to/agloom.yaml`** explicit file  
 6. **Other CLI flags** (highest) — except **`multiline`**, which is **YAML-only** (TUI compose). Execution routing pattern is **not** user-configurable; the runtime classifier selects it.
 
+**Canonical project config** is **`.agloom/agloom.yaml`**. On first bootstrap the CLI creates `.agloom/` and may **migrate** an old root `agloom.yaml` into `.agloom/` and remove stale root copies (legacy starter templates are replaced; custom prompts are preserved).
+
 ### Tuning `system_prompt` (persists across restarts)
 
-The default persona lives in **`ai.system_prompt`** inside **`.agloom/agloom.yaml`** (synced with `agloom/prompts/cli_workspace_prompt.txt` when the file is first created).
+The default persona lives in **`ai.system_prompt`** inside **`.agloom/agloom.yaml`**, seeded from **`agloom_cli/prompts/cli_workspace_prompt.txt`** on first bootstrap. The Python **`agloom`** package does not ship this text — the runtime reads YAML (or **`command.config.set`** over AGP) and passes it to **`create_agent`**.
 
 | How you set it | What happens on restart |
 | --- | --- |

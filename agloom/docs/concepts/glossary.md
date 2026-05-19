@@ -13,5 +13,7 @@ Short definitions for terms used across agloom, AGP, and the docs. (Wording may 
 | **Orchestration** | Optional recursive **pattern dispatch** inside one turn (`max_pattern_depth` ceiling). Off when ceiling is `0`. |
 | **Orchestration plan** | Per-turn limits (depth, token/LLM budgets, escalation) from the classifier or complexity heuristics, clamped to `create_agent` ceilings. |
 | **Spawn** | One bounded follow-up pattern run inside the same turn, counted against depth and budgets. |
+| **MCP inventory** | agloom session catalog of connected MCP servers and tools (`_mcp_server_rows`, system prompt appendix, `runtime.mcp.servers`, `list_mcp_servers`) — not the Super-Brain graph DB. |
+| **MCP appendix** | Block appended to `system_prompt` after connect (`=== MCP servers and tools ===`) listing tool names and descriptions. |
 
 See also: [Recursive orchestration](../features/orchestration.md), [Wire tokens & metric.tokens](../features/wire-tokens.md), and [AGP — Agloom Protocol](../protocol/agp.md).

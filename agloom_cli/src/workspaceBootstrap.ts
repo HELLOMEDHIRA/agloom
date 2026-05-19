@@ -3,13 +3,14 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import YAML from 'yaml'
 import { resolveAgloomProjectRoot } from './config.js'
 import { AGSUPERBRAIN_MCP_CONFIG_YAML } from './agsuperbrainMcpConfig.js'
 import { DEFAULT_AGLOOM_YAML } from './defaultAgloomTemplate.js'
 import { TEMPLATE_NODE_YAML, TEMPLATE_PYTHON_YAML } from './templateYaml.js'
+import { isLegacyCliSystemPrompt } from './cliWorkspacePrompt.js'
 import { migrateLegacySystemPromptInYaml } from './yamlSystemPromptMigrate.js'
 
 export interface EnsureCliWorkspaceResult {
@@ -121,6 +122,51 @@ const rewriteNestedAgloomYamlStripMemorySkills = (nestedYamlPath: string): void 
   }
 }
 
+const extractSystemPromptFromYamlText = (raw: string): string | null => {
+  try {
+    const doc = YAML.parse(raw)
+    if (doc == null || typeof doc !== 'object' || Array.isArray(doc)) return null
+    const rec = doc as Record<string, unknown>
+    const ai = rec.ai
+    if (ai && typeof ai === 'object' && !Array.isArray(ai)) {
+      const sp = (ai as Record<string, unknown>).system_prompt
+      if (typeof sp === 'string' && sp.trim()) return sp.trim()
+    }
+    const top = rec.system_prompt
+    if (typeof top === 'string' && top.trim()) return top.trim()
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+/** Remove confusing duplicate root ``agloom.yaml`` when nested config is canonical. */
+export const pruneStaleRootAgloomYaml = (projectRoot: string): boolean => {
+  const rootYaml = join(projectRoot, 'agloom.yaml')
+  const nestedYaml = join(projectRoot, '.agloom', 'agloom.yaml')
+  if (!existsSync(rootYaml) || !existsSync(nestedYaml)) return false
+  try {
+    const rootRaw = readFileSync(rootYaml, 'utf8')
+    const nestedRaw = readFileSync(nestedYaml, 'utf8')
+    if (rootRaw === nestedRaw) {
+      unlinkSync(rootYaml)
+      process.stderr.write('[agloom] removed duplicate root `agloom.yaml` (same as `.agloom/agloom.yaml`).\n')
+      return true
+    }
+    const rootSp = extractSystemPromptFromYamlText(rootRaw)
+    if (rootSp && isLegacyCliSystemPrompt(rootSp)) {
+      unlinkSync(rootYaml)
+      process.stderr.write(
+        '[agloom] removed legacy root `agloom.yaml` (outdated template; use `.agloom/agloom.yaml`).\n',
+      )
+      return true
+    }
+  } catch {
+    /* ignore */
+  }
+  return false
+}
+
 const hasAgsuperbrainServerEntry = (servers: unknown[]): boolean =>
   servers.some((s) => {
     if (typeof s === 'string') return s.split(':')[0]?.trim().toLowerCase() === 'agsuperbrain'
@@ -189,14 +235,23 @@ export const ensureAgloomCliWorkspace = async(
     if (existsSync(rootYaml)) {
       writeFileSync(nestedYaml, readFileSync(rootYaml, 'utf8'), 'utf8')
       wroteYaml = true
-      process.stderr.write(
-        '[agloom] Migrated root `agloom.yaml` → `.agloom/agloom.yaml` (canonical). Remove the root file if you only want one copy — nested wins when both exist.\n',
-      )
+      try {
+        unlinkSync(rootYaml)
+        process.stderr.write(
+          '[agloom] Migrated root `agloom.yaml` → `.agloom/agloom.yaml` and removed the root copy.\n',
+        )
+      } catch {
+        process.stderr.write(
+          '[agloom] Migrated root `agloom.yaml` → `.agloom/agloom.yaml` (canonical). Remove the root file manually if both remain.\n',
+        )
+      }
     } else {
       writeFileSync(nestedYaml, yamlForTemplate(opts?.template), 'utf8')
       wroteYaml = true
     }
   }
+
+  pruneStaleRootAgloomYaml(projectRoot)
 
   if (existsSync(nestedYaml)) {
     ensureAgsuperbrainMcpInNestedYaml(nestedYaml)

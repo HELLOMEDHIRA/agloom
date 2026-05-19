@@ -66,13 +66,14 @@ Shell tools are included in **`interrupt_before_tools`** by default when `allow_
 
 | Tool                               | Purpose                                                                      |
 | ---------------------------------- | ---------------------------------------------------------------------------- |
+| `list_mcp_servers()`               | List MCP servers + tool names/descriptions from agloom session state (no graph DB). See [MCP](mcp.md). |
 | `ask_user(question, choices=None)` | HITL clarification over AGP (requires active bridge).                        |
 | `write_todos(items_json)`          | Replace session todos; emits AGP `todos.updated` when an emitter is present. |
 | `task(prompt, delegate_name=None)` | Blocking delegate to a **`delegates=`** target via `adelegate`.              |
 
 ## Names
 
-There are **25** built-in tools when fully enabled. The runtime reports how many are active on **`runtime.ready`** (`cli_tools_count`).
+There are **26** built-in tools when fully enabled (`list_mcp_servers` included). The runtime reports how many are active on **`runtime.ready`** (`cli_tools_count`).
 
 ## See also
 

@@ -115,6 +115,7 @@ For inbound commands (`command.invoke`, `command.cancel`, `command.hitl.respond`
 | **Routing** | `thinking.step`, `pattern.classified` | Show classifier / pattern |
 | **HITL** | `hitl.request`, `hitl.granted`, `hitl.denied` | Approvals |
 | **Metrics** | `metric.tokens`, `metric.cost` | Sidebar; use rollup fields — do not sum every `token.delta` blindly |
+| **MCP** | `runtime.mcp.servers` | Connected servers + `tool_catalog` (name + description per tool) |
 | **Lifecycle** | `session.opened`, `session.closed`, `agent.busy`, `agent.idle` | Connection state |
 
 Full catalog: [AGP specification](../agloom/protocol/agp.md).

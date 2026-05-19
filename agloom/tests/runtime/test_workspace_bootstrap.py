@@ -42,6 +42,7 @@ def test_migrate_root_only_yaml_into_dot_agloom(tmp_path: Path) -> None:
     nested = tmp_path / ".agloom" / "agloom.yaml"
     assert nested.is_file()
     assert "root-only" in nested.read_text(encoding="utf-8")
+    assert not root_y.is_file()
     assert sessions_dir == tmp_path / ".agloom" / "sessions"
     _, created2 = ensure_agloom_workspace(tmp_path)
     assert created2 is False
@@ -173,18 +174,21 @@ def test_strip_deprecated_memory_skills_enabled_lines() -> None:
     assert "max_skills: 3" in out
 
 
-def test_ensure_migrates_legacy_system_prompt(tmp_path: Path) -> None:
+def test_ensure_does_not_migrate_legacy_system_prompt(tmp_path: Path) -> None:
+    """Legacy → canonical prompt migration is owned by agloom-cli, not agloom-runtime."""
     import yaml as pyyaml
 
-    from agloom.prompts.yaml_sync import extract_system_prompt_from_yaml, is_canonical_cli_system_prompt
+    from agloom.prompts.yaml_sync import extract_system_prompt_from_yaml, is_legacy_cli_system_prompt
 
     dot = tmp_path / ".agloom"
     dot.mkdir(parents=True)
     y = dot / "agloom.yaml"
-    y.write_text(
-        "ai:\n  model: auto\n  system_prompt: |\n"
+    legacy_body = (
         "    You are an autonomous AI programming assistant built with agloom.\n"
-        "    ## Your Capabilities\n",
+        "    ## Your Capabilities\n"
+    )
+    y.write_text(
+        f"ai:\n  model: auto\n  system_prompt: |\n{legacy_body}",
         encoding="utf-8",
     )
     args = SimpleNamespace(rewrite_workspace_yaml=True)
@@ -192,7 +196,7 @@ def test_ensure_migrates_legacy_system_prompt(tmp_path: Path) -> None:
     data = pyyaml.safe_load(y.read_text(encoding="utf-8"))
     sp = extract_system_prompt_from_yaml(data)
     assert sp is not None
-    assert is_canonical_cli_system_prompt(sp)
+    assert is_legacy_cli_system_prompt(sp)
 
 
 def test_ensure_agloom_workspace_strips_memory_skills_enabled(tmp_path: Path) -> None:

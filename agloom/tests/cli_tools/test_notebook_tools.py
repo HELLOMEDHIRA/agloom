@@ -44,7 +44,7 @@ def test_notebook_edit_requires_read_or_force(tmp_path: Path) -> None:
     assert "notebook_read" in out.lower() or "force" in out.lower()
 
     ok = ts["notebook_edit"].invoke({"path": "b.ipynb", "edits_json": edits, "force": True})
-    assert "✓" in ok or "applied" in ok.lower()
+    assert "OK:" in ok or "applied" in ok.lower()
     data = json.loads(path.read_text(encoding="utf-8"))
     assert len(data["cells"]) == 1
 
@@ -61,7 +61,7 @@ def test_notebook_edit_sequence_insert_delete(tmp_path: Path) -> None:
         {"op": "delete_cell", "cell_index": 0},
     ]
     out = ts["notebook_edit"].invoke({"path": "c.ipynb", "edits_json": json.dumps(seq)})
-    assert "✓" in out
+    assert "OK:" in out
     data = json.loads(path.read_text(encoding="utf-8"))
     assert len(data["cells"]) == 1
     assert data["cells"][0]["cell_type"] == "markdown"

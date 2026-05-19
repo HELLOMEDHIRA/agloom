@@ -1,8 +1,8 @@
 /** Canonical starter ``agloom.yaml`` body (written to ``.agloom/agloom.yaml`` by the CLI).
  * Runtime does not write project files — see ``workspaceBootstrap.ts``.
  *
- * ``ai.system_prompt`` is loaded from ``prompts/cli_workspace_prompt.txt`` (keep in sync with
- * ``agloom/prompts/cli_workspace_prompt.txt`` in the Python package).
+ * ``ai.system_prompt`` is loaded from ``prompts/cli_workspace_prompt.txt`` (this package only).
+ * The Python ``agloom`` core receives it via ``.agloom/agloom.yaml`` or ``command.config.set``.
  */
 
 import { yamlIndentedPromptBlock } from './cliWorkspacePrompt.js'

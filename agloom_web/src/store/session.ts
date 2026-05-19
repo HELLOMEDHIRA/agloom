@@ -671,7 +671,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
         const line = `plan.preview · ${evt.data.pattern} · c=${evt.data.complexity ?? 0}${joined ? `\n${joined}` : ''}`
         const next = { ...s, executionTrace: trace, protocolNotes: pushProtocolNotes(s.protocolNotes, line) }
         if (!s.activeTurn) return next
-        const planDetail = [evt.data.reasoning, joined].filter(Boolean).join('\n')
+        const planDetail = evt.data.reasoning?.trim() || undefined
         return {
           ...next,
           activeTurn: {
@@ -681,8 +681,8 @@ export const useSessionStore = create<SessionStore>((set) => ({
               {
                 id: uid(),
                 step: 'plan',
-                label: `plan · ${evt.data.pattern}`,
-                detail: planDetail || undefined,
+                label: `Routing · ${evt.data.pattern}`,
+                detail: planDetail,
                 elapsedMs: undefined,
               },
             ],

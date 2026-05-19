@@ -9,13 +9,9 @@ import {
 import { DEFAULT_AGLOOM_YAML } from '../defaultAgloomTemplate.js'
 import { migrateLegacySystemPromptInYaml } from '../yamlSystemPromptMigrate.js'
 
-const repoRoot = join(process.cwd(), '..')
-const pyPromptPath = join(repoRoot, 'agloom', 'prompts', 'cli_workspace_prompt.txt')
-
-describe('cli_workspace_prompt.txt sync', () => {
-  it('matches Python package prompt file', () => {
-    const py = readFileSync(pyPromptPath, 'utf8').trimEnd() + '\n'
-    expect(CLI_WORKSPACE_SYSTEM_PROMPT).toBe(py)
+describe('cli_workspace_prompt.txt', () => {
+  it('loads from agloom_cli prompts directory', () => {
+    expect(CLI_WORKSPACE_SYSTEM_PROMPT.toLowerCase()).toContain('terminal workspace (agloom cli)')
   })
 
   it('DEFAULT_AGLOOM_YAML embeds canonical system_prompt', () => {
@@ -33,7 +29,7 @@ describe('cli_workspace_prompt.txt sync', () => {
 
 describe('migrateLegacySystemPromptInYaml', () => {
   it('does not inject prompt when system_prompt is missing', () => {
-    const dir = join(repoRoot, 'agloom_cli', 'src', '__tests__', '_tmp_yaml_empty')
+    const dir = join(process.cwd(), 'src', '__tests__', '_tmp_yaml_empty')
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
     const p = join(dir, 'agloom.yaml')
     writeFileSync(p, 'ai:\n  model: auto\n', 'utf8')
@@ -43,7 +39,7 @@ describe('migrateLegacySystemPromptInYaml', () => {
   })
 
   it('rewrites legacy ai.system_prompt', () => {
-    const dir = join(repoRoot, 'agloom_cli', 'src', '__tests__', '_tmp_yaml_migrate')
+    const dir = join(process.cwd(), 'src', '__tests__', '_tmp_yaml_migrate')
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
     const p = join(dir, 'agloom.yaml')
     writeFileSync(

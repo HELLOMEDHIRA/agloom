@@ -76,6 +76,8 @@ export const App = ({
   const [input, setInput] = useState('')
   const [diagOpen, setDiagOpen] = useState(showDiag)
   const [metricsSidebarOpen, setMetricsSidebarOpen] = useState(true)
+  /** Which scrollable pane receives PgUp/PgDn and Ctrl+[/] when the metrics sidebar is open. */
+  const [scrollPane, setScrollPane] = useState<'chat' | 'metrics'>('chat')
   const [slashHelpOpen, setSlashHelpOpen] = useState(false)
   const [pendingLines, setPendingLines] = useState<string[]>([])
   const [pasteCompose, setPasteCompose] = useState(false)
@@ -113,6 +115,10 @@ export const App = ({
   const SPLIT_MIN_TERM_WIDTH = 92
   const showMetricsSidebar = metricsSidebarOpen && termWidth >= SPLIT_MIN_TERM_WIDTH
   const mainColumnWidth = showMetricsSidebar ? termWidth - SIDEBAR_WIDTH - 1 : termWidth
+
+  useEffect(() => {
+    if (!showMetricsSidebar) setScrollPane('chat')
+  }, [showMetricsSidebar])
   const setMainColumnWidth = useSessionStore((s) => s.setMainColumnWidth)
 
   useEffect(() => {
@@ -140,9 +146,26 @@ export const App = ({
     1
   const chatScrollLines = Math.max(4, middleRowHeight - middleOverhead)
 
+  const chatScrollActive = !showMetricsSidebar || scrollPane === 'chat'
+  const metricsScrollActive = showMetricsSidebar && scrollPane === 'metrics'
+  const chatFocusHint = showMetricsSidebar
+    ? chatScrollActive
+      ? '◀ scroll (Tab → metrics)'
+      : 'Tab → scroll chat'
+    : undefined
+  const metricsFocusHint = showMetricsSidebar
+    ? metricsScrollActive
+      ? '◀ scroll (Tab → chat)'
+      : 'Tab → scroll metrics'
+    : undefined
+
   useInput((char, key) => {
     if (slashHelpOpen) {
       if (key.escape || char === 'q') setSlashHelpOpen(false)
+      return
+    }
+    if (showMetricsSidebar && key.tab) {
+      setScrollPane((p) => (p === 'chat' ? 'metrics' : 'chat'))
       return
     }
     if (key.escape && (input !== '' || pendingLines.length > 0)) {
@@ -425,6 +448,40 @@ export const App = ({
         break
       }
 
+      case '/mcp': {
+        const st = useSessionStore.getState()
+        if (st.mcpServerRows.length === 0 && st.mcpServerNames.length === 0) {
+          appendProtocolNote('/mcp · no MCP servers configured (check mcp.servers in .agloom/agloom.yaml)')
+          break
+        }
+        if (st.mcpServerRows.length === 0) {
+          appendProtocolNote(
+            `/mcp · configured: ${st.mcpServerNames.join(', ')} · connect pending (send a message)`,
+          )
+          break
+        }
+        for (const r of st.mcpServerRows) {
+          if (!r.ok) {
+            appendProtocolNote(`/mcp · ${r.name} · fail · ${String(r.error ?? 'failed')}`)
+            continue
+          }
+          if (r.toolCatalog && r.toolCatalog.length > 0) {
+            appendProtocolNote(`/mcp · ${r.name} · ok · ${r.toolCatalog.length} tool(s)`)
+            for (const t of r.toolCatalog) {
+              const desc = t.description ? ` — ${t.description}` : ''
+              appendProtocolNote(`  · ${t.name}${desc}`)
+            }
+            continue
+          }
+          const tools =
+            r.toolNames && r.toolNames.length > 0
+              ? r.toolNames.join(', ')
+              : `${r.toolCount} tools (names in system prompt appendix)`
+          appendProtocolNote(`/mcp · ${r.name} · ok · ${tools}`)
+        }
+        break
+      }
+
       case '/model': {
         const st = useSessionStore.getState()
         const model = st.model ?? '—'
@@ -507,7 +564,14 @@ export const App = ({
         width={termWidth}
         alignItems="stretch"
       >
-        <Box flexDirection="column" width={mainColumnWidth} flexGrow={1} minHeight={0}>
+        <Box
+          flexDirection="column"
+          width={mainColumnWidth}
+          height={middleRowHeight}
+          minHeight={0}
+          flexGrow={1}
+          overflow="hidden"
+        >
         {slashHelpOpen && (
           <Box
             flexDirection="column"
@@ -528,12 +592,14 @@ export const App = ({
           </Box>
         )}
 
-        <Box flexDirection="column" flexGrow={1} minHeight={0} marginX={1}>
+        <Box flexDirection="column" flexGrow={1} minHeight={0} marginX={1} overflow="hidden">
           <ChatTranscript
             turns={completedTurns}
             width={mainColumnWidth}
             maxLines={chatScrollLines}
-            allowBracketScroll={!showMetricsSidebar}
+            allowBracketScroll={chatScrollActive}
+            scrollActive={chatScrollActive}
+            focusHint={chatFocusHint}
           />
         </Box>
 
@@ -594,7 +660,13 @@ export const App = ({
           alignSelf="stretch"
           flexShrink={0}
         >
-          <MetricsPanel thread={thread} width={SIDEBAR_WIDTH} maxHeight={middleRowHeight} />
+          <MetricsPanel
+            thread={thread}
+            width={SIDEBAR_WIDTH}
+            maxHeight={middleRowHeight}
+            scrollActive={metricsScrollActive}
+            focusHint={metricsFocusHint}
+          />
         </Box>
       )}
       </Box>

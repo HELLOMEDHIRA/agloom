@@ -31,7 +31,7 @@ def test_edit_file_replace_all(tmp_path: Path) -> None:
     t = _tools(tmp_path)["edit_file"]
     out = t.invoke({"path": "a.txt", "old_string": "foo", "new_string": "bar", "replace_all": True})
     summary = out["summary"] if isinstance(out, dict) else out
-    assert "✓" in summary or "applied" in summary.lower()
+    assert "OK:" in summary or "applied" in summary.lower()
     assert (tmp_path / "a.txt").read_text() == "bar bar bar"
 
 
@@ -46,7 +46,7 @@ def test_multi_edit_ordered_and_abort_before_write(tmp_path: Path) -> None:
     good = '[{"old_string":"aaa","new_string":"AAA"},{"old_string":"bbb","new_string":"BBB"}]'
     out2 = me.invoke({"path": "m.txt", "edits_json": good})
     s2 = out2["summary"] if isinstance(out2, dict) else out2
-    assert "✓" in s2 or "replacement" in s2.lower()
+    assert "OK:" in s2 or "replacement" in s2.lower()
     assert (tmp_path / "m.txt").read_text() == "AAA\nBBB\n"
 
 
@@ -88,7 +88,8 @@ def test_write_file_requires_read_first(tmp_path: Path) -> None:
 
 def test_mkdir_and_rmdir(tmp_path: Path) -> None:
     ts = _tools(tmp_path)
-    ts["mkdir"].invoke({"path": "nest/a", "parents": True})
+    mkdir_out = ts["mkdir"].invoke({"path": "nest/a", "parents": True})
+    assert "OK:" in str(mkdir_out)
     assert (tmp_path / "nest" / "a").is_dir()
     ts["rmdir"].invoke({"path": "nest/a", "recursive": False})
     assert not (tmp_path / "nest" / "a").exists()

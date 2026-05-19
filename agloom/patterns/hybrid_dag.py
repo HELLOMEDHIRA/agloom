@@ -315,6 +315,6 @@ def _format_all_outputs(results: list[WorkerResult]) -> str:
     """Format all worker results in execution order for synthesis."""
     sections = []
     for r in results:
-        status = "✓" if r.signal == SignalType.SUCCESS else "✗"
+        status = "OK" if r.signal == SignalType.SUCCESS else "FAIL"
         sections.append(f"{status} [{r.worker_id}] — {r.task}\n{r.output}")
     return "\n\n".join(sections)

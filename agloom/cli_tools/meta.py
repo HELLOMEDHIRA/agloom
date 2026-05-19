@@ -11,7 +11,45 @@ from langchain_core.tools import tool
 def make_meta_tools() -> list:
     # Lazy import: ``import agloom`` re-exports ``get_cli_tools`` from ``cli_tools``; loading
     # ``invocation_context`` here would drag AGP protocol + runtime HITL at package import time.
-    from ..runtime.invocation_context import get_invocation_emitter, get_invocation_hitl_bridge
+    from ..runtime.invocation_context import (
+        get_invocation_agent_config,
+        get_invocation_emitter,
+        get_invocation_hitl_bridge,
+    )
+
+    @tool
+    async def list_mcp_servers() -> str:
+        """List MCP servers wired into this agloom session and their tools (name + short description).
+
+        Use when the user asks which MCP servers are connected, what MCP tools exist, or what
+        each MCP tool does. Does not open the Super-Brain graph database.
+
+        Do **not** use agsuperbrain ``list_modules`` for this — that queries the Kuzu repo graph.
+        """
+        config = get_invocation_agent_config()
+        if config is None:
+            return "list_mcp_servers: no active agent session"
+        from ..mcp_support import format_mcp_inventory_text, mcp_configured_server_names
+
+        configured = mcp_configured_server_names(config)
+        if configured and config.get("_mcp_servers") and not config.get("_mcp_session_attempted"):
+            from ..unified_agent import _ensure_mcp_connected
+
+            try:
+                await _ensure_mcp_connected(config)
+            except Exception as exc:
+                return (
+                    f"MCP connect failed: {exc}\n"
+                    + format_mcp_inventory_text(
+                        configured_names=configured,
+                        server_rows=config.get("_mcp_server_rows"),
+                    )
+                )
+        rows = config.get("_mcp_server_rows")
+        return format_mcp_inventory_text(
+            configured_names=configured,
+            server_rows=rows if isinstance(rows, list) else None,
+        )
 
     @tool
     async def ask_user(question: str, choices: str | None = None) -> str:
@@ -65,6 +103,6 @@ def make_meta_tools() -> list:
             emitter.emit_todos_updated(items=norm)
         except Exception as exc:
             return f"write_todos: emit failed: {exc}"
-        return f"✓ todos updated ({len(norm)} items)"
+        return f"OK: todos updated ({len(norm)} items)"
 
-    return [ask_user, write_todos]
+    return [list_mcp_servers, ask_user, write_todos]

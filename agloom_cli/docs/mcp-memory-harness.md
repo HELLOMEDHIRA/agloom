@@ -14,6 +14,16 @@ YAML merges into **`MCPServerConfig`** (Python). In **`agloom.yaml`** use either
 
 **Catalog & specs:** see [MCP Servers](../agloom/features/mcp.md) and the upstream [MCP registry](https://github.com/modelcontextprotocol/servers).
 
+### Listing servers and tools in the CLI
+
+| Method | What you get |
+| ------ | ------------ |
+| **`/mcp`** slash command | Instant list in **Wire notes** (from last `runtime.mcp.servers` event): server name, ok/fail, each tool name + description when available |
+| **Metrics sidebar** (`/stats`) | MCP section with server status and tool preview |
+| **Ask the agent** | Should use bundled **`list_mcp_servers`** or the MCP appendix in `system_prompt` — **not** agsuperbrain `list_modules` (that opens the graph DB) |
+
+After MCP connect, the runtime appends tool names + descriptions to the agent instructions and emits **`runtime.mcp.servers`** with a **`tool_catalog`** array per server.
+
 Example skeleton:
 
 ```yaml

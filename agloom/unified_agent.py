@@ -1021,6 +1021,16 @@ async def _ensure_mcp_connected(config: dict) -> None:
             sys.stderr.write(f"[agloom-runtime] MCP connected — {summary} (total {total_tools})\n")
             sys.stderr.flush()
 
+        try:
+            from .runtime.invocation_context import get_invocation_emitter
+            from .runtime.session_bootstrap import emit_agent_tool_catalog
+
+            wire_emitter = get_invocation_emitter()
+            if wire_emitter is not None:
+                emit_agent_tool_catalog(wire_emitter, config)
+        except Exception as exc:
+            logger.debug("mcp_tool_catalog_wire_emit_failed", error=str(exc))
+
 
 async def _ensure_skills_bootstrapped(
     config: dict,

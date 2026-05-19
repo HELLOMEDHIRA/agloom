@@ -47,6 +47,26 @@ const toolCallTargetPath = (args: Record<string, unknown> | undefined): string =
   return ''
 }
 
+/** Correlate ``tool.call.result`` when start used LangGraph ``run_id`` and result used LangChain ``tool_call_id``. */
+const resolveToolCallCorrelationId = (
+  toolCalls: ToolCall[],
+  toolCallId: string | undefined,
+  tool: string,
+): string | null => {
+  const id = toolCallId?.trim()
+  if (id && toolCalls.some((tc) => tc.toolCallId === id)) return id
+  for (let i = toolCalls.length - 1; i >= 0; i--) {
+    const tc = toolCalls[i]
+    if (tc && tc.status === 'pending' && tc.tool === tool) return tc.toolCallId
+  }
+  return id ?? null
+}
+
+const settlePendingToolCalls = (toolCalls: ToolCall[], note: string): ToolCall[] =>
+  toolCalls.map((tc) =>
+    tc.status === 'pending' ? { ...tc, status: 'error' as const, error: note } : tc,
+  )
+
 const stringifyWireResultPreview = (v: unknown): string => {
   if (v == null) return ''
   if (typeof v === 'string') return v
@@ -128,11 +148,20 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
             : reason === 'shutdown'
               ? 'Runtime session closed'
               : `Session closed (${reason})`
+      const pendingNote = isError
+        ? (evt.data.error ?? 'Turn ended with an error before all tools reported results')
+        : null
       return {
         ...s,
         status: isError ? 'error' : reason === 'shutdown' ? 'idle' : s.status === 'exited' ? 'exited' : 'idle',
         errorMessage: isError ? (evt.data.error ?? 'Unknown error') : null,
-        activeTurn: null,
+        activeTurn:
+          isError && s.activeTurn && pendingNote
+            ? {
+                ...s.activeTurn,
+                toolCalls: settlePendingToolCalls(s.activeTurn.toolCalls, pendingNote),
+              }
+            : null,
         outboundPrompt: null,
         protocolNotes: pushProtocolNotes(s.protocolNotes, turnNote),
       }
@@ -237,24 +266,50 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
     case 'runtime.mcp.servers': {
       const names = evt.data.server_names ?? []
       const raw = evt.data.servers ?? []
+      const mcpToolNames: string[] = []
       const mcpServerRows = raw
         .filter((r) => r != null && typeof r === 'object' && !Array.isArray(r))
         .map((r) => {
           const o = r as Record<string, unknown>
           const tn = o.tool_names
+          const toolNameList = Array.isArray(tn)
+            ? tn.map((x) => String(x).trim()).filter(Boolean)
+            : []
+          const tc = o.tool_catalog
+          const toolCatalog = Array.isArray(tc)
+            ? tc
+                .filter((item) => item != null && typeof item === 'object' && !Array.isArray(item))
+                .map((item) => {
+                  const e = item as Record<string, unknown>
+                  const name = String(e.name ?? '').trim()
+                  if (!name) return null
+                  const description = String(e.description ?? '').trim()
+                  return description ? { name, description } : { name }
+                })
+                .filter((x): x is { name: string; description?: string } => x != null)
+            : []
+          const namesFromCatalog = toolCatalog.map((e) => e.name)
+          const effectiveNames = namesFromCatalog.length ? namesFromCatalog : toolNameList
+          for (const n of effectiveNames) {
+            if (!mcpToolNames.includes(n)) mcpToolNames.push(n)
+          }
           const n =
             typeof o.tool_count === 'number'
               ? o.tool_count
-              : Array.isArray(tn)
-                ? tn.length
-                : 0
+              : effectiveNames.length
           return {
             name: String(o.name ?? '?'),
             ok: Boolean(o.ok),
             toolCount: Number(n) || 0,
             error: o.error != null ? String(o.error) : undefined,
+            toolNames: effectiveNames.length ? effectiveNames : undefined,
+            toolCatalog: toolCatalog.length ? toolCatalog : undefined,
           }
         })
+      const mergedToolNames = [...(s.toolNames ?? [])]
+      for (const n of mcpToolNames) {
+        if (!mergedToolNames.includes(n)) mergedToolNames.push(n)
+      }
       const parts = mcpServerRows.map((r) => {
         if (r.ok) return `${r.name}:ok(${r.toolCount} tools)`
         return `${r.name}:FAIL${r.error ? `(${r.error})` : ''}`
@@ -264,6 +319,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         ...s,
         mcpServerNames: names,
         mcpServerRows,
+        toolNames: mergedToolNames.length ? mergedToolNames : s.toolNames,
         protocolNotes: pushProtocolNotes(
           s.protocolNotes,
           `MCP servers: ${names.join(', ') || 'none'}${detail}`,
@@ -430,7 +486,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
       const line = `plan.preview · ${evt.data.pattern} · c=${evt.data.complexity ?? 0}${joined ? `\n${joined}` : ''}`
       const next = { ...s, protocolNotes: pushProtocolNotes(s.protocolNotes, line) }
       if (!s.activeTurn) return next
-      const planDetail = [evt.data.reasoning, joined].filter(Boolean).join('\n')
+      const planDetail = evt.data.reasoning?.trim() || undefined
       return {
         ...next,
         activeTurn: {
@@ -440,8 +496,8 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
             {
               id: uid(),
               step: 'plan',
-              label: `plan · ${evt.data.pattern}`,
-              detail: planDetail || undefined,
+              label: `Routing · ${evt.data.pattern}`,
+              detail: planDetail,
               elapsedMs: undefined,
             },
           ],
@@ -512,10 +568,16 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
 
     case 'tool.call.result': {
       if (!s.activeTurn) return s
+      const correlatedId = resolveToolCallCorrelationId(
+        s.activeTurn.toolCalls,
+        evt.data.tool_call_id,
+        evt.data.tool,
+      )
+      if (!correlatedId) return s
       const isFileWrite = evt.data.tool === 'write_file' || evt.data.tool === 'edit_file'
       let filesUpdated = s.filesUpdated
       if (isFileWrite) {
-        const match = s.activeTurn.toolCalls.find((tc) => tc.toolCallId === evt.data.tool_call_id)
+        const match = s.activeTurn.toolCalls.find((tc) => tc.toolCallId === correlatedId)
         const fname = match ? toolCallTargetPath(match.args) : ''
         if (fname && !filesUpdated.includes(fname)) filesUpdated = [...filesUpdated, fname]
       }
@@ -525,7 +587,7 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         activeTurn: {
           ...s.activeTurn,
           toolCalls: s.activeTurn.toolCalls.map((tc) =>
-            tc.toolCallId === evt.data.tool_call_id
+            tc.toolCallId === correlatedId
               ? { ...tc, status: 'done' as const, result: evt.data.output_preview, durationMs: evt.data.duration_ms }
               : tc,
           ),
@@ -535,12 +597,18 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
 
     case 'tool.call.error': {
       if (!s.activeTurn) return s
+      const correlatedId = resolveToolCallCorrelationId(
+        s.activeTurn.toolCalls,
+        evt.data.tool_call_id,
+        evt.data.tool,
+      )
+      if (!correlatedId) return s
       return {
         ...s,
         activeTurn: {
           ...s.activeTurn,
           toolCalls: s.activeTurn.toolCalls.map((tc) =>
-            tc.toolCallId === evt.data.tool_call_id
+            tc.toolCallId === correlatedId
               ? { ...tc, status: 'error' as const, error: evt.data.error, durationMs: evt.data.duration_ms }
               : tc,
           ),
@@ -768,7 +836,10 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         userMessage: active.userMessage,
         assistantMessage: assistantBody,
         thinkingSteps: [...active.thinkingSteps],
-        toolCalls: [...active.toolCalls],
+        toolCalls: settlePendingToolCalls(
+          [...active.toolCalls],
+          'Tool finished but no result event was received on the wire',
+        ),
         workers: [...active.workers],
         pattern: evt.data.pattern ?? active.pattern ?? undefined,
         tokens: turnTokLabel,
@@ -948,7 +1019,18 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
       }
 
     case 'error.fatal':
-      return { ...s, status: 'error', errorMessage: evt.data.message, outboundPrompt: null }
+      return {
+        ...s,
+        status: 'error',
+        errorMessage: evt.data.message,
+        outboundPrompt: null,
+        activeTurn: s.activeTurn
+          ? {
+              ...s.activeTurn,
+              toolCalls: settlePendingToolCalls(s.activeTurn.toolCalls, evt.data.message),
+            }
+          : null,
+      }
 
     case 'error.transient':
       return { ...s, errorMessage: evt.data.message, outboundPrompt: null }

@@ -475,6 +475,7 @@ export interface RuntimeMCPServersEvent extends Envelope {
       tool_count?: number
       tool_names?: string[]
       tool_names_truncated?: boolean
+      tool_catalog?: Array<{ name: string; description?: string }>
     }>
   }
 }

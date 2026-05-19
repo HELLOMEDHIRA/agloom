@@ -90,7 +90,12 @@ async def run_invocation(
     started = time.perf_counter()
     saw_message = False
 
-    tokens = attach_invocation_context(hitl_bridge, emitter)
+    agent_config = getattr(agent, "config", None)
+    tokens = attach_invocation_context(
+        hitl_bridge,
+        emitter,
+        agent_config if isinstance(agent_config, dict) else None,
+    )
     try:
         try:
             async for event in agent.astream_events(prompt, thread_id=thread):

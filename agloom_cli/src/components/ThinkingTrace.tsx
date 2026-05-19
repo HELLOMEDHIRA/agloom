@@ -1,4 +1,4 @@
-/** Inline reasoning trace — dim text above the assistant reply (OpenCode-style, not collapsible). */
+/** Inline execution trace (routing, LLM steps) — dim text above the assistant reply. */
 
 import React from 'react'
 import { Box, Text } from 'ink'
@@ -19,7 +19,7 @@ export const ThinkingTrace = ({ steps }: Props): React.ReactElement | null => {
   return (
     <Box flexDirection="column" marginLeft={2} marginTop={0} marginBottom={0}>
       <Text color="gray" dimColor bold>
-        Reasoning
+        Trace
       </Text>
       {steps.map((s) => {
         const head = s.label ?? s.step

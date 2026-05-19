@@ -2,30 +2,21 @@
 
 Layers (lowest → highest precedence at runtime):
 
-1. **DEFAULT_SYSTEM_PROMPT** — generic core for library/API/embed use (no terminal assumptions).
-2. **CLI_WORKSPACE_SYSTEM_PROMPT** — default persona when ``cli_tools`` is enabled and no custom prompt is set.
-3. **User / YAML ``system_prompt``** — ``ai.system_prompt`` or top-level ``system_prompt`` in
-   ``.agloom/agloom.yaml`` (replaces 1–2 at runtime; persisted across CLI restarts when set in YAML
-   or via ``/system`` in the TUI). Pattern appendices still apply.
-4. **CLI_TOOLS_SYSTEM_APPENDIX** — appended in ``create_agent`` when bundled workspace tools are active.
-5. **Pattern appendices** — e.g. ``REACT_TOOL_DISCIPLINE`` in ``patterns/react.py`` (tool-loop only).
+1. **DEFAULT_SYSTEM_PROMPT** — generic core when no explicit prompt is configured.
+2. **User / YAML ``system_prompt``** — ``ai.system_prompt`` in ``.agloom/agloom.yaml`` (written by
+   **agloom-cli** bootstrap, ``command.config.set`` over AGP, or ``/system`` in the TUI). The CLI
+   workspace persona lives in **agloom_cli** only, not in this package.
+3. **CLI_TOOLS_SYSTEM_APPENDIX** — appended in ``create_agent`` when bundled workspace tools are active.
+4. **Pattern appendices** — e.g. ``REACT_TOOL_DISCIPLINE`` in ``patterns/react.py`` (tool-loop only).
 
 Pattern handlers may add further instructions; they should not contradict the answer contract.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import SystemMessage
-
-_PROMPTS_DIR = Path(__file__).resolve().parent
-
-
-def _load_prompt_file(name: str) -> str:
-    path = _PROMPTS_DIR / name
-    return path.read_text(encoding="utf-8").strip() + "\n"
 
 # Marker checked before re-appending the global contract (idempotent compose).
 ANSWER_CONTRACT_MARKER = "=== Answer contract"
@@ -50,8 +41,6 @@ DEFAULT_SYSTEM_PROMPT = """You are a capable AI assistant running inside the agl
 - State assumptions when the request is ambiguous.
 """
 
-CLI_WORKSPACE_SYSTEM_PROMPT = _load_prompt_file("cli_workspace_prompt.txt")
-
 GLOBAL_ANSWER_CONTRACT_APPENDIX = f"""
 
 {ANSWER_CONTRACT_MARKER} (non-negotiable) ===
@@ -70,8 +59,6 @@ def resolve_system_prompt_base(system_prompt: Any, *, cli_tools: bool = False) -
         system_prompt = content if isinstance(content, str) else str(content)
     if isinstance(system_prompt, str) and system_prompt.strip():
         return system_prompt.strip()
-    if cli_tools:
-        return CLI_WORKSPACE_SYSTEM_PROMPT
     return DEFAULT_SYSTEM_PROMPT
 
 
@@ -90,9 +77,8 @@ def is_explicit_user_system_prompt(system_prompt: Any) -> bool:
 def compose_agent_system_prompt(system_prompt: Any, *, cli_tools: bool = False) -> str | Any:
     """Return callable unchanged; otherwise base prompt + global answer contract.
 
-    When ``system_prompt`` is omitted, the built-in default is chosen (CLI workspace text if
-    ``cli_tools`` else core default). When the user supplies YAML or ``--system-prompt``, that
-    text is used as-is for the body (still gets the answer-contract footer unless already present).
+    When ``system_prompt`` is omitted, :data:`DEFAULT_SYSTEM_PROMPT` is used. The **agloom-cli**
+    client supplies the workspace persona via YAML / AGP before ``create_agent`` runs.
     """
     if callable(system_prompt) and not isinstance(system_prompt, str):
         return system_prompt

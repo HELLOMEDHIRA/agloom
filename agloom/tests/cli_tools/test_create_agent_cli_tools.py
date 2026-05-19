@@ -10,7 +10,7 @@ from langchain_core.tools import tool
 
 from agloom.cli_tools import CLI_TOOL_NAMES, CLI_TOOLS_SYSTEM_APPENDIX
 from agloom.models import DEFAULT_SYSTEM_PROMPT
-from agloom.prompts.core import ANSWER_CONTRACT_MARKER, CLI_WORKSPACE_SYSTEM_PROMPT
+from agloom.prompts.core import ANSWER_CONTRACT_MARKER
 from agloom.unified_agent import create_agent
 
 
@@ -32,7 +32,7 @@ async def test_cli_tools_adds_builtin_names() -> None:
     sp = agent.config["system_prompt"]
     assert isinstance(sp, str)
     assert "Bundled workspace tools" in sp
-    assert CLI_WORKSPACE_SYSTEM_PROMPT.strip() in sp
+    assert DEFAULT_SYSTEM_PROMPT.strip() in sp
     assert ANSWER_CONTRACT_MARKER in sp
     assert CLI_TOOLS_SYSTEM_APPENDIX.strip() in sp
 
@@ -52,7 +52,7 @@ async def test_cli_tools_appendix_omitted_when_builtins_fully_replaced_by_name()
     with patch("agloom.cli_tools.get_cli_tools", return_value=[builtin]):
         agent = await create_agent(model=llm, name="shadow-read", cli_tools=True, tools=[user_tool])
     sp = agent.config["system_prompt"]
-    assert CLI_WORKSPACE_SYSTEM_PROMPT.strip() in sp
+    assert DEFAULT_SYSTEM_PROMPT.strip() in sp
     assert ANSWER_CONTRACT_MARKER in sp
     assert "Bundled workspace tools" not in sp
 

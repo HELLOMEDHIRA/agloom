@@ -400,6 +400,20 @@ async def dispatch_command(
         if agent is None:
             return DispatchResult.CONTINUE
 
+        if agent.config.get("_mcp_servers"):
+            from agloom.unified_agent import _ensure_mcp_connected
+
+            try:
+                await _ensure_mcp_connected(agent.config)
+            except Exception as exc:
+                emitter.emit_error(
+                    severity="transient",
+                    message=str(exc).strip() or repr(exc),
+                    stage="mcp.tool_list",
+                    error_class=type(exc).__name__,
+                )
+                return DispatchResult.CONTINUE
+
         tools = getattr(agent, "config", {}).get("tools", []) or []
         rows: list[tuple[str, str | None]] = []
         for t in tools:

@@ -79,11 +79,20 @@ export interface MetricTokensSlice {
   output: number
 }
 
+export interface McpToolCatalogEntry {
+  name: string
+  description?: string
+}
+
 export interface McpServerStatusRow {
   name: string
   ok: boolean
   toolCount: number
   error?: string | null
+  /** Tool names from ``runtime.mcp.servers`` row (when provided by runtime). */
+  toolNames?: string[]
+  /** Name + short description per tool (when runtime sends ``tool_catalog``). */
+  toolCatalog?: McpToolCatalogEntry[]
 }
 
 export interface SessionStore {

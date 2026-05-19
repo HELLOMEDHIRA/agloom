@@ -22,6 +22,7 @@ CLI_TOOLS_SYSTEM_APPENDIX = """
 
 === Bundled workspace tools ===
 - For each tool you invoke, **parameter names, types, and units** are defined by that tool's own description (the schema bundled with the model). Follow those definitions — do not invent semantics from memory.
+- To list **connected MCP servers and MCP tool summaries**, call ``list_mcp_servers`` (or read the MCP appendix in your instructions) — never agsuperbrain ``list_modules`` for that.
 - Tool results appear in the UI separately; your **final** assistant message must still be standalone prose (see answer contract above).
 """
 
@@ -49,6 +50,7 @@ CLI_TOOL_NAMES: frozenset[str] = frozenset(
         "fetch_url",
         "read_url_markdown",
         "web_search",
+        "list_mcp_servers",
         "ask_user",
         "write_todos",
         "task",

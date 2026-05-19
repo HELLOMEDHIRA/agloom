@@ -182,6 +182,14 @@ const d = {
           tool_count: z.number().optional(),
           tool_names: z.array(z.string()).optional(),
           tool_names_truncated: z.boolean().optional(),
+          tool_catalog: z
+            .array(
+              z.object({
+                name: z.string(),
+                description: z.string().optional(),
+              }),
+            )
+            .optional(),
         }),
       )
       .optional(),

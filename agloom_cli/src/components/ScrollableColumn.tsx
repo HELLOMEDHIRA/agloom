@@ -14,6 +14,10 @@ interface Props {
   allowBracketScroll?: boolean
   /** Pad with blank rows so the viewport always consumes *maxLines* (fills fixed-height panels). */
   fillHeight?: boolean
+  /** When false, scroll keys are ignored (split layout: only the focused pane scrolls). */
+  scrollActive?: boolean
+  /** Shown in the scroll hint bar (e.g. focus target). */
+  focusHint?: string
 }
 
 export const ScrollableColumn = ({
@@ -23,6 +27,8 @@ export const ScrollableColumn = ({
   showScrollHint = true,
   allowBracketScroll = true,
   fillHeight = false,
+  scrollActive = true,
+  focusHint,
 }: Props): React.ReactElement => {
   const total = lines.length
   const maxScroll = Math.max(0, total - maxLines)
@@ -38,7 +44,7 @@ export const ScrollableColumn = ({
   }, [maxScroll, pinToBottomOnGrow, stickToBottom, total])
 
   useInput((_char, key) => {
-    if (total <= maxLines) return
+    if (!scrollActive || total <= maxLines) return
     const step = key.pageUp || key.pageDown ? Math.max(3, maxLines - 1) : 1
     if (key.pageDown || (allowBracketScroll && key.ctrl && _char === ']')) {
       setScrollTop((s) => {
@@ -90,13 +96,23 @@ export const ScrollableColumn = ({
             ))
           : null}
       </Box>
-      {showScrollHint && canScroll && (
-        <Text color="gray" dimColor wrap="truncate-end">
+      {showScrollHint && (canScroll || focusHint) && (
+        <Text color={scrollActive ? 'gray' : 'gray'} dimColor wrap="truncate-end">
           {scrollTop > 0 ? '▲' : ' '} {scrollTop < maxScroll ? '▼' : ' '}
-          {' '}
-          rows {scrollTop + 1}-{Math.min(scrollTop + maxLines, total)}/{total}
-          {' · '}
-          {allowBracketScroll ? 'Ctrl+[/] · PgUp/PgDn' : 'PgUp/PgDn'}
+          {canScroll ? (
+            <>
+              {' '}
+              rows {scrollTop + 1}-{Math.min(scrollTop + maxLines, total)}/{total}
+              {' · '}
+              {allowBracketScroll ? 'Ctrl+[/] · PgUp/PgDn' : 'PgUp/PgDn'}
+            </>
+          ) : null}
+          {focusHint ? (
+            <>
+              {canScroll ? ' · ' : ' '}
+              {focusHint}
+            </>
+          ) : null}
         </Text>
       )}
     </Box>

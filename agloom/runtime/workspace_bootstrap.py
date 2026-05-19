@@ -22,8 +22,11 @@ from typing import Any
 
 import yaml
 
-from agloom.prompts.core import CLI_WORKSPACE_SYSTEM_PROMPT
-from agloom.prompts.yaml_sync import migrate_agloom_yaml_system_prompt, yaml_indented_block
+from agloom.prompts.yaml_sync import (
+    extract_system_prompt_from_yaml,
+    is_legacy_cli_system_prompt,
+    migrate_agloom_yaml_system_prompt,
+)
 
 from .atomic_io import atomic_write_text
 
@@ -145,13 +148,11 @@ DEFAULT_AGLOOM_YAML = f"""# Agloom — https://github.com/HELLOMEDHIRA/agloom
 #   • memory.* / skills.* — session memory and skill registry are tied to the store; tune limits below (no toggles).
 #
 # Merge is shallow per layer: a whole top-level `ai:` block replaces prior `ai` from earlier files.
-# system_prompt body: agloom/prompts/cli_workspace_prompt.txt (keep agloom_cli copy in sync)
+# ai.system_prompt: set by agloom-cli bootstrap (prompts/cli_workspace_prompt.txt) or AGP command.config.set
 
 ai:
   name: agloom
   model: auto
-  system_prompt: |
-{yaml_indented_block(CLI_WORKSPACE_SYSTEM_PROMPT)}
 
 mcp:
   servers:
@@ -268,6 +269,39 @@ def _workspace_yaml_rewrite_allowed(args: Any | None) -> bool:
     return v in ("1", "true", "yes", "on")
 
 
+def prune_stale_root_agloom_yaml(project_root: Path) -> bool:
+    """Remove duplicate or legacy-only root ``agloom.yaml`` when nested config exists."""
+    root_yaml = project_root / "agloom.yaml"
+    nested_yaml = project_root / ".agloom" / "agloom.yaml"
+    if not root_yaml.is_file() or not nested_yaml.is_file():
+        return False
+    try:
+        root_raw = root_yaml.read_text(encoding="utf-8")
+        nested_raw = nested_yaml.read_text(encoding="utf-8")
+        if root_raw == nested_raw:
+            root_yaml.unlink()
+            print(
+                "[agloom-runtime] removed duplicate root agloom.yaml (same as .agloom/agloom.yaml)",
+                file=sys.stderr,
+                flush=True,
+            )
+            return True
+        loaded = yaml.safe_load(root_raw)
+        if isinstance(loaded, dict):
+            root_sp = extract_system_prompt_from_yaml(loaded)
+            if root_sp and is_legacy_cli_system_prompt(root_sp):
+                root_yaml.unlink()
+                print(
+                    "[agloom-runtime] removed legacy root agloom.yaml (use .agloom/agloom.yaml)",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return True
+    except OSError:
+        pass
+    return False
+
+
 def ensure_agloom_workspace(cwd: Path | None = None, *, args: Any | None = None) -> tuple[Path, bool]:
     """Scaffold ``.agloom/`` dirs and starter YAML when missing (also run from ``agloom-runtime serve`` stdio).
 
@@ -302,26 +336,30 @@ def ensure_agloom_workspace(cwd: Path | None = None, *, args: Any | None = None)
         if root_yaml.is_file():
             nested_yaml.write_text(root_yaml.read_text(encoding="utf-8"), encoding="utf-8")
             created = True
-            print(
-                "[agloom-runtime] migrated root agloom.yaml → .agloom/agloom.yaml (canonical); "
-                "remove the root copy if unused — nested wins when both exist",
-                file=sys.stderr,
-                flush=True,
-            )
+            try:
+                root_yaml.unlink()
+                print(
+                    "[agloom-runtime] migrated root agloom.yaml → .agloom/agloom.yaml and removed root copy",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            except OSError:
+                print(
+                    "[agloom-runtime] migrated root agloom.yaml → .agloom/agloom.yaml (canonical); "
+                    "remove the root copy if unused — nested wins when both exist",
+                    file=sys.stderr,
+                    flush=True,
+                )
         else:
             nested_yaml.write_text(DEFAULT_AGLOOM_YAML, encoding="utf-8")
             created = True
 
+    prune_stale_root_agloom_yaml(project_root)
+
     if nested_yaml.is_file() and _workspace_yaml_rewrite_allowed(args):
         _ensure_agsuperbrain_mcp_in_nested_yaml(nested_yaml)
         rewrite_agloom_yaml_strip_memory_skills_enabled(nested_yaml)
-        if migrate_agloom_yaml_system_prompt(nested_yaml):
-            print(
-                "[agloom-runtime] updated `.agloom/agloom.yaml` ai.system_prompt "
-                "to match agloom/prompts/cli_workspace_prompt.txt",
-                file=sys.stderr,
-                flush=True,
-            )
+        migrate_agloom_yaml_system_prompt(nested_yaml)
 
     return sessions_dir, created
 

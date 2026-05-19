@@ -66,10 +66,10 @@ def create_memory_tools(store: LongTermStore) -> list:
         logger.event(f"[MemoryTool] save_memory | ns={ns} | key={key!r} | content={content[:80]!r}")
         if ephemeral:
             return (
-                "⚠ Stored in a non-persistent memory namespace (memory_namespace missing from "
+                "WARN: Stored in a non-persistent memory namespace (memory_namespace missing from "
                 f"RunnableConfig); this will not survive the next agent run. [{key}]: {content}"
             )
-        return f"✓ Saved [{key}]: {content}"
+        return f"OK: Saved [{key}]: {content}"
 
     @tool
     def recall_memory(query: str, config: Annotated[RunnableConfig, InjectedToolArg]) -> str:

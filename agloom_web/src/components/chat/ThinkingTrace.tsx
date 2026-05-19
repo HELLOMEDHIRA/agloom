@@ -1,4 +1,4 @@
-/** Full reasoning / thinking trace (always visible, not collapsible). */
+/** Execution trace (routing, LLM steps) — always visible, not collapsible. */
 import React from 'react'
 import { Brain } from 'lucide-react'
 import type { ThinkingStep } from '../../store/session.js'
@@ -14,7 +14,7 @@ export const ThinkingTrace = ({ steps }: Props): React.ReactElement | null => {
   return (
     <div className="flex flex-col gap-2">
       <div className="text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
-        Reasoning
+        Trace
       </div>
       {steps.map((s) => (
         <div key={s.id} className="flex flex-col gap-0.5 text-xs text-neutral-500">

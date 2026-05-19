@@ -13,6 +13,8 @@ interface Props {
   maxLines: number
   /** When false, chat scroll uses PgUp/PgDn only (sidebar owns Ctrl+[/] in split layout). */
   allowBracketScroll?: boolean
+  scrollActive?: boolean
+  focusHint?: string
 }
 
 export const ChatTranscript = ({
@@ -20,6 +22,8 @@ export const ChatTranscript = ({
   width,
   maxLines,
   allowBracketScroll = true,
+  scrollActive = true,
+  focusHint,
 }: Props): React.ReactElement => {
   const toolNames = useSessionStore((s) => s.toolNames)
 
@@ -38,6 +42,8 @@ export const ChatTranscript = ({
         lines={lines}
         pinToBottomOnGrow
         allowBracketScroll={allowBracketScroll}
+        scrollActive={scrollActive}
+        focusHint={focusHint}
       />
     </Box>
   )

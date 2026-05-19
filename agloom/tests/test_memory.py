@@ -189,7 +189,7 @@ def test_save_memory_ephemeral_namespace_message() -> None:
     save_tool = create_memory_tools(lts)[0]
     out = save_tool.invoke({"key": "k", "content": "hello"}, config={"configurable": {}})
     assert "non-persistent" in out
-    assert "✓ Saved" not in out
+    assert "OK: Saved" not in out
 
 
 def test_save_memory_persistent_namespace_success_prefix() -> None:
@@ -197,7 +197,7 @@ def test_save_memory_persistent_namespace_success_prefix() -> None:
     save_tool = create_memory_tools(lts)[0]
     cfg = {"configurable": {"memory_namespace": ("mem", "user-1")}}
     out = save_tool.invoke({"key": "k", "content": "hello"}, config=cfg)
-    assert out.startswith("✓ Saved")
+    assert out.startswith("OK: Saved")
 
 
 def test_recall_memory_ephemeral_warns_when_empty() -> None:

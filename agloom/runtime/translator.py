@@ -134,16 +134,18 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> None:
     if et == "classify":
         # Classification events from analyze_query: payload includes pattern + complexity.
         pattern = _str(data.get("pattern")) or "UNKNOWN"
+        reason = _str(data.get("reason"))
         emitter.emit_pattern_classified(
             pattern=pattern,
             complexity=_int(data.get("complexity")),
             confidence=_float(data.get("confidence")),
-            reason=None,
+            reason=reason or None,
         )
+        # Trace pane: routing rationale only — not the full classifier blob (subtasks belong in observability).
         emitter.emit_thinking_step(
             step="analyze_query",
-            label=f"pattern={pattern}",
-            detail=_str(data.get("output")),
+            label=f"Routing · {pattern}",
+            detail=reason or None,
             elapsed_ms=_int(data.get("duration_ms")),
         )
         return

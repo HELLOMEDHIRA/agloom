@@ -73,3 +73,25 @@ Tool rows should show the full **`tool.call.result`** `output_preview`. If you u
 ## Vertex / Bedrock auth errors
 
 **Fix:** follow cloud IAM paths ([Models](models.md)): `aws configure` / IAM roles for Bedrock; `gcloud auth application-default login` or service-account JSON for Vertex.
+
+## Agent calls `list_modules` when I ask for MCP servers
+
+**Symptom:** REACT fails with Kuzu lock / `superbrain.db` when you only wanted "what MCPs are connected".
+
+**Cause:** `list_modules` is an **agsuperbrain graph** tool, not an agloom MCP inventory API.
+
+**Fix:**
+
+- Type **`/mcp`** in the TUI for the wire-backed list (no model).
+- Restart the session so MCP connects and the system prompt appendix is populated.
+- Upgrade to a build that includes **`list_mcp_servers`** (bundled CLI meta tool) and the MCP appendix guidance.
+
+## MCP metrics show connected but the agent says none
+
+**Fix:** send one message so lazy MCP connect runs; check **`runtime.mcp.servers`** in **`--capture`** output. Confirm **`mcp.servers`** in **`.agloom/agloom.yaml`** (not only a stale root `agloom.yaml`).
+
+## Windows: session ERROR after tool success (`charmap` / Unicode)
+
+**Symptom:** Tool succeeded on disk but the UI shows ERROR; logs mention `UnicodeEncodeError` on checkmarks or NDJSON.
+
+**Fix:** use a current build (ASCII tool status lines + UTF-8 stdio for the runtime bridge). Set **`PYTHONUTF8=1`** if you spawn `agloom-runtime` manually outside the npm CLI.

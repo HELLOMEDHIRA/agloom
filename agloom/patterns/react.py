@@ -3,7 +3,9 @@
 import asyncio
 import json
 import time
+from collections.abc import Mapping
 from typing import Any, cast
+from uuid import uuid4
 
 from ..multimodal import content_blocks_to_text, text_from_user_turn
 
@@ -210,6 +212,10 @@ async def _user_decision_after_tool_use_failed(user_callback: Any, exc: BaseExce
 REACT_TOOL_DISCIPLINE = """
 
 === TOOL USAGE RULES ===
+- Answer the **current** user message only. Do not read or summarize unrelated files (e.g.
+  ``pyproject.toml``) when the user asked about a **different path**, an existence check, or another task.
+- For "does this path exist?" / existence checks, use the matching path/existence tool for that path —
+  not ``read_file`` on a default project file.
 - Do **not** emit **two** ``read_file`` calls for the **same** ``path`` in one assistant turn unless
   the first result had ``complete=false`` and you are **paging** with a higher ``offset``. The
   runtime may suppress a redundant second HITL for overlapping byte reads — still avoid double
@@ -701,6 +707,7 @@ async def _handle_react_streaming(
 
             elif kind == "on_tool_start":
                 run_id = event.get("run_id", "")
+                wire_id = _wire_tool_call_id_from_stream_event(event)
                 tool_name = event.get("name", "unknown")
                 tool_input = event.get("data", {}).get("input", {})
                 arg_dict = _tool_input_as_dict(tool_input)
@@ -710,12 +717,12 @@ async def _handle_react_streaming(
                     await event_queue.put(
                         AgentEvent(
                             type="tool_call",
-                            data={
-                                "id": run_id,
-                                "name": tool_name,
-                                "input": _trunc(str(tool_input), ml),
-                                "args": arg_dict,
-                            },
+                            data=_agent_event_tool_data(
+                                tool_call_id=wire_id,
+                                tool_name=tool_name,
+                                input=_trunc(str(tool_input), ml),
+                                args=arg_dict,
+                            ),
                         )
                     )
                 steps.append(
@@ -723,7 +730,7 @@ async def _handle_react_streaming(
                         StepType.TOOL_CALL,
                         tool_name,
                         input=str(tool_input),
-                        id=run_id,
+                        id=wire_id,
                         max_length=ml,
                         wire_emitted=bool(event_queue),
                     )
@@ -731,6 +738,7 @@ async def _handle_react_streaming(
 
             elif kind == "on_tool_end":
                 run_id = event.get("run_id", "")
+                wire_id = _wire_tool_call_id_from_stream_event(event)
                 tool_name = _tool_run_ids.pop(run_id, event.get("name", "unknown"))
                 raw_out = event.get("data", {}).get("output")
                 args_rem = _tool_arg_dicts.pop(run_id, {})
@@ -746,13 +754,13 @@ async def _handle_react_streaming(
                     await event_queue.put(
                         AgentEvent(
                             type="tool_result",
-                            data={
-                                "id": run_id,
-                                "name": tool_name,
-                                "output": out_payload,
-                                "args": args_rem,
+                            data=_agent_event_tool_data(
+                                tool_call_id=wire_id,
+                                tool_name=tool_name,
+                                output=out_payload,
+                                args=args_rem,
                                 **({"skill_name": skill_name} if skill_name else {}),
-                            },
+                            ),
                         )
                     )
                 step_out = (
@@ -765,7 +773,7 @@ async def _handle_react_streaming(
                         StepType.TOOL_RESULT,
                         tool_name,
                         output=step_out,
-                        id=run_id,
+                        id=wire_id,
                         max_length=ml,
                         wire_emitted=bool(event_queue),
                     )
@@ -937,6 +945,38 @@ async def _handle_react_streaming(
         )
 
 
+def _wire_tool_call_id_from_stream_event(event: Mapping[str, Any]) -> str:
+    """Stable id for AGP ``tool.call.*`` — LangGraph ``run_id`` pairs start/end on the stream path."""
+    run_id = event.get("run_id")
+    if run_id is not None:
+        s = str(run_id).strip()
+        if s:
+            return s
+    return uuid4().hex
+
+
+def _resolve_wire_tool_call_id_for_step(step: Any, tool_steps: list) -> str:
+    """Match ``tool_result`` steps to a prior wire-emitted ``tool_call`` when ids differ (stream vs ainvoke)."""
+    meta = step.metadata or {}
+    raw = meta.get("id") or meta.get("tool_call_id")
+    tcid = str(raw).strip() if raw is not None else ""
+    if step.type == StepType.TOOL_RESULT:
+        for cs in tool_steps:
+            if cs.type != StepType.TOOL_CALL or cs.name != step.name:
+                continue
+            cm = cs.metadata or {}
+            if not (cm.get("wire_emitted") or cm.get("_wire_emitted")):
+                continue
+            wired = cm.get("id") or cm.get("tool_call_id")
+            if wired is not None and str(wired).strip():
+                return str(wired).strip()
+    return tcid or uuid4().hex
+
+
+def _agent_event_tool_data(*, tool_call_id: str, tool_name: str, **extra: Any) -> dict[str, Any]:
+    return {"tool_call_id": tool_call_id, "id": tool_call_id, "name": tool_name, **extra}
+
+
 async def _emit_react_tool_steps_to_event_queue(agent: dict, tool_steps: list) -> None:
     """Emit tool_call / tool_result events for ``ainvoke`` paths (non-streaming HITL, stream fallback).
 
@@ -955,17 +995,16 @@ async def _emit_react_tool_steps_to_event_queue(agent: dict, tool_steps: list) -
         if meta.get("wire_emitted") or meta.get("_wire_emitted"):
             continue
         event_type = "tool_call" if step.type == StepType.TOOL_CALL else "tool_result"
-        await queue.put(
-            AgentEvent(
-                type=event_type,
-                data={
-                    "name": step.name,
-                    "input": step.input,
-                    "output": step.output,
-                    **(step.metadata or {}),
-                },
-            )
-        )
+        wire_id = _resolve_wire_tool_call_id_for_step(step, tool_steps)
+        payload: dict[str, Any] = {
+            "name": step.name,
+            "input": step.input,
+            "output": step.output,
+            **(step.metadata or {}),
+            "id": wire_id,
+            "tool_call_id": wire_id,
+        }
+        await queue.put(AgentEvent(type=event_type, data=payload))
 
 
 async def _handle_react_hitl(

@@ -38,6 +38,7 @@ TOOL_SAFETY: dict[str, frozenset[ToolSafetyClass]] = {
     "fetch_url": frozenset({ToolSafetyClass.READ_ONLY, ToolSafetyClass.NETWORK}),
     "read_url_markdown": frozenset({ToolSafetyClass.READ_ONLY, ToolSafetyClass.NETWORK}),
     "web_search": frozenset({ToolSafetyClass.READ_ONLY, ToolSafetyClass.NETWORK}),
+    "list_mcp_servers": frozenset({ToolSafetyClass.META}),
     "ask_user": frozenset({ToolSafetyClass.META}),
     "write_todos": frozenset({ToolSafetyClass.META}),
     "task": frozenset({ToolSafetyClass.META}),
