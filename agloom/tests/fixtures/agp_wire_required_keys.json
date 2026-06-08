@@ -1,0 +1,17 @@
+{
+  "token.delta": ["text"],
+  "metric.tokens": ["input_tokens", "output_tokens"],
+  "orchestration.step": ["pattern", "action"],
+  "pattern.classified": ["pattern"],
+  "error.fatal": ["message", "severity"],
+  "tool.call.start": ["tool", "tool_call_id"],
+  "tool.call.result": ["tool", "tool_call_id"],
+  "tool.call.error": ["tool", "tool_call_id", "error"],
+  "worker.spawned": ["worker_id"],
+  "worker.completed": ["worker_id"],
+  "worker.failed": ["worker_id", "error"],
+  "worker.halted": ["worker_id"],
+  "hitl.request": ["request_id", "kind"],
+  "hitl.granted": ["request_id", "decision"],
+  "hitl.denied": ["request_id", "decision"]
+}

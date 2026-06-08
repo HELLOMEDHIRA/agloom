@@ -1,0 +1,151 @@
+site_name: agloom
+site_url: https://agloom.readthedocs.io
+site_description: "agloom — Weave intelligent agents from 9 execution patterns. Built by MEDHIRA."
+site_author: MEDHIRA
+repo_url: https://github.com/HELLOMEDHIRA/agloom
+repo_name: HELLOMEDHIRA/agloom
+edit_uri: edit/main/docs/
+copyright: "&copy; 2026 MEDHIRA"
+
+theme:
+  name: material
+  logo: https://raw.githubusercontent.com/HELLOMEDHIRA/medhira/main/assets/medhira-logo.png
+  favicon: https://raw.githubusercontent.com/HELLOMEDHIRA/medhira/main/assets/medhira-logo.png
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+  - def_list
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+# Package docs are copied to docs/_packages/<name>/ before build; nav paths mirror that layout.
+nav:
+  - Home: index.md
+  - agloom CLI:
+      - Overview: _packages/agloom_cli/index.md
+      - Quickstart: _packages/agloom_cli/quickstart.md
+      - Models & providers: _packages/agloom_cli/models.md
+      - CLI flags: _packages/agloom_cli/flags.md
+      - Config & environment: _packages/agloom_cli/config.md
+      - Direct mode: _packages/agloom_cli/direct-mode.md
+      - Interactive UI: _packages/agloom_cli/interactive.md
+      - Tools & HITL: _packages/agloom_cli/tools-hitl.md
+      - MCP, memory & harness: _packages/agloom_cli/mcp-memory-harness.md
+      - Recipes: _packages/agloom_cli/recipes.md
+      - Troubleshooting: _packages/agloom_cli/troubleshooting.md
+      - AGP wire reference: _packages/agloom_cli/reference.md
+  - Python package:
+      - Overview: _packages/agloom/index.md
+      - Why agloom?: _packages/agloom/getting-started/why-agloom.md
+      - Installation: _packages/agloom/getting-started/installation.md
+      - Quick Start (API): _packages/agloom/getting-started/quickstart.md
+      - Requirements: _packages/agloom/getting-started/requirements.md
+  - Integrating & extending:
+      - Integration overview: _packages/agloom/guides/developer-overview.md
+      - Embedding the runtime: _packages/agloom/guides/embedding-runtime.md
+      - AGP from Python: _packages/agloom/guides/agp-python.md
+      - Observability API: _packages/agloom/guides/observability-python.md
+      - LLM resolution: _packages/agloom/guides/llm-resolution.md
+  - Core Concepts:
+      - Glossary: _packages/agloom/concepts/glossary.md
+      - How It Works: _packages/agloom/concepts/how-it-works.md
+      - Execution Patterns: _packages/agloom/concepts/patterns.md
+      - The create_agent API: _packages/agloom/concepts/create-agent.md
+  - Features:
+      - Tool Calling: _packages/agloom/features/tools.md
+      - Memory: _packages/agloom/features/memory.md
+      - Skill Learning: _packages/agloom/features/skills.md
+      - Feedback & Evaluation: _packages/agloom/features/feedback.md
+      - Streaming & Events: _packages/agloom/features/streaming.md
+      - Thinking trace & reasoning: _packages/agloom/features/thinking-events.md
+      - Human-in-the-Loop: _packages/agloom/features/hitl.md
+      - HITL tool allowlist: _packages/agloom/features/hitl-allowlist.md
+      - CLI tools (built-ins): _packages/agloom/features/cli-tools.md
+      - Middleware: _packages/agloom/features/middleware.md
+      - MCP Servers: _packages/agloom/features/mcp.md
+      - Frozen Agents: _packages/agloom/features/frozen-agents.md
+      - Task Delegation: _packages/agloom/features/delegation.md
+      - Reflection pattern: _packages/agloom/features/reflection.md
+      - Recursive orchestration: _packages/agloom/features/orchestration.md
+      - Long-running harness: _packages/agloom/features/harness.md
+      - Observability & LangSmith: _packages/agloom/features/observability.md
+      - Wire tokens & metric.tokens: _packages/agloom/features/wire-tokens.md
+  - Configuration:
+      - All Parameters: _packages/agloom/configuration/parameters.md
+      - Timeouts & Retries: _packages/agloom/configuration/reliability.md
+      - Logging & Debug: _packages/agloom/configuration/logging.md
+      - Errors & Warnings: _packages/agloom/configuration/errors.md
+  - Protocol (AGP v1):
+      - "AGP — Agloom Protocol": _packages/agloom/protocol/agp.md
+  - Guides:
+      - Production Integration: _packages/agloom/guides/production.md
+      - Production deployment: _packages/agloom/guides/deployment.md
+      - LCEL / callables as tools: _packages/agloom/guides/lcel-as-tools.md
+      - "LangChain create_agent → agloom": _packages/agloom/guides/migration-from-langchain.md
+  - Examples:
+      - Python examples (repo): _packages/agloom/examples/python-examples.md
+  - Architecture:
+      - Runtime CLI (`serve`): _packages/agloom/runtime/cli.md
+      - Runtime (Python bridge): _packages/agloom/runtime/architecture.md
+      - Observability backend: _packages/agloom/observability/architecture.md
+      - Web UI overview: _packages/agloom_web/index.md
+      - Web UI architecture: _packages/agloom_web/architecture.md
+  - Contributing: contributing.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/HELLOMEDHIRA/agloom
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/user/HELLOMEDHIRA/

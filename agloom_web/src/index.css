@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --bg:    #0a0a0a;
+    --panel: #111111;
+    --border:#1e1e1e;
+    --muted: #3a3a3a;
+    --accent:#6366f1;   /* indigo-500 */
+    --cyan:  #22d3ee;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body, #root { height: 100%; }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar       { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 3px; }
+
+  /* Syntax highlight override for dark theme */
+  .hljs { background: transparent !important; }
+}

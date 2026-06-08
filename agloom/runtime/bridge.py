@@ -1,0 +1,217 @@
+"""Bridge: run an agent invocation and stream events to a :class:`SessionEmitter` as AGP.
+
+Owns the lifecycle around a single invocation:
+
+1. Open the session (``session.opened``).
+2. Emit ``message.user`` with the prompt so the wire records the turn boundary even before
+   the model speaks (replay tools depend on this).
+3. For each :class:`AgentEvent` from ``agent.astream_events``, dispatch via :func:`translate`.
+4. On normal completion, emit ``message.assistant`` if no terminal message was already sent,
+   then ``session.closed`` with reason ``completed`` and a duration.
+5. On execution failure (``AgentEvent`` ``error``, or ``done`` with ``result.success`` false),
+   emit ``error.fatal`` via :func:`translate` and ``session.closed`` with reason ``error``.
+6. On exception, emit ``error.fatal`` with the exception's class + repr, then
+   ``session.closed`` with reason ``error``.
+
+The bridge is transport-agnostic: it talks only to the emitter. The emitter's writer decides
+where the bytes land (stdout, a buffer for tests, a WebSocket queue later).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from collections.abc import AsyncIterable
+from typing import Any, Protocol
+from uuid import uuid4
+
+from ..models import AgentEvent
+from ..protocol import SessionEmitter
+from .hitl import HITLBridge
+from .invocation_context import attach_invocation_context, reset_invocation_context
+from .translator import translate
+
+
+# AgentEvent.type values that mean the user already saw final assistant text on the wire.
+_BRIDGE_TERMINAL_ASSISTANT_EVENTS: frozenset[str] = frozenset({"done", "answer", "message_assistant"})
+
+
+class _SupportsAStreamEvents(Protocol):
+    """Structural protocol for an agent (only what the bridge actually uses).
+
+    ``UnifiedAgent`` satisfies this without modification; tests pass any object exposing
+    ``astream_events(query, *, thread_id=…)``.
+    """
+
+    def astream_events(
+        self,
+        query: str | dict | list,
+        *,
+        thread_id: str | None = ...,
+    ) -> AsyncIterable[AgentEvent]: ...
+
+
+def new_session_id() -> str:
+    """Mint a session id used for ``Envelope.session``. Opaque to consumers."""
+    return f"sess_{uuid4().hex[:16]}"
+
+
+async def run_invocation(
+    *,
+    agent: _SupportsAStreamEvents,
+    prompt: str | dict | list,
+    thread: str,
+    emitter: SessionEmitter,
+    hitl_bridge: HITLBridge | None = None,
+    user_attachments: list[dict[str, Any]] | None = None,
+) -> None:
+    """Run one ``ainvoke``-equivalent over AGP.
+
+    The emitter MUST already match ``thread`` (i.e. ``emitter.thread_id == thread``). The
+    caller owns ``open()``; the bridge owns ``close()`` (so failures always close the session).
+
+    Pass ``hitl_bridge`` when the runtime cancels tasks via ``task.cancel()`` so the bridge can
+    distinguish ``prompt.cancelled(reason=user_aborted)`` from ``reason=shutdown`` using
+    :meth:`HITLBridge.prepare_invocation_cancel`.
+    """
+    if not emitter.is_open:
+        emitter.open()
+
+    # Record the user prompt on the wire. Replay tools and frontends that join late can
+    # reconstruct the full turn from this single event + the assistant stream that follows.
+    user_text = prompt if isinstance(prompt, str) else _stringify_prompt(prompt)
+    emitter.emit_message_user(content=user_text, attachments=user_attachments or None)
+    _preview = user_text if len(user_text) <= 280 else f"{user_text[:277]}..."
+    emitter.emit_prompt_requested(kind="user_turn", preview=_preview)
+    emitter.emit_agent_busy(thread=thread)
+
+    from ..patterns.hitl_tool_coalesce import reset_hitl_turn_coalescer
+
+    reset_hitl_turn_coalescer(agent)
+
+    started = time.perf_counter()
+    saw_message = False
+    invocation_failed = False
+    failure_detail: str | None = None
+
+    agent_config = getattr(agent, "config", None)
+    tokens = attach_invocation_context(
+        hitl_bridge,
+        emitter,
+        agent_config if isinstance(agent_config, dict) else None,
+    )
+    try:
+        try:
+            async for event in agent.astream_events(prompt, thread_id=thread):
+                if event.type in _BRIDGE_TERMINAL_ASSISTANT_EVENTS:
+                    saw_message = True
+                fail_msg = translate(event, emitter)
+                if fail_msg is not None:
+                    invocation_failed = True
+                    failure_detail = fail_msg
+
+        except asyncio.CancelledError:
+            emitter.emit_agent_idle(thread=thread)
+            # ``command.cancel`` vs runtime shutdown both cancel the task; callers distinguish via
+            # :meth:`HITLBridge.prepare_invocation_cancel` immediately before ``task.cancel()``.
+            elapsed = int((time.perf_counter() - started) * 1000)
+            cancel_reason = (
+                hitl_bridge.consume_invocation_cancel_reason(asyncio.current_task())
+                if hitl_bridge
+                else "user_aborted"
+            )
+            detail = "invocation_cancelled" if cancel_reason == "user_aborted" else "runtime_shutdown"
+            emitter.emit_prompt_cancelled(reason=cancel_reason, detail=detail)
+            emitter.close(reason=cancel_reason, duration_ms=elapsed)
+            raise  # propagate so the runtime task stays cancelled (asyncio invariant)
+        except Exception as exc:
+            try:
+                emitter.emit_agent_idle(thread=thread)
+            except Exception:
+                pass
+            elapsed = int((time.perf_counter() - started) * 1000)
+            try:
+                emitter.emit_error(
+                    severity="fatal",
+                    message=str(exc).strip() or repr(exc),
+                    error_class=type(exc).__name__,
+                    stage="invocation",
+                    retryable=False,
+                )
+                emitter.close(reason="error", duration_ms=elapsed, error=repr(exc))
+            except Exception:
+                try:
+                    emitter.emit_agent_idle(thread=thread)
+                except Exception:
+                    pass
+                try:
+                    emitter.close(reason="error", duration_ms=elapsed, error="invocation_emit_failure")
+                except Exception:
+                    pass
+            return
+
+        emitter.emit_agent_idle(thread=thread)
+
+        # If the stream ended without an explicit ``done``, the agent finished silently — synthesize
+        # an empty assistant message so consumers get a clean turn boundary.
+        if not saw_message:
+            emitter.emit_message_assistant(content="", pattern=None)
+
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        if invocation_failed:
+            emitter.close(
+                reason="error",
+                duration_ms=duration_ms,
+                error=failure_detail or "execution failed",
+            )
+        else:
+            emitter.close(reason="completed", duration_ms=duration_ms)
+    finally:
+        reset_invocation_context(tokens)
+
+
+def _stringify_prompt(prompt: dict | list) -> str:
+    """Compact representation of a structured prompt for ``message.user.content``.
+
+    Multi-modal / structured prompts (``{"input": "...", "images": [...]}``) are reduced to the
+    primary text field when we can find one; otherwise we fall back to ``str(prompt)`` so the
+    wire still carries *something* faithful.
+    """
+    if isinstance(prompt, list):
+        from ..multimodal import text_from_user_turn
+
+        return text_from_user_turn(prompt)
+    for key in ("content", "input", "prompt", "query", "text", "message"):
+        v = prompt.get(key)
+        if isinstance(v, str) and v.strip():
+            return v
+    return str(prompt)
+
+
+async def run_invocation_to_writer(
+    *,
+    agent: _SupportsAStreamEvents,
+    prompt: str | dict | list,
+    thread: str | None = None,
+    session: str | None = None,
+    writer: Any = None,
+    capabilities: list[str] | None = None,
+) -> SessionEmitter:
+    """High-level helper: build an emitter, run one invocation, return the emitter.
+
+    Returned emitter has its final ``seq`` and ``is_open=False`` — useful for tests that want
+    to inspect the last emitted event.
+    """
+    eff_thread = thread or f"thread_{uuid4().hex[:16]}"
+    eff_session = session or new_session_id()
+    emitter = SessionEmitter(
+        session=eff_session,
+        thread=eff_thread,
+        writer=writer,
+        capabilities=capabilities or [],
+    )
+    await run_invocation(agent=agent, prompt=prompt, thread=eff_thread, emitter=emitter)
+    return emitter
+
+
+__all__ = ["new_session_id", "run_invocation", "run_invocation_to_writer"]

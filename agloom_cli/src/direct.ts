@@ -1,0 +1,276 @@
+/** One-shot / piped execution mode — plain stdout (no interactive TUI). */
+
+import { createInterface } from 'node:readline/promises'
+import stripAnsi from 'strip-ansi'
+import type { AGPEvent, InvokeAttachment } from './types/agp.js'
+import { isAgpEventType } from './types/agpEventGuards.js'
+import type { AGPBridge } from './runtime/bridge.js'
+import { writeBannerToStderr } from './banner.js'
+import { ensureAgloomCliWorkspace } from './workspaceBootstrap.js'
+import {
+  modelAndProviderFromRuntimeArgs,
+  preflightProviderCredentials,
+} from './utils/preflightProviderCredentials.js'
+
+export interface DirectOpts {
+  thread: string
+  attachments?: InvokeAttachment[]
+  quiet: boolean
+  json: boolean
+  noStream: boolean
+  noColor: boolean
+  noBanner: boolean
+  autoApprove: boolean
+  autoReject: boolean
+  hitlTty: boolean
+  /** Walk-up / ``--config`` — passed to workspace bootstrap so ``.agsuperbrain`` matches the runtime. */
+  configPath?: string
+}
+
+const waitForEvent = (
+  bridge: AGPBridge,
+  pred: (e: AGPEvent) => boolean,
+  ms = 120_000,
+): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    const onErr = (err: Error) => {
+      clearTimeout(to)
+      bridge.off('event', fn)
+      bridge.off('error', onErr)
+      reject(err)
+    }
+    const fn = (evt: AGPEvent) => {
+      if (pred(evt)) {
+        clearTimeout(to)
+        bridge.off('error', onErr)
+        bridge.off('event', fn)
+        resolve()
+      }
+    }
+    const to = setTimeout(() => {
+      bridge.off('event', fn)
+      bridge.off('error', onErr)
+      reject(new Error('timed out waiting for AGP event'))
+    }, ms)
+    bridge.on('event', fn)
+    bridge.on('error', onErr)
+  })
+}
+
+export const runDirect = async(options: {
+  bridge: AGPBridge
+  prompt: string
+  opts: DirectOpts
+  runtimeArgs: string[]
+}): Promise<void> => {
+  const { bridge, prompt, opts, runtimeArgs } = options
+
+  await writeBannerToStderr({
+    quiet: opts.quiet,
+    noBanner: opts.noBanner,
+  })
+
+  const { model: modelFromArgs, provider: providerFromArgs } = modelAndProviderFromRuntimeArgs(runtimeArgs)
+  const pf = preflightProviderCredentials(modelFromArgs, providerFromArgs)
+  if (!pf.ok) {
+    process.stderr.write(`[agloom] ${pf.message}\n`)
+    process.exit(1)
+  }
+
+  await ensureAgloomCliWorkspace(process.cwd(), { configPath: opts.configPath })
+
+  let inputTok = 0
+  let outputTok = 0
+  let costUsd: number = 0
+  let costHasEstimate = false
+  const t0 = Date.now()
+  let gotModelOutput = false
+  let sawFatalOnWire = false
+
+  const writeOut = (s: string) => {
+    const t = opts.noColor ? stripAnsi(s) : s
+    process.stdout.write(t)
+  }
+
+  let hitlChain = Promise.resolve()
+  /** Set when ``session.closed`` is seen — queued HITL TTY work must not call ``hitlRespond`` after teardown. */
+  let sessionEnded = false
+  const enqueueHitl = (fn: () => Promise<void>): void => {
+    hitlChain = hitlChain.then(fn).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      process.stderr.write(`[agloom] HITL interactive prompt failed: ${msg}\n`)
+    })
+  }
+
+  const onDiag = (line: string) => {
+    const t = opts.noColor ? stripAnsi(line) : line
+    process.stderr.write(t.endsWith('\n') ? t : `${t}\n`)
+  }
+
+  const onStream = (evt: AGPEvent) => {
+    if (isAgpEventType(evt, 'error.fatal')) {
+      sawFatalOnWire = true
+    }
+    if (opts.json) {
+      process.stdout.write(`${JSON.stringify(evt)}\n`)
+      return
+    }
+    if (isAgpEventType(evt, 'error.transient') || isAgpEventType(evt, 'error.fatal')) {
+      process.stderr.write(`[agloom] ${evt.data.severity}: ${evt.data.message}\n`)
+      return
+    }
+    if (isAgpEventType(evt, 'worker.failed')) {
+      process.stderr.write(`[agloom] worker failed: ${evt.data.error}\n`)
+      return
+    }
+    if (isAgpEventType(evt, 'worker.halted')) {
+      process.stderr.write(`[agloom] worker halted: ${evt.data.reason ?? 'HALT_ALL'}\n`)
+      return
+    }
+    if (isAgpEventType(evt, 'metric.tokens')) {
+      inputTok += evt.data.input_tokens ?? 0
+      outputTok += evt.data.output_tokens ?? 0
+    }
+    if (isAgpEventType(evt, 'metric.cost')) {
+      costUsd += evt.data.cost ?? 0
+      if (evt.data.estimated) costHasEstimate = true
+    }
+    if (isAgpEventType(evt, 'token.delta') && !opts.noStream) {
+      if (evt.data.text) {
+        gotModelOutput = true
+        writeOut(evt.data.text)
+      }
+    }
+    if (isAgpEventType(evt, 'message.assistant')) {
+      const c = evt.data.content ?? ''
+      if (c) gotModelOutput = true
+      if (!opts.json && c) {
+        const text = opts.noColor ? stripAnsi(c) : c
+        writeOut(text)
+        if (!text.endsWith('\n')) writeOut('\n')
+      }
+    }
+
+    if (isAgpEventType(evt, 'hitl.request')) {
+      const id = String(evt.data.request_id ?? '')
+      const tty = process.stdin.isTTY && process.stderr.isTTY
+      if (opts.autoApprove) {
+        if (!sessionEnded) bridge.hitlRespond(id, 'accept')
+        return
+      }
+      if (opts.autoReject) {
+        if (!sessionEnded) bridge.hitlRespond(id, 'reject')
+        return
+      }
+      if (opts.hitlTty && tty) {
+        enqueueHitl(async () => {
+          const rl = createInterface({ input: process.stdin, output: process.stderr })
+          try {
+            const kind = evt.data.kind ?? 'gate'
+            const tool = evt.data.tool ? ` (${evt.data.tool})` : ''
+            const line = await rl.question(`[agloom] HITL ${kind}${tool} — approve? [y/N] `)
+            if (sessionEnded) return
+            const ok = line.trim().toLowerCase().startsWith('y')
+            bridge.hitlRespond(id, ok ? 'accept' : 'reject')
+          } finally {
+            rl.close()
+          }
+        })
+        return
+      }
+      if (!sessionEnded) bridge.hitlRespond(id, 'reject')
+    }
+
+    if (isAgpEventType(evt, 'session.closed')) {
+      sessionEnded = true
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
+      if (!opts.quiet && !opts.json) {
+        const costLabel =
+          costUsd === 0
+            ? '0.0000'
+            : costUsd > 0 && costUsd < 0.0001
+              ? costUsd.toFixed(6)
+              : costUsd > 0 && costUsd < 0.01
+                ? costUsd.toFixed(5)
+                : costUsd.toFixed(4)
+        process.stderr.write(
+          `\n[agloom] done in ${elapsed}s · ${inputTok}↑ + ${outputTok}↓ tokens · $${costLabel}${costHasEstimate ? ' (est.)' : ''} · session=${evt.data.reason}\n`,
+        )
+        if (evt.data.error) {
+          process.stderr.write(`[agloom] session error: ${evt.data.error}\n`)
+        }
+        if (evt.data.reason === 'completed' && !gotModelOutput && !sawFatalOnWire) {
+          let extra = ''
+          const mi = runtimeArgs.indexOf('--model')
+          const mid =
+            mi >= 0 && runtimeArgs[mi + 1] != null ? String(runtimeArgs[mi + 1]) : ''
+          if (mid.includes(':')) {
+            const prov = mid.split(':')[0] ?? ''
+            extra =
+              `[agloom] model prefix ${prov}:… — install the matching \`agloom[${prov}]\` extra if imports fail. Empty output with a key set often means a blank reply or a routing short-circuit; run \`--json\` and check \`message.assistant\` / \`error.*\`.\n`
+          } else if (!runtimeArgs.includes('--model')) {
+            extra =
+              '[agloom] no `--model` was sent (e.g. yaml `model: auto` with no override). Set a provider API key, `AGLOOM_MODEL`, or run `agloom -m provider:model-id`.\n'
+          }
+          process.stderr.write(
+            '[agloom] no assistant output was produced. Check stderr for `[agloom-runtime]` lines, provider API keys, and model id; use `--json` to dump every AGP event.\n' +
+              extra,
+          )
+        }
+      }
+      const reason = evt.data.reason
+      process.exitCode =
+        reason === 'completed' ? 0 : reason === 'user_aborted' ? 130 : reason === 'shutdown' ? 0 : 1
+    }
+  }
+
+  bridge.on('event', onStream)
+  bridge.on('diagnostic', onDiag)
+
+  const readyPromise = waitForEvent(
+    bridge,
+    (e) => e.type === 'session.opened' || e.type === 'runtime.ready',
+  )
+
+  bridge.start(runtimeArgs, { transport: 'stdio' })
+
+  try {
+    await readyPromise
+  } catch (e) {
+    bridge.off('event', onStream)
+    bridge.off('diagnostic', onDiag)
+    throw e
+  }
+
+  bridge.invoke(prompt, opts.thread, opts.attachments)
+
+  await new Promise<void>((resolve) => {
+    const done = (evt: AGPEvent) => {
+      if (isAgpEventType(evt, 'session.closed')) {
+        bridge.off('event', done)
+        resolve()
+      }
+    }
+    bridge.on('event', done)
+    bridge.once('exit', () => {
+      bridge.off('event', done)
+      resolve()
+    })
+  })
+
+  bridge.off('event', onStream)
+  bridge.off('diagnostic', onDiag)
+  await hitlChain
+  bridge.shutdown()
+  await new Promise<void>((resolve) => {
+    if (bridge.status === 'exited') {
+      resolve()
+      return
+    }
+    const t = setTimeout(resolve, 10_000)
+    bridge.once('exit', () => {
+      clearTimeout(t)
+      resolve()
+    })
+  })
+}

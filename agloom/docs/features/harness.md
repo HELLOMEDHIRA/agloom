@@ -1,0 +1,88 @@
+# Long-running harness (progress + git)
+
+The **harness** is an **optional** layer in the **`agloom`** library. It helps agents work across many sessions on the same codebase or product goal: structured **tasks**, **verification steps**, **bootstrap briefings**, and **git** helpers — backed by your LangGraph **store** and optional **`agloom-progress.json`** on disk.
+
+You can turn it on from **`create_agent`** or from the **agloom CLI** (see below). In both cases it only takes effect when a **`store`** is in use — without a store, `harness=True` is **ignored** and a warning is logged.
+
+!!! note "Imports such as `Task` or `GitSession`"
+    Optional symbols (`Task`, `GitSession`, …) are available from the top-level **`agloom`** package when the harness submodule loads successfully. If they are missing after install, reinstall with `pip install --force-reinstall agloom` (or use your project’s full dev install). You can still enable behaviour with **`create_agent(..., harness=True)`** without importing those types. Runtime **`git_*`** tools require **`git`** on `PATH`.
+
+## When to use it
+
+- Multi-session coding or PM-style agents where you want a **durable task list** and explicit **pass/fail verification** before marking work done.
+- Flows where the model should **commit**, **tag checkpoints**, or **inspect git status** through tools instead of raw shell (still **trusted** use — same caution as any git automation).
+
+## Enabling the harness (library)
+
+Requirements:
+
+1. Pass **`store=`** — any LangGraph-compatible store (`InMemoryStore`, `AsyncSqliteStore`, etc.).
+2. Pass **`harness=True`**.
+3. Optionally set **`harness_project_name=`** (default `"project"`). This scopes progress state so separate projects do not collide.
+
+```python
+from agloom import create_agent
+from langgraph.store.memory import InMemoryStore
+
+async def main():
+    agent = await create_agent(
+        model=llm,
+        store=InMemoryStore(),
+        harness=True,
+        harness_project_name="my-app",
+        name="coder",
+    )
+```
+
+## Harness + interactive frontends
+
+There is **one** library knob: **`create_agent(..., harness=True, harness_project_name=...)`**. Everything else is just how different launchers **set that argument**.
+
+| How you run agloom | How harness is toggled |
+| ------------------ | ---------------------- |
+| **Python / your app** | Pass **`harness=True`** (or `False`) to **`create_agent`**. No env vars are read inside the library. |
+| **`agloom` / `agloom-runtime serve`** | Runtime calls `create_agent(..., harness=use_harness)`. Default **`on`** when a LangGraph **`store`** is open; pass **`--no-harness`** to turn off (npm **`agloom --no-harness`** forwards this). |
+| **Scripts / CI** (optional) | Before spawning the runtime only: **`AGLOOM_HARNESS=0`** or **`AGLOOM_HARNESS_ENABLED=0`** — same effect as **`--no-harness`**. Not used when you call **`create_agent`** yourself. |
+
+Typical behaviour with a project-local `.agloom/` layout:
+
+- **SQLite store:** `graph_store.sqlite` holds harness / skills durable state when a store is configured.
+- **Memory / checkpoints:** depend on your YAML and whether you pass a LangGraph checkpointer — mirror the same settings you would use for a pure-library deployment.
+
+## What gets injected
+
+When the harness is active, **12 tools** are appended to your tool list (same set as `create_agent(..., harness=True)`):
+
+| Tool                 | Role                                                                                          |
+| -------------------- | --------------------------------------------------------------------------------------------- |
+| `git_status`         | Working tree summary.                                                                         |
+| `git_log`            | Recent commits.                                                                               |
+| `git_commit`         | Stage all and commit with a message.                                                          |
+| `git_checkpoint`     | Named checkpoint (tag-style) for recovery.                                                    |
+| `git_diff`           | Show working-tree or ref diffs.                                                               |
+| `git_revert_hint`    | Suggest recovery when the tree is broken.                                                     |
+| `bootstrap_progress` | Session start protocol: context, task list, suggested next task.                            |
+| `save_progress`      | Persist progress notes and artifact snapshot (long-term store + disk when configured).       |
+| `update_task`        | Update status, notes, errors, verification results.                                           |
+| `get_next_task`      | Claim the next pending task for the current session.                                          |
+| `add_task`           | Add a task with optional verification steps.                                                  |
+| `initialize_project` | First-run decomposition: goal → structured task list + briefing (uses the agent LLM + store). |
+
+## How the agent “sees” progress
+
+On each turn (non-frozen path), the agent may prepend a **cross-session progress** summary — a structured block (often under a heading like `=== CROSS-SESSION PROGRESS ===`) built from the live progress artifact. That keeps **routing / classification** aligned with the current task graph.
+
+When the harness is enabled, the runtime also **ties progress state to the effective session thread** so new turns start with consistent bootstrap context.
+
+Clients using **`astream_events()`** or AGP may see **`harness_bootstrap`** lines in the thinking trace while that artifact loads — see [Thinking trace & reasoning streams](thinking-events.md).
+
+## Storage and disk
+
+- **Long-term store:** progress and harness metadata live in store namespaces reserved for this feature (not intended for direct editing).
+- **Disk mirror:** tools can write **`agloom-progress.json`** for human inspection or recovery alongside long-term storage.
+
+## Related
+
+- [All Parameters](../configuration/parameters.md) — `harness`, `harness_project_name`
+- [The create_agent API](../concepts/create-agent.md)
+- [Memory & store](memory.md) — `store=` prerequisite
