@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any, cast
 from uuid import uuid4
 
+from ..llm.qwen_compat import normalize_messages_for_chat_template
 from ..multimodal import content_blocks_to_text, text_from_user_turn
 from ..wire_stream_content import (
     answer_text_from_content,
@@ -170,6 +171,11 @@ def _react_tool_names(tools: list[Any]) -> frozenset[str]:
         for n in (getattr(t, "name", None),)
         if isinstance(n, str) and n.strip()
     )
+
+
+def _react_opening_messages(query: str | list[Any]) -> list[Any]:
+    """Opening user turn with Qwen-safe plain-string content when possible."""
+    return normalize_messages_for_chat_template([{"role": "user", "content": query}])
 
 
 def _langchain_react_middleware(agent: dict, *extra: Any) -> list[Any]:
@@ -433,7 +439,7 @@ async def _run_react_ainvoke_with_retries(
         {**(config or {}), "recursion_limit": REACT_RECURSION_LIMIT},
     )
 
-    state = initial_state if initial_state is not None else {"messages": [{"role": "user", "content": query}]}
+    state = initial_state if initial_state is not None else {"messages": _react_opening_messages(query)}
     response = None
     user_cb = agent.get("user_callback")
     attempt = max(0, attempt_offset)
@@ -673,7 +679,7 @@ async def _handle_react_streaming(
         RunnableConfig,  # noqa: TC006
         {**(config or {}), "recursion_limit": REACT_RECURSION_LIMIT},
     )
-    state = {"messages": [{"role": "user", "content": query}]}
+    state = {"messages": _react_opening_messages(query)}
 
     t0 = time.perf_counter()
     steps.append(
@@ -936,7 +942,7 @@ async def _handle_react_streaming(
                 initial_state = {"messages": list(msgs)}
         if _exception_indicates_tool_use_failed(exc):
             base_msgs = list(
-                (initial_state or {"messages": [{"role": "user", "content": query}]})["messages"]
+                (initial_state or {"messages": _react_opening_messages(query)})["messages"]
             )
             initial_state = {
                 "messages": base_msgs

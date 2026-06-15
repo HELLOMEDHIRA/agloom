@@ -44,6 +44,26 @@ Omitting the provider prefix works in some environments (e.g. `deepseek/deepseek
 
 ---
 
+## Qwen3 / vLLM / LiteLLM and tool calling
+
+Self-hosted **Qwen3** models (e.g. `litellm:qwen36fp8`, `vllm:Qwen/...`) use Jinja chat templates that are strict about message shape. Agloom handles this inside REACT and worker agents:
+
+| Behavior | Detail |
+| -------- | ------ |
+| **Qwen detection** | Model id contains `qwen` or `qwq` → `tool_choice=auto` on all tool-bearing model calls |
+| **Other providers** | Opening turn only → `tool_choice=required` (Groq-style); follow-ups use provider default |
+| **User content** | LangChain multimodal content blocks are flattened to plain strings before each LLM call |
+
+If you still see ``No user query found in messages`` after upgrading agloom:
+
+1. Confirm the integrator is on a build that includes `agloom.llm.qwen_compat`.
+2. On the vLLM server, enable auto tool choice and a Qwen-compatible parser (e.g. `--enable-auto-tool-choice`, `--tool-call-parser qwen3_coder`).
+3. See [Errors — LiteLLM / vLLM / Qwen3](../configuration/errors.md).
+
+``react_force_tool_choice_on_user_turn=False`` disables **tool_choice overrides only**; message flattening still runs.
+
+---
+
 ## See also
 
 - [All parameters — `model`](../configuration/parameters.md#core)

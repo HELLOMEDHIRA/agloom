@@ -1024,9 +1024,10 @@ class AgentConfig(BaseModel):
     react_force_tool_choice_on_user_turn: bool = Field(
         default=True,
         description=(
-            "After a HumanMessage, set LangChain tool_choice=required on tool-bearing agents "
-            "(REACT pattern and multi-worker pattern workers) so providers (e.g. Groq) cannot "
-            "emit prose instead of a structured tool call (tool_use_failed)."
+            "Opening turn: tool_choice=required on tool-bearing agents (REACT + workers) for "
+            "Groq-style providers. Qwen3/vLLM models use tool_choice=auto. User multimodal "
+            "blocks are flattened before each model call (always). False disables tool_choice "
+            "overrides only."
         ),
     )
 

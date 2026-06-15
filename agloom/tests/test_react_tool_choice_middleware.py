@@ -29,3 +29,10 @@ def test_no_force_when_last_is_tool_message() -> None:
         ToolMessage(content="data", tool_call_id="1"),
     ]
     assert not should_force_tool_choice_on_request(msgs)
+
+
+def test_force_only_single_user_message() -> None:
+    assert should_force_tool_choice_on_request([HumanMessage(content="only turn")])
+    assert not should_force_tool_choice_on_request(
+        [HumanMessage(content="a"), HumanMessage(content="b")]
+    )

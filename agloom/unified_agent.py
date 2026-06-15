@@ -2995,9 +2995,10 @@ async def create_agent(
     ``checkpointer``: enables ``get_state``, ``get_history``, ``resume``.
     ``mcp_servers``: lazy MCP connect on first ``ainvoke`` (raises ``MCPConnectionError`` if a server exposes no tools).
     ``react_force_tool_choice_on_user_turn``: when True (default), the opening user turn uses
-    LangChain ``tool_choice=required`` on tool-bearing agents so providers like Groq must emit a
-    structured tool call instead of prose (avoids ``tool_use_failed``). Follow-up model calls
-    after tool results use provider defaults (Qwen3/vLLM-safe). Applies to **REACT** and **workers**.
+    ``tool_choice=required`` on tool-bearing agents for Groq-style providers (avoids
+    ``tool_use_failed``). Qwen3/vLLM models automatically use ``tool_choice=auto`` instead.
+    User multimodal content blocks are flattened to plain strings before every model call
+    (always, even when this flag is False). Applies to **REACT** and **workers**.
 
     Also registers the agent name against the store for duplicate-name warnings and may
     extend ``tools`` (memory load_skill, harness tools).

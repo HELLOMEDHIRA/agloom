@@ -34,7 +34,7 @@ When **`mcp_servers`** is set (Grafana, Loki, Elasticsearch, custom observabilit
 - **Investigation / fetch** prompts should run as **REACT** with tool calls — not **DIRECT** or **REFLECTION**.
 - Agloom **coerces** **DIRECT**, **REFLECTION**, and multi-worker patterns (empty `required_tools`) to **REACT** when the query needs registered tools (observability, files, memory).
 - Workers in multi-worker patterns **inherit all agent tools** when `required_tools` is empty but the worker task needs tools.
-- Set **`react_force_tool_choice_on_user_turn=True`** (default) on the **opening** user turn — Qwen3/vLLM-safe on follow-up tool rounds.
+- Keep **`react_force_tool_choice_on_user_turn=True`** (default). Agloom picks `tool_choice=required` for Groq-style models and **`auto` for Qwen3/vLLM**; user content blocks are flattened before each model call.
 
 Details: [MCP Server Integration](../features/mcp.md#classifier-routing-with-mcp).
 

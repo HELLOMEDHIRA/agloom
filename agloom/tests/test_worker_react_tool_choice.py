@@ -18,7 +18,8 @@ def test_worker_react_middleware_respects_parent_flag_false() -> None:
         {"react_force_tool_choice_on_user_turn": False},
         "worker_1",
     )
-    assert not any(isinstance(m, ReactUserTurnToolChoiceMiddleware) for m in chain)
+    mw = next(m for m in chain if isinstance(m, ReactUserTurnToolChoiceMiddleware))
+    assert mw._enabled is False
 
 
 def test_worker_react_middleware_includes_hitl_when_parent_set() -> None:

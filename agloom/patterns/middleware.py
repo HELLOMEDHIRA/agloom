@@ -10,6 +10,11 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from ..hitl_contract import HITLEvent, call_user_callback
+from ..llm.qwen_compat import (
+    extract_model_label,
+    normalize_messages_for_chat_template,
+    resolve_react_tool_choice,
+)
 from ..logging_utils import get_logger
 from .hitl_tool_coalesce import CompositeToolHitlCoalescer, build_default_hitl_coalescer
 
@@ -56,49 +61,53 @@ def _has_prior_tool_round(messages: list[Any]) -> bool:
 
 def should_force_tool_choice_on_request(messages: list[Any] | None) -> bool:
     """
-    Force ``tool_choice=required`` only on the opening user turn.
+    True only for the **first** model call: a single user/human message, no prior turns.
 
-    Recovery ``HumanMessage``s appended after tool results (or Qwen3 multi-step tool
-    follow-ups) must stay on provider default ``tool_choice`` — otherwise vLLM/Qwen
-    chat templates raise ``No user query found in messages``.
+    Any retry nudge (stray JSON, ``tool_use_failed``) or multi-step tool history must not
+    receive ``tool_choice=required`` — Qwen3/vLLM chat templates raise
+    ``No user query found in messages`` when ``required`` is used off the opening turn.
     """
-    if not messages:
+    if not messages or len(messages) != 1:
         return False
-    if not _is_human_message(messages[-1]):
-        return False
-    return not _has_prior_tool_round(messages)
+    return _is_human_message(messages[0])
+
+
+def _prepare_react_model_request(request: Any, *, tool_choice_enabled: bool) -> Any:
+    """Normalize user content and apply provider-safe ``tool_choice`` overrides."""
+    messages = normalize_messages_for_chat_template(list(request.messages or []))
+    overrides: dict[str, Any] = {"messages": messages}
+    if tool_choice_enabled and request.tools:
+        choice = resolve_react_tool_choice(
+            messages,
+            model_label=extract_model_label(request.model),
+        )
+        if choice is not None:
+            overrides["tool_choice"] = choice
+    return request.override(**overrides)
 
 
 class ReactUserTurnToolChoiceMiddleware(AgentMiddleware):
-    """On the opening user turn, force ``tool_choice`` so the model emits structured tool calls."""
+    """Opening-turn tool choice + Qwen3/vLLM message normalization for ReAct agents."""
 
     def __init__(
         self,
         *,
         enabled: bool = True,
-        user_turn_choice: str = "required",
     ) -> None:
         super().__init__()
         self._enabled = enabled
-        self._user_turn_choice = user_turn_choice
 
     def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
-        if not self._enabled or not request.tools:
-            return handler(request)
-        if should_force_tool_choice_on_request(request.messages):
-            return handler(request.override(tool_choice=self._user_turn_choice))
-        return handler(request)
+        prepared = _prepare_react_model_request(request, tool_choice_enabled=self._enabled)
+        return handler(prepared)
 
     async def awrap_model_call(
         self,
         request: Any,
         handler: Callable[[Any], Awaitable[Any]],
     ) -> Any:
-        if not self._enabled or not request.tools:
-            return await handler(request)
-        if should_force_tool_choice_on_request(request.messages):
-            return await handler(request.override(tool_choice=self._user_turn_choice))
-        return await handler(request)
+        prepared = _prepare_react_model_request(request, tool_choice_enabled=self._enabled)
+        return await handler(prepared)
 
 
 def build_langchain_agent_middleware(
@@ -108,14 +117,12 @@ def build_langchain_agent_middleware(
 ) -> list[Any]:
     """Middleware chain for LangChain ``create_agent`` (ReAct + pattern workers).
 
-    When ``force_tool_choice_on_user_turn`` is True, the **opening** user turn uses
-    ``tool_choice=required`` so providers that omit tools still emit a valid tool payload.
-    Follow-up model calls after tool results use the provider default (required for Qwen3
-    / vLLM multi-step tool templates).
+    User multimodal content blocks are **always** flattened to plain strings (Qwen3/vLLM
+    chat-template compatibility). When ``force_tool_choice_on_user_turn`` is True, the opening
+    user turn uses ``tool_choice=required`` for Groq-style providers; Qwen3/vLLM models use
+    ``auto`` instead. When False, only the tool_choice overrides are disabled.
     """
-    chain: list[Any] = []
-    if force_tool_choice_on_user_turn:
-        chain.append(ReactUserTurnToolChoiceMiddleware())
+    chain: list[Any] = [ReactUserTurnToolChoiceMiddleware(enabled=force_tool_choice_on_user_turn)]
     if extras:
         chain.extend(extras)
     return chain
