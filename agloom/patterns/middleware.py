@@ -12,7 +12,9 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from ..hitl_contract import HITLEvent, call_user_callback
 from ..llm.qwen_compat import (
     extract_model_label,
-    normalize_messages_for_chat_template,
+    model_needs_qwen_chat_template_compat,
+    qwen_model_settings_patch,
+    repair_messages_for_chat_template,
     resolve_react_tool_choice,
 )
 from ..logging_utils import get_logger
@@ -74,15 +76,27 @@ def should_force_tool_choice_on_request(messages: list[Any] | None) -> bool:
 
 def _prepare_react_model_request(request: Any, *, tool_choice_enabled: bool) -> Any:
     """Normalize user content and apply provider-safe ``tool_choice`` overrides."""
-    messages = normalize_messages_for_chat_template(list(request.messages or []))
+    state = getattr(request, "state", None)
+    messages = repair_messages_for_chat_template(
+        list(request.messages or []),
+        state=state if isinstance(state, dict) else None,
+    )
+    model_label = extract_model_label(request.model)
     overrides: dict[str, Any] = {"messages": messages}
-    if tool_choice_enabled and request.tools:
-        choice = resolve_react_tool_choice(
-            messages,
-            model_label=extract_model_label(request.model),
+    if model_needs_qwen_chat_template_compat(model_label):
+        overrides["model_settings"] = qwen_model_settings_patch(
+            getattr(request, "model_settings", None)
         )
+    if tool_choice_enabled and request.tools:
+        choice = resolve_react_tool_choice(messages, model_label=model_label)
         if choice is not None:
             overrides["tool_choice"] = choice
+    if overrides.get("model_settings") or overrides.get("tool_choice") or overrides["messages"] is not request.messages:
+        logger.debug(
+            f"[react_middleware] model_label={model_label[:80] if model_label else ''!r} "
+            f"compat={model_needs_qwen_chat_template_compat(model_label)} "
+            f"tool_choice={overrides.get('tool_choice', '<default>')} msgs={len(messages)}"
+        )
     return request.override(**overrides)
 
 

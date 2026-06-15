@@ -50,8 +50,8 @@ Self-hosted **Qwen3** models (e.g. `litellm:qwen36fp8`, `vllm:Qwen/...`) use Jin
 
 | Behavior | Detail |
 | -------- | ------ |
-| **Qwen detection** | Model id contains `qwen` or `qwq` → `tool_choice=auto` on all tool-bearing model calls |
-| **Other providers** | Opening turn only → `tool_choice=required` (Groq-style); follow-ups use provider default |
+| **Qwen detection** | Model id contains `qwen` / `qwq`, or LiteLLM/vLLM routing (incl. opaque model groups like `qwen36fp8`) |
+| **tool_choice** | Strict-template models: **no override** (provider default). Groq-style: `required` on opening turn only |
 | **User content** | LangChain multimodal content blocks are flattened to plain strings before each LLM call |
 
 If you still see ``No user query found in messages`` after upgrading agloom:
