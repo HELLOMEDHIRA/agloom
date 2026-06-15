@@ -985,6 +985,14 @@ class AgentConfig(BaseModel):
     llm_timeout: float = Field(
         default=120.0, ge=1.0, description="Default timeout (s) for non-structured LLM ainvoke calls"
     )
+    react_graph_timeout: float | None = Field(
+        default=None,
+        ge=1.0,
+        description=(
+            "Wall clock (s) for streamed REACT graphs (astream_events). "
+            "Default max(llm_timeout×4, 300) when None."
+        ),
+    )
     classifier_timeout: float = Field(
         default=60.0, ge=1.0, description="Timeout (s) for the classifier structured call"
     )
@@ -1024,10 +1032,9 @@ class AgentConfig(BaseModel):
     react_force_tool_choice_on_user_turn: bool = Field(
         default=True,
         description=(
-            "Opening turn: tool_choice=required on tool-bearing agents (REACT + workers) for "
-            "Groq-style providers. Qwen3/vLLM models use tool_choice=auto. User multimodal "
-            "blocks are flattened before each model call (always). False disables tool_choice "
-            "overrides only."
+            "Opening turn: tool_choice=required for Groq-style providers. Qwen3/vLLM/LiteLLM: "
+            "no tool_choice override (provider default). User blocks flattened via LLM wrapper "
+            "(always). False disables tool_choice overrides only."
         ),
     )
 

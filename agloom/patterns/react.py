@@ -10,6 +10,8 @@ from uuid import uuid4
 from ..llm.qwen_compat import (
     _DEFAULT_USER_TURN,
     ensure_messages_for_chat_template,
+    extract_model_label,
+    model_needs_qwen_chat_template_compat,
 )
 from ..multimodal import content_blocks_to_text, text_from_user_turn
 from ..wire_stream_content import (
@@ -165,6 +167,36 @@ def _react_retry_delay(attempt: int) -> float:
 # (approve/reject), which may take arbitrarily long.
 _AINVOKE_TIMEOUT = 120
 _STRAY_TOOL_JSON_RETRIES = 3
+
+
+def _react_llm_timeout(agent: dict) -> float:
+    """Per model-call wall clock (honors ``create_agent(llm_timeout=...)``)."""
+    try:
+        return max(float(agent.get("llm_timeout", _AINVOKE_TIMEOUT)), 1.0)
+    except (TypeError, ValueError):
+        return float(_AINVOKE_TIMEOUT)
+
+
+def _react_graph_wall_timeout(agent: dict) -> float:
+    """Wall clock for a full streamed ReAct graph (many model + tool rounds)."""
+    explicit = agent.get("react_graph_timeout")
+    if explicit is not None:
+        try:
+            return max(float(explicit), 1.0)
+        except (TypeError, ValueError):
+            pass
+    base = _react_llm_timeout(agent)
+    return max(base * 4.0, 300.0)
+
+
+def _react_timeout_failure_message(agent: dict, *, wall_seconds: float, path: str) -> str:
+    llm_t = int(_react_llm_timeout(agent))
+    graph_t = int(_react_graph_wall_timeout(agent))
+    return (
+        f"REACT timed out after {int(wall_seconds)}s ({path}). "
+        f"Self-hosted Qwen/vLLM with MCP tools often needs "
+        f"create_agent(llm_timeout>={max(llm_t, 300)}, react_graph_timeout>={max(graph_t, 600)})."
+    )
 
 
 def _react_tool_names(tools: list[Any]) -> frozenset[str]:
@@ -329,8 +361,6 @@ async def handle_react(
     except Exception:
         _agloom_version = "unknown"
     _llm = agent.get("llm")
-    from ..llm.qwen_compat import extract_model_label, model_needs_qwen_chat_template_compat
-
     _mlabel = extract_model_label(_llm)
     logger.info(
         f"[React] agloom={_agloom_version} model_label={_mlabel!r} "
@@ -494,20 +524,11 @@ async def _run_react_ainvoke_with_retries(
             )
         try:
             t0 = time.perf_counter()
-            _wall_timeout = max(
-                _AINVOKE_TIMEOUT,
-                float(agent.get("llm_timeout", _AINVOKE_TIMEOUT)),
+            _wall_timeout = _react_llm_timeout(agent)
+            response = await asyncio.wait_for(
+                cast(Any, react_agent).ainvoke(state, config=invoke_config),
+                timeout=_wall_timeout,
             )
-            if hitl_active:
-                response = await asyncio.wait_for(
-                    cast(Any, react_agent).ainvoke(state, config=invoke_config),
-                    timeout=_wall_timeout,
-                )
-            else:
-                response = await asyncio.wait_for(
-                    cast(Any, react_agent).ainvoke(state, config=invoke_config),
-                    timeout=_AINVOKE_TIMEOUT,
-                )
             dur = round((time.perf_counter() - t0) * 1000, 1)
 
             msgs = response.get("messages", [])
@@ -633,6 +654,21 @@ async def _run_react_ainvoke_with_retries(
                         continue
 
             logger.error(f"{log_prefix} ❌ Failed: {exc!r}")
+            if isinstance(exc, TimeoutError):
+                return await _react_failure(
+                    agent,
+                    config,
+                    query,
+                    analysis,
+                    output=_react_timeout_failure_message(
+                        agent,
+                        wall_seconds=_react_llm_timeout(agent),
+                        path=log_prefix,
+                    ),
+                    steps_taken=attempt,
+                    steps=steps,
+                    messages=(response or {}).get("messages", []),
+                )
             fail_note = (
                 "Provider rejected the model's tool output (tool_use_failed — usually prose instead of a structured tool call). "
                 if _exception_indicates_tool_use_failed(exc)
@@ -717,112 +753,114 @@ async def _handle_react_streaming(
     _tool_run_ids: dict[str, str] = {}
     _tool_arg_dicts: dict[str, dict[str, Any]] = {}
     tool_names = _react_tool_names(tools)
+    _graph_wall_timeout = _react_graph_wall_timeout(agent)
 
     try:
-        async for event in react_agent.astream_events(state, config=invoke_config, version="v2"):
-            kind = event["event"]
+        async with asyncio.timeout(_graph_wall_timeout):
+            async for event in react_agent.astream_events(state, config=invoke_config, version="v2"):
+                kind = event["event"]
 
-            if kind == "on_chat_model_stream":
-                chunk = event["data"]["chunk"]
-                if event_queue:
-                    reasoning, answer = split_stream_parts_from_chunk(chunk)
-                    if reasoning:
+                if kind == "on_chat_model_stream":
+                    chunk = event["data"]["chunk"]
+                    if event_queue:
+                        reasoning, answer = split_stream_parts_from_chunk(chunk)
+                        if reasoning:
+                            await event_queue.put(
+                                AgentEvent(
+                                    type="token",
+                                    data={"content": reasoning, "role": "reasoning"},
+                                )
+                            )
+                        if answer and not (
+                            answer.strip()
+                            and tool_names
+                            and _is_stray_tool_json_text(answer.strip(), tool_names)
+                        ):
+                            await event_queue.put(
+                                AgentEvent(
+                                    type="token",
+                                    data={"content": answer, "role": "assistant"},
+                                )
+                            )
+
+                elif kind == "on_tool_start":
+                    run_id = event.get("run_id", "")
+                    wire_id = _wire_tool_call_id_from_stream_event(event)
+                    tool_name = event.get("name", "unknown")
+                    tool_input = event.get("data", {}).get("input", {})
+                    arg_dict = _tool_input_as_dict(tool_input)
+                    _tool_arg_dicts[run_id] = arg_dict
+                    _tool_run_ids[run_id] = tool_name
+                    if event_queue:
                         await event_queue.put(
                             AgentEvent(
-                                type="token",
-                                data={"content": reasoning, "role": "reasoning"},
+                                type="tool_call",
+                                data=_agent_event_tool_data(
+                                    tool_call_id=wire_id,
+                                    tool_name=tool_name,
+                                    input=_trunc(str(tool_input), ml),
+                                    args=arg_dict,
+                                ),
                             )
                         )
-                    if answer and not (
-                        answer.strip()
-                        and tool_names
-                        and _is_stray_tool_json_text(answer.strip(), tool_names)
-                    ):
+                    steps.append(
+                        _make_step(
+                            StepType.TOOL_CALL,
+                            tool_name,
+                            input=str(tool_input),
+                            id=wire_id,
+                            max_length=ml,
+                            wire_emitted=bool(event_queue),
+                        )
+                    )
+
+                elif kind == "on_tool_end":
+                    run_id = event.get("run_id", "")
+                    wire_id = _wire_tool_call_id_from_stream_event(event)
+                    tool_name = _tool_run_ids.pop(run_id, event.get("name", "unknown"))
+                    raw_out = event.get("data", {}).get("output")
+                    args_rem = _tool_arg_dicts.pop(run_id, {})
+                    skill_name: str | None = None
+                    if tool_name == "load_skill":
+                        n = args_rem.get("name")
+                        skill_name = n if isinstance(n, str) else None
+                    if isinstance(raw_out, dict) and isinstance(raw_out.get("summary"), str):
+                        out_payload: str | dict[str, object] = raw_out
+                    else:
+                        out_payload = _tool_output_to_wire_text(raw_out)
+                    if event_queue:
                         await event_queue.put(
                             AgentEvent(
-                                type="token",
-                                data={"content": answer, "role": "assistant"},
+                                type="tool_result",
+                                data=_agent_event_tool_data(
+                                    tool_call_id=wire_id,
+                                    tool_name=tool_name,
+                                    output=out_payload,
+                                    args=args_rem,
+                                    **({"skill_name": skill_name} if skill_name else {}),
+                                ),
                             )
                         )
-
-            elif kind == "on_tool_start":
-                run_id = event.get("run_id", "")
-                wire_id = _wire_tool_call_id_from_stream_event(event)
-                tool_name = event.get("name", "unknown")
-                tool_input = event.get("data", {}).get("input", {})
-                arg_dict = _tool_input_as_dict(tool_input)
-                _tool_arg_dicts[run_id] = arg_dict
-                _tool_run_ids[run_id] = tool_name
-                if event_queue:
-                    await event_queue.put(
-                        AgentEvent(
-                            type="tool_call",
-                            data=_agent_event_tool_data(
-                                tool_call_id=wire_id,
-                                tool_name=tool_name,
-                                input=_trunc(str(tool_input), ml),
-                                args=arg_dict,
-                            ),
+                    step_out = (
+                        raw_out["summary"]
+                        if isinstance(raw_out, dict) and isinstance(raw_out.get("summary"), str)
+                        else _tool_output_to_wire_text(raw_out)
+                    )
+                    steps.append(
+                        _make_step(
+                            StepType.TOOL_RESULT,
+                            tool_name,
+                            output=step_out,
+                            id=wire_id,
+                            max_length=ml,
+                            wire_emitted=bool(event_queue),
                         )
                     )
-                steps.append(
-                    _make_step(
-                        StepType.TOOL_CALL,
-                        tool_name,
-                        input=str(tool_input),
-                        id=wire_id,
-                        max_length=ml,
-                        wire_emitted=bool(event_queue),
-                    )
-                )
 
-            elif kind == "on_tool_end":
-                run_id = event.get("run_id", "")
-                wire_id = _wire_tool_call_id_from_stream_event(event)
-                tool_name = _tool_run_ids.pop(run_id, event.get("name", "unknown"))
-                raw_out = event.get("data", {}).get("output")
-                args_rem = _tool_arg_dicts.pop(run_id, {})
-                skill_name: str | None = None
-                if tool_name == "load_skill":
-                    n = args_rem.get("name")
-                    skill_name = n if isinstance(n, str) else None
-                if isinstance(raw_out, dict) and isinstance(raw_out.get("summary"), str):
-                    out_payload: str | dict[str, object] = raw_out
-                else:
-                    out_payload = _tool_output_to_wire_text(raw_out)
-                if event_queue:
-                    await event_queue.put(
-                        AgentEvent(
-                            type="tool_result",
-                            data=_agent_event_tool_data(
-                                tool_call_id=wire_id,
-                                tool_name=tool_name,
-                                output=out_payload,
-                                args=args_rem,
-                                **({"skill_name": skill_name} if skill_name else {}),
-                            ),
-                        )
-                    )
-                step_out = (
-                    raw_out["summary"]
-                    if isinstance(raw_out, dict) and isinstance(raw_out.get("summary"), str)
-                    else _tool_output_to_wire_text(raw_out)
-                )
-                steps.append(
-                    _make_step(
-                        StepType.TOOL_RESULT,
-                        tool_name,
-                        output=step_out,
-                        id=wire_id,
-                        max_length=ml,
-                        wire_emitted=bool(event_queue),
-                    )
-                )
-
-            elif kind == "on_chain_end":
-                output_data = event.get("data", {}).get("output")
-                if isinstance(output_data, dict) and "messages" in output_data:
-                    final_response = output_data
+                elif kind == "on_chain_end":
+                    output_data = event.get("data", {}).get("output")
+                    if isinstance(output_data, dict) and "messages" in output_data:
+                        final_response = output_data
 
         dur = round((time.perf_counter() - t0) * 1000, 1)
         msgs = list((final_response or {}).get("messages", []))
@@ -849,13 +887,10 @@ async def _handle_react_streaming(
                     )
                 ]
             }
-            _wall_timeout = max(
-                _AINVOKE_TIMEOUT,
-                float(agent.get("llm_timeout", _AINVOKE_TIMEOUT)),
-            )
+            _wall_timeout = _react_llm_timeout(agent)
             final_response = await asyncio.wait_for(
                 cast(Any, react_agent).ainvoke(recovery_state, config=invoke_config),
-                timeout=_wall_timeout if hitl_active else _AINVOKE_TIMEOUT,
+                timeout=_wall_timeout,
             )
             msgs = list((final_response or {}).get("messages", []))
             recovered = _extract_last_ai_message(final_response, tool_names=tool_names)
@@ -910,6 +945,23 @@ async def _handle_react_streaming(
             messages=(final_response or {}).get("messages", []),
         )
 
+    except TimeoutError:
+        logger.error(f"[React|stream] Graph wall timeout ({_graph_wall_timeout}s)")
+        return await _react_failure(
+            agent,
+            config,
+            query,
+            analysis,
+            output=_react_timeout_failure_message(
+                agent,
+                wall_seconds=_graph_wall_timeout,
+                path="stream",
+            ),
+            steps_taken=steps_taken_from_audit(steps),
+            steps=steps,
+            messages=(final_response or {}).get("messages", []),
+        )
+
     except asyncio.CancelledError:
         logger.event("[React|stream] Cancelled — stopping ReAct stream.")
         raise
@@ -954,6 +1006,22 @@ async def _handle_react_streaming(
         )
 
     except Exception as exc:
+        if isinstance(exc, TimeoutError):
+            logger.error(f"[React|stream] Timed out ({_graph_wall_timeout}s)")
+            return await _react_failure(
+                agent,
+                config,
+                query,
+                analysis,
+                output=_react_timeout_failure_message(
+                    agent,
+                    wall_seconds=_graph_wall_timeout,
+                    path="stream",
+                ),
+                steps_taken=steps_taken_from_audit(steps),
+                steps=steps,
+                messages=(final_response or {}).get("messages", []),
+            )
         logger.warning(
             f"[React|stream] astream_events failed ({type(exc).__name__}: {exc}) — "
             f"continuing via ainvoke retry loop for {name}"
@@ -1121,10 +1189,7 @@ async def _handle_react_hitl(
         silent_in_batch += 1
         try:
             t0 = time.perf_counter()
-            _wall_timeout = max(
-                _AINVOKE_TIMEOUT,
-                float(agent.get("llm_timeout", _AINVOKE_TIMEOUT)),
-            )
+            _wall_timeout = _react_llm_timeout(agent)
             response = await asyncio.wait_for(
                 cast(Any, react_agent).ainvoke(
                     {"messages": messages},

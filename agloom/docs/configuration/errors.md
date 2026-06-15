@@ -97,8 +97,8 @@ See [Invoke input](../concepts/create-agent.md#invoke-input-langchain-shape) and
 | Error                | Cause                             | Action                                     |
 | -------------------- | --------------------------------- | ------------------------------------------ |
 | `MCPConnectionError` | MCP connect failed on first invoke (transport error, `get_tools` failure, or server returned **zero** tools/resources/prompts) | Fix server URL/transport/auth; verify the MCP server exposes tools. See [MCP connect failures](../features/mcp.md#connect-failures). |
-| `TimeoutError`       | LLM call exceeded `llm_timeout`   | Increase timeout or check LLM provider     |
-| `No user query found in messages` (LiteLLM / vLLM / Qwen3) | Qwen3 Jinja chat template: `tool_choice=required` on multi-step tool turns, or user content as LangChain content-block lists | Upgrade agloom (Qwen uses `auto`, user blocks flattened, `required` only on a single-message opening turn for non-Qwen). Ensure vLLM has `--enable-auto-tool-choice` and a Qwen tool parser. See [LLM resolution — Qwen3](../guides/llm-resolution.md#qwen3--vllm--litellm-and-tool-calling) |
+| `TimeoutError` / REACT timed out | Per-call or graph wall clock exceeded | Increase `llm_timeout` (per model call) and `react_graph_timeout` (streamed REACT graph). See [Reliability](reliability.md) |
+| `No user query found in messages` (LiteLLM / vLLM / Qwen3) | Strict Jinja template: bad message shape or forced `tool_choice` | Upgrade agloom (LLM wrapper + middleware flatten user blocks; no `tool_choice` override for Qwen/LiteLLM). See [LLM resolution — Qwen3](../guides/llm-resolution.md#qwen3--vllm--litellm-and-tool-calling) |
 | `RateLimitError`     | LLM provider rate limit hit       | Set `rate_limit` to throttle calls         |
 | `CircuitBreakerOpen` | Too many consecutive LLM failures | Wait for cooldown or check provider status |
 

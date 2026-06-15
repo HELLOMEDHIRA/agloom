@@ -70,7 +70,8 @@ await create_agent(model=ChatGroq(model="llama-3.3-70b-versatile"))
 | `max_concurrent`         | `int`   | `4`     | Max parallel workers (1-32)                 |
 | `max_retries`            | `int`   | `2`     | Worker retry count (0-10)                   |
 | `retry_delay`            | `float` | `1.0`   | Seconds between retries                     |
-| `llm_timeout`            | `float` | `120.0` | LLM call timeout in seconds                 |
+| `llm_timeout`            | `float` | `120.0` | Per model-call timeout (seconds) for REACT ``ainvoke`` and workers |
+| `react_graph_timeout`    | `float` or `None` | `None` | Wall clock for a full streamed REACT graph. Default: ``max(llm_timeout × 4, 300)``. Use `600`–`900` for Qwen + MCP investigations |
 | `classifier_timeout`     | `float` | `60.0`  | Classifier timeout in seconds               |
 | `structured_max_retries` | `int`   | `2`     | Structured output retry count               |
 | `rate_limit`             | `float` | `None`  | Max LLM calls per second. `None` = no limit |
@@ -81,7 +82,7 @@ See [Timeouts & Retries](reliability.md) for details.
 
 | Parameter                                 | Type               | Default | Description                                                                                                                                            |
 | ----------------------------------------- | ------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `react_force_tool_choice_on_user_turn`    | `bool`             | `True`  | Opening turn only: `tool_choice=required` for Groq-style providers; **Qwen3/vLLM use `auto`**. Follow-up tool rounds never use `required`. Applies to **REACT** and **workers**. Set `False` to disable **tool_choice overrides only** — user message flattening for chat templates still runs. |
+| `react_force_tool_choice_on_user_turn`    | `bool`             | `True`  | Opening turn: `tool_choice=required` for Groq-style providers. **Qwen3/vLLM/LiteLLM** (strict templates): no `tool_choice` override — provider default. User message flattening always runs via LLM wrapper + middleware. Set `False` to disable tool_choice overrides only. |
 | `react_tool_use_failed_auto_retries_hitl` | `int`              | `2`     | Automatic HITL-backed retries when the model returns malformed tool JSON.                                                                              |
 | `react_tool_use_failed_user_rounds`       | `int`              | `3`     | Max user-visible rounds for tool-use recovery before failing the turn.                                                                                 |
 | `skills_disk_mirror`                      | `Path` or `str` or `None` | `None` | Optional directory path; when set, mirrors skill artifacts on disk for inspection or backup.                                                          |

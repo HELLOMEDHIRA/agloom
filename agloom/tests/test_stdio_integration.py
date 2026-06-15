@@ -59,6 +59,7 @@ FAKE_RUNTIME_SCRIPT = textwrap.dedent("""\
 """)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows subprocess stdin handle flake (WinError 6)")
 @pytest.mark.asyncio
 async def test_stdio_transport_round_trip() -> None:
     """Start a subprocess that emits 6 AGP events; parse all via event_adapter."""

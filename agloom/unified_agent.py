@@ -2939,6 +2939,7 @@ async def create_agent(
     max_retries: int = 2,
     retry_delay: float = 1.0,
     llm_timeout: float = 120.0,
+    react_graph_timeout: float | None = None,
     classifier_timeout: float = 60.0,
     structured_max_retries: int = 2,
     rate_limit: float | None = None,
@@ -2994,11 +2995,12 @@ async def create_agent(
     the dict returned by :func:`agloom.cache.create_cache` for custom embeddings / Qdrant.
     ``checkpointer``: enables ``get_state``, ``get_history``, ``resume``.
     ``mcp_servers``: lazy MCP connect on first ``ainvoke`` (raises ``MCPConnectionError`` if a server exposes no tools).
-    ``react_force_tool_choice_on_user_turn``: when True (default), the opening user turn uses
-    ``tool_choice=required`` on tool-bearing agents for Groq-style providers (avoids
-    ``tool_use_failed``). Qwen3/vLLM models automatically use ``tool_choice=auto`` instead.
-    User multimodal content blocks are flattened to plain strings before every model call
-    (always, even when this flag is False). Applies to **REACT** and **workers**.
+    ``react_force_tool_choice_on_user_turn``: when True (default), Groq-style providers use
+    ``tool_choice=required`` on the opening turn. Qwen3/vLLM/LiteLLM use provider-default
+    ``tool_choice`` (no override). All models get user-message flattening via
+    :func:`~agloom.llm.qwen_compat.wrap_chat_model_for_react_compat` (always on).
+    ``react_graph_timeout``: optional wall clock (seconds) for streamed REACT graphs.
+    Default ``max(llm_timeout × 4, 300)``. Applies to **REACT** and **workers**.
 
     Also registers the agent name against the store for duplicate-name warnings and may
     extend ``tools`` (memory load_skill, harness tools).
@@ -3065,6 +3067,7 @@ async def create_agent(
         max_retries=max_retries,
         retry_delay=retry_delay,
         llm_timeout=llm_timeout,
+        react_graph_timeout=react_graph_timeout,
         classifier_timeout=classifier_timeout,
         structured_max_retries=structured_max_retries,
         rate_limit=rate_limit,
@@ -3258,6 +3261,7 @@ async def create_agent(
         "max_retries": max_retries,
         "retry_delay": retry_delay,
         "llm_timeout": llm_timeout,
+        "react_graph_timeout": react_graph_timeout,
         "classifier_timeout": classifier_timeout,
         "structured_max_retries": structured_max_retries,
         "rate_limit": rate_limit,
