@@ -9,14 +9,18 @@ import pytest
 from agloom.models import AgentEvent
 from agloom.protocol.events import SkillAppliedData
 from agloom.runtime.translator import translate
-from agloom.skills.injector import SkillInjectContext, SkillInjector
+from agloom.skills.injector import SkillInjector, parse_skill_names_from_context
 from agloom.tests.test_runtime_bridge import capture_emitter
-from agloom.unified_agent import _emit_skill_context_event, _wire_context_preview
+from agloom.unified_agent import (
+    _build_skill_context_for_classify,
+    _emit_skill_context_event,
+    _wire_context_preview,
+)
 
 
 def test_skill_applied_data_optional_fields_default() -> None:
     d = SkillAppliedData(phase="classifier", injected_chars=10)
-    assert d.skill_names == []
+    assert d.skills == []
     assert d.context_preview == ""
     assert d.truncated is False
 
@@ -26,6 +30,11 @@ def test_wire_context_preview_truncates() -> None:
     preview, truncated = _wire_context_preview(text, max_chars=8192)
     assert len(preview) == 8192
     assert truncated is True
+
+
+def test_parse_skill_names_from_context() -> None:
+    ctx = "=== RELEVANT SKILLS ===\n  - [alert-rca]: RCA\n  - [slo-sli]: SLO\n==="
+    assert parse_skill_names_from_context(ctx) == ["alert-rca", "slo-sli"]
 
 
 @pytest.mark.asyncio
@@ -42,10 +51,30 @@ async def test_emit_skill_context_event_includes_manifest_fields() -> None:
 
     evt = await q.get()
     assert evt.type == "skill_context"
-    assert evt.data["skill_names"] == ["lint_python"]
+    assert evt.data["skills"] == ["lint_python"]
     assert "lint_python" in evt.data["context_preview"]
     assert evt.data["injected_chars"] == len(ctx)
     assert evt.data["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_legacy_injector_parses_skill_names_from_context() -> None:
+    class _Injector:
+        async def get_context(self, query: str) -> str:
+            _ = query
+            return "=== RELEVANT SKILLS ===\n  - [alert-rca]: Alert RCA\n==="
+
+    ctx, names = await _build_skill_context_for_classify(
+        {"skill_injector": _Injector()},
+        processed_query="investigate alert",
+    )
+    assert names == ["alert-rca"]
+    assert "alert-rca" in ctx
+
+
+def test_skill_applied_data_accepts_legacy_skill_names() -> None:
+    d = SkillAppliedData(phase="classifier", injected_chars=10, skill_names=["legacy-skill"])
+    assert d.skills == ["legacy-skill"]
 
 
 def test_translate_skill_context_passes_preview_to_emitter() -> None:
@@ -56,7 +85,7 @@ def test_translate_skill_context_passes_preview_to_emitter() -> None:
             data={
                 "phase": "classifier",
                 "injected_chars": 50,
-                "skill_names": ["a"],
+                "skills": ["a"],
                 "context_preview": "manifest line",
                 "truncated": True,
             },
@@ -65,6 +94,7 @@ def test_translate_skill_context_passes_preview_to_emitter() -> None:
     )
     assert em.calls[0][1]["truncated"] is True
     assert em.calls[0][1]["context_preview"] == "manifest line"
+    assert em.calls[0][1]["skills"] == ["a"]
 
 
 @pytest.mark.asyncio

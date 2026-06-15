@@ -123,6 +123,8 @@ from .events import (
     SessionOpenedData,
     SessionResumed,
     SessionResumedData,
+    ProgressStep,
+    ProgressStepData,
     SkillApplied,
     SkillAppliedData,
     SkillLearned,
@@ -545,6 +547,30 @@ class SessionEmitter:
             parent=parent,
             data=ThinkingStepData(
                 step=step,
+                label=label,
+                detail=detail,
+                elapsed_ms=elapsed_ms,
+            ),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_progress_step(
+        self,
+        *,
+        phase: str,
+        label: str | None = None,
+        detail: str | None = None,
+        elapsed_ms: int | None = None,
+        parent: str | None = None,
+    ) -> ProgressStep:
+        evt = ProgressStep(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=ProgressStepData(
+                phase=phase,
                 label=label,
                 detail=detail,
                 elapsed_ms=elapsed_ms,
@@ -1013,11 +1039,13 @@ class SessionEmitter:
         *,
         phase: str = "classifier",
         injected_chars: int = 0,
+        skills: list[str] | None = None,
         skill_names: list[str] | None = None,
         context_preview: str = "",
         truncated: bool = False,
         parent: str | None = None,
     ) -> SkillApplied:
+        resolved = list(skills or skill_names or [])
         evt = SkillApplied(
             session=self._session,
             thread=self._thread,
@@ -1026,7 +1054,7 @@ class SessionEmitter:
             data=SkillAppliedData(
                 phase=_lit_skill_applied_phase(phase),
                 injected_chars=injected_chars,
-                skill_names=list(skill_names or []),
+                skills=resolved,
                 context_preview=context_preview,
                 truncated=truncated,
             ),

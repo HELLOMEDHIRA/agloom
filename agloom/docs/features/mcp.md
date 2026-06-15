@@ -52,8 +52,15 @@ async def main():
 | ----------------- | ----------------------------------- | ---------------------------------------------- |
 | `stdio`           | Local process (npx, python, etc.)   | `command`, `args` (optional), `env` (optional) |
 | `sse`             | Remote HTTP with Server-Sent Events | `url`                                          |
-| `streamable_http` | Remote HTTP with streaming          | `url`, `headers` (optional)                    |
-| `http`            | Simple HTTP endpoint                | `url`, `headers` (optional)                    |
+| `streamable_http` | Remote HTTP with streaming (MCP SDK default for HTTP) | `url`, `headers` (optional) |
+| `http`            | Alias for `streamable_http` in Agloom | `url`, `headers` (optional)                    |
+
+!!! tip "Choosing HTTP transport"
+    Many modern MCP servers (including Elastic Agent Builder) speak **streamable HTTP**, not legacy SSE.
+    Prefer **`transport="streamable_http"`** (or **`http`**, which Agloom maps to the same adapter transport).
+
+    If you configure **`sse`** and connect fails, Agloom **retries once** with `streamable_http` before surfacing an error.
+    Connect failures include **server name, URL, transport, and the root cause** (not opaque `TaskGroup` wrappers).
 
 ## MCPServerConfig Fields
 

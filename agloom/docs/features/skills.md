@@ -75,7 +75,7 @@ stateDiagram-v2
 
 When skills are injected before classification, agloom emits **`skill.applied`** with:
 
-- **`skill_names`** — which manifests were matched
+- **`skills`** — which manifests were matched (legacy parsers may still send `skill_names`)
 - **`context_preview`** — the catalogue text sent to the classifier (truncated at 8 KB on the wire)
 - **`injected_chars`** — full in-process length
 

@@ -18,6 +18,53 @@ from .logging_utils import get_logger
 logger = get_logger(__name__)
 
 
+def _adapter_transport(transport: str) -> str:
+    """Map Agloom config aliases to langchain-mcp-adapters transport names."""
+    if transport == "http":
+        return "streamable_http"
+    return transport
+
+
+def _unwrap_exception(exc: BaseException) -> BaseException:
+    """Return the deepest useful leaf from ExceptionGroup / cause chains."""
+    current = exc
+    seen: set[int] = set()
+    while id(current) not in seen:
+        seen.add(id(current))
+        group_types: tuple[type, ...] = (ExceptionGroup, BaseExceptionGroup)
+        if isinstance(current, group_types) and getattr(current, "exceptions", None):
+            current = current.exceptions[0]
+            continue
+        cause = current.__cause__ or current.__context__
+        if cause is not None and cause is not current:
+            current = cause
+            continue
+        break
+    return current
+
+
+def format_mcp_connect_error(
+    cfg: MCPServerConfig,
+    exc: BaseException,
+    *,
+    transport_used: str | None = None,
+) -> str:
+    """Single-line diagnostic: server, transport, url, optional HTTP status, root cause."""
+    root = _unwrap_exception(exc)
+    transport = transport_used or _adapter_transport(cfg.transport)
+    parts = [f"server={cfg.name!r}", f"transport={transport}"]
+    if cfg.url:
+        parts.append(f"url={cfg.url}")
+    for attr in ("status_code", "code", "errno"):
+        code = getattr(root, attr, None)
+        if isinstance(code, int):
+            parts.append(f"status={code}")
+            break
+    msg = str(root).strip() or repr(root)
+    parts.append(f"error={msg}")
+    return "; ".join(parts)
+
+
 class MCPConnectionError(Exception):
     """Raised when one or more configured MCP servers fail to connect (strict mode)."""
 
@@ -65,7 +112,7 @@ class MCPServerConfig(BaseModel):
             raise ValueError(f"[{self.name}] {self.transport} transport requires 'url'")
         return self
 
-    def to_client_dict(self) -> dict[str, Any]:
+    def to_client_dict(self, *, transport_override: str | None = None) -> dict[str, Any]:
         if self.transport == "stdio":
             d: dict[str, Any] = {
                 "command": self.command,
@@ -75,10 +122,22 @@ class MCPServerConfig(BaseModel):
             if self.env:
                 d["env"] = self.env
         else:
-            d = {"url": self.url, "transport": self.transport}
+            transport = _adapter_transport(transport_override or self.transport)
+            d = {"url": self.url, "transport": transport}
             if self.headers:
                 d["headers"] = self.headers
         return d
+
+
+def _build_server_dict(
+    servers: list[MCPServerConfig],
+    transport_overrides: dict[str, str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    overrides = transport_overrides or {}
+    return {
+        cfg.name: cfg.to_client_dict(transport_override=overrides.get(cfg.name))
+        for cfg in servers
+    }
 
 
 @dataclass
@@ -101,6 +160,7 @@ class MCPCapabilities:
     prompt_names: list[str] = field(default_factory=list)
     resource_uris: list[str] = field(default_factory=list)
     last_error: str | None = None
+    transport_used: str | None = None
 
     def all_tools(self) -> list[BaseTool]:
         """All BaseTool objects from this server — tools + resource_tool + prompt_tool."""
@@ -110,6 +170,48 @@ class MCPCapabilities:
         if self.prompt_tool:
             result.append(self.prompt_tool)
         return result
+
+
+async def _populate_server_capabilities(
+    client: Any,
+    client_holder: dict[str, Any],
+    cfg: MCPServerConfig,
+    cap: MCPCapabilities,
+) -> None:
+    """Load tools, resources, and prompts for one MCP server (raises on tool load failure)."""
+    cap.tools = await client.get_tools(server_name=cfg.name)
+
+    try:
+        async with client.session(cfg.name) as session:
+            res_response = await session.list_resources()
+            uris = [str(r.uri) for r in res_response.resources]
+            cap.resource_uris = uris
+
+        if uris:
+            cap.resource_tool = _make_resource_tool(
+                server_name=cfg.name,
+                client_holder=client_holder,
+                uris=uris,
+            )
+            logger.info(f"MCP [{cfg.name}]: {len(uris)} resource(s) → tool 'read_resource_{cfg.name}'")
+    except Exception as e:
+        logger.debug(f"MCP [{cfg.name}]: no resources or list_resources unsupported — {e}")
+
+    try:
+        async with client.session(cfg.name) as session:
+            prompt_response = await session.list_prompts()
+            names = [p.name for p in prompt_response.prompts]
+            cap.prompt_names = names
+
+        if names:
+            cap.prompt_tool = _make_prompt_tool(
+                server_name=cfg.name,
+                client_holder=client_holder,
+                prompt_names=names,
+            )
+            logger.info(f"MCP [{cfg.name}]: {len(names)} prompt(s) {names} → tool 'get_prompt_{cfg.name}'")
+    except Exception as e:
+        logger.debug(f"MCP [{cfg.name}]: no prompts or list_prompts unsupported — {e}")
 
 
 async def load_mcp_capabilities(
@@ -127,69 +229,63 @@ async def load_mcp_capabilities(
         1. client.get_tools()                  → tools list
         2. list resources via raw session      → build read_resource BaseTool
         3. list prompts via raw session        → build get_prompt BaseTool
+
+    When ``transport=sse`` fails, retries once with ``streamable_http`` (common for modern MCP servers).
     """
     try:
         from langchain_mcp_adapters.client import MultiServerMCPClient
     except ImportError as exc:
         raise ImportError("langchain-mcp-adapters is required.\nInstall: uv add langchain-mcp-adapters") from exc
 
-    server_dict = {cfg.name: cfg.to_client_dict() for cfg in servers}
-    # langchain-mcp-adapters 0.1.0+: no ``async with MultiServerMCPClient`` — construct and use ``get_tools`` / ``session``.
-    client = MultiServerMCPClient(cast(Any, server_dict))
-    client_holder: dict[str, Any] = {"client": client, "_client_ref": weakref.ref(client)}
-    logger.info(f"MCP: client ready for {list(server_dict)}")
-
+    transport_overrides: dict[str, str] = {}
+    client: Any = None
+    client_holder: dict[str, Any] = {}
     capabilities: list[MCPCapabilities] = []
 
-    for cfg in servers:
-        cap = MCPCapabilities(server_name=cfg.name)
+    for attempt in range(2):
+        if client is not None:
+            await aclose_mcp_client(client)
 
-        try:
-            cap.tools = await client.get_tools(server_name=cfg.name)
+        server_dict = _build_server_dict(servers, transport_overrides)
+        client = MultiServerMCPClient(cast(Any, server_dict))
+        client_holder = {"client": client, "_client_ref": weakref.ref(client)}
+        logger.info(f"MCP: client ready for {list(server_dict)} (attempt {attempt + 1})")
 
-            try:
-                async with client.session(cfg.name) as session:
-                    res_response = await session.list_resources()
-                    uris = [str(r.uri) for r in res_response.resources]
-                    cap.resource_uris = uris
+        capabilities = []
+        retry_as_streamable: list[str] = []
 
-                if uris:
-                    cap.resource_tool = _make_resource_tool(
-                        server_name=cfg.name,
-                        client_holder=client_holder,
-                        uris=uris,
-                    )
-                    logger.info(f"MCP [{cfg.name}]: {len(uris)} resource(s) → tool 'read_resource_{cfg.name}'")
-            except Exception as e:
-                # Many stdio MCP servers expose tools only (no resources); adapters may still error on list_resources.
-                logger.debug(f"MCP [{cfg.name}]: no resources or list_resources unsupported — {e}")
+        for cfg in servers:
+            transport_used = transport_overrides.get(cfg.name) or _adapter_transport(cfg.transport)
+            cap = MCPCapabilities(server_name=cfg.name, transport_used=transport_used)
 
             try:
-                async with client.session(cfg.name) as session:
-                    prompt_response = await session.list_prompts()
-                    names = [p.name for p in prompt_response.prompts]
-                    cap.prompt_names = names
-
-                if names:
-                    cap.prompt_tool = _make_prompt_tool(
-                        server_name=cfg.name,
-                        client_holder=client_holder,
-                        prompt_names=names,
-                    )
-                    logger.info(f"MCP [{cfg.name}]: {len(names)} prompt(s) {names} → tool 'get_prompt_{cfg.name}'")
+                await _populate_server_capabilities(client, client_holder, cfg, cap)
             except Exception as e:
-                logger.debug(f"MCP [{cfg.name}]: no prompts or list_prompts unsupported — {e}")
+                err_text = format_mcp_connect_error(cfg, e, transport_used=transport_used)
+                logger.error(f"MCP [{cfg.name}]: capability load failed: {err_text}")
+                cap.last_error = err_text
+                if (
+                    cfg.transport == "sse"
+                    and transport_used == "sse"
+                    and cfg.name not in transport_overrides
+                ):
+                    retry_as_streamable.append(cfg.name)
 
-        except Exception as e:
-            logger.error(f"MCP [{cfg.name}]: capability load failed: {e}")
-            cap.last_error = str(e)
+            capabilities.append(cap)
+            logger.info(
+                f"MCP [{cfg.name}]: {len(cap.tools)} tool(s), "
+                f"{len(cap.resource_uris)} resource(s), "
+                f"{len(cap.prompt_names)} prompt(s)"
+            )
 
-        capabilities.append(cap)
-        logger.info(
-            f"MCP [{cfg.name}]: {len(cap.tools)} tool(s), "
-            f"{len(cap.resource_uris)} resource(s), "
-            f"{len(cap.prompt_names)} prompt(s)"
-        )
+        if not retry_as_streamable or attempt == 1:
+            break
+
+        for name in retry_as_streamable:
+            transport_overrides[name] = "streamable_http"
+            logger.info(
+                f"MCP [{name}]: sse connect failed — retrying with transport=streamable_http"
+            )
 
     return capabilities, client, client_holder
 
@@ -328,16 +424,28 @@ async def connect_mcp_servers(
         raise MCPConnectionError(str(e)) from e
     except Exception as e:
         logger.error(f"[{agent_name}] MCP connect failed: {e}")
+        root = _unwrap_exception(e)
         raise MCPConnectionError(
-            f"MCP: could not initialize client for {len(servers)} configured server(s): {e}"
+            f"MCP: could not initialize client for {len(servers)} configured server(s): {root}"
         ) from e
 
     failed = [cap for cap in caps if cap.last_error is not None]
     if failed:
         detail = "; ".join(f"{c.server_name}: {c.last_error}" for c in failed)
         await aclose_mcp_client(client, log_name=agent_name)
+        hint = ""
+        if any(
+            s.transport == "sse" and (c.transport_used or "") == "streamable_http"
+            for s in servers
+            for c in failed
+            if c.server_name == s.name
+        ):
+            hint = (
+                " (sse was retried as streamable_http; if this still fails, "
+                "set transport=streamable_http explicitly in mcp config)"
+            )
         raise MCPConnectionError(
-            f"MCP: {len(failed)} of {len(caps)} server(s) failed to connect — {detail}"
+            f"MCP: {len(failed)} of {len(caps)} server(s) failed to connect — {detail}{hint}"
         )
 
     existing_names = {t.name for t in agent.get("tools", [])}
@@ -376,6 +484,7 @@ async def connect_mcp_servers(
                 "name": cap.server_name,
                 "ok": True,
                 "error": None,
+                "transport": cap.transport_used,
                 "tool_count": len(tools),
                 "tool_names": names,
                 "tool_catalog": catalog,

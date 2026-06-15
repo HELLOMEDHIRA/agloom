@@ -13,6 +13,7 @@ The :data:`Event` type alias is a discriminated union over ``type``; use it (or 
 
 - ``session.*`` — lifecycle (opened, resumed, closed)
 - ``pattern.*`` — classifier output
+- ``progress.*`` — infrastructure / setup status (classify spinner, harness init, …)
 - ``thinking.*`` — reasoning trace lines
 - ``token.*`` — incremental LLM tokens
 - ``message.*`` — user/assistant messages (user + assistant)
@@ -40,7 +41,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from .envelope import Envelope
 
@@ -114,6 +115,23 @@ class ThinkingStepData(_DataBase):
 class ThinkingStep(Envelope):
     type: Literal["thinking.step"] = "thinking.step"
     data: ThinkingStepData
+
+
+# ── progress.step ─────────────────────────────────────────────────────────────
+
+
+class ProgressStepData(_DataBase):
+    """Infrastructure setup lines (harness bootstrap, classify spinner, skills seed, …)."""
+
+    phase: str  # e.g. harness_init, classify, skills_init
+    label: str | None = None
+    detail: str | None = None
+    elapsed_ms: int | None = None
+
+
+class ProgressStep(Envelope):
+    type: Literal["progress.step"] = "progress.step"
+    data: ProgressStepData
 
 
 # ── token.delta ───────────────────────────────────────────────────────────────
@@ -682,9 +700,18 @@ class SkillAppliedData(_DataBase):
 
     phase: SkillAppliedPhase = "classifier"
     injected_chars: int = 0
-    skill_names: list[str] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list)
     context_preview: str = ""
     truncated: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_skill_names(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "skill_names" in data and "skills" not in data:
+            merged = dict(data)
+            merged["skills"] = data["skill_names"]
+            return merged
+        return data
 
 
 class SkillApplied(Envelope):
@@ -1076,6 +1103,7 @@ Event = Annotated[
     | PatternClassified
     | PlanPreview
     | ThinkingStep
+    | ProgressStep
     | TokenDelta
     | MessageUser
     | MessageAssistant
@@ -1242,6 +1270,8 @@ __all__ = [
     "SessionResumedData",
     "ThinkingStep",
     "ThinkingStepData",
+    "ProgressStep",
+    "ProgressStepData",
     "TodosUpdated",
     "TodosUpdatedData",
     "TokenDelta",

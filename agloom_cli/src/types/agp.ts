@@ -71,6 +71,11 @@ export interface ThinkingStepEvent extends Envelope {
   data: { step: string; label?: string; detail?: string; elapsed_ms?: number }
 }
 
+export interface ProgressStepEvent extends Envelope {
+  type: 'progress.step'
+  data: { phase: string; label?: string; detail?: string; elapsed_ms?: number }
+}
+
 // token.*
 
 export interface TokenDeltaEvent extends Envelope {
@@ -352,6 +357,8 @@ export interface SkillAppliedEvent extends Envelope {
   data: {
     phase?: 'classifier' | 'worker' | string
     injected_chars?: number
+    skills?: string[]
+    /** @deprecated use `skills` */
     skill_names?: string[]
     context_preview?: string
     truncated?: boolean

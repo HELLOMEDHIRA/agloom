@@ -525,6 +525,24 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
       }
     }
 
+    case 'progress.step': {
+      if (!s.activeTurn) return s
+      const step: ThinkingStep = {
+        id: uid(),
+        step: 'progress',
+        label: evt.data.label ?? evt.data.phase,
+        detail: evt.data.detail,
+        elapsedMs: evt.data.elapsed_ms,
+      }
+      return {
+        ...s,
+        activeTurn: {
+          ...s.activeTurn,
+          thinkingSteps: [...s.activeTurn.thinkingSteps, step],
+        },
+      }
+    }
+
     case 'token.delta': {
       if (!s.activeTurn) return s
       const chunk = evt.data.text ?? ''
@@ -1024,8 +1042,12 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
       }
 
     case 'skill.applied': {
-      const names =
-        evt.data.skill_names?.length ? evt.data.skill_names.join(', ') : null
+      const skillList = evt.data.skills?.length
+        ? evt.data.skills
+        : evt.data.skill_names?.length
+          ? evt.data.skill_names
+          : null
+      const names = skillList ? skillList.join(', ') : null
       const trunc = evt.data.truncated ? ' · preview truncated' : ''
       const namePart = names ? ` · ${names}` : ''
       return {

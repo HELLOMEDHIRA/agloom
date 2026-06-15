@@ -150,7 +150,7 @@ def test_translate_skill_context_emits_skill_applied() -> None:
             data={
                 "phase": "classifier",
                 "injected_chars": 120,
-                "skill_names": ["lint_python", "deploy"],
+                "skills": ["lint_python", "deploy"],
                 "context_preview": "=== RELEVANT SKILLS ===\n  - [lint_python]: Lint",
                 "truncated": False,
             },
@@ -163,7 +163,7 @@ def test_translate_skill_context_emits_skill_applied() -> None:
             {
                 "phase": "classifier",
                 "injected_chars": 120,
-                "skill_names": ["lint_python", "deploy"],
+                "skills": ["lint_python", "deploy"],
                 "context_preview": "=== RELEVANT SKILLS ===\n  - [lint_python]: Lint",
                 "truncated": False,
             },

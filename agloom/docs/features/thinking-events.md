@@ -10,7 +10,7 @@ agloom surfaces all three through the same streaming APIs you already use — no
 
 | Kind | What the user sees | In-process (`astream_events`) | On the wire (AGP) |
 | ---- | ------------------ | ----------------------------- | ----------------- |
-| **Trace steps** | Short status lines (“Classifying query…”, “Routing · REACT”) | `AgentEvent` with `type="thinking"` or `type="classify"` | `thinking.step`, `pattern.classified` |
+| **Trace steps** | Short status lines (“Classifying query…”, “Routing · REACT”) | `AgentEvent` with `type="progress"` or `type="classify"` | `progress.step`, `pattern.classified`, `thinking.step` (routing rationale) |
 | **Reasoning tokens** | Collapsible reasoning panel (provider-dependent) | `AgentEvent` with `type="token"` and `data["role"] == "reasoning"` | `token.delta` with `role: "reasoning"` |
 | **Answer tokens** | Main chat bubble | `type="token"`, default role | `token.delta`, `role: "assistant"` |
 
@@ -27,8 +27,8 @@ sequenceDiagram
     participant Model
 
     UI->>Agent: user message
-    Note over Agent,UI: optional harness_bootstrap thinking.step
-    Agent-->>UI: thinking.step "Classifying query…"
+    Note over Agent,UI: optional progress.step (harness_init, classify)
+    Agent-->>UI: progress.step "Classifying query…"
     Agent->>Model: classifier
     Agent-->>UI: pattern.classified + thinking.step "Routing · REACT"
     loop ReAct / workers
@@ -43,11 +43,23 @@ sequenceDiagram
 
 ## Trace steps — `astream_events()`
 
-Subscribe to **`thinking`** and **`classify`** events. Both are translated to AGP for clients that use `astream_agp_events()` or `agloom-runtime`.
+Subscribe to **`progress`**, **`thinking`**, and **`classify`** events. Infrastructure setup uses **`progress`**; routing rationale after classify uses **`thinking`** / **`classify`**.
 
-### `thinking` — preparation and progress
+### `progress` — infrastructure setup
 
-Emitted **before and during** setup (not replayed at the end). Common `data` fields:
+Emitted **before and during** pre-REACT bootstrap (harness load, classify spinner, skills seed). Common `data` fields:
+
+| Field | Meaning |
+| ----- | ------- |
+| `phase` | Setup phase (`classify`, `harness_init`, `skills_init`) |
+| `name` | Step id (e.g. `analyze_query`, `harness_bootstrap`) |
+| `output` | Human-readable line for a trace pane |
+
+On AGP this becomes **`progress.step`**.
+
+### `thinking` — routing and reflections
+
+Emitted for routing rationale and other non-infra trace lines (not replayed at the end for prep spinners). Common `data` fields:
 
 | Field | Meaning |
 | ----- | ------- |
@@ -55,7 +67,7 @@ Emitted **before and during** setup (not replayed at the end). Common `data` fie
 | `output` | Human-readable line to show in a trace pane |
 | `duration_ms` | Optional, when timing is known |
 
-**Example — classify spinner**
+#### Example — classify spinner
 
 ```python
 async for event in agent.astream_events(
@@ -91,19 +103,19 @@ On AGP this becomes **`pattern.classified`** plus a **`thinking.step`** whose la
 
 ### Harness-enabled sessions
 
-With **`harness=True`** and a LangGraph **`store`**, you may see **`harness_bootstrap`** trace lines before classification — e.g. loading the progress artifact and how many tasks are on the board. Same `thinking` event shape; details in [Long-running harness](harness.md).
+With **`harness=True`** and a LangGraph **`store`**, you may see **`progress.step`** with `phase: harness_init` before classification when tasks exist — e.g. harness ready summary. Same when `task_count == 0`: silent on the wire (debug log only). Details in [Long-running harness](harness.md).
 
 ---
 
 ## Trace steps — AGP (`astream_agp_events()` / runtime)
 
-Wire type: **`thinking.step`**
+Infrastructure setup uses **`progress.step`**; routing rationale after classify uses **`thinking.step`**.
 
 ```json
 {
-  "type": "thinking.step",
+  "type": "progress.step",
   "data": {
-    "step": "thinking",
+    "phase": "classify",
     "label": "analyze_query",
     "detail": "Classifying query…",
     "elapsed_ms": null
@@ -113,9 +125,28 @@ Wire type: **`thinking.step`**
 
 | Field | Use in UI |
 | ----- | --------- |
-| `label` | Primary step id (`analyze_query`, `harness_bootstrap`, …) |
+| `phase` | Setup phase (`classify`, `harness_init`, `skills_init`) |
+| `label` | Step id (`analyze_query`, `harness_bootstrap`, …) |
 | `detail` | Body text for the trace row |
-| `step` | Event category on the wire (often `thinking`; classifier completion uses `analyze_query` on the paired routing step) |
+| `elapsed_ms` | Optional timing badge |
+
+```json
+{
+  "type": "thinking.step",
+  "data": {
+    "step": "analyze_query",
+    "label": "Routing · REACT",
+    "detail": "needs file tools",
+    "elapsed_ms": 87
+  }
+}
+```
+
+| Field | Use in UI |
+| ----- | --------- |
+| `label` | Primary step id (often routing line after `pattern.classified`) |
+| `detail` | Body text for the trace row |
+| `step` | Event category on the wire |
 | `elapsed_ms` | Optional timing badge |
 
 **`pattern.classified`** — emit once per turn after the classifier; drive pattern badges and analytics.
@@ -132,11 +163,13 @@ Wire type: **`thinking.step`**
 }
 ```
 
-**Example — AGP consumer**
+### Example — AGP consumer
 
 ```python
 async for evt in agent.astream_agp_events("Plan Q3 roadmap", thread_id="t1"):
-    if evt.type == "thinking.step":
+    if evt.type == "progress.step":
+        ui.status(evt.data.label or evt.data.phase, evt.data.detail or "")
+    elif evt.type == "thinking.step":
         ui.trace(evt.data.label or evt.data.step, evt.data.detail or "")
     elif evt.type == "pattern.classified":
         ui.set_pattern_badge(evt.data.pattern)
@@ -171,7 +204,7 @@ When the provider streams **reasoning separately from the final answer**, agloom
 }
 ```
 
-**UI guidance**
+### UI guidance
 
 - Render **`reasoning`** in a secondary panel (muted, collapsible, or “Thought process”).
 - Render **`assistant`** in the main message stream.

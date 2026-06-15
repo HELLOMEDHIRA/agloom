@@ -71,6 +71,12 @@ const d = {
     detail: z.string().optional(),
     elapsed_ms: z.number().optional(),
   }),
+  progressStep: z.object({
+    phase: z.string(),
+    label: z.string().optional(),
+    detail: z.string().optional(),
+    elapsed_ms: z.number().optional(),
+  }),
   tokenDelta: z.object({
     text: z.string(),
     role: z.enum(['assistant', 'tool', 'reasoning']).optional(),
@@ -363,6 +369,7 @@ const d = {
   skillApplied: z.object({
     phase: z.string().optional(),
     injected_chars: z.number().optional(),
+    skills: z.array(z.string()).optional(),
     skill_names: z.array(z.string()).optional(),
     context_preview: z.string().optional(),
     truncated: z.boolean().optional(),
@@ -391,6 +398,7 @@ const DATA_BY_TYPE: Record<string, z.ZodTypeAny> = {
   'pattern.classified': d.patternClassified,
   'plan.preview': d.planPreview,
   'thinking.step': d.thinkingStep,
+  'progress.step': d.progressStep,
   'token.delta': d.tokenDelta,
   'message.user': d.messageUser,
   'message.assistant': d.messageAssistant,

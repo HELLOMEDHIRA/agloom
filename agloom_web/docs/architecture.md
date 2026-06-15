@@ -161,7 +161,7 @@ store.dispatch(evt)
 ### Display rules (parity with CLI)
 
 - **Tool calls** — render full `tool.call.result` `output_preview` (wrap/scroll; no collapse toggle).
-- **Reasoning** — `thinking.step` and plan/orchestration steps stay visible in the turn card.
+- **Reasoning** — `progress.step` (infra setup), `thinking.step` (routing), and plan/orchestration steps stay visible in the turn card.
 - **Assistant text** — accumulate `token.delta`, then **`finalizeAssistantMessage`** when `message.assistant` arrives; strip `[agloom:tool_result]` envelopes and stray tool JSON blobs.
 - **Tokens** — session totals from **`metric.tokens`** only; format as `↑input ↓output` via `formatTurnTokenRollup`.
 

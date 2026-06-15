@@ -112,7 +112,8 @@ For inbound commands (`command.invoke`, `command.cancel`, `command.hitl.respond`
 | ---- | ----- | --- |
 | **Streaming** | `token.delta`, `message.assistant`, `stream.end` | Chat surface |
 | **Tools** | `tool.call.start`, `tool.call.result`, `tool.call.error` | Tool cards; bodies are **full** in `output_preview` when the runtime emits them |
-| **Routing** | `thinking.step`, `pattern.classified` | Operational trace (classify, harness, routing) |
+| **Routing** | `progress.step`, `thinking.step`, `pattern.classified` | Infra setup (`progress.step`); routing rationale (`thinking.step` after classify) |
+| **Skills** | `skill.applied` | Matched skill ids in `skills` (legacy `skill_names` accepted on parse) |
 | **Reasoning** | `token.delta` with `role: "reasoning"` | Model-native reasoning stream (provider-dependent) — separate from `assistant` deltas |
 | **HITL** | `hitl.request`, `hitl.granted`, `hitl.denied` | Approvals |
 | **Metrics** | `metric.tokens`, `metric.cost` | Sidebar; use rollup fields — do not sum every `token.delta` blindly |

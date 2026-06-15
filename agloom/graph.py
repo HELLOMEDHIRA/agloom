@@ -71,17 +71,16 @@ def _make_classify_node(agent: dict):
             )
             return {}
 
-        from .unified_agent import _execute_analyze_query
+        from .unified_agent import (
+            _build_skill_context_for_classify,
+            _emit_skill_context_event,
+            _execute_analyze_query,
+        )
 
-        skill_ctx = ""
-        skill_injector = agent.get("skill_injector")
-        if skill_injector is not None:
-            try:
-                skill_ctx = await skill_injector.get_context(state["query"])
-            except Exception as exc:
-                logger.warning(
-                    f"[Graph:classify] {agent.get('name')} skill_injector failed ({exc!r}) — proceeding without."
-                )
+        skill_ctx, skill_names = await _build_skill_context_for_classify(
+            agent, processed_query=state["query"]
+        )
+        await _emit_skill_context_event(agent, skill_ctx, skill_names)
 
         analysis = await _execute_analyze_query(
             agent,

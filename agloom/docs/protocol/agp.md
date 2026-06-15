@@ -211,31 +211,44 @@ Emitted after the classifier runs (`thinking.step` with `step: "analyze_query"`)
 
 ### `thinking.step`
 
-A single line in the **operational trace** (setup, routing, reflections, warnings) — not model chain-of-thought. UIs should show `label` + `detail`; use `elapsed_ms` when present.
+A single line in the **reasoning / routing trace** (routing rationale after classify, reflections, warnings) — not model chain-of-thought and **not** infrastructure spinners. UIs should show `label` + `detail`; use `elapsed_ms` when present.
+
+Infrastructure setup (classify spinner, harness bootstrap, skills seed) uses **`progress.step`** instead.
 
 Common `label` values (non-exhaustive):
 
 | `label` | Typical `detail` |
 | ------- | ---------------- |
-| `analyze_query` | `Classifying query…` (before classifier) or routing line after `pattern.classified` |
-| `harness_bootstrap` | Harness progress load / task summary when harness is enabled |
+| `analyze_query` | Routing line after `pattern.classified` (`Routing · REACT`) |
 | `tool_resolve` | Tool registry warnings for a worker plan |
 
 ```jsonc
-{ "type": "thinking.step",
-  "data": {
-    "step": "thinking",
-    "label": "analyze_query",
-    "detail": "Classifying query…",
-    "elapsed_ms": null
-  } }
-
 { "type": "thinking.step",
   "data": {
     "step": "analyze_query",
     "label": "Routing · REACT",
     "detail": "needs file tools",
     "elapsed_ms": 87
+  } }
+```
+
+### `progress.step`
+
+Infrastructure / setup status — distinct from model reasoning. Emitted during pre-REACT bootstrap (harness load, classify spinner, skills seed). UIs should **not** treat these as chain-of-thought.
+
+| `phase` | Typical `label` | Meaning |
+| ------- | ----------------- | ------- |
+| `classify` | `analyze_query` | Classifier running |
+| `harness_init` | `harness_bootstrap` | Harness progress artifact loaded |
+| `skills_init` | `skills_bootstrap` | Auto-generating seed skills |
+
+```jsonc
+{ "type": "progress.step",
+  "data": {
+    "phase": "harness_init",
+    "label": "harness_bootstrap",
+    "detail": "Harness ready · 3 task(s) · 33% complete",
+    "elapsed_ms": null
   } }
 ```
 
@@ -321,7 +334,7 @@ Emitted when skill-related context is injected into the classifier turn (non-emp
 | Field | Meaning |
 | ----- | ------- |
 | `injected_chars` | Length of the full injected block |
-| `skill_names` | Manifest ids from semantic search (empty when only delegation text was injected) |
+| `skills` | Manifest ids from semantic search (empty when only delegation text was injected). Legacy wire field `skill_names` is accepted on parse. |
 | `context_preview` | Copy of the injected catalogue (capped at 8192 chars) |
 | `truncated` | `true` when `context_preview` was capped |
 
@@ -332,7 +345,7 @@ Full SKILL.md bodies are **not** included — use `load_skill` → `skill.loaded
   "data": {
     "phase": "classifier",
     "injected_chars": 420,
-    "skill_names": ["lint_python", "deploy_checklist"],
+    "skills": ["lint_python", "deploy_checklist"],
     "context_preview": "=== RELEVANT SKILLS ===\n  - [lint_python]: Lint Python sources\n...",
     "truncated": false
   } }
@@ -596,7 +609,7 @@ Emitted exactly once at the end. `reason` is `completed | user_aborted | error |
 
 ## Versioning & namespace reservation
 
-Already shipped (**v1**): `session.*`, `runtime.*`, `graph.*`, `pattern.*`, `thinking.*`, `token.*`, `message.*`, **`prompt.*`**, **`skill.*`**, `tool.*`, `hitl.*`, `worker.*`, `memory.*`, `checkpoint.*`, `feedback.*`, `metric.*`, `error.*`.
+Already shipped (**v1**): `session.*`, `runtime.*`, `graph.*`, `pattern.*`, `progress.*`, `thinking.*`, `token.*`, `message.*`, **`prompt.*`**, **`skill.*`**, `tool.*`, `hitl.*`, `worker.*`, `memory.*`, `checkpoint.*`, `feedback.*`, `metric.*`, `error.*`.
 
 Additional event types may appear under existing namespaces without bumping **`v`** — follow the same dotted `type` convention and additive payload rules. Names not listed above remain available for new envelopes under those namespaces.
 
@@ -606,9 +619,7 @@ Additional event types may appear under existing namespaces without bumping **`v
 
 ---
 
-<a id="agp-inbound-commands"></a>
-
-## Inbound commands (frontend → runtime)
+## Inbound commands (frontend → runtime) {#agp-inbound-commands}
 
 Commands share the envelope format. The runtime serve loop reads NDJSON from stdin concurrently with the running invocation, so commands and events interleave.
 

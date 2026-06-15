@@ -2,12 +2,30 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from ..logging_utils import get_logger
 
 logger = get_logger(__name__)
+
+_SKILL_LINE_RE = re.compile(r"^\s*-\s*\[([^\]]+)\]:")
+
+
+def parse_skill_names_from_context(context: str) -> list[str]:
+    """Extract manifest ids from classifier catalogue lines (``  - [id]: …``)."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for line in context.splitlines():
+        match = _SKILL_LINE_RE.match(line)
+        if not match:
+            continue
+        name = match.group(1).strip()
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
 
 
 @dataclass(frozen=True)

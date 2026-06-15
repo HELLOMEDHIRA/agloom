@@ -227,7 +227,15 @@ class ProgressArtifact(BaseModel):
         failing = self.failing_tasks
 
         if not pending and not failing:
-            return f"Progress: {len(self.passing_tasks)}/{len(self.tasks)} tasks complete. Project appears finished."
+            if not self.tasks:
+                goal = (self.description or "").strip()
+                if goal:
+                    return f"Harness: no tasks yet. Goal: {goal[:240]}"
+                return "Harness: no tasks yet (call initialize_project to create tasks)."
+            return (
+                f"Progress: {len(self.passing_tasks)}/{len(self.tasks)} tasks complete. "
+                "All tasks passing."
+            )
 
         lines = [f"Progress: {len(self.passing_tasks)}/{len(self.tasks)} tasks complete."]
         if failing:

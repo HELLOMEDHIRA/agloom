@@ -17,6 +17,7 @@ const TYPE_COLOR: Record<string, string> = {
   'session.closed':     'bg-neutral-800 border-neutral-700 text-neutral-400',
   'pattern.classified': 'bg-indigo-900/80 border-indigo-700 text-indigo-300',
   'thinking.step':      'bg-purple-900/80 border-purple-700 text-purple-300',
+  'progress.step':      'bg-cyan-900/80 border-cyan-700 text-cyan-300',
   'tool.call':          'bg-cyan-900/80 border-cyan-700 text-cyan-300',
   'tool.result':        'bg-cyan-950/80 border-cyan-800 text-cyan-400',
   'worker.spawned':     'bg-yellow-900/80 border-yellow-700 text-yellow-300',
@@ -65,6 +66,7 @@ const shortLabel = (type: string, data: Record<string, unknown>): string => {
     case 'graph.node.exit':   return `← ${d['node'] ?? '?'}`
     case 'orchestration.step': return `↻ d${d['depth'] ?? '0'} ${d['pattern'] ?? '?'} ${d['action'] ?? ''}`
     case 'thinking.step':     return d['label'] ?? d['step'] ?? '?'
+    case 'progress.step':     return d['label'] ?? d['phase'] ?? '?'
     case 'pattern.classified':return d['pattern'] ?? '?'
     case 'hitl.request':      return d['kind'] ?? '?'
     default:                  return type.split('.').pop() ?? type

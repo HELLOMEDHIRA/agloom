@@ -15,7 +15,8 @@ Short definitions for terms used across agloom, AGP, and the docs. (Wording may 
 | **Spawn** | One bounded follow-up pattern run inside the same turn, counted against depth and budgets. |
 | **MCP inventory** | agloom session catalog of connected MCP servers and tools (`_mcp_server_rows`, system prompt appendix, `runtime.mcp.servers`, `list_mcp_servers`) — not the Super-Brain graph DB. |
 | **MCP appendix** | Block appended to `system_prompt` after connect (`=== MCP servers and tools ===`) listing tool names and descriptions. |
-| **Thinking trace** | Operational progress lines on the stream (`thinking` / `thinking.step`, `classify` / `pattern.classified`) — classify, harness bootstrap, routing, etc. |
+| **Thinking trace** | Routing rationale and reflections on the stream (`thinking` / `thinking.step`, `classify` / `pattern.classified`). |
+| **Progress trace** | Infrastructure setup lines (`progress` / `progress.step`) — classify spinner, harness init, skills seed — not model chain-of-thought. |
 | **Reasoning tokens** | Provider-native reasoning text on the stream (`token` / `token.delta` with `role=reasoning`), separate from the final answer. |
 
 See also: [Thinking trace & reasoning streams](../features/thinking-events.md), [Recursive orchestration](../features/orchestration.md), [Wire tokens & metric.tokens](../features/wire-tokens.md), and [AGP — Agloom Protocol](../protocol/agp.md).

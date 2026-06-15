@@ -302,7 +302,12 @@ const summarise = (evt: AGPKnownEvent): string => {
     case 'skill.loaded':
       return `skill loaded: ${evt.data.skill_name}`
     case 'skill.applied': {
-      const names = evt.data.skill_names?.length ? evt.data.skill_names.join(', ') : null
+      const names =
+        evt.data.skills?.length
+          ? evt.data.skills.join(', ')
+          : evt.data.skill_names?.length
+            ? evt.data.skill_names.join(', ')
+            : null
       const trunc = evt.data.truncated ? ' truncated' : ''
       return `skill applied (${evt.data.phase ?? '?'})${names ? ` ${names}` : ''} +${evt.data.injected_chars ?? 0} chars${trunc}`
     }
@@ -699,6 +704,22 @@ export const useSessionStore = create<SessionStore>((set) => ({
         if (!s.activeTurn) return { ...s, executionTrace: trace }
         const step: ThinkingStep = { id: uid(), step: evt.data.step, label: evt.data.label, detail: evt.data.detail, elapsedMs: evt.data.elapsed_ms }
         return { ...s, executionTrace: trace, status: 'thinking', activeTurn: { ...s.activeTurn, thinkingSteps: [...s.activeTurn.thinkingSteps, step] } }
+      }
+
+      case 'progress.step': {
+        if (!s.activeTurn) return { ...s, executionTrace: trace }
+        const step: ThinkingStep = {
+          id: uid(),
+          step: 'progress',
+          label: evt.data.label ?? evt.data.phase,
+          detail: evt.data.detail,
+          elapsedMs: evt.data.elapsed_ms,
+        }
+        return {
+          ...s,
+          executionTrace: trace,
+          activeTurn: { ...s.activeTurn, thinkingSteps: [...s.activeTurn.thinkingSteps, step] },
+        }
       }
 
       case 'token.delta': {
@@ -1150,7 +1171,11 @@ export const useSessionStore = create<SessionStore>((set) => ({
 
       case 'skill.applied': {
         const names =
-          evt.data.skill_names?.length ? evt.data.skill_names.join(', ') : null
+          evt.data.skills?.length
+            ? evt.data.skills.join(', ')
+            : evt.data.skill_names?.length
+              ? evt.data.skill_names.join(', ')
+              : null
         const trunc = evt.data.truncated ? ' · preview truncated' : ''
         const namePart = names ? ` · ${names}` : ''
         return {

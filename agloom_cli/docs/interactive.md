@@ -32,32 +32,32 @@ Navigation follows common terminal conventions (focusable regions, overlays, and
 
 Typed at the input bar. The list below matches what **`/help`** shows in the UI.
 
-| Command              | Action                                                 |
-| -------------------- | ------------------------------------------------------ |
-| `/help`              | Full list in-modal                                     |
-| `/cancel`            | Cancel current run (**Ctrl+X**)                        |
-| `/clear`             | Clear transcript + metrics notes                       |
-| `/undo`              | Remove last turn from session memory and the local transcript |
-| `/retry`             | Re-run the last completed turn                         |
-| `/checkpoint [name]` | Create a named git checkpoint (requires harness)       |
-| `/diff [path]`       | Show git diff for working tree (requires harness)      |
-| `/hint`              | Suggest git revert hint (requires harness)               |
-| `/git status`        | Show working tree status (requires harness)             |
-| `/git checkpoints`   | List named checkpoints (requires harness)               |
-| `/plan <goal>`       | Preview how the agent would decompose a goal           |
-| `/mcp`               | List connected MCP servers and each tool (name + description from wire) |
-| `/model`             | Show active model from runtime/metrics                 |
-| `/memory clear`      | Clear session memory for current thread                |
-| `/cost`              | Token/cost slice + recent metrics                      |
-| `/temperature <n>`   | Set temperature via config                             |
-| `/system <text>`     | Inline system prompt update                            |
-| `/session list`      | List sessions (**requires `--store`** on runtime)      |
-| `/diag`              | Toggle stderr diagnostic pane                          |
-| `/stats`             | Toggle metrics sidebar (full-height when open)       |
-| `/budget raise …`    | Raise token/USD caps (`--tokens N`, `--usd N`)        |
-| `/feedback <1-5>`    | Score last completed turn                              |
-| `/save <path.md>`    | Export transcript as Markdown to disk                  |
-| `/exit`, `/quit`     | Shutdown runtime and exit                              |
+| Command                | Action                                                                     |
+| ---------------------- | -------------------------------------------------------------------------- |
+| `/help`                | Full list in-modal                                                         |
+| `/cancel`              | Cancel current run (**Ctrl+X**)                                            |
+| `/clear`               | Clear transcript + metrics notes                                           |
+| `/undo`                | Remove last turn from session memory and the local transcript              |
+| `/retry`               | Re-run the last completed turn                                             |
+| `/checkpoint [name]`   | Create a named git checkpoint (requires harness)                           |
+| `/diff [path]`         | Show git diff for working tree (requires harness)                          |
+| `/hint`                | Suggest git revert hint (requires harness)                                 |
+| `/git status`          | Show working tree status (requires harness)                                |
+| `/git checkpoints`     | List named checkpoints (requires harness)                                  |
+| `/plan <goal>`         | Preview how the agent would decompose a goal                               |
+| `/mcp`                 | List connected MCP servers and each tool (name + description from wire)    |
+| `/model`               | Show active model from runtime/metrics                                     |
+| `/memory clear`        | Clear session memory for current thread                                    |
+| `/cost`                | Token/cost slice + recent metrics                                          |
+| `/temperature <n>`     | Set temperature via config                                                 |
+| `/system <text>`       | Inline system prompt update                                                |
+| `/session list`        | List sessions (**requires `--store`** on runtime)                          |
+| `/diag`                | Toggle stderr diagnostic pane                                              |
+| `/stats`               | Toggle metrics sidebar (full-height when open)                             |
+| `/budget raise …`      | Raise token/USD caps (`--tokens N`, `--usd N`)                             |
+| `/feedback <1-5>`      | Score last completed turn                                                  |
+| `/save <path.md>`      | Export transcript as Markdown to disk                                      |
+| `/exit`, `/quit`       | Shutdown runtime and exit                                                  |
 
 Many AGP events append lines under **Wire notes** (config applied, sessions, feedback, …). Notes are **not capped** — long payloads wrap in the sidebar.
 
@@ -67,7 +67,7 @@ The TUI maps AGP into three visible streams (same shapes custom clients should u
 
 | What you see | AGP types | Notes |
 | ------------ | --------- | ----- |
-| **Trace** (status lines) | `thinking.step`, `pattern.classified` | Classify, harness bootstrap, routing — always expanded in the main column |
+| **Trace** (status lines) | `progress.step`, `thinking.step`, `pattern.classified` | Infra setup (`progress.step`: classify, harness init, skills seed); routing rationale (`thinking.step`); pattern badge |
 | **Reasoning** (model chain-of-thought) | `token.delta` with `role: "reasoning"` | Shown when the provider streams separable reasoning; not mixed into the answer bubble |
 | **Answer** | `token.delta` (`assistant`), then **`message.assistant`** | Live typing from deltas; final text prefers **`message.assistant`** |
 

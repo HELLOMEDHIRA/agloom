@@ -61,8 +61,8 @@ When the harness is active, **12 tools** are appended to your tool list (same se
 | `git_checkpoint`     | Named checkpoint (tag-style) for recovery.                                                    |
 | `git_diff`           | Show working-tree or ref diffs.                                                               |
 | `git_revert_hint`    | Suggest recovery when the tree is broken.                                                     |
-| `bootstrap_progress` | Session start protocol: context, task list, suggested next task.                            |
-| `save_progress`      | Persist progress notes and artifact snapshot (long-term store + disk when configured).       |
+| `bootstrap_progress` | Session start protocol: context, task list, suggested next task.                              |
+| `save_progress`      | Persist progress notes and artifact snapshot (long-term store + disk).                        |
 | `update_task`        | Update status, notes, errors, verification results.                                           |
 | `get_next_task`      | Claim the next pending task for the current session.                                          |
 | `add_task`           | Add a task with optional verification steps.                                                  |
@@ -74,7 +74,7 @@ On each turn (non-frozen path), the agent may prepend a **cross-session progress
 
 When the harness is enabled, the runtime also **ties progress state to the effective session thread** so new turns start with consistent bootstrap context.
 
-Clients using **`astream_events()`** or AGP may see **`harness_bootstrap`** lines in the thinking trace while that artifact loads — see [Thinking trace & reasoning streams](thinking-events.md).
+Clients using **`astream_events()`** or AGP may see **`progress.step`** with `phase: harness_init` when the harness loads an artifact that already has tasks — e.g. `Harness ready · N task(s) · …`. When there are **no tasks yet**, bootstrap is **silent on the wire** (debug log only); use `initialize_project` to seed tasks. See [Thinking trace & reasoning streams](thinking-events.md).
 
 ## Storage and disk
 

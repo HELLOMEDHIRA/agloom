@@ -5505,7 +5505,16 @@
           "title": "Injected Chars",
           "type": "integer"
         },
+        "skills": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Skills",
+          "type": "array",
+          "default": []
+        },
         "skill_names": {
+          "description": "Deprecated — use skills. Accepted on parse for backward compatibility.",
           "items": {
             "type": "string"
           },
@@ -6009,6 +6018,131 @@
         "step"
       ],
       "title": "ThinkingStepData",
+      "type": "object"
+    },
+    "ProgressStep": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "progress.step",
+          "default": "progress.step",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/ProgressStepData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "ProgressStep",
+      "type": "object"
+    },
+    "ProgressStepData": {
+      "additionalProperties": true,
+      "description": "Infrastructure setup status (classify spinner, harness init, skills seed) — not model chain-of-thought.",
+      "properties": {
+        "phase": {
+          "title": "Phase",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "elapsed_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Elapsed Ms"
+        }
+      },
+      "required": [
+        "phase"
+      ],
+      "title": "ProgressStepData",
       "type": "object"
     },
     "TodosUpdated": {
@@ -8259,6 +8393,7 @@
       "skill.applied": "#/$defs/SkillApplied",
       "skill.learned": "#/$defs/SkillLearned",
       "skill.loaded": "#/$defs/SkillLoaded",
+      "progress.step": "#/$defs/ProgressStep",
       "stream.heartbeat": "#/$defs/StreamHeartbeat",
       "thinking.step": "#/$defs/ThinkingStep",
       "todos.updated": "#/$defs/TodosUpdated",
@@ -8345,6 +8480,9 @@
     },
     {
       "$ref": "#/$defs/ThinkingStep"
+    },
+    {
+      "$ref": "#/$defs/ProgressStep"
     },
     {
       "$ref": "#/$defs/TokenDelta"

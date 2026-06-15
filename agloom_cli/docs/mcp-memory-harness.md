@@ -14,6 +14,9 @@ YAML merges into **`MCPServerConfig`** (Python). In **`agloom.yaml`** use either
 
 **Catalog & specs:** see [MCP Servers](../agloom/features/mcp.md) and the upstream [MCP registry](https://github.com/modelcontextprotocol/servers).
 
+!!! tip "HTTP transport"
+    Prefer **`transport: streamable_http`** (or **`http`**, which Agloom maps to the same adapter transport) for modern remote MCP servers. If you configure **`sse`** and connect fails, the runtime retries once with `streamable_http`. Connect errors include server name, URL, transport, and the root cause.
+
 ### Listing servers and tools in the CLI
 
 | Method | What you get |
@@ -51,10 +54,10 @@ Defaults integrate with LangGraph stores opened by the Python runtime process.
 
 Separate from AGP EventStore:
 
-| Flag                        | Role                                                                                  |
-| --------------------------- | ------------------------------------------------------------------------------------- |
-| `--agent-store <type>`      | Long-lived agent store (skills, LT memory tools). Default sqlite async. |
-| `--agent-store-path <path>` | SQLite path (default `.agloom/graph_store.sqlite`).                                   |
+| Flag                        | Role                                                                              |
+| --------------------------- | --------------------------------------------------------------------------------- |
+| `--agent-store <type>`      | Long-lived agent store (skills, LT memory tools). Default sqlite async.           |
+| `--agent-store-path <path>` | SQLite path (default `.agloom/graph_store.sqlite`).                               |
 
 ### What is the harness?
 
@@ -93,19 +96,19 @@ To confirm: when you run `agloom`, the boot logs will say:
 
 The harness injects **11 tools** that form a structured workflow:
 
-| Phase | Tool | What it does |
-|-------|------|-------------|
-| **Init** | `initialize_project` | Decompose a high-level goal into structured tasks with verification steps |
-| **Session start** | `bootstrap_progress` | Read current progress and suggest the next task for this session |
-| **Tracking** | `save_progress` | Persist progress notes + artifact snapshot to store + disk |
-| | `get_next_task` | Claim the next `PENDING` task for the current session |
-| | `update_task` | Mark task as `PASSING`/`FAILING`/`IN_PROGRESS` with notes |
-| | `add_task` | Insert a new task mid-session when discovery happens |
-| **Git** | `git_status` | Working tree summary (branch, clean/dirty, staged/unstaged counts) |
-| | `git_log` | Recent commit history |
-| | `git_commit` | Stage all + commit with a message |
-| | `git_checkpoint` | Create a named annotated tag for recovery |
-| | `git_revert_hint` | When the tree is broken, suggest how to revert |
+| Phase             | Tool                 | What it does                                                              |
+| ----------------- | -------------------- | ------------------------------------------------------------------------- |
+| **Init**          | `initialize_project` | Decompose a high-level goal into structured tasks with verification steps |
+| **Session start** | `bootstrap_progress` | Read current progress and suggest the next task for this session          |
+| **Tracking**      | `save_progress`      | Persist progress notes + artifact snapshot to store + disk                |
+|                   | `get_next_task`      | Claim the next `PENDING` task for the current session                     |
+|                   | `update_task`        | Mark task as `PASSING`/`FAILING`/`IN_PROGRESS` with notes                 |
+|                   | `add_task`           | Insert a new task mid-session when discovery happens                      |
+| **Git**           | `git_status`         | Working tree summary (branch, clean/dirty, staged/unstaged counts)        |
+|                   | `git_log`            | Recent commit history                                                     |
+|                   | `git_commit`         | Stage all + commit with a message                                         |
+|                   | `git_checkpoint`     | Create a named annotated tag for recovery                                 |
+|                   | `git_revert_hint`    | When the tree is broken, suggest how to revert                            |
 
 ### Typical flow
 
@@ -137,12 +140,12 @@ With a default LangGraph store, harness is on unless you pass **`--no-harness`**
 
 Typical workspace artifacts:
 
-| Path                            | Purpose                                            |
-| ------------------------------- | -------------------------------------------------- |
-| `.agloom/graph_store.sqlite`    | LangGraph async store (default)                    |
-| `.agloom/session_memory.sqlite` | Session memory when `--memory sqlite`              |
-| `.agloom/skills`                | Default **skills disk mirror** (Markdown files) when `--skills-dir` is omitted |
-| `.agloom/agp_events.db`         | AGP EventStore when `--store sqlite` (CLI default) |
+| Path                            | Purpose                                                                       |
+| ------------------------------- | ----------------------------------------------------------------------------- |
+| `.agloom/graph_store.sqlite`    | LangGraph async store (default)                                               |
+| `.agloom/session_memory.sqlite` | Session memory when `--memory sqlite`                                         |
+| `.agloom/skills`                | Default skills disk mirror when `--skills-dir` is omitted                     |
+| `.agloom/agp_events.db`         | AGP EventStore when `--store sqlite` (CLI default)                            |
 
 Learned skills are always persisted in the LangGraph store; the mirror directory is for human-readable copies. Tune paths via flags or YAML (`store_path`, `memory_path`, `skills_dir`) plus pass-through **`--`**.
 

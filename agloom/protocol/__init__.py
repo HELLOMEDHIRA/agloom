@@ -313,6 +313,8 @@ __all__ = [
     "SkillLoadedSource",
     "StreamHeartbeat",
     "StreamHeartbeatData",
+    "ProgressStep",
+    "ProgressStepData",
     "ThinkingStep",
     "ThinkingStepData",
     "TodosUpdated",

@@ -286,21 +286,42 @@ async def _emit_graph_node_event(config: dict, event_type: str, *, node: str, pa
     )
 
 
+_PREP_PROGRESS_PHASES: dict[str, str] = {
+    "harness_bootstrap": "harness_init",
+    "analyze_query": "classify",
+    "skills_bootstrap": "skills_init",
+}
+
+
+async def _emit_preparation_progress(
+    event_queue: asyncio.Queue | None,
+    *,
+    name: str,
+    detail: str,
+) -> None:
+    """Surface pre-REACT infrastructure setup on the AGP wire as ``progress.step``."""
+    if event_queue is None:
+        return
+    await event_queue.put(
+        AgentEvent(
+            type="progress",
+            data={
+                "phase": _PREP_PROGRESS_PHASES.get(name, name),
+                "name": name,
+                "output": detail,
+            },
+        )
+    )
+
+
 async def _emit_preparation_thinking(
     event_queue: asyncio.Queue | None,
     *,
     name: str,
     detail: str,
 ) -> None:
-    """Surface pre-REACT setup (harness bootstrap, classify, …) on the AGP wire."""
-    if event_queue is None:
-        return
-    await event_queue.put(
-        AgentEvent(
-            type="thinking",
-            data={"name": name, "output": detail},
-        )
-    )
+    """Backward-compatible alias — infra prep now emits ``progress``, not ``thinking``."""
+    await _emit_preparation_progress(event_queue, name=name, detail=detail)
 
 
 async def _emit_step_event(config: dict, step: AgentStep) -> None:
@@ -433,6 +454,10 @@ async def _build_skill_context_for_classify(
                 skill_names = list(bundle.skill_names)
             else:
                 skill_ctx = await skill_injector.get_context(processed_query)
+                if skill_ctx:
+                    from .skills.injector import parse_skill_names_from_context
+
+                    skill_names = parse_skill_names_from_context(skill_ctx)
         except Exception as exc:
             name = config.get("name", "Agent")
             logger.warning(f"[{name}] skill_injector failed ({exc!r}) — proceeding without.")
@@ -447,7 +472,7 @@ async def _build_skill_context_for_classify(
     return skill_ctx, skill_names
 
 
-async def _emit_skill_context_event(config: dict[str, Any], skill_ctx: str, skill_names: list[str]) -> None:
+async def _emit_skill_context_event(config: dict[str, Any], skill_ctx: str, skills: list[str]) -> None:
     """Queue in-process ``skill_context`` for AGP ``skill.applied`` translation."""
     if not skill_ctx.strip():
         return
@@ -461,7 +486,7 @@ async def _emit_skill_context_event(config: dict[str, Any], skill_ctx: str, skil
             data={
                 "phase": "classifier",
                 "injected_chars": len(skill_ctx),
-                "skill_names": skill_names,
+                "skills": skills,
                 "context_preview": preview,
                 "truncated": truncated,
             },
@@ -1183,7 +1208,6 @@ async def _ensure_harness_bootstrapped(
     if getattr(tracker, "_bootstrapped_for_thread", None) == effective_thread_id:
         return
 
-    await _emit_preparation_thinking(eq, name="harness_bootstrap", detail="Loading harness progress artifact…")
     try:
         await tracker.bootstrap(
             session_id=effective_thread_id,
@@ -1197,11 +1221,12 @@ async def _ensure_harness_bootstrapped(
             f"{n_tasks} tasks, "
             f"progress={ratio:.0%}"
         )
-        await _emit_preparation_thinking(
-            eq,
-            name="harness_bootstrap",
-            detail=f"Harness ready · {n_tasks} task(s) · {ratio:.0%} complete",
-        )
+        if n_tasks > 0:
+            await _emit_preparation_thinking(
+                eq,
+                name="harness_bootstrap",
+                detail=f"Harness ready · {n_tasks} task(s) · {ratio:.0%} complete",
+            )
     except Exception as exc:
         logger.warning(f"[{config.get('name', 'Agent')}] harness bootstrap failed ({exc!r}) — proceeding")
         await _emit_preparation_thinking(

@@ -49,6 +49,7 @@ _TRANSLATED_AGENT_EVENT_TYPES: frozenset[str] = frozenset(
         "graph_node_enter",
         "graph_node_exit",
         "skill_context",
+        "progress",
         "skill_learned",
         "memory_lt_recall",
         "memory_session_write",
@@ -346,13 +347,22 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> str | None:
         )
         return
 
+    if et == "progress":
+        emitter.emit_progress_step(
+            phase=_str(data.get("phase")) or "setup",
+            label=_str(data.get("name")),
+            detail=_str(data.get("output")),
+            elapsed_ms=_int(data.get("duration_ms")),
+        )
+        return
+
     if et == "skill_context":
-        raw_names = data.get("skill_names")
-        skill_names = [str(n) for n in raw_names if n is not None] if isinstance(raw_names, list) else []
+        raw = data.get("skills") or data.get("skill_names")
+        skills = [str(n) for n in raw if n is not None] if isinstance(raw, list) else []
         emitter.emit_skill_applied(
             phase=_str(data.get("phase")) or "classifier",
             injected_chars=_int(data.get("injected_chars")) or 0,
-            skill_names=skill_names,
+            skills=skills,
             context_preview=_str(data.get("context_preview")) or "",
             truncated=bool(data.get("truncated")),
         )

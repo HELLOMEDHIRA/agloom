@@ -11,6 +11,7 @@ const EVENT_COLOR: Record<string, string> = {
   'session.closed':     'text-neutral-500',
   'pattern.classified': 'text-indigo-400',
   'thinking.step':      'text-purple-400',
+  'progress.step':      'text-cyan-400',
   'tool.call':          'text-cyan-400',
   'tool.result':        'text-cyan-300',
   'worker.spawned':     'text-yellow-400',
@@ -57,7 +58,7 @@ export const ExecutionTrace = (): React.ReactElement => {
           </span>
 
           {/* Summary */}
-          <span className="text-neutral-400 flex-1 whitespace-pre-wrap break-words">
+          <span className="text-neutral-400 flex-1 whitespace-pre-wrap wrap-break-word">
             {te.summary}
           </span>
 
