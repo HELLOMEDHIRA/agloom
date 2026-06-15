@@ -5,12 +5,15 @@ from __future__ import annotations
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from agloom.llm.qwen_compat import (
+    _ChatTemplateCompatProxy,
+    ensure_messages_for_chat_template,
     extract_model_label,
     model_needs_qwen_chat_template_compat,
     normalize_messages_for_chat_template,
     repair_messages_for_chat_template,
     resolve_react_tool_choice,
     tag_llm_for_chat_template_compat,
+    wrap_chat_model_for_react_compat,
 )
 from agloom.patterns.middleware import should_force_tool_choice_on_request
 
@@ -88,3 +91,47 @@ def test_no_force_after_assistant_prose_recovery() -> None:
         HumanMessage(content="Use structured tool calls only."),
     ]
     assert not should_force_tool_choice_on_request(msgs)
+
+
+def test_ensure_messages_fills_empty_user() -> None:
+    out = ensure_messages_for_chat_template([HumanMessage(content="")])
+    assert out[0].content
+    assert "tools" in str(out[0].content).lower()
+
+
+def test_proxy_repairs_messages_on_ainvoke() -> None:
+    captured: list[Any] = []
+
+    class FakeLLM:
+        model = "alias"
+
+        async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> str:
+            captured.append(list(input))
+            return "ok"
+
+        def bind_tools(self, tools: Any, **kwargs: Any) -> Any:
+            return self
+
+    wrapped = wrap_chat_model_for_react_compat(FakeLLM(), "litellm:qwen36fp8")
+    assert isinstance(wrapped, _ChatTemplateCompatProxy)
+
+    import asyncio
+
+    asyncio.run(wrapped.ainvoke([HumanMessage(content="")]))
+    assert captured
+    assert captured[0][0].content
+
+
+def test_proxy_strips_tool_choice_on_bind_tools() -> None:
+    seen: dict[str, Any] = {}
+
+    class FakeLLM:
+        model = "alias"
+
+        def bind_tools(self, tools: Any, **kwargs: Any) -> Any:
+            seen.update(kwargs)
+            return self
+
+    wrapped = wrap_chat_model_for_react_compat(FakeLLM(), "litellm:qwen36fp8")
+    wrapped.bind_tools([], tool_choice="required")
+    assert "tool_choice" not in seen

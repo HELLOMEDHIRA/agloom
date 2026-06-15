@@ -3104,9 +3104,9 @@ async def create_agent(
     skills_mirror_path: Path | None = Path(skills_disk_mirror).resolve() if skills_disk_mirror is not None else None
 
     resolved_llm = resolve_model(model)
-    from agloom.llm.qwen_compat import tag_llm_for_chat_template_compat
+    from agloom.llm.qwen_compat import wrap_chat_model_for_react_compat
 
-    tag_llm_for_chat_template_compat(resolved_llm, model)
+    resolved_llm = wrap_chat_model_for_react_compat(resolved_llm, model)
     resolved_prompt = resolve_system_prompt(system_prompt, cli_tools=cli_tools_kw is not None)
     agent_name = (name or "UnifiedAgent").strip()
     resolved_tools = normalize_tools(tools or [])

@@ -7,7 +7,10 @@ from collections.abc import Mapping
 from typing import Any, cast
 from uuid import uuid4
 
-from ..llm.qwen_compat import normalize_messages_for_chat_template
+from ..llm.qwen_compat import (
+    _DEFAULT_USER_TURN,
+    ensure_messages_for_chat_template,
+)
 from ..multimodal import content_blocks_to_text, text_from_user_turn
 from ..wire_stream_content import (
     answer_text_from_content,
@@ -175,7 +178,14 @@ def _react_tool_names(tools: list[Any]) -> frozenset[str]:
 
 def _react_opening_messages(query: str | list[Any]) -> list[Any]:
     """Opening user turn with Qwen-safe plain-string content when possible."""
-    return normalize_messages_for_chat_template([{"role": "user", "content": query}])
+    if isinstance(query, str):
+        text = query.strip()
+    else:
+        text = text_from_user_turn(query).strip()
+    if not text:
+        logger.warning("[React] Empty user query — using default opening turn for tool agent")
+        text = _DEFAULT_USER_TURN
+    return ensure_messages_for_chat_template([HumanMessage(content=text)])
 
 
 def _langchain_react_middleware(agent: dict, *extra: Any) -> list[Any]:
@@ -313,6 +323,19 @@ async def handle_react(
     hitl_active = bool(interrupt_before_tools and user_callback)
 
     logger.event(f"[React] ▶ {name} — {len(tools)} tools available | HITL={'Level2-Tool' if hitl_active else 'off'}")
+
+    try:
+        from agloom import __version__ as _agloom_version
+    except Exception:
+        _agloom_version = "unknown"
+    _llm = agent.get("llm")
+    from ..llm.qwen_compat import extract_model_label, model_needs_qwen_chat_template_compat
+
+    _mlabel = extract_model_label(_llm)
+    logger.info(
+        f"[React] agloom={_agloom_version} model_label={_mlabel!r} "
+        f"chat_template_compat={model_needs_qwen_chat_template_compat(_mlabel)}"
+    )
 
     if not tools:
         logger.debug("[React] No tools — direct LLM fallback.")

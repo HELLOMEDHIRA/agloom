@@ -11,10 +11,10 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from ..hitl_contract import HITLEvent, call_user_callback
 from ..llm.qwen_compat import (
+    ensure_messages_for_chat_template,
     extract_model_label,
     model_needs_qwen_chat_template_compat,
     qwen_model_settings_patch,
-    repair_messages_for_chat_template,
     resolve_react_tool_choice,
 )
 from ..logging_utils import get_logger
@@ -77,7 +77,7 @@ def should_force_tool_choice_on_request(messages: list[Any] | None) -> bool:
 def _prepare_react_model_request(request: Any, *, tool_choice_enabled: bool) -> Any:
     """Normalize user content and apply provider-safe ``tool_choice`` overrides."""
     state = getattr(request, "state", None)
-    messages = repair_messages_for_chat_template(
+    messages = ensure_messages_for_chat_template(
         list(request.messages or []),
         state=state if isinstance(state, dict) else None,
     )

@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..logging_utils import get_logger
 from ..multimodal import content_blocks_to_text
 
 logger = get_logger(__name__)
+
+_DEFAULT_USER_TURN = "Use the available tools to complete the requested task."
 
 _QWEN_MODEL_MARKERS = (
     "qwen",
@@ -21,6 +24,111 @@ _KNOWN_STRICT_TOOL_CHOICE_VENDORS = (
     "groq",
     "cerebras",
 )
+
+
+class _ChatTemplateCompatProxy:
+    """Wrap any chat model / RunnableBinding — repair messages on every LLM call."""
+
+    def __init__(self, inner: Any, model_label: str) -> None:
+        object.__setattr__(self, "_agloom_inner", inner)
+        object.__setattr__(self, "_agloom_label", model_label)
+
+    def __repr__(self) -> str:
+        inner = object.__getattribute__(self, "_agloom_inner")
+        return f"ChatTemplateCompatProxy({inner!r})"
+
+    def __getattr__(self, name: str) -> Any:
+        inner = object.__getattribute__(self, "_agloom_inner")
+        return getattr(inner, name)
+
+    def _label(self) -> str:
+        return object.__getattribute__(self, "_agloom_label")
+
+    def _wrap_child(self, child: Any) -> Any:
+        inner = object.__getattribute__(self, "_agloom_inner")
+        if child is inner:
+            return self
+        return _ChatTemplateCompatProxy(child, self._label())
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> Any:
+        inner = object.__getattribute__(self, "_agloom_inner")
+        return self._wrap_child(
+            inner.bind_tools(tools, **_sanitize_bind_kwargs(kwargs, self._label()))
+        )
+
+    def bind(self, **kwargs: Any) -> Any:
+        inner = object.__getattribute__(self, "_agloom_inner")
+        return self._wrap_child(inner.bind(**_sanitize_bind_kwargs(kwargs, self._label())))
+
+    def with_config(self, config: Any) -> Any:
+        inner = object.__getattribute__(self, "_agloom_inner")
+        return self._wrap_child(inner.with_config(config))
+
+    def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+        inner = object.__getattribute__(self, "_agloom_inner")
+        return inner.invoke(
+            _coerce_llm_input(input, self._label()),
+            config,
+            **_sanitize_invoke_kwargs(kwargs, self._label()),
+        )
+
+    async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+        inner = object.__getattribute__(self, "_agloom_inner")
+        return await inner.ainvoke(
+            _coerce_llm_input(input, self._label()),
+            config,
+            **_sanitize_invoke_kwargs(kwargs, self._label()),
+        )
+
+    def stream(self, input: Any, config: Any = None, **kwargs: Any) -> Iterator[Any]:
+        inner = object.__getattribute__(self, "_agloom_inner")
+        return inner.stream(
+            _coerce_llm_input(input, self._label()),
+            config,
+            **_sanitize_invoke_kwargs(kwargs, self._label()),
+        )
+
+    async def astream(self, input: Any, config: Any = None, **kwargs: Any) -> AsyncIterator[Any]:
+        inner = object.__getattribute__(self, "_agloom_inner")
+        async for chunk in inner.astream(
+            _coerce_llm_input(input, self._label()),
+            config,
+            **_sanitize_invoke_kwargs(kwargs, self._label()),
+        ):
+            yield chunk
+
+    def _generate(self, messages: Any, stop: Any = None, run_manager: Any = None, **kwargs: Any) -> Any:
+        inner = object.__getattribute__(self, "_agloom_inner")
+        return inner._generate(
+            _coerce_llm_input(messages, self._label()),
+            stop,
+            run_manager,
+            **_sanitize_invoke_kwargs(kwargs, self._label()),
+        )
+
+    async def _agenerate(self, messages: Any, stop: Any = None, run_manager: Any = None, **kwargs: Any) -> Any:
+        inner = object.__getattribute__(self, "_agloom_inner")
+        return await inner._agenerate(
+            _coerce_llm_input(messages, self._label()),
+            stop,
+            run_manager,
+            **_sanitize_invoke_kwargs(kwargs, self._label()),
+        )
+
+
+def wrap_chat_model_for_react_compat(llm: Any, model_spec: Any) -> Any:
+    """Wrap the resolved LLM so every invoke/stream path repairs messages (not only middleware)."""
+    if isinstance(model_spec, str):
+        label = model_spec.strip()
+    else:
+        from .model_resolver import describe_llm
+
+        _slug, label = describe_llm(llm)
+    label = label or extract_model_label(llm)
+    tag_llm_for_chat_template_compat(llm, label)
+    if isinstance(llm, _ChatTemplateCompatProxy):
+        return llm
+    return _ChatTemplateCompatProxy(llm, label)
 
 
 def tag_llm_for_chat_template_compat(llm: Any, model_spec: Any) -> None:
@@ -203,6 +311,79 @@ def normalize_messages_for_chat_template(messages: list[Any]) -> list[Any]:
     return out if changed else messages
 
 
+def _is_system_message(msg: Any) -> bool:
+    if isinstance(msg, SystemMessage):
+        return True
+    if isinstance(msg, dict):
+        return str(msg.get("role") or "").lower() == "system"
+    role = str(getattr(msg, "type", None) or getattr(msg, "role", None) or "").lower()
+    return role == "system"
+
+
+def _sanitize_bind_kwargs(kwargs: dict[str, Any], model_label: str) -> dict[str, Any]:
+    if not model_needs_qwen_chat_template_compat(model_label):
+        return kwargs
+    out = dict(kwargs)
+    out.pop("tool_choice", None)
+    return out
+
+
+def _sanitize_invoke_kwargs(kwargs: dict[str, Any], model_label: str) -> dict[str, Any]:
+    if not model_needs_qwen_chat_template_compat(model_label):
+        return kwargs
+    out = dict(kwargs)
+    out.pop("tool_choice", None)
+    return out
+
+
+def _coerce_llm_input(input: Any, model_label: str) -> Any:
+    if isinstance(input, list):
+        return ensure_messages_for_chat_template(input)
+    if isinstance(input, dict) and "messages" in input:
+        patched = dict(input)
+        patched["messages"] = ensure_messages_for_chat_template(list(input["messages"] or []))
+        return patched
+    return input
+
+
+def ensure_messages_for_chat_template(
+    messages: list[Any],
+    *,
+    state: dict[str, Any] | None = None,
+) -> list[Any]:
+    """Flatten user blocks, fill empty user turns, guarantee a non-empty user query."""
+    repaired = repair_messages_for_chat_template(messages, state=state)
+    if _has_nonempty_user_text(repaired):
+        return repaired
+
+    for idx, msg in enumerate(repaired):
+        if not _is_human_message(msg):
+            continue
+        if isinstance(msg, HumanMessage):
+            raw = msg.content
+        elif isinstance(msg, dict):
+            raw = msg.get("content")
+        else:
+            raw = getattr(msg, "content", None)
+        if not _human_content_as_text(raw):
+            logger.warning(
+                f"[qwen_compat] Empty user message at index {idx} — filling default user turn"
+            )
+            repaired[idx] = _replace_human_content(msg, _DEFAULT_USER_TURN)
+            return repaired
+
+    insert_at = 0
+    for idx, msg in enumerate(repaired):
+        if _is_system_message(msg):
+            insert_at = idx + 1
+        else:
+            break
+    logger.warning(
+        f"[qwen_compat] No user query in {len(repaired)} message(s) — inserting default user turn"
+    )
+    return repaired[:insert_at] + [HumanMessage(content=_DEFAULT_USER_TURN)] + repaired[insert_at:]
+
+
 def repair_messages_for_chat_template(
     messages: list[Any],
     *,
@@ -214,13 +395,7 @@ def repair_messages_for_chat_template(
         return repaired
 
     state_msgs = list((state or {}).get("messages") or [])
-    fallback = _latest_user_text_from_messages(state_msgs)
-    if not fallback:
-        return repaired
-
-    logger.debug(
-        f"[qwen_compat] Injecting user query text from agent state ({len(fallback)} chars)"
-    )
+    fallback = _latest_user_text_from_messages(state_msgs) or _DEFAULT_USER_TURN
     if repaired and _is_human_message(repaired[-1]):
         return repaired[:-1] + [_replace_human_content(repaired[-1], fallback)]
     return [HumanMessage(content=fallback), *repaired]
