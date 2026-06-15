@@ -31,9 +31,10 @@ Read **[Execution patterns](../concepts/patterns.md)** for the nine patterns, di
 
 When **`mcp_servers`** is set (Grafana, Loki, Elasticsearch, custom observability MCP, etc.):
 
-- **Investigation / fetch** prompts (“show errors in the last hour”, “why did latency spike”, “query logs for checkout”) should run as **REACT** with MCP tool calls — not **DIRECT** (hallucinated telemetry) or **REFLECTION** (generate→critique loop without a guaranteed fetch step).
-- The classifier prompt encodes this rule; agloom **coerces** mis-routed **DIRECT** or **REFLECTION** classifications to **REACT** when the query matches observability-fetch heuristics.
-- Set **`react_force_tool_choice_on_user_turn=True`** (default) so the first model turn after each user message requests a structured tool call — applies to **REACT** and to **workers** inside other patterns when they have tools.
+- **Investigation / fetch** prompts should run as **REACT** with tool calls — not **DIRECT** or **REFLECTION**.
+- Agloom **coerces** **DIRECT**, **REFLECTION**, and multi-worker patterns (empty `required_tools`) to **REACT** when the query needs registered tools (observability, files, memory).
+- Workers in multi-worker patterns **inherit all agent tools** when `required_tools` is empty but the worker task needs tools.
+- Set **`react_force_tool_choice_on_user_turn=True`** (default) on the **opening** user turn — Qwen3/vLLM-safe on follow-up tool rounds.
 
 Details: [MCP Server Integration](../features/mcp.md#classifier-routing-with-mcp).
 

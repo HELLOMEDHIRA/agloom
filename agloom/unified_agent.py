@@ -25,7 +25,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool, StructuredTool
 
-from .classifier import analyze_query
+from .classifier import analyze_query, query_needs_registered_tools
 from .compat import ensure_langchain_pending_deprecation_suppressed
 from .delegation import (
     BackgroundDelegationManager,
@@ -1601,6 +1601,31 @@ async def run_fresh(
     )
     # Whitespace-only classifier text must not short-circuit — it would yield an empty AGP assistant
     # message after stripping (``translate`` / wire consumers treat blank as "no output").
+    # Never short-circuit DIRECT when tools are registered and the query needs tool calls.
+    _agent_tools = config.get("tools") or []
+    _query_for_tools = augmented_query if isinstance(augmented_query, str) else raw_query_str
+    if (
+        analysis.pattern == PatternType.DIRECT
+        and _agent_tools
+        and query_needs_registered_tools(_query_for_tools)
+    ):
+        logger.warning(
+            f"[{name}] DIRECT with registered tools for a tool-requiring query — coercing to REACT."
+        )
+        analysis = analysis.model_copy(
+            update={
+                "pattern": PatternType.REACT,
+                "direct_response": None,
+                "reasoning": (
+                    f"{(analysis.reasoning or '').strip()} "
+                    "[runtime: DIRECT→REACT, registered tools required]"
+                ).strip(),
+            }
+        )
+        pattern_val = analysis.pattern.value
+
+    # Whitespace-only classifier text must not short-circuit — it would yield an empty AGP assistant
+    # message after stripping (``translate`` / wire consumers treat blank as "no output").
     if not is_frozen and analysis.pattern == PatternType.DIRECT and _direct_text and not _has_custom_direct:
         out_blob = f"{analysis.pattern.value}\n{analysis.reasoning or ''}\n{_direct_text}"
         in_tok = _approx_char_tokens(augmented_query)
@@ -2969,10 +2994,10 @@ async def create_agent(
     the dict returned by :func:`agloom.cache.create_cache` for custom embeddings / Qdrant.
     ``checkpointer``: enables ``get_state``, ``get_history``, ``resume``.
     ``mcp_servers``: lazy MCP connect on first ``ainvoke`` (raises ``MCPConnectionError`` if a server exposes no tools).
-    ``react_force_tool_choice_on_user_turn``: when True (default), tool-bearing LangChain agents use
-    ``tool_choice=required`` after each user message so providers like Groq must emit a structured
-    tool call instead of prose (avoids ``tool_use_failed``). Applies to **REACT** and to **workers**
-    in multi-worker patterns (SUPERVISOR, REFLECTION, SWARM, etc.) when they have tools.
+    ``react_force_tool_choice_on_user_turn``: when True (default), the opening user turn uses
+    LangChain ``tool_choice=required`` on tool-bearing agents so providers like Groq must emit a
+    structured tool call instead of prose (avoids ``tool_use_failed``). Follow-up model calls
+    after tool results use provider defaults (Qwen3/vLLM-safe). Applies to **REACT** and **workers**.
 
     Also registers the agent name against the store for duplicate-name warnings and may
     extend ``tools`` (memory load_skill, harness tools).
@@ -3183,7 +3208,7 @@ async def create_agent(
             fn = factory_fn(*args, **kwargs)
             tool_name = getattr(fn, "__name__", factory_fn.__name__.replace("_tool", ""))
             try:
-                return StructuredTool.from_function(
+                return _structured_tool_from_callable(
                     fn,
                     name=tool_name,
                     description=fn.__doc__ or "",

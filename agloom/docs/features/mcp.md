@@ -118,14 +118,15 @@ When **`mcp_servers`** is configured, MCP tools are merged **before** `analyze_q
 - Investigation, log, metrics, trace, and dashboard fetch queries → **REACT** (not DIRECT or REFLECTION)
 - The classifier must not hallucinate telemetry in `direct_response`
 
-Agloom also applies **post-classify coercion** as a safety net:
+Agloom applies **post-classify coercion** and **runtime guards**:
 
-| Classifier picked | Query looks like observability fetch | Result |
-| ----------------- | ------------------------------------ | ------ |
-| **DIRECT**        | Yes, and tools exist                 | Coerced to **REACT** |
-| **REFLECTION**    | Yes, and `mcp_servers` configured    | Coerced to **REACT** |
+| Situation | Result |
+| --------- | ------ |
+| **DIRECT** + tools + tool-requiring query | Coerced to **REACT**; DIRECT short-circuit blocked at runtime |
+| **REFLECTION** + tool-requiring query | Coerced to **REACT** |
+| **SUPERVISOR** / other multi-worker patterns with empty `required_tools` on all subtasks | Coerced to **REACT**, or workers **inherit all agent tools** if the pattern still runs |
 
-Pure conceptual questions (“what is Grafana?”) without a live-data request may still route to **DIRECT**.
+Tool-requiring heuristics cover observability (logs/metrics), filesystem/workspace reads, and memory save/recall — not pure conceptual questions.
 
 See [Choosing an execution pattern](../guides/choosing-a-pattern.md#mcp-and-observability-queries).
 

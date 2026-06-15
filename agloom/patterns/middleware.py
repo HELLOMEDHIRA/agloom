@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, MutableSet
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from ..hitl_contract import HITLEvent, call_user_callback
 from ..logging_utils import get_logger
@@ -30,8 +30,47 @@ class UserAbort(Exception):
     """
 
 
+def _is_human_message(msg: Any) -> bool:
+    if isinstance(msg, HumanMessage):
+        return True
+    if isinstance(msg, dict):
+        role = str(msg.get("role") or "").lower()
+        return role in ("user", "human")
+    role = str(getattr(msg, "type", None) or getattr(msg, "role", None) or "").lower()
+    return role in ("human", "user")
+
+
+def _has_prior_tool_round(messages: list[Any]) -> bool:
+    """True when the thread already has assistant tool calls or tool results."""
+    for msg in messages[:-1]:
+        if isinstance(msg, ToolMessage):
+            return True
+        if isinstance(msg, dict) and str(msg.get("role") or "").lower() == "tool":
+            return True
+        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+            return True
+        if isinstance(msg, dict) and msg.get("role") == "assistant" and msg.get("tool_calls"):
+            return True
+    return False
+
+
+def should_force_tool_choice_on_request(messages: list[Any] | None) -> bool:
+    """
+    Force ``tool_choice=required`` only on the opening user turn.
+
+    Recovery ``HumanMessage``s appended after tool results (or Qwen3 multi-step tool
+    follow-ups) must stay on provider default ``tool_choice`` — otherwise vLLM/Qwen
+    chat templates raise ``No user query found in messages``.
+    """
+    if not messages:
+        return False
+    if not _is_human_message(messages[-1]):
+        return False
+    return not _has_prior_tool_round(messages)
+
+
 class ReactUserTurnToolChoiceMiddleware(AgentMiddleware):
-    """After a user ``HumanMessage``, force ``tool_choice`` so the model emits structured tool calls."""
+    """On the opening user turn, force ``tool_choice`` so the model emits structured tool calls."""
 
     def __init__(
         self,
@@ -46,10 +85,9 @@ class ReactUserTurnToolChoiceMiddleware(AgentMiddleware):
     def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
         if not self._enabled or not request.tools:
             return handler(request)
-        last = request.messages[-1] if request.messages else None
-        if isinstance(last, HumanMessage):
+        if should_force_tool_choice_on_request(request.messages):
             return handler(request.override(tool_choice=self._user_turn_choice))
-        return handler(request.override(tool_choice=None))
+        return handler(request)
 
     async def awrap_model_call(
         self,
@@ -58,10 +96,9 @@ class ReactUserTurnToolChoiceMiddleware(AgentMiddleware):
     ) -> Any:
         if not self._enabled or not request.tools:
             return await handler(request)
-        last = request.messages[-1] if request.messages else None
-        if isinstance(last, HumanMessage):
+        if should_force_tool_choice_on_request(request.messages):
             return await handler(request.override(tool_choice=self._user_turn_choice))
-        return await handler(request.override(tool_choice=None))
+        return await handler(request)
 
 
 def build_langchain_agent_middleware(
@@ -71,9 +108,10 @@ def build_langchain_agent_middleware(
 ) -> list[Any]:
     """Middleware chain for LangChain ``create_agent`` (ReAct + pattern workers).
 
-    When ``force_tool_choice_on_user_turn`` is True, the first model call after each
-    ``HumanMessage`` uses ``tool_choice=required`` so providers that omit tools still
-    emit a valid tool payload.
+    When ``force_tool_choice_on_user_turn`` is True, the **opening** user turn uses
+    ``tool_choice=required`` so providers that omit tools still emit a valid tool payload.
+    Follow-up model calls after tool results use the provider default (required for Qwen3
+    / vLLM multi-step tool templates).
     """
     chain: list[Any] = []
     if force_tool_choice_on_user_turn:

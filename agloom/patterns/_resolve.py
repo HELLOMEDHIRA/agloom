@@ -1,5 +1,6 @@
 """Tool resolution — maps required_tools name strings to actual tool objects."""
 
+from ..classifier import query_needs_registered_tools
 from ..logging_utils import get_logger
 from ..models import AgentEvent, QueryAnalysis, ResolvedWorkerConfig, SubTask, WorkerPlan
 
@@ -57,6 +58,12 @@ def resolve_worker_configs(
                     resolved_tools.append(tool)
                 else:
                     missing_tools.append(tool_name)
+        elif tool_map and query_needs_registered_tools(subtask.task or ""):
+            resolved_tools = list(tool_map.values())
+            logger.event(
+                f"[Resolve] Worker '{subtask.worker_id}' inherited all {len(resolved_tools)} "
+                f"agent tool(s) (empty required_tools, task needs tools)"
+            )
 
         if missing_tools:
             _notify_missing_tools(agent, subtask.worker_id, missing_tools)

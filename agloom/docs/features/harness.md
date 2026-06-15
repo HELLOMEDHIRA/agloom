@@ -53,6 +53,8 @@ Typical behaviour with a project-local `.agloom/` layout:
 
 When the harness is active, **12 tools** are appended to your tool list (same set as `create_agent(..., harness=True)`):
 
+Progress and git helpers are **async** LangChain tools. Agloom registers them with `coroutine=` (not plain `func=`) so invocations are awaited and never return a raw coroutine object to the model.
+
 | Tool                 | Role                                                                                          |
 | -------------------- | --------------------------------------------------------------------------------------------- |
 | `git_status`         | Working tree summary.                                                                         |

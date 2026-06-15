@@ -297,54 +297,110 @@ _OBSERVABILITY_FETCH_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-_CONCEPTUAL_OBSERVABILITY_ONLY_RE = re.compile(
+_CONCEPTUAL_ONLY_RE = re.compile(
     r"^\s*what\s+is\s+(a\s+)?[\w\s./-]+\??\s*$",
     re.IGNORECASE,
 )
 
+_FILE_WORKSPACE_RE = re.compile(
+    r"""
+    \b(read_file|write_file|grep_files|list_dir|run_shell|execute|bash)\b
+    | \b(read|show|display|print|open|list|grep)\b.{0,24}\b(file|directory|folder|repo|path|lines)\b
+    | \b(pyproject|contents?|directory|folder)\b
+    | \.[a-z]{2,5}\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
 
-def query_looks_like_observability_fetch(query: str) -> bool:
-    """Heuristic: user wants live logs/metrics/traces fetched, not a conceptual definition."""
+_MEMORY_RE = re.compile(
+    r"\b(remember|save|recall|note that|keep in mind|what do you know about|do you remember|store this)\b",
+    re.IGNORECASE,
+)
+
+_GREETING_OR_CHITCHAT_RE = re.compile(
+    r"^\s*(hi|hello|hey|thanks|thank you|tell me a joke)\b",
+    re.IGNORECASE,
+)
+
+_MULTI_WORKER_PATTERNS = frozenset(
+    {
+        PatternType.SUPERVISOR,
+        PatternType.SWARM,
+        PatternType.BLACKBOARD,
+        PatternType.PIPELINE,
+        PatternType.PLANNER_EXECUTOR,
+        PatternType.HYBRID_DAG,
+    }
+)
+
+
+def query_is_purely_conceptual(query: str) -> bool:
+    """Greetings and definitional questions that should not force tool calls."""
     text = (query or "").strip()
     if not text:
-        return False
-    if _CONCEPTUAL_OBSERVABILITY_ONLY_RE.match(text):
-        return False
-    return _OBSERVABILITY_FETCH_RE.search(text) is not None
+        return True
+    if _CONCEPTUAL_ONLY_RE.match(text):
+        return True
+    if _GREETING_OR_CHITCHAT_RE.match(text):
+        return True
+    if re.match(r"^\s*what\s+(is|are|does|do)\s+", text, re.IGNORECASE) and not _FILE_WORKSPACE_RE.search(
+        text
+    ):
+        return True
+    return False
 
 
-def coerce_analysis_for_mcp_observability(
+def query_needs_registered_tools(query: str) -> bool:
+    """Heuristic: user expects live tool calls (MCP, files, memory, workspace)."""
+    text = (query or "").strip()
+    if not text or query_is_purely_conceptual(text):
+        return False
+    if query_looks_like_observability_fetch(text):
+        return True
+    if _FILE_WORKSPACE_RE.search(text):
+        return True
+    return _MEMORY_RE.search(text) is not None
+
+
+def _subtasks_lack_required_tools(analysis: QueryAnalysis) -> bool:
+    if not analysis.subtasks:
+        return True
+    return all(not (st.required_tools or []) for st in analysis.subtasks)
+
+
+def coerce_analysis_when_tools_required(
     analysis: QueryAnalysis,
     query: str,
     *,
-    mcp_configured: bool = False,
     has_tools: bool = False,
+    mcp_configured: bool = False,
 ) -> QueryAnalysis:
     """
-    Enforce REACT for observability fetch when tools (especially MCP) are available.
+    Post-classify safety net: route tool-dependent queries to REACT.
 
-    - DIRECT + tools + observability fetch → REACT (avoid hallucinated telemetry).
-    - REFLECTION + MCP configured + observability fetch → REACT (raw fetch is not a critique loop).
+    - DIRECT / REFLECTION with tools → REACT when the query needs registered tools.
+    - Multi-worker patterns whose subtasks omit ``required_tools`` → REACT (workers would
+      otherwise run LLM-only unless ``resolve_worker_configs`` inherits tools).
     """
-    if not has_tools or not query_looks_like_observability_fetch(query):
+    _ = mcp_configured  # retained for API compat; coercion no longer MCP-only
+    if not has_tools or not query_needs_registered_tools(query):
         return analysis
 
     coerce = False
     if analysis.pattern == PatternType.DIRECT:
         coerce = True
-    elif analysis.pattern == PatternType.REFLECTION and mcp_configured:
+    elif analysis.pattern == PatternType.REFLECTION:
+        coerce = True
+    elif analysis.pattern in _MULTI_WORKER_PATTERNS and _subtasks_lack_required_tools(analysis):
         coerce = True
 
     if not coerce:
         return analysis
 
     prev = analysis.pattern.value
-    note = (
-        f"[coerced {prev}→REACT: observability/investigation query requires tool calls"
-        f"{'' if mcp_configured else ''}]"
-    )
+    note = f"[coerced {prev}→REACT: query requires registered tool calls]"
     logger.warning(
-        f"[Classifier] {note} — pattern was {prev!r}, query matched observability fetch heuristic."
+        f"[Classifier] {note} — pattern was {prev!r}, query matched tool-required heuristic."
     )
     return analysis.model_copy(
         update={
@@ -355,6 +411,32 @@ def coerce_analysis_for_mcp_observability(
             "reasoning": f"{(analysis.reasoning or '').strip()} {note}".strip(),
         }
     )
+
+
+def coerce_analysis_for_mcp_observability(
+    analysis: QueryAnalysis,
+    query: str,
+    *,
+    mcp_configured: bool = False,
+    has_tools: bool = False,
+) -> QueryAnalysis:
+    """Backward-compatible alias — use :func:`coerce_analysis_when_tools_required`."""
+    return coerce_analysis_when_tools_required(
+        analysis,
+        query,
+        has_tools=has_tools,
+        mcp_configured=mcp_configured,
+    )
+
+
+def query_looks_like_observability_fetch(query: str) -> bool:
+    """Heuristic: user wants live logs/metrics/traces fetched, not a conceptual definition."""
+    text = (query or "").strip()
+    if not text:
+        return False
+    if _CONCEPTUAL_ONLY_RE.match(text):
+        return False
+    return _OBSERVABILITY_FETCH_RE.search(text) is not None
 
 
 def build_classifier_user_prompt(*, tools_desc: str, query: str) -> str:
@@ -395,8 +477,8 @@ async def analyze_query(
                      **or** an empty list when no tools are registered.
     skill_context  : Optional skill manifest lines injected by SkillInjector.
                      When present, added to the prompt before the query section.
-    mcp_configured : When True, post-classify coercion blocks REFLECTION for observability
-                     fetch queries (MCP tools require REACT + tool calls).
+    mcp_configured : When True, included for API compatibility; post-classify coercion uses
+                     :func:`coerce_analysis_when_tools_required` for all tool-dependent queries.
 
     Uses ``QueryAnalysisToolPayload`` as the structured-output / tool-call shape:
     provider-side JSON Schema often requires exact scalar types, while models
@@ -453,7 +535,7 @@ async def analyze_query(
                 "[Classifier] REFLECTION without subtasks — synthesizing goal from user query."
             )
         analysis = normalize_reflection_analysis(analysis, query)
-        analysis = coerce_analysis_for_mcp_observability(
+        analysis = coerce_analysis_when_tools_required(
             analysis,
             query,
             mcp_configured=mcp_configured,

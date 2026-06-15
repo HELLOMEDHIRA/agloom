@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -46,3 +47,19 @@ async def test_harness_true_without_store_disables_harness() -> None:
     names = {t.name for t in agent.config["tools"]}
     assert not (_HARNESS_TOOL_NAMES & names)
     assert agent.config.get("_harness_enabled") is False
+
+
+@pytest.mark.asyncio
+async def test_harness_async_tools_are_awaited_not_raw_coroutines() -> None:
+    """Harness factories return async defs — must register with coroutine=, not func=."""
+    llm = MagicMock()
+    llm.ainvoke = AsyncMock(return_value=MagicMock())
+    store = InMemoryStore()
+    agent = await create_agent(model=llm, store=store, harness=True, name="harness-async")
+    get_next = next(t for t in agent.config["tools"] if t.name == "get_next_task")
+    git_status = next(t for t in agent.config["tools"] if t.name == "git_status")
+    assert inspect.iscoroutinefunction(get_next.coroutine)
+    assert inspect.iscoroutinefunction(git_status.coroutine)
+    out = await get_next.ainvoke({})
+    assert not inspect.iscoroutine(out)
+    assert isinstance(out, str)

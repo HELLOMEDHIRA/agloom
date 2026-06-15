@@ -40,7 +40,7 @@ These are warnings logged during execution. They don't crash your agent — aglo
 | Warning                                                             | Cause                                         | Action                                      |
 | ------------------------------------------------------------------- | --------------------------------------------- | ------------------------------------------- |
 | `No handler for pattern 'X' — falling back to REACT`                | Classifier selected a pattern with no handler | Normal — REACT is a safe fallback           |
-| `[Classifier] [coerced X→REACT: observability/investigation query requires tool calls]` | Classifier picked DIRECT or REFLECTION for an observability fetch with MCP/tools | Normal — runtime enforces REACT so MCP tools are invoked |
+| `[Classifier] [coerced X→REACT: query requires registered tool calls]` | Classifier picked DIRECT, REFLECTION, or multi-worker pattern without `required_tools` for a tool-requiring query | Normal — runtime enforces REACT or worker tool inheritance |
 | `response_format: structured call returned None — using raw output` | Structured output failed                      | Check your `response_format` Pydantic model |
 | `response_format failed (Error) — using raw output`                 | Structured output raised an exception         | Model may not support structured output     |
 
@@ -98,6 +98,7 @@ See [Invoke input](../concepts/create-agent.md#invoke-input-langchain-shape) and
 | -------------------- | --------------------------------- | ------------------------------------------ |
 | `MCPConnectionError` | MCP connect failed on first invoke (transport error, `get_tools` failure, or server returned **zero** tools/resources/prompts) | Fix server URL/transport/auth; verify the MCP server exposes tools. See [MCP connect failures](../features/mcp.md#connect-failures). |
 | `TimeoutError`       | LLM call exceeded `llm_timeout`   | Increase timeout or check LLM provider     |
+| `No user query found in messages` (LiteLLM / vLLM / Qwen3) | Qwen3 chat template rejects some multi-step tool histories when `tool_choice` is forced on recovery turns | Upgrade agloom (opening-turn-only `tool_choice`) or set `react_force_tool_choice_on_user_turn=False`; fix vLLM chat template if needed |
 | `RateLimitError`     | LLM provider rate limit hit       | Set `rate_limit` to throttle calls         |
 | `CircuitBreakerOpen` | Too many consecutive LLM failures | Wait for cooldown or check provider status |
 
