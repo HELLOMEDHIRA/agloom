@@ -5,6 +5,7 @@ Uses structured output / tool-calling on ``BaseChatModel``. Provider payloads ar
 """
 
 import asyncio
+import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -181,6 +182,34 @@ list_directory, run_shell, grep_files, write_file, …):
 
 
 ═══════════════════════════════════════════════════════════
+MCP / OBSERVABILITY RULE  ⚠ HIGHEST PRIORITY (MCP SERVERS)
+═══════════════════════════════════════════════════════════
+
+When MCP servers are configured (tools below include MCP-backed observability tools such as
+log/metrics/trace/dashboard queries, ``read_resource_*``, ``get_prompt_*``, or similar):
+
+  • You do **not** have live telemetry, logs, metrics, traces, or dashboard data in classifier
+    memory. You cannot truthfully answer investigation questions without tool calls.
+
+  • ANY user request to **investigate**, **fetch**, **query**, **show**, **pull**, or **check**
+    logs, metrics, traces, errors, latency, dashboards, alerts, or incidents → **pattern = REACT**,
+    **direct_response = null**. **Never REFLECTION** for a raw data-fetch step.
+
+  • **Never** choose DIRECT with fabricated log lines, metric values, or “I would query …” text.
+    Route to REACT so the agent invokes MCP tools.
+
+  • **Never** choose REFLECTION when the user only needs observability data retrieved and
+    summarized — that is REACT (1–3 tool calls), not a generate→critique loop.
+
+  • Pure conceptual questions (“what is Grafana?”, “what is p99 latency?”) with **no** request to
+    inspect **live** data may stay DIRECT when no tools are needed.
+
+  Signals that almost always require REACT when MCP/observability tools exist:
+    investigate, root cause, RCA, why did, errors, logs, metrics, latency, p99, traces,
+    dashboard, alert, incident, outage, spike, last hour, query loki, prometheus, elasticsearch.
+
+
+═══════════════════════════════════════════════════════════
 STRICT FIELD RULES
 ═══════════════════════════════════════════════════════════
 
@@ -253,6 +282,80 @@ Query: {query}
 
 _QUERY_SLOT_MARKER_PREFIX = "\ufeffAGLOOM_CLASSIFIER_QUERY_"
 
+# Observability / investigation fetch — used for post-classify coercion when MCP tools exist.
+_OBSERVABILITY_FETCH_RE = re.compile(
+    r"""
+    \b(investigat\w*|root\s*cause|rca|why\s+did|what\s+caused|what\s+happened)\b
+    | \b(logs?|log\s*lines?|error\s*rate|exceptions?)\b
+    | \b(metrics?|latency|p9[59]|throughput)\b
+    | \b(traces?|spans?|apm)\b
+    | \b(grafana|prometheus|loki|elasticsearch|kibana|datadog|sentry)\b
+    | \b(dashboard|alert|incident|outage|spike|anomal\w*)\b
+    | \b(show|fetch|get|pull|query)\b.{0,48}\b(logs?|metrics?|traces?|errors?|dashboard)\b
+    | \blast\s+\d+\s*(m|min|mins|minutes|h|hr|hrs|hours|d|days)\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_CONCEPTUAL_OBSERVABILITY_ONLY_RE = re.compile(
+    r"^\s*what\s+is\s+(a\s+)?[\w\s./-]+\??\s*$",
+    re.IGNORECASE,
+)
+
+
+def query_looks_like_observability_fetch(query: str) -> bool:
+    """Heuristic: user wants live logs/metrics/traces fetched, not a conceptual definition."""
+    text = (query or "").strip()
+    if not text:
+        return False
+    if _CONCEPTUAL_OBSERVABILITY_ONLY_RE.match(text):
+        return False
+    return _OBSERVABILITY_FETCH_RE.search(text) is not None
+
+
+def coerce_analysis_for_mcp_observability(
+    analysis: QueryAnalysis,
+    query: str,
+    *,
+    mcp_configured: bool = False,
+    has_tools: bool = False,
+) -> QueryAnalysis:
+    """
+    Enforce REACT for observability fetch when tools (especially MCP) are available.
+
+    - DIRECT + tools + observability fetch → REACT (avoid hallucinated telemetry).
+    - REFLECTION + MCP configured + observability fetch → REACT (raw fetch is not a critique loop).
+    """
+    if not has_tools or not query_looks_like_observability_fetch(query):
+        return analysis
+
+    coerce = False
+    if analysis.pattern == PatternType.DIRECT:
+        coerce = True
+    elif analysis.pattern == PatternType.REFLECTION and mcp_configured:
+        coerce = True
+
+    if not coerce:
+        return analysis
+
+    prev = analysis.pattern.value
+    note = (
+        f"[coerced {prev}→REACT: observability/investigation query requires tool calls"
+        f"{'' if mcp_configured else ''}]"
+    )
+    logger.warning(
+        f"[Classifier] {note} — pattern was {prev!r}, query matched observability fetch heuristic."
+    )
+    return analysis.model_copy(
+        update={
+            "pattern": PatternType.REACT,
+            "direct_response": None,
+            "subtasks": [],
+            "needs_reflection": False,
+            "reasoning": f"{(analysis.reasoning or '').strip()} {note}".strip(),
+        }
+    )
+
 
 def build_classifier_user_prompt(*, tools_desc: str, query: str) -> str:
     """Fill :data:`CLASSIFIER_PROMPT` so user *query* and *tools_desc* cannot corrupt each other.
@@ -279,6 +382,7 @@ async def analyze_query(
     classifier_timeout: float = 60.0,
     structured_max_retries: int = 2,
     fallback_pattern: PatternType | None = None,
+    mcp_configured: bool = False,
 ) -> QueryAnalysis:
     """
     Single LLM call → QueryAnalysis.
@@ -291,6 +395,8 @@ async def analyze_query(
                      **or** an empty list when no tools are registered.
     skill_context  : Optional skill manifest lines injected by SkillInjector.
                      When present, added to the prompt before the query section.
+    mcp_configured : When True, post-classify coercion blocks REFLECTION for observability
+                     fetch queries (MCP tools require REACT + tool calls).
 
     Uses ``QueryAnalysisToolPayload`` as the structured-output / tool-call shape:
     provider-side JSON Schema often requires exact scalar types, while models
@@ -347,6 +453,12 @@ async def analyze_query(
                 "[Classifier] REFLECTION without subtasks — synthesizing goal from user query."
             )
         analysis = normalize_reflection_analysis(analysis, query)
+        analysis = coerce_analysis_for_mcp_observability(
+            analysis,
+            query,
+            mcp_configured=mcp_configured,
+            has_tools=has_tools,
+        )
 
         reasoning = (analysis.reasoning or "").strip()
         logger.event(

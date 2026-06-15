@@ -794,6 +794,7 @@ async def dispatch_command(
                 classifier_timeout=float(cfg.get("classifier_timeout", 60.0)),
                 structured_max_retries=int(cfg.get("structured_max_retries", 2)),
                 fallback_pattern=cfg.get("fallback_pattern"),
+                mcp_configured=bool(cfg.get("_mcp_servers")),
             )
             steps: list[str] = []
             for i, st in enumerate(analysis.subtasks):

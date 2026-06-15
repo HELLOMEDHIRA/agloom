@@ -109,3 +109,32 @@ async def test_load_mcp_capabilities_reports_rich_error_after_retry() -> None:
     assert "server='bad'" in caps[0].last_error
     assert "transport=streamable_http" in caps[0].last_error
     assert "Connection refused" in caps[0].last_error
+
+
+@pytest.mark.asyncio
+async def test_connect_mcp_servers_fails_when_server_returns_zero_tools() -> None:
+    from agloom.mcp_support import MCPConnectionError, connect_mcp_servers
+
+    cfg = MCPServerConfig(name="empty", transport="sse", url="http://127.0.0.1/mcp")
+    agent: dict = {"tools": [], "name": "test-agent"}
+
+    class _EmptyClient:
+        def __init__(self, server_dict: dict) -> None:
+            self._server_dict = server_dict
+
+        async def get_tools(self, *, server_name: str):
+            return []
+
+        def session(self, name: str):
+            session = MagicMock()
+            session.__aenter__ = AsyncMock(return_value=session)
+            session.__aexit__ = AsyncMock(return_value=None)
+            session.list_resources = AsyncMock(return_value=MagicMock(resources=[]))
+            session.list_prompts = AsyncMock(return_value=MagicMock(prompts=[]))
+            return session
+
+    with patch("langchain_mcp_adapters.client.MultiServerMCPClient", _EmptyClient):
+        with pytest.raises(MCPConnectionError, match="registered no callable tools"):
+            await connect_mcp_servers([cfg], agent)
+
+    assert agent.get("tools") == []

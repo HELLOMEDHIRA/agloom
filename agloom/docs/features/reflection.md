@@ -25,6 +25,7 @@ Full table: [All parameters](../configuration/parameters.md).
 ## When you might not see REFLECTION
 
 - The **classifier** must route to **`PatternType.REFLECTION`** — prompts that look like quick factual questions usually land on **DIRECT** or **REACT**.
+- **MCP / observability fetch** queries (logs, metrics, traces, incident investigation) with **`mcp_servers`** configured are routed to **REACT**, not REFLECTION — a raw data fetch is not a generate→critique loop. See [MCP classifier routing](mcp.md#classifier-routing-with-mcp).
 - **Subtasks**: the classifier should provide exactly one goal in **`analysis.subtasks`**. If it returns REFLECTION with an empty list, agloom **synthesizes a goal from the user query** (same worker id `goal`) and continues the critique loop. A hard failure only occurs when both subtasks and the query text are empty.
 
 ## Human-in-the-loop

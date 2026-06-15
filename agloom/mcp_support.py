@@ -430,6 +430,16 @@ async def connect_mcp_servers(
         ) from e
 
     failed = [cap for cap in caps if cap.last_error is not None]
+    empty_tools = [cap for cap in caps if cap.last_error is None and not cap.all_tools()]
+    if empty_tools:
+        detail = "; ".join(
+            f"{c.server_name}: connected but returned 0 tools/resources/prompts" for c in empty_tools
+        )
+        await aclose_mcp_client(client, log_name=agent_name)
+        raise MCPConnectionError(
+            f"MCP: {len(empty_tools)} of {len(caps)} server(s) registered no callable tools — {detail}"
+        )
+
     if failed:
         detail = "; ".join(f"{c.server_name}: {c.last_error}" for c in failed)
         await aclose_mcp_client(client, log_name=agent_name)

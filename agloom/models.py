@@ -1024,8 +1024,9 @@ class AgentConfig(BaseModel):
     react_force_tool_choice_on_user_turn: bool = Field(
         default=True,
         description=(
-            "ReAct: after a HumanMessage, set LangChain tool_choice=required so providers "
-            "(e.g. Groq) cannot emit prose instead of a structured tool call (tool_use_failed)."
+            "After a HumanMessage, set LangChain tool_choice=required on tool-bearing agents "
+            "(REACT pattern and multi-worker pattern workers) so providers (e.g. Groq) cannot "
+            "emit prose instead of a structured tool call (tool_use_failed)."
         ),
     )
 

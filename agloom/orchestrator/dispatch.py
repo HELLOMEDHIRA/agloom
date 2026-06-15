@@ -77,6 +77,7 @@ async def _reclassify_if_needed(
         classifier_timeout=_agent_float(agent, "classifier_timeout", 60.0),
         structured_max_retries=_agent_int(agent, "structured_max_retries", 2),
         fallback_pattern=_agent_fallback_pattern(agent),
+        mcp_configured=bool(agent.get("_mcp_servers")),
     )
 
 
@@ -190,6 +191,7 @@ class SpawnAPI:
             classifier_timeout=_agent_float(agent, "classifier_timeout", 60.0),
             structured_max_retries=_agent_int(agent, "structured_max_retries", 2),
             fallback_pattern=_agent_fallback_pattern(agent),
+            mcp_configured=bool(agent.get("_mcp_servers")),
         )
 
     async def escalate_pattern(self, result: ExecutionResult, reason: str) -> ExecutionResult:

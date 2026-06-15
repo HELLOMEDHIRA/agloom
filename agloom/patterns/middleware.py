@@ -64,6 +64,25 @@ class ReactUserTurnToolChoiceMiddleware(AgentMiddleware):
         return await handler(request.override(tool_choice=None))
 
 
+def build_langchain_agent_middleware(
+    *,
+    force_tool_choice_on_user_turn: bool = True,
+    extras: list[Any] | None = None,
+) -> list[Any]:
+    """Middleware chain for LangChain ``create_agent`` (ReAct + pattern workers).
+
+    When ``force_tool_choice_on_user_turn`` is True, the first model call after each
+    ``HumanMessage`` uses ``tool_choice=required`` so providers that omit tools still
+    emit a valid tool payload.
+    """
+    chain: list[Any] = []
+    if force_tool_choice_on_user_turn:
+        chain.append(ReactUserTurnToolChoiceMiddleware())
+    if extras:
+        chain.extend(extras)
+    return chain
+
+
 class HumanApprovalMiddleware(AgentMiddleware):
     """Pause before listed tools; ``"tools"`` in the interrupt list matches all tool names."""
 

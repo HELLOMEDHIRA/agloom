@@ -92,6 +92,43 @@ When the MCP connection is established, agloom loads:
 
 Each tool's **name** and **description** (from the MCP server's schema) are captured at connect time.
 
+## Connect failures
+
+Agloom raises **`MCPConnectionError`** (fatal on first `ainvoke` / `astream`) when:
+
+- The MCP adapter is missing (`langchain-mcp-adapters` not installed)
+- The multi-server client cannot start
+- **`get_tools`** fails for any configured server (after optional `sse` → `streamable_http` retry)
+- A server **connects successfully but registers zero callable capabilities** — no tools, resources, or prompts
+
+Example zero-tool error:
+
+```text
+MCP: 1 of 1 server(s) registered no callable tools — grafana: connected but returned 0 tools/resources/prompts
+```
+
+Partial failures close the shared client before raising — do not reuse handles from a failed connect attempt.
+
+Error messages include **server name**, **transport**, **URL** (for HTTP), and the **root cause** (unwrapped from `ExceptionGroup` / `TaskGroup` when present).
+
+## Classifier routing with MCP
+
+When **`mcp_servers`** is configured, MCP tools are merged **before** `analyze_query` runs on the first turn. The classifier prompt includes a high-priority **MCP / observability rule**:
+
+- Investigation, log, metrics, trace, and dashboard fetch queries → **REACT** (not DIRECT or REFLECTION)
+- The classifier must not hallucinate telemetry in `direct_response`
+
+Agloom also applies **post-classify coercion** as a safety net:
+
+| Classifier picked | Query looks like observability fetch | Result |
+| ----------------- | ------------------------------------ | ------ |
+| **DIRECT**        | Yes, and tools exist                 | Coerced to **REACT** |
+| **REFLECTION**    | Yes, and `mcp_servers` configured    | Coerced to **REACT** |
+
+Pure conceptual questions (“what is Grafana?”) without a live-data request may still route to **DIRECT**.
+
+See [Choosing an execution pattern](../guides/choosing-a-pattern.md#mcp-and-observability-queries).
+
 ## Session inventory (no graph DB)
 
 agloom keeps an in-memory catalog after connect (`_mcp_server_rows` on the agent config). You do **not** need to call MCP tools such as agsuperbrain **`list_modules`** to answer "what MCP servers are connected?" — that tool queries the Super-Brain **Kuzu graph database**, not agloom's wiring.

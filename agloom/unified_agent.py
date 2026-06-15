@@ -536,6 +536,7 @@ async def _execute_analyze_query(
         classifier_timeout=float(cfg.get("classifier_timeout", 60.0)),
         structured_max_retries=int(cfg.get("structured_max_retries", 2)),
         fallback_pattern=fallback,
+        mcp_configured=bool(cfg.get("_mcp_servers")),
     )
 
 
@@ -2967,10 +2968,11 @@ async def create_agent(
     :func:`agloom.cache.default_query_cache`). Pass ``False`` to disable caching entirely, or pass
     the dict returned by :func:`agloom.cache.create_cache` for custom embeddings / Qdrant.
     ``checkpointer``: enables ``get_state``, ``get_history``, ``resume``.
-    ``mcp_servers``: lazy MCP connect on first ``ainvoke``.
-    ``react_force_tool_choice_on_user_turn``: when True (default), ReAct uses LangChain
-    ``tool_choice=required`` after each user message so providers like Groq must emit a
-    structured tool call instead of prose (avoids ``tool_use_failed``).
+    ``mcp_servers``: lazy MCP connect on first ``ainvoke`` (raises ``MCPConnectionError`` if a server exposes no tools).
+    ``react_force_tool_choice_on_user_turn``: when True (default), tool-bearing LangChain agents use
+    ``tool_choice=required`` after each user message so providers like Groq must emit a structured
+    tool call instead of prose (avoids ``tool_use_failed``). Applies to **REACT** and to **workers**
+    in multi-worker patterns (SUPERVISOR, REFLECTION, SWARM, etc.) when they have tools.
 
     Also registers the agent name against the store for duplicate-name warnings and may
     extend ``tools`` (memory load_skill, harness tools).

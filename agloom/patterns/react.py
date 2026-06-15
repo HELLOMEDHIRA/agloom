@@ -43,7 +43,7 @@ from ..models import (
     _trunc,
 )
 from .hitl_tool_coalesce import build_default_hitl_coalescer
-from .middleware import HumanApprovalMiddleware, ReactUserTurnToolChoiceMiddleware, UserAbort
+from .middleware import HumanApprovalMiddleware, UserAbort, build_langchain_agent_middleware
 from .react_tool_recovery import (
     exception_indicates_tool_use_failed as _exception_indicates_tool_use_failed,
 )
@@ -174,11 +174,10 @@ def _react_tool_names(tools: list[Any]) -> frozenset[str]:
 
 def _langchain_react_middleware(agent: dict, *extra: Any) -> list[Any]:
     """Middleware for LangChain ``create_agent`` inside ReAct (tool_choice + optional HITL)."""
-    chain: list[Any] = []
-    if agent.get("react_force_tool_choice_on_user_turn", False):
-        chain.append(ReactUserTurnToolChoiceMiddleware())
-    chain.extend(extra)
-    return chain
+    return build_langchain_agent_middleware(
+        force_tool_choice_on_user_turn=bool(agent.get("react_force_tool_choice_on_user_turn", True)),
+        extras=list(extra),
+    )
 
 
 def _hitl_middleware_extras(agent: dict) -> list[Any]:

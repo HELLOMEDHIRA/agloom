@@ -54,6 +54,7 @@ async def test_execute_analyze_query_forwards_kwargs(monkeypatch: pytest.MonkeyP
         "classifier_timeout": 9.0,
         "structured_max_retries": 1,
         "fallback_pattern": None,
+        "_mcp_servers": [{"name": "grafana"}],
     }
     r = await _execute_analyze_query(cfg, augmented_query="aq", skill_context="sk")
     assert r.pattern == PatternType.DIRECT
@@ -63,6 +64,7 @@ async def test_execute_analyze_query_forwards_kwargs(monkeypatch: pytest.MonkeyP
     assert captured["structured_max_retries"] == 1
     assert captured["llm"] is cfg["llm"]
     assert captured["tools"] == ["t1"]
+    assert captured["mcp_configured"] is True
 
 
 @pytest.mark.asyncio

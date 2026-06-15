@@ -113,6 +113,9 @@ def extend_invoke_config_with_event_queue(
                 "_hitl_tool_coalescer": coalescer,
                 "name": agent.get("name", "UnifiedAgent"),
             }
+        base["react_force_tool_choice_on_user_turn"] = agent.get(
+            "react_force_tool_choice_on_user_turn", True
+        )
     return base
 
 
@@ -287,6 +290,19 @@ async def _react_graph_astream_to_result(
     return final_response
 
 
+def _worker_react_middleware(invoke_config: dict | None, worker_id: str) -> list[Any]:
+    """Tool-choice + L2 HITL middleware for supervisor/reflection/swarm worker ReAct agents."""
+    from agloom.patterns.middleware import build_langchain_agent_middleware
+
+    force = True
+    if invoke_config is not None:
+        force = bool(invoke_config.get("react_force_tool_choice_on_user_turn", True))
+    return build_langchain_agent_middleware(
+        force_tool_choice_on_user_turn=force,
+        extras=_hitl_middleware_for_invoke(invoke_config, worker_id),
+    )
+
+
 def _hitl_middleware_for_invoke(invoke_config: dict | None, worker_id: str) -> list[Any]:
     """Share parent L2 HITL (allowlist + coalescer) for supervisor/swarm worker ReAct agents."""
     if not invoke_config:
@@ -339,7 +355,7 @@ async def _run_react(
                     f"with the text to process, then reply with the final answer as plain text."
                 )
 
-            hitl_middleware = _hitl_middleware_for_invoke(invoke_config, config.worker_id)
+            hitl_middleware = _worker_react_middleware(invoke_config, config.worker_id)
             agent = lc_create_agent(
                 model=llm,
                 tools=config.tools,
