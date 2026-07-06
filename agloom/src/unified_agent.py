@@ -684,6 +684,7 @@ RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
         "save_memory",
         "recall_memory",
         "load_skill",
+        "recall_tool_artifact",
     }
 )
 
@@ -952,18 +953,15 @@ def _memory_injection_last_n(config: dict) -> int:
 
 
 def _max_tokens_budget_from_chat_model(llm: Any) -> int | None:
-    """Best-effort read of ``max_tokens`` from a chat model for session-memory summarize budget."""
-    if llm is None:
-        return None
-    v = getattr(llm, "max_tokens", None)
-    if isinstance(v, int) and v > 0:
-        return v
-    mk = getattr(llm, "model_kwargs", None)
-    if isinstance(mk, dict):
-        raw = mk.get("max_tokens")
-        if isinstance(raw, int) and raw > 0:
-            return raw
-    return None
+    """Deprecated: use :func:`_context_window_budget_for_memory`."""
+    return _context_window_budget_for_memory(llm)
+
+
+def _context_window_budget_for_memory(llm: Any, model_spec: Any = None) -> int | None:
+    """Context window tokens for session-memory summarize budget (not output ``max_tokens``)."""
+    from agloom.context.window import infer_context_window_tokens
+
+    return infer_context_window_tokens(llm, model_spec)
 
 
 async def _record_turn(
@@ -3194,6 +3192,10 @@ async def create_agent(
     react_force_tool_choice_on_user_turn: bool = True,
     react_tool_use_failed_auto_retries_hitl: int = 2,
     react_tool_use_failed_user_rounds: int = 3,
+    tool_scratchpad: bool = True,
+    tool_digest_min_chars: int = 4000,
+    context_window_tokens: int | None = None,
+    context_compact_ratio: float = 0.82,
     max_pattern_depth: int = 0,
     max_orchestration_llm_calls: int = 100,
     max_orchestration_tokens: int = 0,
@@ -3223,9 +3225,9 @@ async def create_agent(
     ``checkpointer``: enables ``get_state``, ``get_history``, ``resume``.
     ``mcp_servers``: lazy MCP connect on first ``ainvoke`` (raises ``MCPConnectionError`` if a server exposes no tools).
     ``react_force_tool_choice_on_user_turn``: when True (default), Groq-style providers use
-    ``tool_choice=required`` on the opening turn. Qwen3/vLLM/LiteLLM use provider-default
+    ``tool_choice=required`` on the opening turn. Strict chat-template providers (vLLM, LiteLLM routers, self-hosted) use provider-default
     ``tool_choice`` (no override). All models get user-message flattening via
-    :func:`~agloom.llm.qwen_compat.wrap_chat_model_for_react_compat` (always on).
+    :func:`~agloom.llm.chat_template_compat.wrap_chat_model_for_react_compat` (always on).
     ``react_graph_timeout``: optional wall clock (seconds) for streamed REACT graphs.
     Default ``max(llm_timeout × 4, 300)``. Applies to **REACT** and **workers**.
     ``react_recursion_limit``: LangGraph step cap for REACT/worker tool loops (default ``25``).
@@ -3316,6 +3318,10 @@ async def create_agent(
         react_force_tool_choice_on_user_turn=react_force_tool_choice_on_user_turn,
         react_tool_use_failed_auto_retries_hitl=react_tool_use_failed_auto_retries_hitl,
         react_tool_use_failed_user_rounds=react_tool_use_failed_user_rounds,
+        tool_scratchpad=tool_scratchpad,
+        tool_digest_min_chars=tool_digest_min_chars,
+        context_window_tokens=context_window_tokens,
+        context_compact_ratio=context_compact_ratio,
         max_pattern_depth=max_pattern_depth,
         max_orchestration_llm_calls=max_orchestration_llm_calls,
         max_orchestration_tokens=max_orchestration_tokens,
@@ -3340,13 +3346,22 @@ async def create_agent(
     skills_mirror_path: Path | None = Path(skills_disk_mirror).resolve() if skills_disk_mirror is not None else None
 
     resolved_llm = resolve_model(model)
-    from agloom.llm.qwen_compat import wrap_chat_model_for_react_compat
+    from agloom.llm.chat_template_compat import wrap_chat_model_for_react_compat
 
     resolved_llm = wrap_chat_model_for_react_compat(resolved_llm, model)
     resolved_prompt = resolve_system_prompt(system_prompt, cli_tools=cli_tools_kw is not None)
     agent_name = (name or "UnifiedAgent").strip()
     resolved_tools = normalize_tools(tools or [])
-    _check_reserved_tool_names(resolved_tools)
+    from agloom.context.tool_scratchpad import ToolScratchpad, make_recall_tool_artifact
+    from agloom.context.window import infer_context_window_tokens, reserved_output_tokens
+
+    ctx_window = context_window_tokens or infer_context_window_tokens(resolved_llm, model)
+    ctx_reserved = reserved_output_tokens(resolved_llm, context_window=ctx_window)
+    tool_scratchpad_pad: ToolScratchpad | None = None
+    if tool_scratchpad and resolved_tools:
+        tool_scratchpad_pad = ToolScratchpad()
+        resolved_tools = [*resolved_tools, make_recall_tool_artifact(tool_scratchpad_pad)]
+    _check_reserved_tool_names(resolved_tools[:-1] if tool_scratchpad_pad else resolved_tools)
     _task_agent_cell: list[Any | None] | None = None
     if cli_tools_kw is not None and bool(cli_tools_kw.get("task_tool", True)):
         _task_agent_cell = [None]
@@ -3383,7 +3398,7 @@ async def create_agent(
     resolved_summarizer = resolve_model(summarizer_model) if summarizer_model else resolved_llm
     memory_budget = summarize_max_tokens_budget
     if memory_budget is None:
-        memory_budget = _max_tokens_budget_from_chat_model(resolved_llm)
+        memory_budget = _context_window_budget_for_memory(resolved_llm, model)
     resolved_memory = memory
     memory_user_supplied = memory is not None
     if resolved_memory is None:
@@ -3560,6 +3575,12 @@ async def create_agent(
         "react_force_tool_choice_on_user_turn": react_force_tool_choice_on_user_turn,
         "react_tool_use_failed_auto_retries_hitl": react_tool_use_failed_auto_retries_hitl,
         "react_tool_use_failed_user_rounds": react_tool_use_failed_user_rounds,
+        "tool_scratchpad": tool_scratchpad_pad is not None,
+        "_tool_scratchpad": tool_scratchpad_pad,
+        "tool_digest_min_chars": tool_digest_min_chars,
+        "context_window_tokens": ctx_window,
+        "context_reserved_output_tokens": ctx_reserved,
+        "context_compact_ratio": context_compact_ratio,
         "_handoff_targets": [],
         "_delegate_targets": [],
         "_bg_delegation_manager": BackgroundDelegationManager(),

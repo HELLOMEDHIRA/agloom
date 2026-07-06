@@ -73,3 +73,20 @@ def test_format_exception_message_plain_exception() -> None:
 def test_format_exception_message_graph_recursion() -> None:
     msg = format_exception_message(GraphRecursionError("limit"))
     assert "GraphRecursionError" in msg
+
+
+def test_format_exception_message_includes_http_response_body() -> None:
+    class FakeResponse:
+        status_code = 400
+        url = "http://10.10.10.30:4000/chat/completions"
+        text = '{"error":{"message":"No user query found in messages","type":"BadRequestError"}}'
+
+    class FakeHTTPError(Exception):
+        def __str__(self) -> str:
+            return "Client error '400 Bad Request' for url 'http://10.10.10.30:4000/chat/completions'"
+
+    exc = FakeHTTPError()
+    exc.response = FakeResponse()  # type: ignore[attr-defined]
+    msg = format_exception_message(exc)
+    assert "No user query found" in msg
+    assert "status=400" in msg

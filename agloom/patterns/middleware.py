@@ -10,13 +10,13 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from ..src.hitl_contract import HITLEvent, call_user_callback
-from ..llm.qwen_compat import (
+from ..llm.chat_template_compat import (
     ensure_messages_for_chat_template,
     extract_model_label,
     model_label_for_middleware,
-    model_needs_qwen_chat_template_compat,
-    qwen_model_settings_patch,
+    patch_strict_template_model_settings,
     resolve_react_tool_choice,
+    uses_strict_chat_template,
 )
 from ..src.logging_utils import get_logger
 from .hitl_tool_coalesce import CompositeToolHitlCoalescer, build_default_hitl_coalescer
@@ -67,7 +67,7 @@ def should_force_tool_choice_on_request(messages: list[Any] | None) -> bool:
     True only for the **first** model call: a single user/human message, no prior turns.
 
     Any retry nudge (stray JSON, ``tool_use_failed``) or multi-step tool history must not
-    receive ``tool_choice=required`` — Qwen3/vLLM chat templates raise
+    receive ``tool_choice=required`` — strict chat templates raise
     ``No user query found in messages`` when ``required`` is used off the opening turn.
     """
     if not messages or len(messages) != 1:
@@ -84,8 +84,8 @@ def _prepare_react_model_request(request: Any, *, tool_choice_enabled: bool) -> 
     )
     model_label = model_label_for_middleware(request.model)
     overrides: dict[str, Any] = {"messages": messages}
-    if model_needs_qwen_chat_template_compat(model_label):
-        overrides["model_settings"] = qwen_model_settings_patch(
+    if uses_strict_chat_template(model_label):
+        overrides["model_settings"] = patch_strict_template_model_settings(
             getattr(request, "model_settings", None)
         )
     if tool_choice_enabled and request.tools:
@@ -95,14 +95,14 @@ def _prepare_react_model_request(request: Any, *, tool_choice_enabled: bool) -> 
     if overrides.get("model_settings") or overrides.get("tool_choice") or overrides["messages"] is not request.messages:
         logger.debug(
             f"[react_middleware] model_label={model_label[:80] if model_label else ''!r} "
-            f"compat={model_needs_qwen_chat_template_compat(model_label)} "
+            f"strict_template={uses_strict_chat_template(model_label)} "
             f"tool_choice={overrides.get('tool_choice', '<default>')} msgs={len(messages)}"
         )
     return request.override(**overrides)
 
 
 class ReactUserTurnToolChoiceMiddleware(AgentMiddleware):
-    """Opening-turn tool choice + Qwen3/vLLM message normalization for ReAct agents."""
+    """Opening-turn tool choice + strict chat-template message normalization for ReAct agents."""
 
     def __init__(
         self,
@@ -132,10 +132,10 @@ def build_langchain_agent_middleware(
 ) -> list[Any]:
     """Middleware chain for LangChain ``create_agent`` (ReAct + pattern workers).
 
-    User multimodal content blocks are **always** flattened to plain strings (Qwen3/vLLM
-    chat-template compatibility). When ``force_tool_choice_on_user_turn`` is True, the opening
-    user turn uses ``tool_choice=required`` for Groq-style providers; Qwen3/vLLM models use
-    ``auto`` instead. When False, only the tool_choice overrides are disabled.
+    User multimodal content blocks are **always** flattened to plain strings (strict chat-template
+    compatibility). When ``force_tool_choice_on_user_turn`` is True, the opening
+    user turn uses ``tool_choice=required`` for Groq/Cerebras-style providers; strict-template
+    models use provider default instead. When False, only the tool_choice overrides are disabled.
     """
     chain: list[Any] = [ReactUserTurnToolChoiceMiddleware(enabled=force_tool_choice_on_user_turn)]
     if extras:

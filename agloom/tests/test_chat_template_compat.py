@@ -1,4 +1,4 @@
-"""Qwen3 / vLLM / LiteLLM chat-template compatibility (tool_choice + message flattening)."""
+"""Chat-template compatibility (tool_choice + message flattening)."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from agloom.llm.qwen_compat import (
+from agloom.llm.chat_template_compat import (
     _ChatTemplateCompatProxy,
     ensure_messages_for_chat_template,
     extract_model_label,
     model_label_for_middleware,
-    model_needs_qwen_chat_template_compat,
+    uses_strict_chat_template,
     normalize_messages_for_chat_template,
     repair_messages_for_chat_template,
     repair_react_graph_state,
@@ -22,19 +22,19 @@ from agloom.llm.qwen_compat import (
 from agloom.patterns.middleware import should_force_tool_choice_on_request
 
 
-def test_model_needs_qwen_compat() -> None:
-    assert model_needs_qwen_chat_template_compat("qwen36fp8")
-    assert model_needs_qwen_chat_template_compat("litellm:qwen3-30b-a3b")
-    assert model_needs_qwen_chat_template_compat("litellm hosted_vllm/default")
-    assert not model_needs_qwen_chat_template_compat("groq/llama-3.3-70b")
-    assert not model_needs_qwen_chat_template_compat("litellm:groq/llama-3.3-70b")
+def test_uses_strict_chat_template() -> None:
+    assert uses_strict_chat_template("qwen36fp8")
+    assert uses_strict_chat_template("litellm:qwen3-30b-a3b")
+    assert uses_strict_chat_template("litellm hosted_vllm/default")
+    assert not uses_strict_chat_template("groq/llama-3.3-70b")
+    assert not uses_strict_chat_template("litellm:groq/llama-3.3-70b")
 
 
 def test_litellm_class_triggers_compat() -> None:
     class ChatLiteLLM:
         model = "corporate-alias-v1"
 
-    assert model_needs_qwen_chat_template_compat(extract_model_label(ChatLiteLLM()))
+    assert uses_strict_chat_template(extract_model_label(ChatLiteLLM()))
 
 
 def test_tagged_model_label_used() -> None:
@@ -43,7 +43,7 @@ def test_tagged_model_label_used() -> None:
 
     m = M()
     tag_llm_for_chat_template_compat(m, "litellm:qwen36fp8")
-    assert model_needs_qwen_chat_template_compat(extract_model_label(m))
+    assert uses_strict_chat_template(extract_model_label(m))
 
 
 def test_flatten_multimodal_user_blocks() -> None:
@@ -64,7 +64,7 @@ def test_repair_user_from_state_when_request_empty() -> None:
     assert out[0].content == "real investigation query"
 
 
-def test_resolve_tool_choice_qwen_never_forces() -> None:
+def test_resolve_tool_choice_strict_template_never_forces() -> None:
     msgs = [HumanMessage(content="fetch metrics")]
     assert resolve_react_tool_choice(msgs, model_label="qwen36fp8") is None
 
@@ -79,7 +79,7 @@ def test_resolve_tool_choice_litellm_opaque_never_forces() -> None:
     assert resolve_react_tool_choice(msgs, model_label="litellm corporate-alias") is None
 
 
-def test_resolve_tool_choice_qwen_multistep_never_forces() -> None:
+def test_resolve_tool_choice_strict_template_multistep_never_forces() -> None:
     msgs = [
         HumanMessage(content="query logs"),
         AIMessage(content="", tool_calls=[{"name": "search", "args": {}, "id": "1"}]),
@@ -146,7 +146,7 @@ def test_model_label_for_middleware_uses_proxy_label() -> None:
         model = "opaque-alias"
 
     wrapped = wrap_chat_model_for_react_compat(FakeLLM(), "litellm:qwen36fp8")
-    assert model_needs_qwen_chat_template_compat(model_label_for_middleware(wrapped))
+    assert uses_strict_chat_template(model_label_for_middleware(wrapped))
 
 
 def test_repair_react_graph_state_prepends_user_when_missing() -> None:
@@ -160,7 +160,7 @@ def test_repair_react_graph_state_prepends_user_when_missing() -> None:
 
 
 def test_exception_indicates_missing_user_query_unwraps_group() -> None:
-    from agloom.llm.qwen_compat import exception_indicates_missing_user_query
+    from agloom.llm.chat_template_compat import exception_indicates_missing_user_query
 
     inner = RuntimeError("No user query found in messages.")
     outer = ExceptionGroup("unhandled errors in a TaskGroup (1 sub-exception)", [inner])

@@ -74,7 +74,7 @@ await create_agent(model=ChatGroq(model="llama-3.3-70b-versatile"))
 | `max_retries` | `int` | `2` | Worker retry count (0-10) |
 | `retry_delay` | `float` | `1.0` | Seconds between retries |
 | `llm_timeout` | `float` | `120.0` | Per model-call timeout (seconds) for REACT ``ainvoke`` and workers |
-| `react_graph_timeout` | `float` or `None` | `None` | Wall clock for a full streamed REACT graph. Default: ``max(llm_timeout × 4, 300)``. Use `600`–`900` for Qwen + MCP investigations |
+| `react_graph_timeout` | `float` or `None` | `None` | Wall clock for a full streamed REACT graph. Default: ``max(llm_timeout × 4, 300)``. Use `600`–`900` for long MCP / self-hosted tool investigations |
 | `react_recursion_limit` | `int` | `25` | LangGraph step cap for REACT/worker tool loops (1–500). Returns ``success=False`` when hit |
 | `turn_planner_timeout` | `float` | `60.0` | Turn planner timeout in seconds (`plan_turn` / `analyze_query`). YAML may still use legacy `classifier_timeout`. |
 | `classifier_timeout` | `float` | *(alias)* | Deprecated alias for `turn_planner_timeout` on `create_agent()` and in agent config dicts. |
@@ -87,7 +87,7 @@ See [Timeouts & Retries](reliability.md) for details.
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
-| `react_force_tool_choice_on_user_turn` | `bool` | `True` | Opening turn: `tool_choice=required` for Groq-style providers. **Qwen3/vLLM/LiteLLM** (strict templates): no `tool_choice` override — provider default. User message flattening always runs via LLM wrapper + middleware. Set `False` to disable tool_choice overrides only. |
+| `react_force_tool_choice_on_user_turn` | `bool` | `True` | Opening turn: `tool_choice=required` for Groq/Cerebras-style providers. **Strict chat templates** (vLLM, LiteLLM routers, self-hosted): no `tool_choice` override — provider default. User message flattening always runs via LLM wrapper + middleware. Set `False` to disable tool_choice overrides only. |
 | `react_tool_use_failed_auto_retries_hitl` | `int` | `2` | Automatic HITL-backed retries when the model returns malformed tool JSON. |
 | `react_tool_use_failed_user_rounds` | `int` | `3` | Max user-visible rounds for tool-use recovery before failing the turn. |
 | `skills_disk_mirror` | `Path` or `str` or `None` | `None` | Optional directory path; when set, mirrors skill artifacts on disk for inspection or backup. |

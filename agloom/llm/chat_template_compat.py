@@ -1,4 +1,4 @@
-"""Qwen3 / vLLM / LiteLLM chat-template compatibility helpers for tool-bearing agents."""
+"""Chat-template compatibility for tool-bearing agents (strict templates, vLLM, LiteLLM routers)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ logger = get_logger(__name__)
 
 _DEFAULT_USER_TURN = "Use the available tools to complete the requested task."
 
-_QWEN_MODEL_MARKERS = (
+_STRICT_TEMPLATE_MODEL_MARKERS = (
     "qwen",
     "qwq",
 )
@@ -198,10 +198,10 @@ def extract_model_label(model: Any) -> str:
     return " ".join(hints).lower()
 
 
-def model_needs_qwen_chat_template_compat(model_label: str) -> bool:
-    """True when the provider chat template is strict (Qwen3, vLLM, opaque LiteLLM groups)."""
+def uses_strict_chat_template(model_label: str) -> bool:
+    """True when the provider chat template rejects malformed or tool-heavy message lists."""
     label = (model_label or "").lower()
-    if any(marker in label for marker in _QWEN_MODEL_MARKERS):
+    if any(marker in label for marker in _STRICT_TEMPLATE_MODEL_MARKERS):
         return True
     if "vllm" in label or "chatlitellm" in label:
         return True
@@ -321,7 +321,7 @@ def _is_system_message(msg: Any) -> bool:
 
 
 def _sanitize_bind_kwargs(kwargs: dict[str, Any], model_label: str) -> dict[str, Any]:
-    if not model_needs_qwen_chat_template_compat(model_label):
+    if not uses_strict_chat_template(model_label):
         return kwargs
     out = dict(kwargs)
     out.pop("tool_choice", None)
@@ -329,7 +329,7 @@ def _sanitize_bind_kwargs(kwargs: dict[str, Any], model_label: str) -> dict[str,
 
 
 def _sanitize_invoke_kwargs(kwargs: dict[str, Any], model_label: str) -> dict[str, Any]:
-    if not model_needs_qwen_chat_template_compat(model_label):
+    if not uses_strict_chat_template(model_label):
         return kwargs
     out = dict(kwargs)
     out.pop("tool_choice", None)
@@ -367,7 +367,7 @@ def ensure_messages_for_chat_template(
             raw = getattr(msg, "content", None)
         if not _human_content_as_text(raw):
             logger.warning(
-                f"[qwen_compat] Empty user message at index {idx} — filling default user turn"
+                f"[chat_template_compat] Empty user message at index {idx} — filling default user turn"
             )
             repaired[idx] = _replace_human_content(msg, _DEFAULT_USER_TURN)
             return repaired
@@ -379,7 +379,7 @@ def ensure_messages_for_chat_template(
         else:
             break
     logger.warning(
-        f"[qwen_compat] No user query in {len(repaired)} message(s) — inserting default user turn"
+        f"[chat_template_compat] No user query in {len(repaired)} message(s) — inserting default user turn"
     )
     return repaired[:insert_at] + [HumanMessage(content=_DEFAULT_USER_TURN)] + repaired[insert_at:]
 
@@ -401,8 +401,8 @@ def repair_messages_for_chat_template(
     return [HumanMessage(content=fallback), *repaired]
 
 
-def qwen_model_settings_patch(existing: dict[str, Any] | None) -> dict[str, Any]:
-    """Disable Qwen thinking in tool loops when the upstream supports chat_template_kwargs."""
+def patch_strict_template_model_settings(existing: dict[str, Any] | None) -> dict[str, Any]:
+    """Patch provider model settings for tool loops (e.g. disable extended thinking modes)."""
     settings = dict(existing or {})
     extra = dict(settings.get("extra_body") or {})
     ctk = dict(extra.get("chat_template_kwargs") or {})
@@ -420,7 +420,7 @@ def resolve_react_tool_choice(
     """Opening-turn tool choice for ReAct; strict templates must not use ``required``."""
     if not messages:
         return None
-    if model_needs_qwen_chat_template_compat(model_label):
+    if uses_strict_chat_template(model_label):
         return None
     opening = len(messages) == 1 and _is_human_message(messages[0])
     if opening:
@@ -468,13 +468,13 @@ def repair_react_graph_state(
     opening = ensure_messages_for_chat_template([HumanMessage(content=_query_text())])
     tail = [m for m in repaired if not _is_human_message(m)]
     logger.warning(
-        f"[qwen_compat] ReAct state missing user query — prepending opening turn ({len(tail)} trailing msgs)"
+        f"[chat_template_compat] ReAct state missing user query — prepending opening turn ({len(tail)} trailing msgs)"
     )
     return opening + tail
 
 
 def exception_indicates_missing_user_query(exc: BaseException) -> bool:
-    """True when LiteLLM/vLLM/Qwen Jinja rejected the message list (no user role)."""
+    """True when a strict chat template rejected the message list (no user role)."""
     from ..src.exception_utils import unwrap_exception
 
     low = str(unwrap_exception(exc)).lower()

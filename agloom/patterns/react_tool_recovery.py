@@ -150,6 +150,17 @@ def _walk_exception(err: BaseException | None) -> bool:
     return _walk(unwrap_exception(err))
 
 
+def exception_indicates_context_window_exceeded(exc: BaseException) -> bool:
+    """True when the provider rejected the request for exceeding the context window."""
+    low = str(unwrap_exception(exc)).lower()
+    return (
+        "contextwindowexceeded" in low
+        or "context window" in low
+        or "maximum context length" in low
+        or "reduce the length of the input prompt" in low
+    )
+
+
 def extract_failed_generation_snippet(exc: BaseException, *, max_len: int = 320) -> str:
     """Best-effort parse of provider ``failed_generation`` text for retry hints."""
     visited: set[int] = set()

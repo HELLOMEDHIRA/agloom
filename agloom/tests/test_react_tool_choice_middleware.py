@@ -1,4 +1,4 @@
-"""ReactUserTurnToolChoiceMiddleware — opening user turn only (Qwen3-safe)."""
+"""ReactUserTurnToolChoiceMiddleware — opening user turn only (strict-template safe)."""
 
 from __future__ import annotations
 

@@ -1112,8 +1112,8 @@ class AgentConfig(BaseModel):
     summarize_max_tokens_budget: int | None = Field(
         default=None,
         description=(
-            "When set (or inferred from the chat model's max_tokens), rolling memory summarizes "
-            "when estimated stored tokens exceed 80% of this budget; otherwise summarize_threshold applies."
+            "When set (or inferred from the model context window), rolling memory summarizes "
+            "when estimated stored tokens exceed ~80% of this budget; otherwise summarize_threshold applies."
         ),
     )
     summarizer_model: Any = None
@@ -1123,9 +1123,10 @@ class AgentConfig(BaseModel):
     react_force_tool_choice_on_user_turn: bool = Field(
         default=True,
         description=(
-            "Opening turn: tool_choice=required for Groq-style providers. Qwen3/vLLM/LiteLLM: "
-            "no tool_choice override (provider default). User blocks flattened via LLM wrapper "
-            "(always). False disables tool_choice overrides only."
+            "Opening turn: tool_choice=required for Groq/Cerebras-style providers. Strict chat "
+            "templates (vLLM, LiteLLM routers, self-hosted): no tool_choice override (provider "
+            "default). User blocks flattened via LLM wrapper (always). False disables "
+            "tool_choice overrides only."
         ),
     )
 
@@ -1146,6 +1147,30 @@ class AgentConfig(BaseModel):
             "ReAct: how many times the user_callback may extend the run with a user-chosen "
             "retry after REACT_TOOL_USE_FAILED. See ``agloom.hitl_contract``."
         ),
+    )
+
+    tool_scratchpad: bool = Field(
+        default=True,
+        description=(
+            "When True and tools are present, large tool outputs are stored off-thread with "
+            "digests in the model transcript; use recall_tool_artifact for full payloads."
+        ),
+    )
+    tool_digest_min_chars: int = Field(
+        default=4000,
+        ge=500,
+        description="Minimum tool result size (chars) before storing full output in scratchpad.",
+    )
+    context_window_tokens: int | None = Field(
+        default=None,
+        ge=4096,
+        description="Model context window for REACT budgeting; inferred from model when unset.",
+    )
+    context_compact_ratio: float = Field(
+        default=0.82,
+        ge=0.5,
+        le=0.95,
+        description="Fraction of context window usable for input before compaction runs.",
     )
 
     max_pattern_depth: int = Field(

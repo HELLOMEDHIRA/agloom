@@ -7,15 +7,19 @@ from collections.abc import Mapping
 from typing import Any, cast
 from uuid import uuid4
 
-from ..llm.qwen_compat import (
+from ..llm.chat_template_compat import (
     _DEFAULT_USER_TURN,
     ensure_messages_for_chat_template,
     exception_indicates_missing_user_query,
     extract_model_label,
     human_message_after_missing_user_query,
-    model_needs_qwen_chat_template_compat,
+    uses_strict_chat_template,
     repair_react_graph_state,
 )
+from ..context.compaction import append_context_compaction_recap, compact_messages_for_budget
+from ..context.tool_scratchpad import ToolScratchpad
+from ..context.tokens import estimate_messages_tokens
+from ..context.window import infer_context_window_tokens, reserved_output_tokens
 from ..src.multimodal import content_blocks_to_text, text_from_user_turn
 from ..src.wire_stream_content import (
     answer_text_from_content,
@@ -55,6 +59,7 @@ from .hitl_tool_coalesce import build_default_hitl_coalescer
 from ._steps_accounting import steps_taken_from_audit
 from .middleware import HumanApprovalMiddleware, UserAbort, build_langchain_agent_middleware
 from .react_tool_recovery import (
+    exception_indicates_context_window_exceeded,
     exception_indicates_tool_use_failed as _exception_indicates_tool_use_failed,
 )
 from .react_tool_recovery import (
@@ -197,7 +202,7 @@ def _react_timeout_failure_message(agent: dict, *, wall_seconds: float, path: st
     graph_t = int(_react_graph_wall_timeout(agent))
     return (
         f"REACT timed out after {int(wall_seconds)}s ({path}). "
-        f"Self-hosted Qwen/vLLM with MCP tools often needs "
+        f"Self-hosted inference with MCP tools often needs "
         f"create_agent(llm_timeout>={max(llm_t, 300)}, react_graph_timeout>={max(graph_t, 600)})."
     )
 
@@ -317,7 +322,7 @@ def _react_tool_names(tools: list[Any]) -> frozenset[str]:
 
 
 def _react_opening_messages(query: str | list[Any]) -> list[Any]:
-    """Opening user turn with Qwen-safe plain-string content when possible."""
+    """Opening user turn with plain-string content for strict chat templates when possible."""
     if isinstance(query, str):
         text = query.strip()
     else:
@@ -341,11 +346,46 @@ def _react_invoke_state(
     return {**state, "messages": repaired}
 
 
+def _compact_react_state_for_context_pressure(agent: dict, state: dict) -> dict | None:
+    """Emergency compaction when the provider reports context window exhaustion."""
+    pad = agent.get("_tool_scratchpad")
+    if not isinstance(pad, ToolScratchpad):
+        return None
+    window = int(agent.get("context_window_tokens") or infer_context_window_tokens(agent.get("llm")))
+    reserved = int(
+        agent.get("context_reserved_output_tokens")
+        or reserved_output_tokens(agent.get("llm"), context_window=window)
+    )
+    ratio = float(agent.get("context_compact_ratio", 0.82))
+    budget = max(2048, int(window * ratio) - reserved)
+    msgs = list(state.get("messages") or [])
+    if not msgs:
+        return None
+    compacted = compact_messages_for_budget(msgs, pad, target_input_tokens=budget)
+    compacted = append_context_compaction_recap(compacted, scratchpad=pad)
+    if estimate_messages_tokens(compacted) >= estimate_messages_tokens(msgs):
+        return None
+    return {**state, "messages": compacted}
+
+
 def _langchain_react_middleware(agent: dict, *extra: Any) -> list[Any]:
     """Middleware for LangChain ``create_agent`` inside ReAct (tool_choice + optional HITL)."""
+    from .tool_context_middleware import (
+        build_tool_context_middleware,
+        tool_context_settings_from_mapping,
+    )
+
+    leading: list[Any] = []
+    trailing: list[Any] = []
+    settings = tool_context_settings_from_mapping(agent)
+    if settings is not None:
+        budget_mw, scratch_mw = build_tool_context_middleware(settings)
+        leading.append(budget_mw)
+        trailing.append(scratch_mw)
+
     return build_langchain_agent_middleware(
         force_tool_choice_on_user_turn=bool(agent.get("react_force_tool_choice_on_user_turn", True)),
-        extras=list(extra),
+        extras=[*leading, *extra, *trailing],
     )
 
 
@@ -485,7 +525,7 @@ async def handle_react(
     _mlabel = extract_model_label(_llm)
     logger.info(
         f"[React] agloom={_agloom_version} model_label={_mlabel!r} "
-        f"chat_template_compat={model_needs_qwen_chat_template_compat(_mlabel)}"
+        f"strict_chat_template={uses_strict_chat_template(_mlabel)}"
     )
 
     if not tools:
@@ -755,6 +795,17 @@ async def _run_react_ainvoke_with_retries(
                         },
                     )
                     continue
+            elif exception_indicates_context_window_exceeded(exc) and attempt < max_attempts:
+                compacted = _compact_react_state_for_context_pressure(agent, state)
+                if compacted is not None:
+                    logger.warning(
+                        f"{log_prefix} ⚠ context window exceeded on attempt "
+                        f"{attempt}/{max_attempts} (agent={name}) — compacting scratchpad "
+                        f"and retrying: {format_exception_message(exc)}"
+                    )
+                    await asyncio.sleep(_react_retry_delay(attempt))
+                    state = _react_invoke_state(agent, query, compacted)
+                    continue
                 if user_cb and user_recovery_budget > 0:
                     user_recovery_budget -= 1
                     decision = await _user_decision_after_tool_use_failed(user_cb, exc)
@@ -808,6 +859,8 @@ async def _run_react_ainvoke_with_retries(
                 )
             elif exception_indicates_missing_user_query(exc):
                 fail_note = "Chat template rejected the message list (no user query found). "
+            elif exception_indicates_context_window_exceeded(exc):
+                fail_note = "Context window exceeded after compaction retries. "
             else:
                 fail_note = ""
             exc_str = format_exception_message(exc)
@@ -1180,6 +1233,12 @@ async def _handle_react_streaming(
                     + [HumanMessage(content=human_message_after_missing_user_query())]
                 },
             )
+        elif exception_indicates_context_window_exceeded(exc):
+            compacted = _compact_react_state_for_context_pressure(agent, {"messages": list((initial_state or {}).get("messages") or _react_opening_messages(query))})
+            if compacted is not None:
+                initial_state = _react_invoke_state(agent, query, compacted)
+            elif initial_state is not None:
+                initial_state = _react_invoke_state(agent, query, initial_state)
         elif initial_state is not None:
             initial_state = _react_invoke_state(agent, query, initial_state)
         return await _run_react_ainvoke_with_retries(

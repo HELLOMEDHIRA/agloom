@@ -114,6 +114,13 @@ def extend_invoke_config_with_event_queue(
         base["react_force_tool_choice_on_user_turn"] = agent.get(
             "react_force_tool_choice_on_user_turn", True
         )
+        if agent.get("_tool_scratchpad") is not None:
+            base["_tool_scratchpad"] = agent["_tool_scratchpad"]
+            base["tool_scratchpad"] = agent.get("tool_scratchpad", True)
+            base["tool_digest_min_chars"] = agent.get("tool_digest_min_chars", 4000)
+            base["context_window_tokens"] = agent.get("context_window_tokens")
+            base["context_reserved_output_tokens"] = agent.get("context_reserved_output_tokens")
+            base["context_compact_ratio"] = agent.get("context_compact_ratio", 0.82)
     return base
 
 
@@ -291,13 +298,26 @@ async def _react_graph_astream_to_result(
 def _worker_react_middleware(invoke_config: dict | None, worker_id: str) -> list[Any]:
     """Tool-choice + L2 HITL middleware for supervisor/reflection/swarm worker ReAct agents."""
     from agloom.patterns.middleware import build_langchain_agent_middleware
+    from agloom.patterns.tool_context_middleware import (
+        build_tool_context_middleware,
+        tool_context_settings_from_mapping,
+    )
 
     force = True
+    cfg: dict[str, Any] = {}
     if invoke_config is not None:
         force = bool(invoke_config.get("react_force_tool_choice_on_user_turn", True))
+        cfg = invoke_config
+    leading: list[Any] = []
+    trailing: list[Any] = []
+    settings = tool_context_settings_from_mapping(cfg)
+    if settings is not None:
+        budget_mw, scratch_mw = build_tool_context_middleware(settings)
+        leading.append(budget_mw)
+        trailing.append(scratch_mw)
     return build_langchain_agent_middleware(
         force_tool_choice_on_user_turn=force,
-        extras=_hitl_middleware_for_invoke(invoke_config, worker_id),
+        extras=[*leading, *_hitl_middleware_for_invoke(invoke_config, worker_id), *trailing],
     )
 
 

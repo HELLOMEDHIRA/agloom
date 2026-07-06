@@ -44,21 +44,21 @@ Omitting the provider prefix works in some environments (e.g. `deepseek/deepseek
 
 ---
 
-## Qwen3 / vLLM / LiteLLM and tool calling
+## Strict chat templates and tool calling
 
-Self-hosted **Qwen3** models (e.g. `litellm:qwen36fp8`, `vllm:Qwen/...`) use Jinja chat templates that are strict about message shape. Agloom handles this inside REACT and worker agents:
+Some providers — especially **self-hosted inference** (vLLM, SGLang), **LiteLLM routers**, and models with strict Jinja chat templates — reject malformed message lists or forced `tool_choice` on follow-up turns. Agloom handles this inside REACT and worker agents via `agloom.llm.chat_template_compat`:
 
 | Behavior | Detail |
 | --- | --- |
-| **Qwen detection** | Model id contains `qwen` / `qwq`, or LiteLLM/vLLM routing (incl. opaque model groups like `qwen36fp8`) |
-| **tool_choice** | Strict-template models: **no override** (provider default). Groq-style: `required` on opening turn only |
+| **Strict-template detection** | `uses_strict_chat_template()` — vLLM/LiteLLM routing, opaque model groups, or model ids with known strict-template markers |
+| **tool_choice** | Strict-template models: **no override** (provider default). Groq/Cerebras-style: `required` on opening turn only |
 | **User content** | LangChain multimodal content blocks are flattened to plain strings before each LLM call |
 
 If you still see ``No user query found in messages`` after upgrading agloom:
 
-1. Confirm the integrator is on a build that includes `agloom.llm.qwen_compat`.
-2. On the vLLM server, enable auto tool choice and a Qwen-compatible parser (e.g. `--enable-auto-tool-choice`, `--tool-call-parser qwen3_coder`).
-3. See [Errors — LiteLLM / vLLM / Qwen3](../configuration/errors.md).
+1. Confirm the integrator is on a build that includes `agloom.llm.chat_template_compat`.
+2. On the inference server, enable auto tool choice and the **tool-call parser** that matches your model family (e.g. vLLM `--enable-auto-tool-choice` with the appropriate `--tool-call-parser`).
+3. See [Errors — strict chat templates](../configuration/errors.md).
 
 ``react_force_tool_choice_on_user_turn=False`` disables **tool_choice overrides only**; message flattening still runs.
 

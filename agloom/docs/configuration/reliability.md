@@ -29,7 +29,7 @@ async def main():
     )
 ```
 
-When a timeout fires, REACT returns `success=False` with an actionable message (not a bare ``TimeoutError``) and emits an ``error`` AgentEvent on streamed runs. Tighten **`classifier_timeout`** in latency-sensitive APIs; for self-hosted Qwen + MCP tool loops use **`llm_timeout=300`** and **`react_graph_timeout=600`** (or higher).
+When a timeout fires, REACT returns `success=False` with an actionable message (not a bare ``TimeoutError``) and emits an ``error`` AgentEvent on streamed runs. Tighten **`classifier_timeout`** in latency-sensitive APIs; for long self-hosted + MCP tool loops use **`llm_timeout=300`** and **`react_graph_timeout=600`** (or higher).
 
 When LangGraph hits **`react_recursion_limit`** (default 25 graph steps), REACT also returns **`success=False`** — not a partial answer from the last model turn. Raise **`react_recursion_limit`** for long investigations (e.g. `50`–`100` for MCP-heavy RCA).
 

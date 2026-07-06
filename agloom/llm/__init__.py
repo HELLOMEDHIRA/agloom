@@ -8,8 +8,8 @@ Public API::
 The model resolver supports all LangChain provider integrations via
 explicit ``provider:model_id`` syntax or automatic API-key detection.
 
-Qwen3/vLLM chat-template compatibility for tool-bearing agents lives in
-``agloom.llm.qwen_compat`` (used internally by REACT middleware).
+Strict chat-template compatibility for tool-bearing agents lives in
+``agloom.llm.chat_template_compat`` (used internally by REACT middleware).
 """
 
 from .model_resolver import (
