@@ -175,4 +175,25 @@ memory:
     expect(y.summarizer_model).toBe('groq:meta-llama/llama-3.3-70b-versatile')
     unlinkSync(p)
   })
+
+  it('flattens execution and harness into create_agent-oriented keys', () => {
+    const p = writeYaml(`
+execution:
+  llm_timeout: 800
+  classifier_timeout: 120
+  react_graph_timeout: 900
+  react_recursion_limit: 50
+harness:
+  project_name: rca-platform
+  goal: Checkout latency RCA
+`)
+    const y = parseAgloomYamlFile(p)
+    expect(y.llm_timeout).toBe(800)
+    expect(y.turn_planner_timeout).toBe(120)
+    expect(y.react_graph_timeout).toBe(900)
+    expect(y.react_recursion_limit).toBe(50)
+    expect(y.harness_project_name).toBe('rca-platform')
+    expect(y.harness_goal).toBe('Checkout latency RCA')
+    unlinkSync(p)
+  })
 })

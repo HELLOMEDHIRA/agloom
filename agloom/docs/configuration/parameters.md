@@ -5,6 +5,9 @@ Complete reference for **`create_agent`**. Only **`model`** is required; everyth
 !!! info "Call-time options"
     **`thread_id`**, **`user_id`**, and **`context`** are passed to **`ainvoke`** / streaming methods — not to `create_agent`. See [Runtime parameters](#runtime-parameters-method-signatures) below.
 
+!!! important "No `AGLOOM_*` env for agent behavior"
+    **Agent tuning is not read from environment variables.** Pass kwargs to **`create_agent(...)`** when embedding in Python. For **`agloom-runtime serve`** / the CLI, the same knobs flow through **`agloom.yaml`** (`execution.*`, `harness.*`, `safety.*`) and runtime argv (`--llm-timeout`, `--no-harness`, …) into **`create_agent`** — not `AGLOOM_LLM_TIMEOUT`, `AGLOOM_HARNESS_ENABLED`, etc. Infrastructure env vars (`AGLOOM_RUNTIME`, provider API keys, session-marker security) are separate; see [CLI config](../../agloom_cli/config.md). Full contract: [Integration overview — Configuration contract](../guides/developer-overview.md#configuration-contract-single-source-of-truth).
+
 ## Core
 
 | Parameter | Type | Default | Description |

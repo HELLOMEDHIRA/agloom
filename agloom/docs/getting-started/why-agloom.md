@@ -45,6 +45,12 @@ Timeouts, retries, rate limiting, circuit breakers, concurrent worker limits, st
 
 **agloom fix:** All of these are built in and configurable via `create_agent` parameters. Set `llm_timeout=60`, `max_retries=3`, `rate_limit=10` and move on.
 
+### 7. "My agent forgets the plan across sessions"
+
+Multi-day coding or RCA work lives only in chat history. There is no durable task list, no verification steps, no git checkpoints tied to progress.
+
+**agloom fix:** The **long-running harness** gives your agent a structured task ledger (`harness_plan`), **HARNESS CURRENT FOCUS** on every turn, and progress/git tools. Enable in Python with `harness=True` + `store=`; the CLI turns it on by default when a store is open. See [Long-running harness](../features/harness.md).
+
 ---
 
 ## How agloom Compares
@@ -52,13 +58,15 @@ Timeouts, retries, rate limiting, circuit breakers, concurrent worker limits, st
 | Capability | LangChain `create_react_agent` | agloom `create_agent` |
 | --- | --- | --- |
 | Patterns | 1 (REACT only) | 9 (auto-selected) |
-| Classification | Manual | Automatic |
+| Turn planner | Manual | Automatic ([guide](../concepts/turn-planner.md)) |
+| Long-running harness | No | Task ledger + git tools ([guide](../features/harness.md)) |
 | Skill learning | No | Built-in |
 | Feedback | No | Auto-eval + user + trends |
 | Memory | DIY wiring | Always on + `thread_id` + `store=` |
 | Streaming | Basic | Combined tokens + events in one stream, real-time for all patterns |
 | Token tracking | No | Built-in |
 | HITL | Basic | 4 levels (pattern/tool/worker/signal) |
+| AGP clients | No | CLI + web + custom ([guide](../guides/clients-overview.md)) |
 | Timeouts/retries | DIY | Configurable parameters |
 | Circuit breaker | No | Built-in |
 | Rate limiting | No | Built-in |
@@ -88,6 +96,9 @@ Already on LangChain’s **`create_agent`**? See **[LangChain `create_agent` →
 | --- | --- |
 | Run code now | [Quick start](quickstart.md) |
 | See the pipeline | [How it works](../concepts/how-it-works.md) |
+| Understand auto routing | [Turn planner](../concepts/turn-planner.md) |
+| Multi-session coding / RCA | [Long-running harness](../features/harness.md) |
 | Pick patterns | [Execution patterns](../concepts/patterns.md) |
 | Build a chat UI | [Streaming & events](../features/streaming.md) |
+| Use CLI or web | [Clients overview](../guides/clients-overview.md) |
 | Embed in your platform | [Integration overview](../guides/developer-overview.md) |

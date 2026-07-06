@@ -41,6 +41,36 @@ agloom-runtime serve --obs --obs-db ./obs.sqlite --obs-port 8766
 | `--agent-store-path` | `.agloom/graph_store.sqlite` | SQLite file for agent store. |
 | `--no-harness` | off | Disable harness tools (progress + git); skills/memory remain if store enabled. |
 
+### Execution (`create_agent` kwargs)
+
+Mapped from **`agloom.yaml`** `execution.*` / `harness.*` / `safety.*` or explicit flags below — **not** from `AGLOOM_*` environment variables.
+
+| Flag | Maps to `create_agent` |
+| --- | --- |
+| `--llm-timeout <sec>` | `llm_timeout` |
+| `--turn-planner-timeout` / `--classifier-timeout` | `turn_planner_timeout` |
+| `--react-graph-timeout` | `react_graph_timeout` |
+| `--react-recursion-limit` | `react_recursion_limit` |
+| `--max-concurrent` | `max_concurrent` |
+| `--max-retries` | `max_retries` |
+| `--no-memory-tools` | `enable_memory_tools=False` |
+| `--harness-project-name` | `HarnessMetadata.project_name` |
+| `--harness-goal` | `HarnessMetadata.goal` |
+| `--no-require-tool-approval` | `require_tool_approval_for_cli_tools=False` |
+
+Example YAML:
+
+```yaml
+execution:
+  llm_timeout: 800
+  classifier_timeout: 120
+harness:
+  project_name: rca-platform
+  goal: Checkout latency RCA
+```
+
+See [All parameters](../configuration/parameters.md) and [CLI config](../../agloom_cli/config.md).
+
 !!! note "CLI default differs"
     The **`agloom`** npm CLI passes **`--store sqlite`** by default so sessions can be listed and replayed. Bare **`agloom-runtime serve`** defaults to **`--store none`**. See [agloom_cli flags](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/flags/).
 

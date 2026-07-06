@@ -23,12 +23,24 @@ Production: **`npm run build`** → serve **`dist/`** with **`VITE_AGP_WS_URL=ws
 | Surface | Purpose |
 | ------- | ------- |
 | **Chat** | Streaming assistant, full tool rows, inline HITL |
+| **Harness** | Task ledger tab from `harness.synced`; header **harness on/off** badge |
 | **Runtime panel** | Graph, workers, execution trace, artifacts |
 | **Observability** | `/observe` dashboard and per-session replay |
 
 The web app is an **AGP consumer** — it does not run Python in the browser.
 
-When the runtime opens with a LangGraph store (default), **harness** is usually on: the header shows **harness on/off**, and `progress.step` lines (`Harness bound`, `Harness planned`, …) appear in the chat trace. Disable with `agloom-runtime serve --no-harness`.
+When the runtime opens with a LangGraph store (default), **harness** is usually on: the header shows **harness on/off**, `progress.step` lines (`Harness bound`, `Harness planned`, …) appear in the chat trace, and the **Harness** tab lists durable tasks with verification steps. Disable with `agloom-runtime serve --no-harness`.
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│  harness on │ tokens ↑↓                                     │
+├──────────────────────────┬──────────────────────────────────┤
+│  Chat + tools + HITL     │  Graph │ Workers │ Trace │        │
+│                          │  Harness │ Artifacts              │
+└──────────────────────────┴──────────────────────────────────┘
+```
+
+Slash commands in the composer (when harness is on): `/checkpoint`, `/diff`, `/hint`, `/git status`.
 
 ---
 
@@ -37,7 +49,7 @@ When the runtime opens with a LangGraph store (default), **harness** is usually 
 | Path | Screen |
 | ---- | ------ |
 | **`/`** | Home — sessions / navigation |
-| **`/session/:id`** | Chat + runtime sidebar |
+| **`/session/:id`** | Chat + runtime sidebar (includes Harness tab) |
 | **`/observe`** | Live metrics and sessions |
 | **`/sessions/:id/trace`** | Trace viewer & replay |
 | **`/settings`** | Connection hints |
@@ -48,8 +60,10 @@ When the runtime opens with a LangGraph store (default), **harness** is usually 
 
 | Page | Content |
 | ---- | ------- |
-| [architecture.md](architecture.md) | Stack, state reducer, display rules, deployment |
+| [architecture.md](architecture.md) | Stack, state reducer, harness wire, deployment |
+| [Long-running harness](../agloom/features/harness.md) | Python + wire contract for the ledger |
 | [AGP protocol](../agloom/protocol/agp.md) | Wire contract (MkDocs **Protocol**) |
+| [Clients overview](../agloom/guides/clients-overview.md) | CLI vs web vs custom |
 | [Production deployment](../agloom/guides/deployment.md) | Docker, reverse proxy, `VITE_AGP_WS_URL` |
 
 ---

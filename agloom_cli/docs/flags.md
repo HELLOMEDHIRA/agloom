@@ -57,6 +57,27 @@ TUI **`multiline`** is not a CLI flag — set it in **`agloom.yaml`** (see [Conf
 
 There is **no** `--no-memory` or `--no-skills` flag on the npm CLI or `agloom-runtime serve`; YAML `memory.enabled: false` / `skills.enabled: false` is ignored for disabling those systems (see [Config](config.md)).
 
+## Execution / harness (`create_agent` via YAML)
+
+The npm CLI does **not** wrap every runtime execution flag. Configure via **`.agloom/agloom.yaml`** (merged into runtime argv) or pass-through after `--`:
+
+| YAML block | Runtime argv (via merge) | `create_agent` |
+| --- | --- | --- |
+| `execution.llm_timeout` | `--llm-timeout` | `llm_timeout` |
+| `execution.classifier_timeout` | `--turn-planner-timeout` | `turn_planner_timeout` |
+| `execution.react_graph_timeout` | `--react-graph-timeout` | `react_graph_timeout` |
+| `execution.react_recursion_limit` | `--react-recursion-limit` | `react_recursion_limit` |
+| `harness.project_name` / `goal` | `--harness-project-name`, `--harness-goal` | `harness_metadata` |
+| `harness.enabled: false` | `--no-harness` | `harness=False` |
+| `safety.require_approval: false` | `--no-require-tool-approval` | `require_tool_approval_for_cli_tools=False` |
+
+```bash
+# Passthrough when you need a flag not wrapped by Commander:
+agloom -- --llm-timeout 800 --turn-planner-timeout 120
+```
+
+Agent behavior env vars (`AGLOOM_LLM_TIMEOUT`, `AGLOOM_HARNESS_ENABLED`, …) are **not** supported — see [Config](config.md).
+
 ## CLI tools (sandbox)
 
 Default npm behavior enables **`--with-cli-tools`** with working dir = cwd unless opted out.

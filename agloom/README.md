@@ -59,8 +59,9 @@ asyncio.run(main())
 ## Integration paths
 
 1. **Application** — embed `create_agent` in your service ([quick start](https://agloom.readthedocs.io/_packages/agloom/getting-started/quickstart/))
-2. **Streaming UI** — `astream_events` or `astream_agp_events` ([streaming guide](https://agloom.readthedocs.io/_packages/agloom/features/streaming/))
-3. **AGP clients** — `agloom-runtime serve` + CLI/web ([integration overview](https://agloom.readthedocs.io/_packages/agloom/guides/developer-overview/))
+2. **Long-running work** — harness task ledger + git tools ([harness guide](https://agloom.readthedocs.io/_packages/agloom/features/harness/))
+3. **Streaming UI** — `astream_events` or `astream_agp_events` ([streaming guide](https://agloom.readthedocs.io/_packages/agloom/features/streaming/))
+4. **AGP clients** — `agloom-runtime serve` + CLI/web ([clients overview](https://agloom.readthedocs.io/_packages/agloom/guides/clients-overview/))
 
 Examples: `agloom/examples/` on GitHub.
 

@@ -53,6 +53,13 @@ execution:
   max_retries: 2
   llm_timeout: 120.0
   classifier_timeout: 60.0
+  # react_graph_timeout: 600.0
+  # react_recursion_limit: 25
+
+# Optional harness scope (on when runtime has a LangGraph store; use CLI --no-harness to disable)
+# harness:
+#   project_name: my-project
+#   goal: Ship feature X with verification
 
 safety:
   require_approval: true

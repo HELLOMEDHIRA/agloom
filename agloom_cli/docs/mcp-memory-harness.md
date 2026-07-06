@@ -36,7 +36,7 @@ Under the hood the runtime calls **`create_agent(..., harness=…, harness_metad
 For **`agloom`** / **`agloom-runtime serve`**, harness is **on by default** whenever a LangGraph store is open. To turn it off:
 
 - **`agloom --no-harness`** or **`agloom-runtime serve --no-harness`** (preferred)
-- Optional before spawn: **`AGLOOM_HARNESS=0`** or **`AGLOOM_HARNESS_ENABLED=0`**
+- **`harness.enabled: false`** in `.agloom/agloom.yaml`
 
 ```text
 [agloom-runtime] agent LT store=sqlite harness=on

@@ -146,6 +146,7 @@ DEFAULT_AGLOOM_YAML = f"""# Agloom — https://github.com/HELLOMEDHIRA/agloom
 #   • mcp.servers — agsuperbrain → .agloom/mcp/agsuperbrain.yaml (stdio MCP; `agsuperbrain` CLI on PATH for mcp-serve)
 #   • .agloom/rules/ — drop *.md / *.mdc files
 #   • memory.* / skills.* — session memory and skill registry are tied to the store; tune limits below (no toggles).
+#   • harness — on by default when agloom-runtime has a LangGraph store (sqlite); use --no-harness to disable
 #
 # Merge is shallow per layer: a whole top-level `ai:` block replaces prior `ai` from earlier files.
 # ai.system_prompt: set by agloom-cli bootstrap (prompts/cli_workspace_prompt.txt) or AGP command.config.set
@@ -179,6 +180,13 @@ execution:
   max_retries: 2
   llm_timeout: 120.0
   classifier_timeout: 60.0
+  # react_graph_timeout: 600.0
+  # react_recursion_limit: 25
+
+# Optional harness scope (on when runtime has a LangGraph store; use --no-harness to disable)
+# harness:
+#   project_name: my-project
+#   goal: Ship feature X with verification
 
 safety:
   require_approval: true

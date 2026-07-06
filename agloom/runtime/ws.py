@@ -71,7 +71,6 @@ async def serve_ws(
     *,
     base_args: Namespace,
     lg_store: Any | None,
-    use_harness: bool,
     host: str = "127.0.0.1",
     port: int = 8765,
     store: EventStore | None = None,
@@ -111,7 +110,6 @@ async def serve_ws(
             ws,
             base_args=base_args,
             lg_store=lg_store,
-            use_harness=use_harness,
             store=store,
             heartbeat_interval=heartbeat_interval,
             budget_tokens=budget_tokens,
@@ -139,7 +137,6 @@ async def _session_loop(
     *,
     base_args: Namespace,
     lg_store: Any | None,
-    use_harness: bool,
     store: EventStore | None,
     heartbeat_interval: float,
     budget_tokens: int | None = None,
@@ -154,8 +151,10 @@ async def _session_loop(
     from agloom.runtime.serve_cli import (
         build_create_agent_kwargs,
         cli_tools_options_from_args,
+        harness_metadata_from_args,
         open_isolated_session_memory,
         resolve_llm_for_serve,
+        resolve_use_harness,
     )
     from agloom.runtime.session_bootstrap import (
         connect_mcp_or_raise,
@@ -182,6 +181,7 @@ async def _session_loop(
     session_id = prepared.session_id
     initial_thread = prepared.initial_thread
     merged_args = prepared.working_args
+    use_harness = resolve_use_harness(merged_args, lg_store=lg_store)
 
     async def _send_error(msg: str) -> None:
         try:
@@ -253,7 +253,9 @@ async def _session_loop(
         try:
             from agloom.harness.metadata import runtime_default_harness_metadata
 
-            harness_meta = runtime_default_harness_metadata() if use_harness else None
+            harness_meta = harness_metadata_from_args(merged_args) if use_harness else None
+            if harness_meta is None and use_harness:
+                harness_meta = runtime_default_harness_metadata()
             agent = await create_agent(
                 model=llm,
                 name="agloom-runtime",

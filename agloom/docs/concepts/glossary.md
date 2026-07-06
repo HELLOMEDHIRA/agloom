@@ -4,7 +4,7 @@ Short definitions for terms used across agloom, AGP, and the docs. (Wording may 
 
 | Term | Meaning |
 | --- | --- |
-| **Turn planner** | Per-turn LLM step (`plan_turn` / `analyze_query`) that picks pattern, optional `subtasks`, optional `harness_plan`, and orchestration hints. Implemented in the classifier module; runs **every turn** unless `frozen=True`. |
+| **Turn planner** | Per-turn LLM step ([`plan_turn` / `analyze_query`](turn-planner.md)) that picks pattern, optional `subtasks`, optional `harness_plan`, and orchestration hints. Runs **every turn** unless `frozen=True`. |
 | **Harness** | Optional cross-session **task ledger** (`harness=True` + `store=` + `harness_metadata`). Progress/git tools + **HARNESS CURRENT FOCUS** steer each turn. |
 | **`harness_plan`** | Durable task list from the turn planner, persisted on the progress artifact. Distinct from **`subtasks`** (this-turn worker routing). |
 | **`subtasks`** | This-turn worker assignments for SUPERVISOR, SWARM, etc. May be empty while `harness_plan` still seeds REACT focus. |
@@ -23,4 +23,4 @@ Short definitions for terms used across agloom, AGP, and the docs. (Wording may 
 | **Progress trace** | Infrastructure setup lines (`progress` / `progress.step`) — classify spinner, harness init, skills seed — not model chain-of-thought. |
 | **Reasoning tokens** | Provider-native reasoning text on the stream (`token` / `token.delta` with `role=reasoning`), separate from the final answer. |
 
-See also: [Long-running harness](../features/harness.md), [Thinking trace & reasoning streams](../features/thinking-events.md), [Recursive orchestration](../features/orchestration.md), [Wire tokens & metric.tokens](../features/wire-tokens.md), and [AGP — Agloom Protocol](../protocol/agp.md).
+See also: [Turn planner](turn-planner.md), [Long-running harness](../features/harness.md), [Thinking trace & reasoning streams](../features/thinking-events.md), [Recursive orchestration](../features/orchestration.md), [Wire tokens & metric.tokens](../features/wire-tokens.md), and [AGP — Agloom Protocol](../protocol/agp.md).

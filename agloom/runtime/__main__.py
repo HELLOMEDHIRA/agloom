@@ -262,6 +262,7 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             apply_api_key_env,
             build_create_agent_kwargs,
             cli_tools_options_from_args,
+            harness_metadata_from_args,
             open_isolated_session_memory,
             resolve_llm_for_serve,
             resolve_use_harness,
@@ -402,7 +403,9 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         try:
             from agloom.harness.metadata import runtime_default_harness_metadata
 
-            harness_meta = runtime_default_harness_metadata() if use_harness else None
+            harness_meta = harness_metadata_from_args(args) if use_harness else None
+            if harness_meta is None and use_harness:
+                harness_meta = runtime_default_harness_metadata()
             agent = await create_agent(
                 model=llm,
                 name="agloom-runtime",
@@ -691,7 +694,10 @@ async def _serve_ws(args: argparse.Namespace) -> int:
         store = MemoryEventStore()
 
     lg_store, lg_store_cleanup = await _open_runtime_langgraph_store(args)
-    use_harness = resolve_use_harness(args, lg_store=lg_store)
+    from .serve_cli import merge_agloom_yaml_into_namespace, resolve_use_harness
+
+    boot_args = merge_agloom_yaml_into_namespace(args, cwd=Path.cwd())
+    use_harness = resolve_use_harness(boot_args, lg_store=lg_store)
     if lg_store is not None:
         _eprint(
             f"[agloom-runtime] agent LT store={getattr(args, 'agent_store', 'sqlite')!r} "
@@ -704,7 +710,6 @@ async def _serve_ws(args: argparse.Namespace) -> int:
         await serve_ws(
             base_args=args,
             lg_store=lg_store,
-            use_harness=use_harness,
             host=args.host,
             port=args.port,
             store=store,
@@ -1159,6 +1164,76 @@ def _add_serve_agent_flags(serve: argparse.ArgumentParser) -> None:
         default=50,
         metavar="N",
         help="SessionMemory max_turns / rolling window size (starter YAML: memory.max_turns).",
+    )
+    serve.add_argument(
+        "--llm-timeout",
+        dest="llm_timeout",
+        type=float,
+        default=None,
+        metavar="SEC",
+        help="Per-call LLM wall clock (create_agent llm_timeout). YAML: execution.llm_timeout.",
+    )
+    serve.add_argument(
+        "--turn-planner-timeout",
+        "--classifier-timeout",
+        dest="turn_planner_timeout",
+        type=float,
+        default=None,
+        metavar="SEC",
+        help="Turn planner timeout (create_agent turn_planner_timeout). YAML: execution.classifier_timeout.",
+    )
+    serve.add_argument(
+        "--react-graph-timeout",
+        dest="react_graph_timeout",
+        type=float,
+        default=None,
+        metavar="SEC",
+        help="REACT graph wall clock (create_agent react_graph_timeout). YAML: execution.react_graph_timeout.",
+    )
+    serve.add_argument(
+        "--react-recursion-limit",
+        dest="react_recursion_limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help="LangGraph step cap for REACT loops (create_agent react_recursion_limit).",
+    )
+    serve.add_argument(
+        "--max-concurrent",
+        dest="max_concurrent",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Max parallel workers (create_agent max_concurrent). YAML: execution.max_concurrent.",
+    )
+    serve.add_argument(
+        "--max-retries",
+        dest="max_retries",
+        type=int,
+        default=None,
+        metavar="N",
+        help="LLM retry count (create_agent max_retries). YAML: execution.max_retries.",
+    )
+    serve.add_argument(
+        "--no-memory-tools",
+        dest="enable_memory_tools",
+        action="store_false",
+        default=None,
+        help="Disable load_memory / save_memory tools (create_agent enable_memory_tools=False).",
+    )
+    serve.add_argument(
+        "--harness-project-name",
+        dest="harness_project_name",
+        default=None,
+        metavar="NAME",
+        help="HarnessMetadata.project_name when harness is on (YAML: harness.project_name).",
+    )
+    serve.add_argument(
+        "--harness-goal",
+        dest="harness_goal",
+        default=None,
+        metavar="TEXT",
+        help="HarnessMetadata.goal when harness is on (YAML: harness.goal).",
     )
 
 

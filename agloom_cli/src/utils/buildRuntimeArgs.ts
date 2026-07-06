@@ -36,6 +36,15 @@ export type RuntimeArgsInput = {
   agentStore?: string
   agentStorePath?: string
   cliToolsWorkingDir: string
+  llmTimeout?: number
+  turnPlannerTimeout?: number
+  reactGraphTimeout?: number
+  reactRecursionLimit?: number
+  maxConcurrent?: number
+  maxRetries?: number
+  harnessProjectName?: string
+  harnessGoal?: string
+  enableMemoryTools?: boolean
   passthrough?: string[]
 }
 
@@ -93,6 +102,27 @@ export const buildRuntimeArgs = (o: RuntimeArgsInput): string[] => {
   if (o.agentStore) parts.push('--agent-store', o.agentStore)
   if (o.agentStorePath) parts.push('--agent-store-path', o.agentStorePath)
   if (o.noHarness) parts.push('--no-harness')
+  if (o.llmTimeout !== undefined && !Number.isNaN(o.llmTimeout)) {
+    parts.push('--llm-timeout', String(o.llmTimeout))
+  }
+  if (o.turnPlannerTimeout !== undefined && !Number.isNaN(o.turnPlannerTimeout)) {
+    parts.push('--turn-planner-timeout', String(o.turnPlannerTimeout))
+  }
+  if (o.reactGraphTimeout !== undefined && !Number.isNaN(o.reactGraphTimeout)) {
+    parts.push('--react-graph-timeout', String(o.reactGraphTimeout))
+  }
+  if (o.reactRecursionLimit !== undefined && !Number.isNaN(o.reactRecursionLimit)) {
+    parts.push('--react-recursion-limit', String(Math.floor(o.reactRecursionLimit)))
+  }
+  if (o.maxConcurrent !== undefined && !Number.isNaN(o.maxConcurrent)) {
+    parts.push('--max-concurrent', String(Math.floor(o.maxConcurrent)))
+  }
+  if (o.maxRetries !== undefined && !Number.isNaN(o.maxRetries)) {
+    parts.push('--max-retries', String(Math.floor(o.maxRetries)))
+  }
+  if (o.harnessProjectName) parts.push('--harness-project-name', o.harnessProjectName)
+  if (o.harnessGoal) parts.push('--harness-goal', o.harnessGoal)
+  if (o.enableMemoryTools === false) parts.push('--no-memory-tools')
   parts.push(...(o.passthrough ?? []))
   return parts
 }

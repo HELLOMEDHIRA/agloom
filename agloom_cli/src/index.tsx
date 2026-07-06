@@ -78,6 +78,15 @@ type CliOpts = {
   historyFile?: string
   budgetTokens?: number
   budgetCostUsd?: number
+  llmTimeout?: number
+  turnPlannerTimeout?: number
+  reactGraphTimeout?: number
+  reactRecursionLimit?: number
+  maxConcurrent?: number
+  maxRetries?: number
+  harnessProjectName?: string
+  harnessGoal?: string
+  enableMemoryTools?: boolean
   /** File paths forwarded as ``command.invoke`` attachments (base64 on the wire). */
   attach: string[]
   /** TUI: append each inbound AGP event as one NDJSON line. */
@@ -454,6 +463,15 @@ const runtimeArgsForOpts = (o: CliOpts, resolvedThread: string): string[] =>
     agentStore: o.agentStore,
     agentStorePath: o.agentStorePath,
     cliToolsWorkingDir: cwd,
+    llmTimeout: o.llmTimeout,
+    turnPlannerTimeout: o.turnPlannerTimeout,
+    reactGraphTimeout: o.reactGraphTimeout,
+    reactRecursionLimit: o.reactRecursionLimit,
+    maxConcurrent: o.maxConcurrent,
+    maxRetries: o.maxRetries,
+    harnessProjectName: o.harnessProjectName,
+    harnessGoal: o.harnessGoal,
+    enableMemoryTools: o.enableMemoryTools,
     passthrough: passthroughRuntime,
   })
 

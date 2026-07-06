@@ -4,11 +4,14 @@ agloom is two moving parts: the **Python `agloom` package** (library + `agloom-r
 
 ## Environment variables (checklist)
 
+**Agent tuning** (timeouts, harness, tool approval) is **not** configured via env — use `create_agent` kwargs or `agloom.yaml`. See [Configuration contract](developer-overview.md#configuration-contract-single-source-of-truth).
+
 | Variable | When |
 | --- | --- |
 | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GROQ_API_KEY`, … | Upstream LLM (see [LLM resolution](llm-resolution.md); CLI table under **agloom CLI → Models** on ReadTheDocs) |
 | `AGLOOM_RUNTIME` | Non-default path to the Python entrypoint for the bridge |
-| `AGLOOM_PROVIDER` / `AGLOOM_MODEL` | Optional defaults for auto-detect / library |
+| `AGLOOM_MODEL` / `AGLOOM_PROVIDER` | Optional **model defaults** when YAML/CLI omit `-m` — not execution timeouts or harness |
+| `AGLOOM_OMIT_API_KEY_FROM_SESSION` | Session marker security (omit API key from persisted snapshot) |
 | `VITE_AGP_WS_URL` | **Web** build: WebSocket URL for `agloom-runtime --transport=ws` |
 | `AWS_*` / `GOOGLE_APPLICATION_CREDENTIALS` | Bedrock / Vertex / cloud IAM providers |
 

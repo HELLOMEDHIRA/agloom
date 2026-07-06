@@ -21,6 +21,8 @@ your parser → dispatch on event.type
 
 The CLI does **not** embed Python. It forwards flags to **`agloom-runtime`** and parses stdout.
 
+**Configuration:** agent timeouts, harness scope, and tool approval come from **`.agloom/agloom.yaml`** (`execution.*`, `harness.*`, `safety.*`) merged into runtime argv — not from `AGLOOM_LLM_TIMEOUT`-style env vars. See [Config](config.md) and [Configuration contract](../agloom/guides/developer-overview.md#configuration-contract-single-source-of-truth).
+
 ---
 
 ## stdout vs stderr

@@ -7,9 +7,11 @@ Optional YAML layers configure defaults without long command lines. **Precedence
 1. Built-in CLI defaults  
 2. User file: **`~/.agloom/agloom.yaml`**  
 3. **Walk-up** from the current working directory (nearest parent toward disk root): **`.agloom/agloom.yaml`** first, then legacy **`./agloom.yaml`** if nested is absent  
-4. **`AGLOOM_*`** environment variables (see below)  
+4. **`AGLOOM_*`** environment variables — **bridge / model defaults only** (see below); **not** agent timeouts, harness, or feature toggles  
 5. **`--config /path/to/agloom.yaml`** explicit file  
 6. **Other CLI flags** (highest) — except **`multiline`**, which is **YAML-only** (TUI compose). Execution routing pattern is **not** user-configurable; the runtime turn planner selects it.
+
+**Agent behavior** (timeouts, harness metadata, tool approval, memory tools) is configured through **`create_agent` kwargs**. The CLI and runtime map **`execution.*`**, **`harness.*`**, and **`safety.*`** in YAML (plus matching `agloom-runtime serve` flags) into those kwargs. Environment variables such as `AGLOOM_LLM_TIMEOUT` or `AGLOOM_HARNESS_ENABLED` are **not** supported. See the full contract in the Python docs: [Configuration contract](../agloom/guides/developer-overview.md#configuration-contract-single-source-of-truth).
 
 **Canonical project config** is **`.agloom/agloom.yaml`**. On first bootstrap the CLI creates `.agloom/` and may **migrate** an old root `agloom.yaml` into `.agloom/` and remove stale root copies (legacy starter templates are replaced; custom prompts are preserved).
 
@@ -50,6 +52,30 @@ Validated fields (unknown keys are preserved via passthrough for forward compati
 | `mcp` | array | Strings `name:path` or `{ name, config }` objects |
 
 Flat keys **`no_memory`** and **`no_skills`** are stripped when YAML is loaded — they are not supported configuration.
+
+### Nested `execution`, `harness`, and `safety`
+
+These blocks map to **`create_agent`** parameters (via runtime argv). They are **not** read from `AGLOOM_*` environment variables.
+
+```yaml
+execution:
+  llm_timeout: 120.0
+  classifier_timeout: 60.0   # → turn_planner_timeout
+  react_graph_timeout: 600.0
+  react_recursion_limit: 25
+  max_concurrent: 4
+  max_retries: 2
+
+harness:
+  project_name: rca-platform
+  goal: Checkout latency RCA
+  enabled: true                # false → same as agloom --no-harness
+
+safety:
+  require_approval: true       # false → --no-require-tool-approval
+```
+
+Equivalent runtime flags: `--llm-timeout`, `--turn-planner-timeout`, `--react-graph-timeout`, `--harness-project-name`, `--no-harness`, etc.
 
 ### Nested `memory` and `skills` (rich YAML)
 
@@ -103,15 +129,17 @@ Each session file includes an `effective_config` snapshot that **normally embeds
 
 ## Environment variables
 
-### CLI / bridge
+### CLI / bridge (infrastructure only)
 
 | Variable | Purpose |
 | --- | --- |
 | `AGLOOM_RUNTIME` | Override executable for Python bridge (default: `agloom-runtime` on `PATH`). |
-| `AGLOOM_MODEL` | Default model id (wired where runtime honors env). |
+| `AGLOOM_MODEL` | Default model id when YAML/CLI omit `-m`. |
 | `AGLOOM_PROVIDER` | Default provider slug for unprefixed / ambiguous ids (Python resolver). |
 | `AGLOOM_BANNER` | Set `0` / `false` to suppress the stderr startup banner. |
 | `AGLOOM_OMIT_API_KEY_FROM_SESSION` | When `1` / `true`, session JSON omits `api_key_secret` (names-only snapshot). |
+
+**Not supported:** `AGLOOM_LLM_TIMEOUT`, `AGLOOM_HARNESS_ENABLED`, `AGLOOM_ENABLE_STORE`, `AGLOOM_TOOL_AUTO_APPROVE`, or similar agent-behavior toggles. Use **`agloom.yaml`** `execution.*` / `harness.*` / `safety.*` or **`create_agent(...)`** kwargs instead.
 
 ### Per-provider API keys (curated)
 

@@ -22,6 +22,7 @@ from .hitl_allowlist import (
 )
 from .serve_cli import (
     inject_api_key_secret_from_session_marker,
+    merge_agloom_yaml_into_namespace,
     merge_api_key_env_from_session_marker,
     merge_base_url_from_session_marker,
     merge_ws_connection_args,
@@ -69,6 +70,7 @@ def prepare_runtime_session(
     """Ensure workspace, merge WS query overrides, write session marker JSON."""
     root = (cwd or Path.cwd()).resolve()
     working_args = merge_ws_connection_args(args, ws_path_query) if ws_path_query else args
+    working_args = merge_agloom_yaml_into_namespace(working_args, cwd=root)
     sessions_dir, yaml_created = ensure_agloom_workspace(root, args=working_args)
     bootstrap_optional_agsuperbrain(root, args=working_args)
 

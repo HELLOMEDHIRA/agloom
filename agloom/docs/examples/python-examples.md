@@ -6,12 +6,12 @@ Runnable scripts live under **`agloom/examples/`** in the GitHub repository. The
 
 | Example | Path | You will learn |
 | --- | --- | --- |
+| **Harness** (recommended for multi-session agents) | `agloom/examples/harness/harness_agent.py` | Durable task ledger + `HarnessMetadata` across turns |
 | **Minimal agent** | `agloom/examples/quickstart/basic_agent.py` | `create_agent`, `ainvoke`, first result |
 | **Tools & ReAct** | `agloom/examples/tools/tools_and_react.py` | `@tool`, automatic tool loop |
 | **Streaming** | `agloom/examples/streaming/streaming.py` | `astream_events` for UIs |
 | **Frozen / batch agent** | `agloom/examples/patterns/frozen_agent.py` | Fixed pattern bias, batch-style calls |
 | **Multi-agent** | `agloom/examples/multi_agent/multi_agent.py` | Supervisor-style workloads |
-| **Harness** | `agloom/examples/harness/harness_agent.py` | Durable task ledger + metadata |
 
 Each folder has a short **README** with prerequisites (API keys, extras).
 
@@ -20,6 +20,7 @@ Each folder has a short **README** with prerequisites (API keys, extras).
 ```bash
 uv sync --group dev
 export GROQ_API_KEY=your_key   # or OPENAI_API_KEY, etc.
+uv run python agloom/examples/harness/harness_agent.py
 uv run python agloom/examples/quickstart/basic_agent.py
 ```
 
@@ -28,10 +29,13 @@ Install only the extras you need, e.g. `pip install 'agloom[groq]'`.
 ## Prefer docs-first?
 
 - [Quickstart](../getting-started/quickstart.md) — install + first agent in one page
+- [Long-running harness](../features/harness.md) — task ledger for coding / RCA
 - [Create an agent](../concepts/create-agent.md) — full `create_agent` surface
+- [Use cases](../guides/use-cases.md) — map your problem to the right guide
 - [Production integration](../guides/production.md) — FastAPI, persistence, tenants
 
 ## Web and CLI
 
-- **CLI:** [agloom CLI docs](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/)
-- **Web workspace:** [agloom_web architecture](https://agloom.readthedocs.io/en/latest/_packages/agloom_web/architecture/)
+- **CLI:** [agloom CLI docs](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/) · [MCP, memory & harness](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/mcp-memory-harness/)
+- **Web workspace:** [Web overview](https://agloom.readthedocs.io/en/latest/_packages/agloom_web/) · [architecture](https://agloom.readthedocs.io/en/latest/_packages/agloom_web/architecture/)
+- **Clients:** [CLI, web & AGP clients](../guides/clients-overview.md)

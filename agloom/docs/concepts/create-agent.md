@@ -2,7 +2,7 @@
 
 `create_agent` is the **only entry point** you need for production agents. Pass a LangChain-compatible model (and optional tools, memory store, policies); it returns an agent object with `ainvoke`, streaming helpers, and cleanup.
 
-Under the hood agloom wires the **turn planner**, pattern handlers, guardrails, and optional MCP — you do not assemble those pieces yourself.
+Under the hood agloom wires the **[turn planner](turn-planner.md)**, pattern handlers, guardrails, and optional MCP — you do not assemble those pieces yourself.
 
 !!! tip "Coming from LangChain `create_agent`?"
     agloom uses the **same invoke shape** (`{"messages": [...]}`) as [LangChain’s `create_agent`](https://docs.langchain.com/oss/python/langchain/agents). The factory is **async**, and `ainvoke` returns an **`ExecutionResult`** (not a raw graph state dict). Full porting guide: **[Migrating from LangChain — `create_agent`](../guides/migration-from-langchain.md#from-langchain-create_agent)**.
@@ -29,6 +29,9 @@ async def create_agent(
 ```
 
 See [All Parameters](../configuration/parameters.md) for the complete reference.
+
+!!! important "Configuration contract"
+    Agent behavior is configured **only** through `create_agent` kwargs — not `AGLOOM_*` env vars for timeouts, harness, or tool approval. When using the CLI or `agloom-runtime serve`, the same knobs flow through **`agloom.yaml`** and runtime argv. Full contract: [Integration overview — Configuration contract](../guides/developer-overview.md#configuration-contract-single-source-of-truth).
 
 ### Long-running harness (optional)
 

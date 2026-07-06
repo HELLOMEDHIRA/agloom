@@ -6,6 +6,7 @@ Ship agloom agents behind APIs, workers, and multi-tenant products. This guide c
 
 | Concern | What to configure |
 | --- | --- |
+| **Agent behavior** | `create_agent` kwargs only — or `agloom.yaml` for CLI/runtime ([configuration contract](developer-overview.md#configuration-contract-single-source-of-truth)) |
 | **Secrets** | Provider API keys via env / secret store — never bake into images |
 | **Persistence** | `checkpointer` + durable `store` for threads; SQLite or your own `BaseStore` backend |
 | **Timeouts** | `llm_timeout`, `classifier_timeout` — see [Timeouts & retries](../configuration/reliability.md) |

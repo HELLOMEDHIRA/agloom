@@ -35,11 +35,11 @@ asyncio.run(main())
 
 ### What happened
 
-1. `create_agent` wired up the full pipeline — turn planner, pattern handlers, error handling
-
-If you are porting from **LangChain’s** `create_agent`, see [Migrating from LangChain](../guides/migration-from-langchain.md#from-langchain-create_agent).
+1. `create_agent` wired up the full pipeline — [turn planner](../concepts/turn-planner.md), pattern handlers, error handling
 2. `ainvoke` planned the turn and routed it to a pattern (often **DIRECT** for short factual questions — the exact pattern depends on the model and tools)
 3. The handler ran and returned the result
+
+If you are porting from **LangChain’s** `create_agent`, see [Migrating from LangChain](../guides/migration-from-langchain.md#from-langchain-create_agent).
 
 ## Inspecting the Result
 
@@ -156,6 +156,35 @@ asyncio.run(main())
 
 All runtime methods (`ainvoke`, `astream`, `astream_events`, `abatch`) accept `thread_id`, `user_id`, and `context`. See [Memory](../features/memory.md) for details.
 
+## Long-running work (harness)
+
+For **multi-session coding**, **RCA**, or any workflow where the agent must track tasks with verification steps across days, enable the **harness**:
+
+```python
+import asyncio
+from langgraph.store.memory import InMemoryStore
+from agloom import create_agent, HarnessMetadata
+
+async def main():
+    agent = await create_agent(
+        model=llm,
+        store=InMemoryStore(),
+        harness=True,
+        name="delivery-agent",
+        harness_metadata=HarnessMetadata(
+            project_name="feature-auth",
+            goal="Ship OAuth login with tests",
+        ),
+    )
+    await agent.ainvoke("Break this into tasks and start on the first one", thread_id="s1")
+    await agent.ainvoke("Mark the schema task complete and move to tests", thread_id="s1")
+
+asyncio.run(main())
+```
+
+!!! tip "CLI / runtime default"
+    The **agloom CLI** and **`agloom-runtime serve`** turn harness **on** when a LangGraph store is open (default sqlite). In Python you opt in with `harness=True`. Full guide: [Long-running harness](../features/harness.md).
+
 ## Graceful Cleanup
 
 Use the context manager to ensure resources (MCP connections, feedback handlers) are cleaned up:
@@ -181,15 +210,19 @@ agloom -m groq:llama-3.3-70b-versatile
 agloom "Explain quantum computing in 2 sentences"
 ```
 
-See the CLI overview: [GitHub source: `agloom_cli/docs/index.md`](https://github.com/HELLOMEDHIRA/agloom/blob/main/agloom_cli/docs/index.md); [Read the Docs (built copy)](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/) — same page after `make docs-prepare` / MkDocs.
+See the CLI overview: [CLI on Read the Docs](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/) · [MCP, memory & harness](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/mcp-memory-harness/) — harness is **on by default** when the runtime store is open.
 
 ## What's Next?
 
 | Topic | Link |
 | --- | --- |
+| Turn planner (auto routing) | [Turn planner](../concepts/turn-planner.md) |
 | Understand the 9 patterns | [Execution Patterns](../concepts/patterns.md) |
-| CLI (Node / TUI) | [CLI on Read the Docs](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/) · [source `agloom_cli/docs/`](https://github.com/HELLOMEDHIRA/agloom/tree/main/agloom_cli/docs) |
+| Multi-session task ledger | [Long-running harness](../features/harness.md) |
+| CLI (Node / TUI) | [CLI on Read the Docs](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/) |
+| Web workspace | [Web overview](https://agloom.readthedocs.io/en/latest/_packages/agloom_web/) |
 | Every parameter explained | [All Parameters](../configuration/parameters.md) |
 | Add memory to your agent | [Memory](../features/memory.md) |
 | Build streaming UIs | [Streaming & Events](../features/streaming.md) |
+| Pick a use case | [Use cases](../guides/use-cases.md) |
 | Enable LangSmith tracing | [Observability](../features/observability.md) |

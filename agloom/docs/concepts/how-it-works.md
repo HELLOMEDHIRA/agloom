@@ -23,7 +23,7 @@ flowchart TD
     R --> I[ExecutionResult]
 ```
 
-You choose the **model**, **tools**, and **policies** (timeouts, HITL, memory store). agloom chooses **how** to execute each turn.
+You choose the **model**, **tools**, and **policies** (timeouts, HITL, memory store) via **`create_agent` kwargs** — or, for CLI/runtime clients, via **`agloom.yaml`** merged into the same kwargs. agloom chooses **how** to execute each turn. See [Configuration contract](../guides/developer-overview.md#configuration-contract-single-source-of-truth).
 
 ---
 
@@ -33,9 +33,9 @@ You choose the **model**, **tools**, and **policies** (timeouts, HITL, memory st
 
 If you pass a **`thread_id`**, recent conversation turns are injected into the prompt. With a **`store=`** and **`user_id`**, long-term memories can be retrieved as well. No extra wiring for “session vs long-term” beyond those parameters.
 
-### 2. Turn planning (classifier)
+### 2. Turn planning
 
-Each turn runs a **turn planner** — one structured LLM call (`plan_turn` / `analyze_query`) that decides:
+Each turn runs the **[turn planner](turn-planner.md)** — one structured LLM call (`plan_turn` / `analyze_query`) that decides:
 
 - Which **execution pattern** fits (DIRECT, REACT, SUPERVISOR, …)
 - Rough **complexity** and whether work can run **in parallel**

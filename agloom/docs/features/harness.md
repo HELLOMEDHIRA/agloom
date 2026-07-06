@@ -6,7 +6,7 @@ The **harness** is an optional layer for multi-day coding, incident response, an
 
 !!! note "Library vs `agloom-runtime serve`"
     **`create_agent(..., harness=False)`** is the Python API default — harness tools are opt-in when embedding agloom.
-    **`agloom`** / **`agloom-runtime serve`** turn harness **on** whenever a LangGraph agent store is open (default sqlite) unless you pass **`--no-harness`** or set **`AGLOOM_HARNESS=0`**.
+    **`agloom`** / **`agloom-runtime serve`** turn harness **on** whenever a LangGraph agent store is open (default sqlite) unless you pass **`--no-harness`** or set **`harness.enabled: false`** in YAML.
 
 With harness off, agloom still routes every turn through the same **turn planner** and patterns; work lives in memory and checkpoints only. With **`harness=True`** (library) or the runtime default above, you add a project scope, progress tools, and cross-session accountability.
 
@@ -174,10 +174,51 @@ See [Frozen agents](frozen-agents.md) for batch translation and fixed-workflow u
 
 ## Harness + interactive frontends
 
-| How you run agloom | Harness toggle |
+| How you run agloom | Harness toggle | UI surface |
+| --- | --- | --- |
+| **Your Python app** | `harness=True` + `harness_metadata` on `create_agent` | `astream_agp_events` → `harness.synced` |
+| **`agloom` CLI** | On when store is open (default) | Metrics sidebar; `/checkpoint`, `/git status`, `/diff` |
+| **`agloom_web`** | Same runtime default | Header **harness on/off** badge; **Harness** tab for task ledger |
+| **`agloom-runtime serve`** | On when store is open (unless `--no-harness`) | AGP events for any client |
+
+### CLI (terminal)
+
+```bash
+agloom -m groq:llama-3.3-70b-versatile
+# runtime.ready → harness_enabled: true (when store open)
+# pattern.classified → harness_plan on planning turns
+# harness.synced → full ledger snapshot
+```
+
+Slash commands when harness is on: `/checkpoint`, `/diff`, `/hint`, `/git status`, `/git checkpoints`.  
+Docs: [CLI — MCP, memory & harness](../../agloom_cli/mcp-memory-harness.md) · [Interactive UI](../../agloom_cli/interactive.md)
+
+### Web workspace
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│  Session header          harness on │ tokens ↑↓             │
+├──────────────────────────┬──────────────────────────────────┤
+│  Chat + tool traces      │  Runtime panel tabs:               │
+│  progress.step lines     │  Graph │ Workers │ Trace │        │
+│  (Harness bound, …)      │  Harness │ Artifacts              │
+└──────────────────────────┴──────────────────────────────────┘
+```
+
+The **Harness** tab renders `harness.synced` tasks (active task, verification, completion %).  
+Docs: [Web overview](../../agloom_web/index.md) · [Web architecture](../../agloom_web/architecture.md)
+
+### Wire events (all clients)
+
+| Event | Use |
 | --- | --- |
-| **Your Python app** | `harness=True` + `harness_metadata` on `create_agent` |
-| **`agloom-runtime serve`** | On when a store is open (unless `--no-harness`); default metadata for interactive sessions |
+| `runtime.ready.harness_enabled` | Badge before first invoke |
+| `pattern.classified.harness_plan` | Ledger preview after planner |
+| `harness.synced` | Full task board snapshot |
+| `command.harness.git` | Git ops from CLI/web slash commands |
+| `progress.step` (`harness_init`) | Infra setup line in chat trace |
+
+Details: [AGP protocol](../protocol/agp.md#harness-on-the-wire).
 
 ---
 
@@ -204,6 +245,8 @@ For true parallel throughput across users, use **separate agent instances** or a
 
 ## Related
 
+- [Turn planner](../concepts/turn-planner.md) — `harness_plan` vs `subtasks`
+- [Clients overview](../guides/clients-overview.md) — CLI, web, custom AGP
 - [All parameters](../configuration/parameters.md) — `harness`, `harness_metadata`
 - [Memory & store](memory.md) — `store=` prerequisite
 - [How it works](../concepts/how-it-works.md) — full turn pipeline

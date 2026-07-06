@@ -20,7 +20,7 @@ agloom -m groq:llama-3.3-70b-versatile
 | Type a question or pipe a diff | Classifies the task and picks an execution pattern |
 | Approve or deny tool prompts | Enforces HITL for risky tools (configurable allowlist) |
 | Watch the right sidebar | Streams **tokens**, **wire notes**, and **tool results** in full |
-| Use `/retry`, `/undo`, `/checkpoint` | Session memory + harness workflows when enabled |
+| Use `/retry`, `/undo`, `/checkpoint` | Session memory + **harness** workflows when enabled (default with store) |
 
 The CLI does **not** embed Python in Node — it spawns **`agloom-runtime`** and speaks **newline-delimited JSON (AGP)** on stdio.
 
@@ -71,14 +71,15 @@ agloom -m groq:meta-llama/llama-3.3-70b-versatile
 | Page | Purpose |
 | ---- | ------- |
 | [Quickstart](quickstart.md) | Five-minute tour |
+| [MCP, memory & harness](mcp-memory-harness.md) | **Harness** (on by default), MCP, session memory |
 | [Models & providers](models.md) | `--model` prefixes, env keys, catalogs |
 | [CLI flags](flags.md) | Every npm option |
-| [Config & environment](config.md) | `agloom.yaml`, env vars |
+| [Config & environment](config.md) | `agloom.yaml` + bridge env (not agent-tuning `AGLOOM_*`) |
 | [Direct mode](direct-mode.md) | Scripts, `--json`, exit codes |
 | [Interactive UI](interactive.md) | Layout, slash commands, metrics sidebar |
 | [Tools & HITL](tools-hitl.md) | Built-in tools and approvals |
 | [MCP, memory & harness](mcp-memory-harness.md) | MCP, session memory, long-running harness |
-| [Recipes](recipes.md) | Copy-paste workflows |
+| [Recipes](recipes.md) | Copy-paste workflows (incl. harness multi-day coding) |
 | [Troubleshooting](troubleshooting.md) | Runtime, models, HITL, tokens, stray JSON |
 | [AGP wire reference](reference.md) | Build custom clients on stdio NDJSON |
 | [Thinking & reasoning (library)](../agloom/features/thinking-events.md) | Trace steps vs `token.delta` reasoning — matches the TUI layout |

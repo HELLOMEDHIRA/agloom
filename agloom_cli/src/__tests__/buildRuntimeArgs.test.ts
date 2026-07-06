@@ -28,4 +28,32 @@ describe('buildRuntimeArgs', () => {
       expect.arrayContaining(['--agent-store', 'sqlite', '--agent-store-path', '.agloom/custom.sqlite']),
     )
   })
+
+  it('forwards execution and harness create_agent flags from YAML merge', () => {
+    const args = buildRuntimeArgs({
+      ...base,
+      llmTimeout: 800,
+      turnPlannerTimeout: 120,
+      reactGraphTimeout: 900,
+      reactRecursionLimit: 50,
+      harnessProjectName: 'rca-platform',
+      harnessGoal: 'Checkout latency RCA',
+    })
+    expect(args).toEqual(
+      expect.arrayContaining([
+        '--llm-timeout',
+        '800',
+        '--turn-planner-timeout',
+        '120',
+        '--react-graph-timeout',
+        '900',
+        '--react-recursion-limit',
+        '50',
+        '--harness-project-name',
+        'rca-platform',
+        '--harness-goal',
+        'Checkout latency RCA',
+      ]),
+    )
+  })
 })

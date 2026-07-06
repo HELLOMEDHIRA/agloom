@@ -74,6 +74,28 @@ Logs via stdin only unless the agent later invokes kubectl through tools.
 
 ---
 
+## 7. Multi-day feature branch (harness)
+
+Use the default store so harness stays **on** (progress ledger + git tools):
+
+```bash
+cd my-repo
+agloom -m groq:meta-llama/llama-3.3-70b-versatile \
+  "Plan OAuth login work as harness tasks, then implement the first task"
+```
+
+**What happens**
+
+1. Turn planner may seed a **`harness_plan`** on the first planning turn
+2. Runtime syncs tasks to the progress artifact (`harness.synced` on `--json`)
+3. Each turn gets **HARNESS CURRENT FOCUS** toward the active task
+4. Use `/checkpoint auth-wip` before risky edits; `/git status` to inspect
+
+Disable harness: `agloom --no-harness …`  
+Python embedding: [Long-running harness](../agloom/features/harness.md)
+
+---
+
 ## Automation tips
 
 | Flag | Use |

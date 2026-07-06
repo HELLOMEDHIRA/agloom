@@ -52,6 +52,9 @@ agloom -m groq:meta-llama/llama-3.3-70b-versatile
 
 Reasoning and tool results are **always visible** — no toggle required.
 
+!!! tip "Harness on by default"
+    With the default LangGraph store (`--agent-store=sqlite`), the runtime enables the **long-running harness** unless you pass `--no-harness`. You will see `harness=on` on startup and harness progress lines in the trace. See [MCP, memory & harness](mcp-memory-harness.md).
+
 ---
 
 ## 5. Pipe and JSON (automation)

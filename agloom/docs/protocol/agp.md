@@ -50,6 +50,42 @@ Optionally, **`session.opened`** / **`session.resumed`** may include `data.capab
 
 ---
 
+## Harness on the wire
+
+Long-running harness events are first-class in AGP v1. Build task-board UIs from these types:
+
+| Event / field | When | Client action |
+| --- | --- | --- |
+| `runtime.ready.harness_enabled` | Startup, before first invoke | Show harness on/off badge |
+| `pattern.classified.harness_plan` | After turn planner on seed/replan turns | Preview planned tasks |
+| `pattern.classified.harness_work_kind` | Same | Short work label (`investigation`, …) |
+| `harness.synced` | After ledger sync | Render full task board (`tasks`, `completion_ratio`) |
+| `progress.step` (`phase: harness_init`) | Harness bootstrap | Infra line in chat trace (not chain-of-thought) |
+| `command.harness.git` | Client → runtime | Git status, checkpoint, diff, revert hint |
+
+Python guide: [Long-running harness](../features/harness.md).  
+Clients: [CLI, web & AGP clients](../guides/clients-overview.md).
+
+### Agent configuration (not on the wire as env)
+
+**`create_agent`** parameters (timeouts, harness metadata, tool approval) are **not** configured via `AGLOOM_*` environment variables. They flow:
+
+1. **Python embed** — kwargs on `create_agent(...)`
+2. **Runtime / CLI** — `agloom.yaml` (`execution.*`, `harness.*`, `safety.*`) + `agloom-runtime serve` flags → `build_create_agent_kwargs()` → agent
+3. **Hot reload (limited)** — `command.config.set` supports `model_id`, sampling, `system_prompt`, session budgets only (not execution timeouts today)
+
+Full contract: [Integration overview — Configuration contract](../guides/developer-overview.md#configuration-contract-single-source-of-truth).
+
+Observability on the wire:
+
+| Event | What clients learn |
+| --- | --- |
+| `runtime.ready.harness_enabled` | Harness on/off for this runtime attachment |
+| `runtime.config` | Resolved `model_id`, tool names, capabilities (post-bootstrap) |
+| Session marker `effective_config` | Serializable argv/YAML snapshot (stdio resume); includes execution fields when set |
+
+---
+
 ## Event types (v1 catalog)
 
 The catalog below covers session lifecycle, execution graph, classification, reasoning, tokens, messages, tools, HITL, workers, memory, checkpoints, feedback, metrics, and errors.
@@ -87,7 +123,7 @@ Emitted once per runtime attachment after workspace/bootstrap checks and **befor
 
 `cli_tools_count` is the number of bundled workspace tools when `--with-cli-tools` is on (currently **26** including `list_mcp_servers`).
 
-`harness_enabled` is **`true`** when a LangGraph agent store is open and harness is not disabled (`--no-harness` / `AGLOOM_HARNESS=0`). Omitted only on very old runtimes; clients should treat missing as unknown until `runtime.config` arrives.
+`harness_enabled` is **`true`** when a LangGraph agent store is open and harness is not disabled (`--no-harness` or `harness.enabled: false` in YAML). Omitted only on very old runtimes; clients should treat missing as unknown until `runtime.config` arrives.
 
 ### `runtime.config`
 

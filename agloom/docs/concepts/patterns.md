@@ -1,6 +1,6 @@
 # Execution patterns
 
-agloom **routes each query automatically**. You do not pick ReAct vs supervisor vs planner on every turn — the **turn planner** (`plan_turn` / `analyze_query`) analyzes complexity, tool need, and parallelism, then runs one of **nine built-in patterns**.
+agloom **routes each query automatically**. You do not pick ReAct vs supervisor vs planner on every turn — the **[turn planner](turn-planner.md)** (`plan_turn` / `analyze_query`) analyzes complexity, tool need, and parallelism, then runs one of **nine built-in patterns**.
 
 ## How routing works
 

@@ -150,6 +150,42 @@ export const flattenRichAgloomYaml = (raw: unknown): unknown =>{
     }
   }
 
+  const execution = o.execution
+  if (execution && typeof execution === 'object' && !Array.isArray(execution)) {
+    const ex = execution as Record<string, unknown>
+    const setNum = (srcKey: string, destKey: string) => {
+      const v = ex[srcKey]
+      if (typeof v === 'number' && (o[destKey] === undefined || o[destKey] === null)) {
+        o[destKey] = v
+      }
+    }
+    setNum('llm_timeout', 'llm_timeout')
+    setNum('react_graph_timeout', 'react_graph_timeout')
+    setNum('react_recursion_limit', 'react_recursion_limit')
+    setNum('max_concurrent', 'max_concurrent')
+    setNum('max_retries', 'max_retries')
+    const tp = ex.turn_planner_timeout ?? ex.classifier_timeout
+    if (typeof tp === 'number' && (o.turn_planner_timeout === undefined || o.turn_planner_timeout === null)) {
+      o.turn_planner_timeout = tp
+    }
+    delete o.execution
+  }
+
+  const harness = o.harness
+  if (harness && typeof harness === 'object' && !Array.isArray(harness)) {
+    const h = harness as Record<string, unknown>
+    if (h.enabled === false) {
+      o.no_harness = true
+    }
+    if (typeof h.project_name === 'string' && h.project_name.trim()) {
+      o.harness_project_name = h.project_name.trim()
+    }
+    if (typeof h.goal === 'string' && h.goal.trim()) {
+      o.harness_goal = h.goal.trim()
+    }
+    delete o.harness
+  }
+
   const mcpBlock = o.mcp
   if (mcpBlock && typeof mcpBlock === 'object' && !Array.isArray(mcpBlock)) {
     const mc = mcpBlock as Record<string, unknown>
@@ -186,6 +222,17 @@ const AgloomYamlSchema = z.preprocess(
       session_max_turns: z.number().int().optional(),
       no_cli_tools: z.boolean().optional(),
       require_tool_approval: z.boolean().optional(),
+      no_harness: z.boolean().optional(),
+      llm_timeout: z.number().optional(),
+      turn_planner_timeout: z.number().optional(),
+      classifier_timeout: z.number().optional(),
+      react_graph_timeout: z.number().optional(),
+      react_recursion_limit: z.number().int().optional(),
+      max_concurrent: z.number().int().optional(),
+      max_retries: z.number().int().optional(),
+      harness_project_name: z.string().optional(),
+      harness_goal: z.string().optional(),
+      enable_memory_tools: z.boolean().optional(),
       mcp: z.preprocess(
         normalizeMcpYamlInput,
         z.array(z.union([z.string(), z.object({ name: z.string(), config: z.string() })])).optional(),
@@ -345,6 +392,16 @@ export type CliOptsLike = {
   maxTurns?: number
   noCliTools?: boolean
   noRequireToolApproval?: boolean
+  noHarness?: boolean
+  llmTimeout?: number
+  turnPlannerTimeout?: number
+  reactGraphTimeout?: number
+  reactRecursionLimit?: number
+  maxConcurrent?: number
+  maxRetries?: number
+  harnessProjectName?: string
+  harnessGoal?: string
+  enableMemoryTools?: boolean
   mcp: string[]
   attach?: string[]
   capture?: string
@@ -445,6 +502,22 @@ export const applyAgloomConfigLayers = (
   if (fromDefault('noCliTools') && y.no_cli_tools === true) next.noCliTools = true
   if (fromDefault('noRequireToolApproval') && y.require_tool_approval === false)
     next.noRequireToolApproval = true
+  if (fromDefault('noHarness') && y.no_harness === true) next.noHarness = true
+  if (fromDefault('llmTimeout') && y.llm_timeout !== undefined) next.llmTimeout = y.llm_timeout
+  if (fromDefault('turnPlannerTimeout')) {
+    const tp = y.turn_planner_timeout ?? y.classifier_timeout
+    if (tp !== undefined) next.turnPlannerTimeout = tp
+  }
+  if (fromDefault('reactGraphTimeout') && y.react_graph_timeout !== undefined)
+    next.reactGraphTimeout = y.react_graph_timeout
+  if (fromDefault('reactRecursionLimit') && y.react_recursion_limit !== undefined)
+    next.reactRecursionLimit = y.react_recursion_limit
+  if (fromDefault('maxConcurrent') && y.max_concurrent !== undefined) next.maxConcurrent = y.max_concurrent
+  if (fromDefault('maxRetries') && y.max_retries !== undefined) next.maxRetries = y.max_retries
+  if (fromDefault('harnessProjectName') && y.harness_project_name)
+    next.harnessProjectName = y.harness_project_name
+  if (fromDefault('harnessGoal') && y.harness_goal) next.harnessGoal = y.harness_goal
+  if (fromDefault('enableMemoryTools') && y.enable_memory_tools === false) next.enableMemoryTools = false
 
   if (y.mcp && files.length > 0) {
     const extra = mcpSpecsFromYaml(y.mcp, files[files.length - 1]!)

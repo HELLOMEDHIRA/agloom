@@ -465,17 +465,11 @@ def resolve_use_harness(args: Namespace, *, lg_store: Any) -> bool:
 
     Library callers set ``harness=`` on ``create_agent`` directly; this helper is not used there.
 
-    Precedence: ``AGLOOM_HARNESS`` / ``AGLOOM_HARNESS_ENABLED`` env when set (``0``/``false`` off,
-    ``1``/``true`` on), else ``not args.no_harness`` when a store is open (default on).
+    Controlled only by ``--no-harness`` when a LangGraph store is open (default on).
+    Agent tuning is never read from ``AGLOOM_*`` environment variables.
     """
     if lg_store is None:
         return False
-    for key in ("AGLOOM_HARNESS", "AGLOOM_HARNESS_ENABLED"):
-        raw = (os.environ.get(key) or "").strip().lower()
-        if raw in ("0", "false", "no", "off"):
-            return False
-        if raw in ("1", "true", "yes", "on"):
-            return True
     return not getattr(args, "no_harness", False)
 
 
@@ -750,6 +744,25 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
     eff["with_cli_tools"] = bool(getattr(args, "with_cli_tools", False))
     eff["require_tool_approval"] = bool(getattr(args, "require_tool_approval", True))
 
+    for snap_key, arg_key in (
+        ("llm_timeout", "llm_timeout"),
+        ("turn_planner_timeout", "turn_planner_timeout"),
+        ("classifier_timeout", "classifier_timeout"),
+        ("react_graph_timeout", "react_graph_timeout"),
+        ("react_recursion_limit", "react_recursion_limit"),
+        ("max_concurrent", "max_concurrent"),
+        ("max_retries", "max_retries"),
+        ("harness_project_name", "harness_project_name"),
+        ("harness_goal", "harness_goal"),
+        ("no_harness", "no_harness"),
+    ):
+        val = getattr(args, arg_key, None)
+        if val is not None:
+            eff[snap_key] = val
+
+    if getattr(args, "enable_memory_tools", None) is False:
+        eff["enable_memory_tools"] = False
+
     wrote_secret = False
     if (
         _persist_api_key_marker_requested(args)
@@ -771,7 +784,10 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
 
 
 def build_create_agent_kwargs(args: Namespace) -> dict[str, Any]:
-    """Non-model kwargs for :func:`agloom.create_agent` (merge after ``model=``)."""
+    """Non-model kwargs for :func:`agloom.create_agent` (merge after ``model=``).
+
+    Runtime and CLI map ``agloom.yaml`` / argv into ``Namespace`` fields — not ``AGLOOM_*`` env vars.
+    """
     mk = memory_kwargs_from_args(args)
     mc = mcp_configs_from_args(args)
     sm = summarizer_model_from_args(args)
@@ -797,7 +813,107 @@ def build_create_agent_kwargs(args: Namespace) -> dict[str, Any]:
 
     kwargs["require_tool_approval_for_cli_tools"] = bool(getattr(args, "require_tool_approval", True))
 
+    _maybe = (
+        ("llm_timeout", "llm_timeout"),
+        ("react_graph_timeout", "react_graph_timeout"),
+        ("react_recursion_limit", "react_recursion_limit"),
+        ("turn_planner_timeout", "turn_planner_timeout"),
+        ("classifier_timeout", "classifier_timeout"),
+        ("max_concurrent", "max_concurrent"),
+        ("max_retries", "max_retries"),
+        ("max_skills", "max_skills"),
+    )
+    for attr, key in _maybe:
+        val = getattr(args, attr, None)
+        if val is not None:
+            kwargs[key] = val
+
+    if getattr(args, "enable_memory_tools", None) is False:
+        kwargs["enable_memory_tools"] = False
+
     return kwargs
+
+
+def harness_metadata_from_args(args: Namespace) -> Any | None:
+    """Build ``HarnessMetadata`` from explicit runtime/CLI fields (not environment)."""
+    from agloom.harness.metadata import HarnessMetadata
+
+    project = getattr(args, "harness_project_name", None)
+    goal = getattr(args, "harness_goal", None)
+    if not project and not goal:
+        return None
+    pn = str(project or "agloom-runtime").strip() or "agloom-runtime"
+    g = str(goal or "Interactive workspace session").strip() or "Interactive workspace session"
+    return HarnessMetadata(project_name=pn, goal=g, init_git=False)
+
+
+def _set_namespace_default(args: Namespace, name: str, value: Any) -> None:
+    if getattr(args, name, None) is None:
+        setattr(args, name, value)
+
+
+def merge_agloom_yaml_into_namespace(args: Namespace, *, cwd: Path | None = None) -> Namespace:
+    """Fill unset execution/harness/safety fields on *args* from ``.agloom/agloom.yaml``.
+
+    CLI flags and explicit ``serve`` argv win over YAML. Environment variables are not consulted.
+    """
+    from .yaml_safe import safe_yaml_load
+
+    root = (cwd or Path.cwd()).resolve()
+    for yaml_path in (root / ".agloom" / "agloom.yaml", root / "agloom.yaml"):
+        if not yaml_path.is_file():
+            continue
+        try:
+            doc = safe_yaml_load(yaml_path.read_text(encoding="utf-8"), label=str(yaml_path))
+        except (OSError, ValueError, TypeError):
+            continue
+        if not isinstance(doc, dict):
+            continue
+
+        execution = doc.get("execution")
+        if isinstance(execution, dict):
+            if execution.get("llm_timeout") is not None:
+                _set_namespace_default(args, "llm_timeout", float(execution["llm_timeout"]))
+            tp = execution.get("turn_planner_timeout", execution.get("classifier_timeout"))
+            if tp is not None:
+                _set_namespace_default(args, "turn_planner_timeout", float(tp))
+            if execution.get("react_graph_timeout") is not None:
+                _set_namespace_default(args, "react_graph_timeout", float(execution["react_graph_timeout"]))
+            if execution.get("react_recursion_limit") is not None:
+                _set_namespace_default(args, "react_recursion_limit", int(execution["react_recursion_limit"]))
+            if execution.get("max_concurrent") is not None:
+                _set_namespace_default(args, "max_concurrent", int(execution["max_concurrent"]))
+            if execution.get("max_retries") is not None:
+                _set_namespace_default(args, "max_retries", int(execution["max_retries"]))
+
+        safety = doc.get("safety")
+        if isinstance(safety, dict) and safety.get("require_approval") is False:
+            if getattr(args, "require_tool_approval", None) is None:
+                args.require_tool_approval = False
+
+        harness = doc.get("harness")
+        if isinstance(harness, dict):
+            if harness.get("enabled") is False and not getattr(args, "no_harness", False):
+                args.no_harness = True
+            if harness.get("project_name"):
+                _set_namespace_default(args, "harness_project_name", str(harness["project_name"]).strip())
+            if harness.get("goal"):
+                _set_namespace_default(args, "harness_goal", str(harness["goal"]).strip())
+
+        skills = doc.get("skills")
+        if isinstance(skills, dict) and skills.get("max_skills") is not None:
+            _set_namespace_default(args, "max_skills", int(skills["max_skills"]))
+
+        memory = doc.get("memory")
+        if isinstance(memory, dict):
+            if memory.get("max_turns") is not None:
+                _set_namespace_default(args, "session_max_turns", int(memory["max_turns"]))
+            if memory.get("enable_memory_tools") is False:
+                _set_namespace_default(args, "enable_memory_tools", False)
+
+        break
+
+    return args
 
 
 def skills_disk_mirror_from_args(args: Namespace, *, cwd: Path | None = None) -> Path:
