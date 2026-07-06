@@ -11,13 +11,16 @@ Every turn starts the same way: you call `agent.ainvoke(...)`, `agent.astream(..
 ```mermaid
 flowchart TD
     A[Your query] --> B[Load memory for thread]
-    B --> C[Classify intent & complexity]
+    B --> H{Harness optional}
+    H -->|harness=True| HB[Bind project + ledger]
+    H -->|default| C
+    HB --> C[Turn planner: route + optional harness_plan]
     C --> D{Pick execution pattern}
-    D --> E[Run pattern]
+    D --> E[Run pattern with tools]
     E --> F[Learn skills optional]
     F --> G[Score quality optional]
-    G --> H[Cache & return result]
-    H --> I[ExecutionResult]
+    G --> R[Cache & return result]
+    R --> I[ExecutionResult]
 ```
 
 You choose the **model**, **tools**, and **policies** (timeouts, HITL, memory store). agloom chooses **how** to execute each turn.
@@ -30,16 +33,20 @@ You choose the **model**, **tools**, and **policies** (timeouts, HITL, memory st
 
 If you pass a **`thread_id`**, recent conversation turns are injected into the prompt. With a **`store=`** and **`user_id`**, long-term memories can be retrieved as well. No extra wiring for “session vs long-term” beyond those parameters.
 
-### 2. Classification
+### 2. Turn planning (classifier)
 
-A lightweight planning step analyzes the query and decides:
+Each turn runs a **turn planner** — one structured LLM call (`plan_turn` / `analyze_query`) that decides:
 
 - Which **execution pattern** fits (DIRECT, REACT, SUPERVISOR, …)
 - Rough **complexity** and whether work can run **in parallel**
-- Optional **subtasks** for multi-agent patterns
+- Optional **`subtasks`** for multi-agent patterns (this-turn worker routing)
+- Optional **`harness_plan`** when the long-running harness is on and the ledger needs seeding or replanning
 - Optional **orchestration budget** when recursive depth is enabled
 
-The structured analysis is on **`result.analysis`** (and in streaming events / AGP as `pattern.classified`).
+The structured plan is on **`result.analysis`** in-process. On the wire, **`pattern.classified`** carries routing fields plus optional **`harness_plan`** / **`harness_work_kind`**; **`harness.synced`** publishes the ledger snapshot after sync.
+
+!!! tip "Frozen agents"
+    Pass **`frozen=True`** to run the planner **once** on the first call and replay the locked pattern on later messages. Harness metadata and ledger sync still apply on the first call. See [Frozen agents](../features/frozen-agents.md).
 
 ### 3. Cache lookup
 
@@ -54,7 +61,7 @@ If you configured interrupts and a **`user_callback`**, agloom can pause before 
 The selected pattern runs with your tools and model. Examples:
 
 | Pattern | Typical use |
-| ------- | ----------- |
+| --- | --- |
 | **DIRECT** | Short answers, no tools |
 | **REACT** | Tool-heavy research or coding |
 | **SUPERVISOR** | Parallel subtasks with a manager |
@@ -78,10 +85,10 @@ When persistence is enabled, each run can be scored on relevance and completenes
 You receive an **`ExecutionResult`**:
 
 | Field | Meaning |
-| ----- | ------- |
+| --- | --- |
 | `output` | Final assistant text |
 | `pattern_used` | Pattern that ran |
-| `analysis` | Classifier output |
+| `analysis` | Turn planner output (`QueryAnalysis` / `TurnPlan`) |
 | `steps` | Trace of steps (tools, workers, timings) |
 | `token_usage` | Aggregated token counts for the turn |
 | `run_id` | Id for feedback or tracing |
@@ -98,7 +105,7 @@ graph TB
     end
 
     subgraph agloom["agloom agent"]
-        CL[Classifier]
+        CL[Turn planner]
         PH[Pattern handlers]
         GU[Guardrails]
     end
@@ -114,9 +121,9 @@ graph TB
 ```
 
 | Stage | What changes | What stays the same |
-| ----- | ------------ | ------------------- |
+| --- | --- | --- |
 | Prototype | `create_agent` in a script | Same `ainvoke` / `astream` API |
-| Product | Add `thread_id`, tools, HITL | Classification still automatic |
+| Product | Add `thread_id`, tools, HITL, optional harness | Turn planning still automatic |
 | Platform | Run `agloom-runtime`, multiple UIs on AGP | Same event types on the wire |
 | Fleet | Remote workers behind runtime (future) | AGP session + thread model |
 
@@ -128,7 +135,8 @@ Concurrency is **async-first**: many turns can run in parallel with isolated sta
 
 - Lazy resources (MCP, skills) are initialized safely under load.
 - LLM calls can be capped with a semaphore.
-- Each **`ainvoke`** uses isolated turn state — no accidental cross-talk between requests when you use distinct **`thread_id`** values.
+- Each **`ainvoke`** uses isolated per-turn state (`invoke_config`) — distinct **`thread_id`** values keep memory separate.
+- A single agent instance **serializes** overlapping `ainvoke` / `astream` calls with an internal lock so harness focus and turn prep cannot cross between concurrent requests on that instance.
 
 ---
 

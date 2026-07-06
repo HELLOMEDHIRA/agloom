@@ -44,7 +44,7 @@ Typed at the input bar. The list below matches what **`/help`** shows in the UI.
 | `/hint`                | Suggest git revert hint (requires harness)                                 |
 | `/git status`          | Show working tree status (requires harness)                                |
 | `/git checkpoints`     | List named checkpoints (requires harness)                                  |
-| `/plan <goal>`         | Preview how the agent would decompose a goal                               |
+| `/plan <goal>`         | Preview turn planner routing (no agent run)                                |
 | `/mcp`                 | List connected MCP servers and each tool (name + description from wire)    |
 | `/model`               | Show active model from runtime/metrics                                     |
 | `/memory clear`        | Clear session memory for current thread                                    |

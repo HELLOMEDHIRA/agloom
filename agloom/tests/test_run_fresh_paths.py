@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.messages import AIMessage
 
-from agloom.delegation import HandoffTarget
-from agloom.models import ExecutionResult, PatternType, QueryAnalysis
-from agloom.unified_agent import (
+from agloom.src.delegation import HandoffTarget
+from agloom.src.models import ExecutionResult, PatternType, QueryAnalysis
+from agloom.src.unified_agent import (
     _build_classifier_augmented_query,
     _build_skill_context_for_classify,
     _coerce_unknown_pattern_handler,
@@ -79,17 +79,18 @@ async def test_skill_context_includes_delegation_targets() -> None:
 async def test_try_direct_stream_uses_shared_classifier_prep(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict = {}
 
-    async def fake_execute(cfg, *, augmented_query, skill_context):
+    async def fake_execute(cfg, *, augmented_query, skill_context, user_query=""):
         captured["augmented_query"] = augmented_query
         captured["skill_context"] = skill_context
+        captured["user_query"] = user_query
         return _direct_analysis()
 
-    monkeypatch.setattr("agloom.unified_agent._execute_analyze_query", fake_execute)
-    monkeypatch.setattr("agloom.unified_agent._ensure_mcp_connected", AsyncMock())
-    monkeypatch.setattr("agloom.unified_agent._ensure_skills_bootstrapped", AsyncMock())
-    monkeypatch.setattr("agloom.unified_agent._ensure_harness_bootstrapped", AsyncMock())
+    monkeypatch.setattr("agloom.src.unified_agent._execute_analyze_query", fake_execute)
+    monkeypatch.setattr("agloom.src.unified_agent._ensure_mcp_connected", AsyncMock())
+    monkeypatch.setattr("agloom.src.unified_agent._ensure_skills_bootstrapped", AsyncMock())
+    monkeypatch.setattr("agloom.src.unified_agent._ensure_harness_bootstrapped", AsyncMock())
     monkeypatch.setattr(
-        "agloom.unified_agent.build_memory_context",
+        "agloom.src.unified_agent.build_memory_context",
         AsyncMock(return_value="MEM"),
     )
 
@@ -133,7 +134,7 @@ async def test_run_fresh_coerces_unknown_pattern_via_ainvoke(monkeypatch: pytest
         subtasks=[],
     )
 
-    with patch("agloom.unified_agent.analyze_query", new=AsyncMock(return_value=unknown)):
+    with patch("agloom.src.unified_agent.analyze_query", new=AsyncMock(return_value=unknown)):
         agent = await create_agent(model=_StubChatModel(), name="coerce-test", query_cache=False)
         reg = {k: v for k, v in agent.config["registry"].items() if k != PatternType.BLACKBOARD}
         reg[PatternType.REACT] = stub_react
@@ -158,7 +159,7 @@ async def test_frozen_agent_skips_live_classify_on_invoke(monkeypatch: pytest.Mo
         query_cache=False,
         frozen=True,
     )
-    from agloom.frozen import build_execution_plan
+    from agloom.src.frozen import build_execution_plan
 
     agent.config["frozen_analysis"] = frozen_analysis
     agent.config["_frozen_handler"] = _HANDLERS[PatternType.DIRECT]
@@ -170,7 +171,7 @@ async def test_frozen_agent_skips_live_classify_on_invoke(monkeypatch: pytest.Mo
         execution_mode="handler",
     )
 
-    with patch("agloom.unified_agent.analyze_query", classify_mock):
+    with patch("agloom.src.unified_agent.analyze_query", classify_mock):
         try:
             result = await agent.ainvoke(
                 {"messages": [{"role": "user", "content": "anything"}]},

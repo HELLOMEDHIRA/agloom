@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import pytest
 
-from agloom.models import AgentEvent
+from agloom.src.models import AgentEvent
 from agloom.protocol import (
     ErrorFatal,
     MessageAssistant,

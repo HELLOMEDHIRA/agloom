@@ -19,6 +19,7 @@ export const DEFAULT_AGLOOM_YAML = `# Agloom — https://github.com/HELLOMEDHIRA
 #   • mcp.servers               — agsuperbrain → .agloom/mcp/agsuperbrain.yaml (stdio MCP; agsuperbrain CLI on PATH)
 #   • .agloom/rules/            — drop *.md / *.mdc rule files; optional rules.dir if you relocate
 #   • memory.* / skills.*       — tied to the store when present; tune limits below (no enable/disable toggles)
+#   • harness                   — on by default when agloom-runtime has a LangGraph store (sqlite); omit --no-harness on CLI
 
 ai:
   name: agloom

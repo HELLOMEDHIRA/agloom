@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 
-from ..models import (
+from ..src.models import (
     OrchestrationContext,
     OrchestrationCycleDetected,
     PatternType,

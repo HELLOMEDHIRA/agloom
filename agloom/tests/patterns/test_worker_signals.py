@@ -1,4 +1,4 @@
-from agloom.models import SignalType
+from agloom.src.models import SignalType
 from agloom.patterns._worker_signals import halted_worker_result, worker_execution_failed
 
 

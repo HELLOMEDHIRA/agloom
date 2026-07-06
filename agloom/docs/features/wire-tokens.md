@@ -21,7 +21,7 @@ During a turn, the runtime may emit one or more **`metric.tokens`** events:
 ```
 
 | Field | Meaning |
-| ----- | ------- |
+| --- | --- |
 | `input_tokens` | Prompt / context tokens for this slice |
 | `output_tokens` | Completion tokens for this slice |
 | `phase` | Optional label (classifier, react, worker, …) |

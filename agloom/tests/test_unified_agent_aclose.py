@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agloom.unified_agent import UnifiedAgent
+from agloom.src.unified_agent import UnifiedAgent
 
 
 @pytest.mark.asyncio

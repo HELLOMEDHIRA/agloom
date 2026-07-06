@@ -9,7 +9,7 @@ import pytest
 
 from langchain_core.messages import HumanMessage
 
-from agloom.llm_utils import (
+from agloom.src.llm_utils import (
     CircuitBreaker,
     CircuitBreakerError,
     CircuitBreakerHalfOpenBusy,
@@ -30,7 +30,7 @@ def test_circuit_breaker_exception_types() -> None:
 @pytest.mark.asyncio
 async def test_try_invoke_handles_circuit_breaker_open(monkeypatch: pytest.MonkeyPatch) -> None:
     br = CircuitBreaker(failure_threshold=1, recovery_timeout=3600.0)
-    monkeypatch.setattr("agloom.llm_utils.DEFAULT_CIRCUIT_BREAKER", br)
+    monkeypatch.setattr("agloom.src.llm_utils.DEFAULT_CIRCUIT_BREAKER", br)
 
     structured = MagicMock()
     structured.ainvoke = AsyncMock(side_effect=ValueError("provider"))
@@ -59,7 +59,7 @@ async def test_try_invoke_propagates_half_open_busy(monkeypatch: pytest.MonkeyPa
         async def __aexit__(self, *_exc: object) -> None:
             return None
 
-    monkeypatch.setattr("agloom.llm_utils.DEFAULT_CIRCUIT_BREAKER", BusyBreaker())
+    monkeypatch.setattr("agloom.src.llm_utils.DEFAULT_CIRCUIT_BREAKER", BusyBreaker())
 
     structured = MagicMock()
     structured.ainvoke = AsyncMock(return_value={"ok": True})
@@ -75,7 +75,7 @@ async def test_try_invoke_propagates_half_open_busy(monkeypatch: pytest.MonkeyPa
 async def test_robust_structured_call_retries_half_open_busy(monkeypatch: pytest.MonkeyPatch) -> None:
     from pydantic import BaseModel
 
-    from agloom.llm_utils import robust_structured_call
+    from agloom.src.llm_utils import robust_structured_call
 
     class Mini(BaseModel):
         v: int = 1
@@ -89,12 +89,12 @@ async def test_robust_structured_call_retries_half_open_busy(monkeypatch: pytest
             raise CircuitBreakerHalfOpenBusy("contended")
         return Mini(v=42)
 
-    monkeypatch.setattr("agloom.llm_utils._try_invoke", fake_try_invoke)
-    monkeypatch.setattr("agloom.llm_utils._llm_skips_json_schema_mode", lambda _llm: True)
-    monkeypatch.setattr("agloom.llm_utils._env_skip_json_schema_first", lambda: True)
+    monkeypatch.setattr("agloom.src.llm_utils._try_invoke", fake_try_invoke)
+    monkeypatch.setattr("agloom.src.llm_utils._llm_skips_json_schema_mode", lambda _llm: True)
+    monkeypatch.setattr("agloom.src.llm_utils._env_skip_json_schema_first", lambda: True)
 
     llm = MagicMock()
-    monkeypatch.setattr("agloom.llm_utils._build_structured", lambda *_a, **_k: llm)
+    monkeypatch.setattr("agloom.src.llm_utils._build_structured", lambda *_a, **_k: llm)
 
     out = await robust_structured_call(
         llm,

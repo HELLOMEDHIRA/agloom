@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agloom.classifier import CLASSIFIER_PROMPT, build_classifier_user_prompt
+from agloom.src.classifier import CLASSIFIER_PROMPT, build_classifier_user_prompt
 
 
 def test_classifier_prompt_uses_replace_not_format_for_user_text() -> None:
@@ -43,7 +43,7 @@ class _T:
 
 def test_classifier_query_slot_single_substitution() -> None:
     """Marker must not replace multiple occurrences if query echoes the marker."""
-    from agloom.classifier import _QUERY_SLOT_MARKER_PREFIX
+    from agloom.src.classifier import _QUERY_SLOT_MARKER_PREFIX
 
     marker = f"{_QUERY_SLOT_MARKER_PREFIX}deadbeef\ufeff"
     query = f"see {marker} in docs"

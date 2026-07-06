@@ -1,12 +1,12 @@
 # Execution patterns
 
-agloom **routes each query automatically**. You do not pick ReAct vs supervisor vs planner on every turn — a **classifier** analyzes complexity, tool need, and parallelism, then runs one of **nine built-in patterns**.
+agloom **routes each query automatically**. You do not pick ReAct vs supervisor vs planner on every turn — the **turn planner** (`plan_turn` / `analyze_query`) analyzes complexity, tool need, and parallelism, then runs one of **nine built-in patterns**.
 
 ## How routing works
 
 ```mermaid
 flowchart TD
-    Q[Query arrives] --> C{Classifier}
+    Q[Query arrives] --> C{Turn planner}
     C -->|Simple, no tools| DIRECT
     C -->|Needs tools| REACT
     C -->|Multi-faceted, parallel| SUPERVISOR
@@ -18,7 +18,9 @@ flowchart TD
     C -->|Complex dependencies| HYBRID
 ```
 
-The classifier runs once per turn (bounded by **`classifier_timeout`**). Its decision is visible in logs, **`result.pattern_used`**, AGP **`thinking.step`** / **`pattern.selected`** events, and LangSmith traces.
+The turn planner runs **once per turn** (bounded by **`classifier_timeout`**), unless **`frozen=True`** locks the plan after the first call. Its decision is visible in logs, **`result.analysis`**, **`result.pattern_used`**, AGP **`thinking.step`** / **`pattern.classified`** events, and LangSmith traces.
+
+With **`harness=True`**, the same call may also return **`harness_plan`** tasks for the durable ledger — separate from **`subtasks`** used for multi-worker routing. See [Long-running harness](../features/harness.md).
 
 !!! tip "You stay in control of tools and policy"
     Patterns control **orchestration shape**, not your business rules. Tools, HITL gates, memory, and skills apply regardless of which pattern runs.
@@ -152,10 +154,10 @@ Query → [Parallel A, Parallel B] → Sequential C → Response
 ## Biasing routing (without forking the library)
 
 | Mechanism | Use case |
-| --------- | -------- |
+| --- | --- |
 | **Tools & system prompt** | Steer toward REACT when tools are registered |
 | **`command.config.set` (AGP)** | Live pattern hint from CLI / web when supported |
-| **Simpler queries** | Classifier often picks DIRECT — fewer tokens |
+| **Simpler queries** | Turn planner often picks DIRECT — fewer tokens |
 | **Custom pattern handler** | Replace behavior for one pattern (advanced) |
 
 There is **no** public `fallback_pattern` YAML knob — if a pattern has no handler, agloom falls back to **REACT** and logs a warning.

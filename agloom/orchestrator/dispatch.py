@@ -6,9 +6,9 @@ import time
 import uuid
 from typing import Any
 
-from ..classifier import analyze_query
-from ..logging_utils import get_logger
-from ..models import (
+from ..src.classifier import analyze_query
+from ..src.logging_utils import get_logger
+from ..src.models import (
     ExecutionResult,
     OrchestrationBudgetExceeded,
     OrchestrationContext,
@@ -18,6 +18,7 @@ from ..models import (
     QueryAnalysis,
     SpawnInstruction,
     _merge_token_usage,
+    resolve_turn_planner_timeout,
 )
 from ..patterns.react import handle_react
 from .context import fresh_orchestration_context
@@ -74,7 +75,7 @@ async def _reclassify_if_needed(
         query=instruction.task,
         tools=tools,
         skill_context="",
-        classifier_timeout=_agent_float(agent, "classifier_timeout", 60.0),
+        classifier_timeout=resolve_turn_planner_timeout(agent),
         structured_max_retries=_agent_int(agent, "structured_max_retries", 2),
         fallback_pattern=_agent_fallback_pattern(agent),
         mcp_configured=bool(agent.get("_mcp_servers")),
@@ -188,7 +189,7 @@ class SpawnAPI:
             query=task,
             tools=agent["tools"],
             skill_context="",
-            classifier_timeout=_agent_float(agent, "classifier_timeout", 60.0),
+            classifier_timeout=resolve_turn_planner_timeout(agent),
             structured_max_retries=_agent_int(agent, "structured_max_retries", 2),
             fallback_pattern=_agent_fallback_pattern(agent),
             mcp_configured=bool(agent.get("_mcp_servers")),

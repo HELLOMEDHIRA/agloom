@@ -7,7 +7,7 @@ The [**AGP specification**](../protocol/agp.md) describes the JSON wire format (
 ## Three integration levels
 
 | Level | When to use | API |
-| ----- | ----------- | --- |
+| --- | --- | --- |
 | **Easiest** | You already have an agent; want typed events | `agent.astream_agp_events()` |
 | **Bridge** | You own stdout/WebSocket and one prompt per invocation | `run_invocation` + `SessionEmitter` |
 | **Full control** | Custom servers, replay stores, schema export | `agloom.protocol` models + stores |
@@ -73,7 +73,7 @@ Inbound **commands** (`command.invoke`, `command.hitl.respond`, …) use the par
 ## Replay and persistence
 
 | Store | Use case |
-| ----- | -------- |
+| --- | --- |
 | In-memory | Unit tests, short demos |
 | SQLite | Resume sessions, observability dashboards |
 

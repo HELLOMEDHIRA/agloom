@@ -17,7 +17,7 @@ User-authored text (queries, worker outputs) must not be passed through
 
 from __future__ import annotations
 
-from ..models import SignalType, WorkerResult
+from ..src.models import SignalType, WorkerResult
 
 # Canonical ``ExecutionResult.error`` when no sub-task produced SUCCESS.
 ALL_PATTERN_WORKERS_FAILED_ERROR = "AllPatternWorkersFailed"

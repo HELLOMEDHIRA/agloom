@@ -47,7 +47,7 @@ def safe_writer_write(writer: Any, text: str) -> None:
 
 
 def ensure_langchain_pending_deprecation_suppressed() -> None:
-    """Ignore ``LangChainPendingDeprecationWarning`` once per process (idempotent)."""
+    """Ignore known LangChain shim warnings once per process (idempotent)."""
     global _LC_PENDING_DEPRECATION_FILTERED
     if _LC_PENDING_DEPRECATION_FILTERED:
         return
@@ -58,6 +58,12 @@ def ensure_langchain_pending_deprecation_suppressed() -> None:
         from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
 
         warnings.filterwarnings("ignore", category=LangChainPendingDeprecationWarning)
+        warnings.filterwarnings(
+            "ignore",
+            message=r"Core Pydantic V1 functionality isn't compatible.*",
+            category=UserWarning,
+            module=r"langchain_core\._api\.deprecation",
+        )
     except ImportError:
         pass
 

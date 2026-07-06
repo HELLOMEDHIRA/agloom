@@ -100,6 +100,7 @@ export const MetricsPanel = ({ thread, width, maxHeight, scrollActive = true, fo
   const sessionMemoryMode = useSessionStore((s) => s.sessionMemoryMode)
   const skillsEnabled = useSessionStore((s) => s.skillsEnabled)
   const harnessEnabled = useSessionStore((s) => s.harnessEnabled)
+  const harnessLedgerTasks = useSessionStore((s) => s.harnessLedgerTasks)
   const cliToolsEnabled = useSessionStore((s) => s.cliToolsEnabled)
   const cliToolsCount = useSessionStore((s) => s.cliToolsCount)
   const mcpServerRows = useSessionStore((s) => s.mcpServerRows)
@@ -244,6 +245,30 @@ export const MetricsPanel = ({ thread, width, maxHeight, scrollActive = true, fo
         </Text>
       </Text>,
     )
+    if (harnessLedgerTasks != null && harnessLedgerTasks.length > 0) {
+      lines.push(spacer('sp-harness'))
+      lines.push(
+        <Text key="harness-h" bold color="white">
+          Harness tasks ({harnessLedgerTasks.length})
+        </Text>,
+      )
+      harnessLedgerTasks.slice(0, 8).forEach((t, i) => {
+        const st = t.status ?? 'pending'
+        lines.push(
+          <Text key={`ht-${i}`} color="gray" dimColor wrap="wrap">
+            {t.task_id}: {t.description.slice(0, 72)}
+            {t.description.length > 72 ? '…' : ''} [{st}]
+          </Text>,
+        )
+      })
+      if (harnessLedgerTasks.length > 8) {
+        lines.push(
+          <Text key="ht-more" color="gray" dimColor>
+            … +{harnessLedgerTasks.length - 8} more
+          </Text>,
+        )
+      }
+    }
     lines.push(
       <Text key="mcp" wrap="wrap">
         <Text color="gray">mcp </Text>
@@ -495,6 +520,7 @@ export const MetricsPanel = ({ thread, width, maxHeight, scrollActive = true, fo
     completedTurns,
     filesUpdated,
     harnessEnabled,
+    harnessLedgerTasks,
     mcpRollup,
     mcpServerNames,
     mcpServerRows,

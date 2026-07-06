@@ -13,7 +13,7 @@ If you've built agents with LangChain, LangGraph, or any other framework, you've
 
 Every query is different. A simple "Hello" doesn't need a REACT loop. A complex "Analyze sales data across 3 regions" doesn't belong in a single LLM call. But LangChain makes **you** decide the pattern per query at design time.
 
-**agloom fix:** An LLM-powered classifier analyzes every query in real time and routes it to the optimal pattern automatically. Zero configuration.
+**agloom fix:** A **turn planner** analyzes every message in real time and routes it to the optimal pattern automatically — including optional harness task seeding when you enable the long-running ledger. Zero router code.
 
 ### 2. "My agent doesn't learn anything"
 
@@ -49,22 +49,22 @@ Timeouts, retries, rate limiting, circuit breakers, concurrent worker limits, st
 
 ## How agloom Compares
 
-| Capability         | LangChain `create_react_agent` | agloom `create_agent`                                              |
-| ------------------ | ------------------------------ | ------------------------------------------------------------------ |
-| Patterns           | 1 (REACT only)                 | 9 (auto-selected)                                                  |
-| Classification     | Manual                         | Automatic                                                          |
-| Skill learning     | No                             | Built-in                                                           |
-| Feedback           | No                             | Auto-eval + user + trends                                          |
-| Memory             | DIY wiring                     | Always on + `thread_id` + `store=`                                 |
-| Streaming          | Basic                          | Combined tokens + events in one stream, real-time for all patterns |
-| Token tracking     | No                             | Built-in                                                           |
-| HITL               | Basic                          | 4 levels (pattern/tool/worker/signal)                              |
-| Timeouts/retries   | DIY                            | Configurable parameters                                            |
-| Circuit breaker    | No                             | Built-in                                                           |
-| Rate limiting      | No                             | Built-in                                                           |
-| Frozen/batch       | No                             | `frozen=True`                                                      |
-| LangSmith          | Manual setup                   | Auto-detected                                                      |
-| Structured logging | No                             | JSON/text, debug toggle                                            |
+| Capability | LangChain `create_react_agent` | agloom `create_agent` |
+| --- | --- | --- |
+| Patterns | 1 (REACT only) | 9 (auto-selected) |
+| Classification | Manual | Automatic |
+| Skill learning | No | Built-in |
+| Feedback | No | Auto-eval + user + trends |
+| Memory | DIY wiring | Always on + `thread_id` + `store=` |
+| Streaming | Basic | Combined tokens + events in one stream, real-time for all patterns |
+| Token tracking | No | Built-in |
+| HITL | Basic | 4 levels (pattern/tool/worker/signal) |
+| Timeouts/retries | DIY | Configurable parameters |
+| Circuit breaker | No | Built-in |
+| Rate limiting | No | Built-in |
+| Frozen/batch | No | `frozen=True` |
+| LangSmith | Manual setup | Auto-detected |
+| Structured logging | No | JSON/text, debug toggle |
 
 ## Built on LangChain, Not Against It
 
@@ -85,7 +85,7 @@ Already on LangChain’s **`create_agent`**? See **[LangChain `create_agent` →
 ## What to read next
 
 | Goal | Guide |
-| ---- | ----- |
+| --- | --- |
 | Run code now | [Quick start](quickstart.md) |
 | See the pipeline | [How it works](../concepts/how-it-works.md) |
 | Pick patterns | [Execution patterns](../concepts/patterns.md) |

@@ -13,7 +13,7 @@ That is the **application path**: you supply a model and tools; agloom classifie
 ## What you build vs what agloom runs
 
 | You provide | agloom handles automatically |
-| ----------- | ---------------------------- |
+| --- | --- |
 | LangChain-compatible **model** | Per-turn **pattern** selection (nine strategies) |
 | LangChain **`create_agent` invoke shape** | Same `{"messages": [...]}` input — see [migration guide](migration-from-langchain.md#from-langchain-create_agent) |
 | Optional **tools** | Tool loops, worker pools, pipelines, reflection |
@@ -101,7 +101,7 @@ Depth on deployment: [Production deployment](deployment.md).
 ## Documentation map
 
 | I want to… | Read |
-| ---------- | ---- |
+| --- | --- |
 | Understand the product | [Why agloom?](../getting-started/why-agloom.md) |
 | Run my first agent | [Quick start](../getting-started/quickstart.md) |
 | See how a turn flows | [How it works](../concepts/how-it-works.md) |

@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from langchain_core.messages import AIMessage
 
-from agloom.delegation import HandoffTarget, run_delegate
-from agloom.models import ExecutionResult, PatternType, QueryAnalysis
-from agloom.unified_agent import create_agent
+from agloom.src.delegation import HandoffTarget, run_delegate
+from agloom.src.models import ExecutionResult, PatternType, QueryAnalysis
+from agloom.src.unified_agent import create_agent
 
 
 class _StubChatModel:
@@ -52,7 +52,7 @@ async def test_ainvoke_handoff_when_classifier_names_delegate() -> None:
             return _delegate_result(delegate_out, name="coder")
 
     with patch(
-        "agloom.unified_agent.analyze_query",
+        "agloom.src.unified_agent.analyze_query",
         new=AsyncMock(return_value=_react_analysis_with_delegate("coder")),
     ):
         primary = await create_agent(model=_StubChatModel(), name="primary", query_cache=False)
@@ -81,7 +81,7 @@ async def test_ainvoke_handoff_applies_input_transform() -> None:
         return f"CTX:{q}"
 
     with patch(
-        "agloom.unified_agent.analyze_query",
+        "agloom.src.unified_agent.analyze_query",
         new=AsyncMock(return_value=_react_analysis_with_delegate("coder")),
     ):
         primary = await create_agent(model=_StubChatModel(), name="primary", query_cache=False)
@@ -156,7 +156,7 @@ async def test_handoff_skipped_when_delegate_not_in_reasoning() -> None:
         subtasks=[],
     )
 
-    with patch("agloom.unified_agent.analyze_query", new=AsyncMock(return_value=analysis)):
+    with patch("agloom.src.unified_agent.analyze_query", new=AsyncMock(return_value=analysis)):
         primary = await create_agent(model=_StubChatModel(), name="primary", query_cache=False)
         primary.register_handoff(_DelegateAgent(), name="coder", description="Code")
         try:

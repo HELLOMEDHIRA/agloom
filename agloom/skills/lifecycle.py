@@ -11,7 +11,7 @@ from weakref import WeakKeyDictionary
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, field_validator
 
-from ..logging_utils import get_logger
+from ..src.logging_utils import get_logger
 from ..memory.store import LongTermStore
 from .registry import _is_skill_sentinel
 
@@ -311,7 +311,7 @@ class SkillLifecycleManager:
             rc = self._run_count
 
         if applied_skill:
-            from ..llm_utils import safe_create_task
+            from ..src.llm_utils import safe_create_task
 
             safe_create_task(
                 self._update_usage(applied_skill, success),
@@ -319,7 +319,7 @@ class SkillLifecycleManager:
             )
 
         if rc % self._review_every == 0:
-            from ..llm_utils import safe_create_task
+            from ..src.llm_utils import safe_create_task
 
             safe_create_task(
                 self._run_review_cycle(),
@@ -404,7 +404,7 @@ If over max_skills, you MUST prune or merge enough to get under the limit.
 Skills with model_reset_at set recently had their stats reset due to a model change — give them a chance before pruning.
 """.strip()
 
-            from ..llm_utils import robust_structured_call
+            from ..src.llm_utils import robust_structured_call
 
             result = await robust_structured_call(
                 self._llm,
@@ -535,7 +535,7 @@ def _compute_model_fingerprint(llm: Any) -> str:
     Cached per live ``llm`` instance via weak references when hashable; otherwise :class:`~agloom.llm.instance_key.LlmInstanceKey`.
     """
     from agloom.llm.instance_key import llm_cache_key
-    from agloom.llm_utils import llm_weak_dict_key_ok
+    from agloom.src.llm_utils import llm_weak_dict_key_ok
 
     if llm_weak_dict_key_ok(llm):
         cached = _fingerprint_cache.get(llm)

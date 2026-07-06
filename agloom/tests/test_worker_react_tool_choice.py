@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from agloom.patterns.middleware import ReactUserTurnToolChoiceMiddleware
-from agloom.worker import _worker_react_middleware, extend_invoke_config_with_event_queue
+from agloom.src.worker import _worker_react_middleware, extend_invoke_config_with_event_queue
 
 
 def test_worker_react_middleware_includes_tool_choice_by_default() -> None:

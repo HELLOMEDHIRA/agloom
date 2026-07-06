@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agloom.mcp_support import aclose_mcp_client
+from agloom.src.mcp_support import aclose_mcp_client
 
 
 @pytest.mark.asyncio

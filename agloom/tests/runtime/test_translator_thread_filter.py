@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import json
 
-from agloom.models import AgentEvent
+from agloom.src.models import AgentEvent
 from agloom.protocol import SessionEmitter, event_adapter
 from agloom.runtime.translator import translate
 

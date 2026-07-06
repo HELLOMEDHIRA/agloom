@@ -7,7 +7,7 @@ from agloom.prompts.core import (
     DEFAULT_SYSTEM_PROMPT,
     compose_agent_system_prompt,
 )
-from agloom.unified_agent import resolve_system_prompt
+from agloom.src.unified_agent import resolve_system_prompt
 
 
 def test_compose_default_includes_answer_contract() -> None:

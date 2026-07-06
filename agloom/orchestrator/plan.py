@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..models import QueryAnalysis
+from ..src.models import QueryAnalysis
 
 
 @dataclass(frozen=True)

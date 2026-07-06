@@ -13,8 +13,8 @@ from ..llm.qwen_compat import (
     extract_model_label,
     model_needs_qwen_chat_template_compat,
 )
-from ..multimodal import content_blocks_to_text, text_from_user_turn
-from ..wire_stream_content import (
+from ..src.multimodal import content_blocks_to_text, text_from_user_turn
+from ..src.wire_stream_content import (
     answer_text_from_content,
     emit_llm_chunk_to_event_queue,
     split_stream_parts_from_chunk,
@@ -25,7 +25,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.runnables import RunnableConfig
 from langgraph.errors import GraphRecursionError
 
-from ..hitl_contract import (
+from ..src.hitl_contract import (
     DEFAULT_REACT_TOOL_USE_FAILED_AUTO_RETRIES_HITL,
     DEFAULT_REACT_TOOL_USE_FAILED_USER_ROUNDS,
     REACT_TOOL_USE_FAILED_AUTO_RETRIES_HITL_KEY,
@@ -34,9 +34,9 @@ from ..hitl_contract import (
     call_user_callback,
     normalize_react_tool_use_failed_decision,
 )
-from ..logging_utils import get_logger
-from ..worker import resolve_event_queue
-from ..models import (
+from ..src.logging_utils import get_logger
+from ..src.worker import resolve_event_queue
+from ..src.models import (
     DEFAULT_SYSTEM_PROMPT,
     AgentEvent,
     ExecutionResult,
@@ -49,6 +49,7 @@ from ..models import (
     _trunc,
 )
 from .hitl_tool_coalesce import build_default_hitl_coalescer
+from ._steps_accounting import steps_taken_from_audit
 from .middleware import HumanApprovalMiddleware, UserAbort, build_langchain_agent_middleware
 from .react_tool_recovery import (
     exception_indicates_tool_use_failed as _exception_indicates_tool_use_failed,
@@ -68,7 +69,7 @@ from .react_tool_recovery import (
 from .react_tool_recovery import (
     last_ai_message_is_stray_tool_json as _last_ai_message_is_stray_tool_json,
 )
-from ._steps_accounting import steps_taken_from_audit
+from ..src.exception_utils import format_exception_message
 
 logger = get_logger(__name__)
 
@@ -130,7 +131,7 @@ async def _emit_llm_call_step(
     cfg = run_config or {}
     if event_queue is not None and "_event_queue" not in cfg:
         cfg = {**cfg, "_event_queue": event_queue}
-    from ..wire_tokens import emit_llm_call_from_step
+    from ..src.wire_tokens import emit_llm_call_from_step
 
     await emit_llm_call_from_step(cfg, step)
 
@@ -148,8 +149,7 @@ def _tool_input_as_dict(tool_input: Any) -> dict[str, Any]:
     return {}
 
 
-REACT_RECURSION_LIMIT = 25
-REACT_MAX_HITL_CYCLES = REACT_RECURSION_LIMIT // 2
+REACT_RECURSION_LIMIT = 25  # default; override via create_agent(react_recursion_limit=…)
 
 _MAX_TOOL_RETRIES = 5
 # Hard ceiling on total ``ainvoke`` attempts (including user-authorized extensions).
@@ -196,6 +196,111 @@ def _react_timeout_failure_message(agent: dict, *, wall_seconds: float, path: st
         f"REACT timed out after {int(wall_seconds)}s ({path}). "
         f"Self-hosted Qwen/vLLM with MCP tools often needs "
         f"create_agent(llm_timeout>={max(llm_t, 300)}, react_graph_timeout>={max(graph_t, 600)})."
+    )
+
+
+def _react_recursion_limit(agent: dict) -> int:
+    """LangGraph ``recursion_limit`` for REACT graphs (tool-call steps)."""
+    raw = agent.get("react_recursion_limit", REACT_RECURSION_LIMIT)
+    try:
+        limit = int(raw)
+    except (TypeError, ValueError):
+        limit = REACT_RECURSION_LIMIT
+    return max(1, min(limit, 500))
+
+
+def _react_recursion_limit_failure_message(*, limit: int, path: str) -> str:
+    return (
+        f"REACT step limit reached after {limit} graph steps ({path}). "
+        "Investigation incomplete — simplify the task or raise create_agent(react_recursion_limit=…)."
+    )
+
+
+async def _react_emit_stream_error(
+    event_queue: asyncio.Queue | None,
+    *,
+    message: str,
+    error_class: str,
+    stage: str = "react",
+) -> None:
+    if event_queue is None:
+        return
+    await event_queue.put(
+        AgentEvent(
+            type="error",
+            data={
+                "error": message,
+                "error_class": error_class,
+                "stage": stage,
+                "severity": "fatal",
+            },
+        )
+    )
+
+
+async def _react_recursion_limit_failure(
+    agent: dict,
+    config: dict | None,
+    query: str | list[Any],
+    analysis: QueryAnalysis,
+    *,
+    path: str,
+    steps: list,
+    steps_taken: int | None = None,
+    messages: list | None = None,
+    event_queue: asyncio.Queue | None = None,
+    max_length: int = 0,
+) -> ExecutionResult:
+    """Hard stop when LangGraph hits ``recursion_limit`` — same contract as timeouts."""
+    limit = _react_recursion_limit(agent)
+    taken = steps_taken if steps_taken is not None else limit
+    msg = _react_recursion_limit_failure_message(limit=limit, path=path)
+    logger.warning(f"{path} ⚠ Recursion limit ({limit}) reached.")
+    steps.append(_make_step(StepType.FALLBACK, "react_recursion_limit", output=msg, max_length=max_length))
+    queue = event_queue if event_queue is not None else resolve_event_queue(agent, config)
+    await _react_emit_stream_error(
+        queue,
+        message=msg,
+        error_class="GraphRecursionError",
+    )
+    return await _react_failure(
+        agent,
+        config,
+        query,
+        analysis,
+        output=msg,
+        steps_taken=taken,
+        steps=steps,
+        messages=messages or [],
+    )
+
+
+async def _react_return_timeout_failure(
+    agent: dict,
+    config: dict | None,
+    query: str | list[Any],
+    analysis: QueryAnalysis,
+    *,
+    wall_seconds: float,
+    path: str,
+    steps_taken: int,
+    steps: list,
+    messages: list | None = None,
+    event_queue: asyncio.Queue | None = None,
+) -> ExecutionResult:
+    msg = _react_timeout_failure_message(agent, wall_seconds=wall_seconds, path=path)
+    logger.error(f"{path} Timed out ({int(wall_seconds)}s)")
+    queue = event_queue if event_queue is not None else resolve_event_queue(agent, config)
+    await _react_emit_stream_error(queue, message=msg, error_class="TimeoutError")
+    return await _react_failure(
+        agent,
+        config,
+        query,
+        analysis,
+        output=msg,
+        steps_taken=steps_taken,
+        steps=steps,
+        messages=messages or [],
     )
 
 
@@ -489,7 +594,7 @@ async def _run_react_ainvoke_with_retries(
 
     invoke_config = cast(
         RunnableConfig,  # noqa: TC006
-        {**(config or {}), "recursion_limit": REACT_RECURSION_LIMIT},
+        {**(config or {}), "recursion_limit": _react_recursion_limit(agent)},
     )
 
     state = initial_state if initial_state is not None else {"messages": _react_opening_messages(query)}
@@ -596,22 +701,15 @@ async def _run_react_ainvoke_with_retries(
             )
 
         except GraphRecursionError:
-            logger.warning(f"{log_prefix} ⚠ Recursion limit ({REACT_RECURSION_LIMIT}) reached.")
-            partial = "Step limit reached — partial result may be incomplete."
-            try:
-                partial = _extract_last_ai_message(response) or partial
-            except Exception:
-                pass
-            steps.append(_make_step(StepType.FALLBACK, "react_recursion_limit", output=partial, max_length=ml))
-            return ExecutionResult(
-                pattern_used=PatternType.REACT,
-                query=query,
-                output=partial,
-                steps_taken=REACT_RECURSION_LIMIT,
-                success=True,
-                analysis=analysis,
+            return await _react_recursion_limit_failure(
+                agent,
+                config,
+                query,
+                analysis,
+                path=log_prefix,
                 steps=steps,
                 messages=(response or {}).get("messages", []),
+                max_length=ml,
             )
 
         except Exception as exc:
@@ -655,16 +753,13 @@ async def _run_react_ainvoke_with_retries(
 
             logger.error(f"{log_prefix} ❌ Failed: {exc!r}")
             if isinstance(exc, TimeoutError):
-                return await _react_failure(
+                return await _react_return_timeout_failure(
                     agent,
                     config,
                     query,
                     analysis,
-                    output=_react_timeout_failure_message(
-                        agent,
-                        wall_seconds=_react_llm_timeout(agent),
-                        path=log_prefix,
-                    ),
+                    wall_seconds=_react_llm_timeout(agent),
+                    path=log_prefix,
                     steps_taken=attempt,
                     steps=steps,
                     messages=(response or {}).get("messages", []),
@@ -674,7 +769,7 @@ async def _run_react_ainvoke_with_retries(
                 if _exception_indicates_tool_use_failed(exc)
                 else ""
             )
-            exc_str = str(exc).strip() or repr(exc)
+            exc_str = format_exception_message(exc)
             return await _react_failure(
                 agent,
                 config,
@@ -736,7 +831,7 @@ async def _handle_react_streaming(
 
     invoke_config = cast(
         RunnableConfig,  # noqa: TC006
-        {**(config or {}), "recursion_limit": REACT_RECURSION_LIMIT},
+        {**(config or {}), "recursion_limit": _react_recursion_limit(agent)},
     )
     state = {"messages": _react_opening_messages(query)}
 
@@ -946,20 +1041,17 @@ async def _handle_react_streaming(
         )
 
     except TimeoutError:
-        logger.error(f"[React|stream] Graph wall timeout ({_graph_wall_timeout}s)")
-        return await _react_failure(
+        return await _react_return_timeout_failure(
             agent,
             config,
             query,
             analysis,
-            output=_react_timeout_failure_message(
-                agent,
-                wall_seconds=_graph_wall_timeout,
-                path="stream",
-            ),
+            wall_seconds=_graph_wall_timeout,
+            path="stream",
             steps_taken=steps_taken_from_audit(steps),
             steps=steps,
             messages=(final_response or {}).get("messages", []),
+            event_queue=event_queue,
         )
 
     except asyncio.CancelledError:
@@ -987,40 +1079,31 @@ async def _handle_react_streaming(
         )
 
     except GraphRecursionError:
-        logger.warning(f"[React|stream] Recursion limit ({REACT_RECURSION_LIMIT}) reached.")
-        partial = "Step limit reached — partial result may be incomplete."
-        try:
-            partial = _extract_last_ai_message(final_response) or partial
-        except Exception:
-            pass
-        steps.append(_make_step(StepType.FALLBACK, "react_recursion_limit", output=partial, max_length=ml))
-        return ExecutionResult(
-            pattern_used=PatternType.REACT,
-            query=query,
-            output=partial,
-            steps_taken=REACT_RECURSION_LIMIT,
-            success=True,
-            analysis=analysis,
+        return await _react_recursion_limit_failure(
+            agent,
+            config,
+            query,
+            analysis,
+            path="stream",
             steps=steps,
             messages=(final_response or {}).get("messages", []),
+            event_queue=event_queue,
+            max_length=ml,
         )
 
     except Exception as exc:
         if isinstance(exc, TimeoutError):
-            logger.error(f"[React|stream] Timed out ({_graph_wall_timeout}s)")
-            return await _react_failure(
+            return await _react_return_timeout_failure(
                 agent,
                 config,
                 query,
                 analysis,
-                output=_react_timeout_failure_message(
-                    agent,
-                    wall_seconds=_graph_wall_timeout,
-                    path="stream",
-                ),
+                wall_seconds=_graph_wall_timeout,
+                path="stream",
                 steps_taken=steps_taken_from_audit(steps),
                 steps=steps,
                 messages=(final_response or {}).get("messages", []),
+                event_queue=event_queue,
             )
         logger.warning(
             f"[React|stream] astream_events failed ({type(exc).__name__}: {exc}) — "
@@ -1153,7 +1236,7 @@ async def _handle_react_hitl(
 
     invoke_config = {
         **(incoming_config or {}),
-        "recursion_limit": REACT_RECURSION_LIMIT,
+        "recursion_limit": _react_recursion_limit(agent),
     }
     steps: list = (incoming_config or {}).get("_steps", [])
     ml = agent.get("max_step_output_length", 0)
@@ -1278,19 +1361,27 @@ async def _handle_react_hitl(
             )
 
         except GraphRecursionError:
-            logger.warning(f"[React|HITL] ⚠ Recursion limit ({REACT_RECURSION_LIMIT}) reached.")
-            partial = "Step limit reached — partial result may be incomplete."
-            try:
-                partial = _extract_last_ai_message(response) or partial
-            except Exception:
-                pass
-            return ExecutionResult(
-                pattern_used=PatternType.REACT,
-                query=query,
-                output=partial,
-                steps_taken=REACT_RECURSION_LIMIT,
-                success=True,
-                analysis=analysis,
+            return await _react_recursion_limit_failure(
+                agent,
+                incoming_config,
+                query,
+                analysis,
+                path="[React|HITL]",
+                steps=steps,
+                messages=(response or {}).get("messages", []),
+                max_length=ml,
+            )
+
+        except TimeoutError:
+            return await _react_return_timeout_failure(
+                agent,
+                incoming_config,
+                query,
+                analysis,
+                wall_seconds=_react_llm_timeout(agent),
+                path="[React|HITL]",
+                steps_taken=attempt,
+                steps=steps,
                 messages=(response or {}).get("messages", []),
             )
 
@@ -1349,7 +1440,7 @@ async def _handle_react_hitl(
             )
             # Use ``repr(exc)`` so empty-message exceptions still surface their class name —
             # otherwise users see an unhelpful ``execution failed: `` with no diagnostic.
-            exc_str = str(exc).strip() or repr(exc)
+            exc_str = format_exception_message(exc)
             return await _react_failure(
                 agent,
                 incoming_config,

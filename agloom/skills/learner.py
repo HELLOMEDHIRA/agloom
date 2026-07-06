@@ -8,8 +8,8 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, field_validator
 
-from ..logging_utils import get_logger
-from ..models import AgentEvent
+from ..src.logging_utils import get_logger
+from ..src.models import AgentEvent
 
 logger = get_logger(__name__)
 
@@ -140,7 +140,7 @@ class SkillLearner:
         if result.steps_taken < 2:
             return
 
-        from ..llm_utils import safe_create_task
+        from ..src.llm_utils import safe_create_task
 
         safe_create_task(
             self._extract(result, query, agent_name, event_queue=event_queue),
@@ -182,7 +182,7 @@ Existing skills (DO NOT duplicate these):
 Should we store this run as a reusable skill?
 """.strip()
 
-            from ..llm_utils import robust_structured_call
+            from ..src.llm_utils import robust_structured_call
 
             decision = await robust_structured_call(
                 self._llm,

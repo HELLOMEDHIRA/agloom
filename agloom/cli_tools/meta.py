@@ -29,11 +29,11 @@ def make_meta_tools() -> list:
         config = get_invocation_agent_config()
         if config is None:
             return "list_mcp_servers: no active agent session"
-        from ..mcp_support import format_mcp_inventory_text, mcp_configured_server_names
+        from ..src.mcp_support import format_mcp_inventory_text, mcp_configured_server_names
 
         configured = mcp_configured_server_names(config)
         if configured and config.get("_mcp_servers") and not config.get("_mcp_session_attempted"):
-            from ..unified_agent import _ensure_mcp_connected
+            from ..src.unified_agent import _ensure_mcp_connected
 
             try:
                 await _ensure_mcp_connected(config)

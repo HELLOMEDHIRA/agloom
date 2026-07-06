@@ -27,6 +27,7 @@ export const KNOWN_AGP_EVENT_TYPES = new Set<string>([
   'message.user',
   'pattern.classified',
   'plan.preview',
+  'harness.synced',
   'thinking.step',
   'progress.step',
   'token.delta',

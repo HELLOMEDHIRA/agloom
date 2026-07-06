@@ -5,12 +5,13 @@ Runnable scripts live under **`agloom/examples/`** in the GitHub repository. The
 ## What each example teaches
 
 | Example | Path | You will learn |
-| ------- | ---- | -------------- |
+| --- | --- | --- |
 | **Minimal agent** | `agloom/examples/quickstart/basic_agent.py` | `create_agent`, `ainvoke`, first result |
 | **Tools & ReAct** | `agloom/examples/tools/tools_and_react.py` | `@tool`, automatic tool loop |
 | **Streaming** | `agloom/examples/streaming/streaming.py` | `astream_events` for UIs |
 | **Frozen / batch agent** | `agloom/examples/patterns/frozen_agent.py` | Fixed pattern bias, batch-style calls |
 | **Multi-agent** | `agloom/examples/multi_agent/multi_agent.py` | Supervisor-style workloads |
+| **Harness** | `agloom/examples/harness/harness_agent.py` | Durable task ledger + metadata |
 
 Each folder has a short **README** with prerequisites (API keys, extras).
 

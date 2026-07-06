@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..models import ExecutionResult, OrchestrationContext, PatternType, SpawnInstruction
+from ..src.models import ExecutionResult, OrchestrationContext, PatternType, SpawnInstruction
 from .evaluation import ExecutionEvaluation
 
 

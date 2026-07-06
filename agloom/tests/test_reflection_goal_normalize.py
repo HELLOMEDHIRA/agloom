@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from agloom.models import (
+from agloom.src.models import (
     PatternType,
     QueryAnalysis,
     SubTask,
@@ -14,7 +14,7 @@ from agloom.models import (
     normalize_reflection_analysis,
 )
 from agloom.patterns.reflection import handle_reflection
-from agloom.models import SignalType
+from agloom.src.models import SignalType
 
 
 def test_normalize_reflection_synthesizes_goal_from_query() -> None:

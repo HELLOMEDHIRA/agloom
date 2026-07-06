@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from agloom.llm.provider_registry import PROVIDERS
-from agloom.llm_utils import exercise_llm_weak_dict_paths, llm_weak_dict_key_ok
+from agloom.src.llm_utils import exercise_llm_weak_dict_paths, llm_weak_dict_key_ok
 
 pytestmark = pytest.mark.provider_probe
 

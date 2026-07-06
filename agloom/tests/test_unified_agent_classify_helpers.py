@@ -6,14 +6,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agloom.models import PatternType, QueryAnalysis
-from agloom.unified_agent import (
+from agloom.src.models import PatternType, QueryAnalysis
+from agloom.src.unified_agent import (
     _build_classifier_augmented_query,
     _build_harness_context_for_classify,
     _coerce_unknown_pattern_handler,
     _execute_analyze_query,
 )
-from agloom.unified_agent import _HANDLERS
+from agloom.src.unified_agent import _HANDLERS
 
 
 def test_build_classifier_augmented_query_neither() -> None:
@@ -26,7 +26,7 @@ def test_build_classifier_augmented_query_memory_only() -> None:
 
 def test_build_classifier_augmented_query_harness_only() -> None:
     out = _build_classifier_augmented_query(memory_ctx="", harness_ctx="H", processed_query="Q")
-    assert "=== CROSS-SESSION PROGRESS ===" in out
+    assert "=== HARNESS ===" in out
     assert "H" in out
     assert out.endswith("\nQ")
 
@@ -34,8 +34,8 @@ def test_build_classifier_augmented_query_harness_only() -> None:
 def test_build_classifier_augmented_query_memory_and_harness() -> None:
     out = _build_classifier_augmented_query(memory_ctx="M", harness_ctx="H", processed_query="Q")
     assert out.startswith("M")
-    assert "CROSS-SESSION PROGRESS" in out
-    assert out.endswith("Q")
+    assert "=== HARNESS ===" in out
+    assert out.endswith("\nQ")
 
 
 @pytest.mark.asyncio
@@ -46,7 +46,7 @@ async def test_execute_analyze_query_forwards_kwargs(monkeypatch: pytest.MonkeyP
         captured.update(kwargs)
         return QueryAnalysis(pattern=PatternType.DIRECT, complexity=1, reasoning="ok", subtasks=[])
 
-    monkeypatch.setattr("agloom.unified_agent.analyze_query", fake_analyze_query)
+    monkeypatch.setattr("agloom.src.unified_agent.analyze_query", fake_analyze_query)
 
     cfg = {
         "llm": object(),
@@ -55,8 +55,11 @@ async def test_execute_analyze_query_forwards_kwargs(monkeypatch: pytest.MonkeyP
         "structured_max_retries": 1,
         "fallback_pattern": None,
         "_mcp_servers": [{"name": "grafana"}],
+        "_harness_enabled": False,
     }
-    r = await _execute_analyze_query(cfg, augmented_query="aq", skill_context="sk")
+    r = await _execute_analyze_query(
+        cfg, augmented_query="aq", skill_context="sk", user_query="user q"
+    )
     assert r.pattern == PatternType.DIRECT
     assert captured["query"] == "aq"
     assert captured["skill_context"] == "sk"
@@ -65,21 +68,43 @@ async def test_execute_analyze_query_forwards_kwargs(monkeypatch: pytest.MonkeyP
     assert captured["llm"] is cfg["llm"]
     assert captured["tools"] == ["t1"]
     assert captured["mcp_configured"] is True
+    assert captured["harness_needs_plan"] is False
 
 
 @pytest.mark.asyncio
 async def test_build_harness_context_returns_empty_when_disabled() -> None:
-    assert await _build_harness_context_for_classify({"_harness_enabled": False}, is_frozen=False) == ""
+    assert (
+        await _build_harness_context_for_classify(
+            {"_harness_enabled": False}, is_frozen=False, user_query="q"
+        )
+        == ""
+    )
 
 
 @pytest.mark.asyncio
-async def test_build_harness_context_reads_progress_tracker() -> None:
+async def test_build_harness_context_reads_progress_tracker(monkeypatch: pytest.MonkeyPatch) -> None:
     tracker = MagicMock()
+    tracker.artifact.tasks = []
     tracker.get_classifier_context.return_value = "harness-body"
 
+    def fake_build(metadata, progress_snippet, *, needs_plan: bool, needs_replan: bool = False) -> str:
+        assert needs_plan is True
+        assert needs_replan is False
+        return progress_snippet
+
+    monkeypatch.setattr(
+        "agloom.harness.metadata.build_harness_classifier_context",
+        fake_build,
+    )
+
     ctx = await _build_harness_context_for_classify(
-        {"_harness_enabled": True, "_progress_tracker": tracker},
+        {
+            "_harness_enabled": True,
+            "_progress_tracker": tracker,
+            "_harness_metadata": MagicMock(project_name="p", goal="g", allow_replan=False),
+        },
         is_frozen=False,
+        user_query="please investigate production outage",
     )
     assert ctx == "harness-body"
 

@@ -6,7 +6,7 @@ import pytest
 
 pytest.importorskip("google.protobuf")
 
-from agloom import cache as cache_mod
+from agloom.src import cache as cache_mod
 
 
 def test_qdrant_pool_lazy_and_shutdown() -> None:

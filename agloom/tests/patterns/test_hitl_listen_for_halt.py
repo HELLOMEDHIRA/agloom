@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from agloom.models import Signal, SignalType
+from agloom.src.models import Signal, SignalType
 from agloom.patterns.hitl import _listen_for_halt, _should_interrupt
 
 

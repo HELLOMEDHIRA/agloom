@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from agloom.llm_utils import robust_structured_call
+from agloom.src.llm_utils import robust_structured_call
 
 
 class _Mini(BaseModel):
@@ -21,12 +21,12 @@ async def test_agloom_skip_json_schema_env_skips_first_path(monkeypatch: pytest.
         calls.append(method)
         return None
 
-    monkeypatch.setattr("agloom.llm_utils._build_structured", fake_build_structured)
+    monkeypatch.setattr("agloom.src.llm_utils._build_structured", fake_build_structured)
 
     async def no_fallback(*a, **k):
         return None
 
-    monkeypatch.setattr("agloom.llm_utils._try_raw_json_fallback", no_fallback)
+    monkeypatch.setattr("agloom.src.llm_utils._try_raw_json_fallback", no_fallback)
 
     class DummyLLM:
         pass

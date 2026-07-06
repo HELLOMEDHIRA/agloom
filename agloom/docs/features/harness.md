@@ -1,90 +1,210 @@
 # Long-running harness (progress + git)
 
-The **harness** is an **optional** layer in the **`agloom`** library. It helps agents work across many sessions on the same codebase or product goal: structured **tasks**, **verification steps**, **bootstrap briefings**, and **git** helpers — backed by your LangGraph **store** and optional **`agloom-progress.json`** on disk.
+Ship agents that **remember what “done” means** across sessions — not just what was said last turn.
 
-You can turn it on from **`create_agent`** or from the **agloom CLI** (see below). In both cases it only takes effect when a **`store`** is in use — without a store, `harness=True` is **ignored** and a warning is logged.
+The **harness** is an optional layer for multi-day coding, incident response, and product work. It gives your agent a durable **task ledger** with verification steps, session bootstrap briefings, and optional **git** helpers — backed by your LangGraph **`store=`** and an on-disk **`agloom-progress.json`** artifact when configured.
 
-!!! note "Imports such as `Task` or `GitSession`"
-    Optional symbols (`Task`, `GitSession`, …) are available from the top-level **`agloom`** package when the harness submodule loads successfully. If they are missing after install, reinstall with `pip install --force-reinstall agloom` (or use your project’s full dev install). You can still enable behaviour with **`create_agent(..., harness=True)`** without importing those types. Runtime **`git_*`** tools require **`git`** on `PATH`.
+!!! note "Library vs `agloom-runtime serve`"
+    **`create_agent(..., harness=False)`** is the Python API default — harness tools are opt-in when embedding agloom.
+    **`agloom`** / **`agloom-runtime serve`** turn harness **on** whenever a LangGraph agent store is open (default sqlite) unless you pass **`--no-harness`** or set **`AGLOOM_HARNESS=0`**.
 
-## When to use it
+With harness off, agloom still routes every turn through the same **turn planner** and patterns; work lives in memory and checkpoints only. With **`harness=True`** (library) or the runtime default above, you add a project scope, progress tools, and cross-session accountability.
 
-- Multi-session coding or PM-style agents where you want a **durable task list** and explicit **pass/fail verification** before marking work done.
-- Flows where the model should **commit**, **tag checkpoints**, or **inspect git status** through tools instead of raw shell (still **trusted** use — same caution as any git automation).
+---
 
-## Enabling the harness (library)
+## Why teams use it
 
-Requirements:
+| Without harness | With harness |
+| --- | --- |
+| “What were we doing?” every new session | Goal + task list persist on the artifact |
+| Implicit progress in chat history | Explicit tasks with pass/fail verification |
+| Ad-hoc git in shell | `git_status`, `git_commit`, checkpoint tags via tools |
+| One-shot ReAct loops | **HARNESS CURRENT FOCUS** steers each turn toward the active task |
 
-1. Pass **`store=`** — any LangGraph-compatible store (`InMemoryStore`, `AsyncSqliteStore`, etc.).
-2. Pass **`harness=True`**.
-3. Optionally set **`harness_project_name=`** (default `"project"`). This scopes progress state so separate projects do not collide.
+Typical fits: **RCA agents**, **multi-session refactors**, **PM-style delivery**, any workflow where you want the model to **prove** a step before marking it complete.
+
+---
+
+## Quick start
+
+**Requirements:** `store=` + `harness=True` + `harness_metadata=`.
 
 ```python
-from agloom import create_agent
+from agloom import create_agent, HarnessMetadata
 from langgraph.store.memory import InMemoryStore
 
-async def main():
-    agent = await create_agent(
-        model=llm,
-        store=InMemoryStore(),
-        harness=True,
-        harness_project_name="my-app",
-        name="coder",
-    )
+agent = await create_agent(
+    model=llm,
+    store=InMemoryStore(),
+    harness=True,
+    name="rca-agent",
+    harness_metadata=HarnessMetadata(
+        project_name="rca-inc-8842",
+        goal="Checkout DB latency spike — find root cause",
+        init_git=False,
+    ),
+)
+
+# Turn 1 — planner may seed harness tasks; REACT runs with active-task focus
+result = await agent.ainvoke(
+    "Investigate checkout latency spike in production",
+    thread_id="rca-session-1",
+)
+print(result.pattern_used, result.output[:200])
+
+# Turn 2 — routes again (e.g. still REACT); ledger persists; focus updates
+result = await agent.ainvoke(
+    "I found connection pool exhaustion in the logs",
+    thread_id="rca-session-1",
+)
 ```
+
+`harness=True` without **`harness_metadata`** or **`store=`** raises **`ValueError`** at construction.
+
+!!! note "Imports"
+    `HarnessMetadata`, `Task`, `ProgressTracker`, and `GitSession` are available from **`from agloom import …`** when the harness submodule loads. Git tools require **`git`** on `PATH`.
+
+---
+
+## How a harness turn flows
+
+```text
+create_agent(harness=True, harness_metadata=…)
+        ↓
+[bind] project goal + optional pre-seeded tasks (once per thread)
+        ↓
+[turn planner] plan_turn / analyze_query — route + optional harness_plan
+        ↓
+[sync] persist harness_plan (or derive from subtasks) when ledger is empty
+        ↓
+[inject] HARNESS CURRENT FOCUS → pattern handler + workers
+        ↓
+[execute] REACT / SUPERVISOR / … + progress & git tools
+```
+
+The **turn planner** (implemented in the classifier module) is one LLM call per turn that decides:
+
+- **Which pattern** runs this message (REACT, SUPERVISOR, DIRECT, …)
+- **Optional `harness_plan`** — durable tasks for the ledger (usually turn 1)
+- **Optional `subtasks`** — this-turn worker routing for multi-agent patterns
+
+These are related but not the same: REACT often has `subtasks = []` while still needing a `harness_plan`.
+
+### Wire events (`progress.step`)
+
+| Phase | Example detail |
+| --- | --- |
+| After bind, no tasks | `Harness bound · no tasks yet — turn planner may add tasks after triage` |
+| After bind, tasks exist | `Harness ready · N task(s) · X% complete` |
+| After plan sync | `Harness planned · N task(s) · …` |
+
+For task-board UIs, also consume **`harness.synced`** (full ledger snapshot) and **`pattern.classified.harness_plan`** (planner output). See [AGP protocol](../protocol/agp.md).
+
+---
+
+## `HarnessMetadata` fields
+
+| Field | Purpose |
+| --- | --- |
+| `project_name` | Artifact scope key (incident id, effort name) |
+| `goal` | North-star objective on the progress artifact |
+| `init_git` | Run `git init` once when cwd is not a repo |
+| `allow_replan` | When `True`, later turns may **append** new `harness_plan` tasks (duplicate ids skipped) |
+| `force_plan` | When `True`, skip short-query heuristics so seeding works on brief intentional messages |
+| `tasks` | Optional integrator pre-seed (tickets, alerts) — skipped if artifact already has tasks |
+
+```python
+HarnessMetadata(
+    project_name="rca-inc-8842",
+    goal="Checkout DB latency spike",
+    init_git=False,
+    allow_replan=False,
+    force_plan=False,
+    tasks=[
+        {
+            "id": "ctx-001",
+            "description": "Collect alert timeline",
+            "priority": "critical",
+            "verification_steps": ["Timeline documented with UTC timestamps"],
+        },
+    ],
+)
+```
+
+### Planner gating (`needs_plan` / `needs_replan`)
+
+| Gate | When active |
+| --- | --- |
+| **`needs_plan`** | Harness on, **empty** ledger, non-trivial user query → full wire schema + HARNESS RULE in prompt |
+| **`needs_replan`** | `allow_replan=True`, ledger has tasks, user expands scope → append-only harness fields |
+
+Turn 2+ on a seeded ledger uses a **lighter wire schema** (no `harness_plan` fields) unless replan is triggered — saving tokens and avoiding redundant planning.
+
+---
+
+## Progress & git tools
+
+When harness is active, agloom appends **progress + git tools** to the agent:
+
+| Tool | Role |
+| --- | --- |
+| `bootstrap_progress` | Session start briefing — call at the beginning of each session |
+| `get_next_task` | Claim highest-priority pending task |
+| `update_task` | Mark verification steps, status, notes |
+| `save_progress` | Persist artifact to store + disk |
+| `add_task` | Add ad-hoc tasks mid-flight |
+| `git_status` / `git_log` / `git_diff` | Inspect repo state |
+| `git_commit` / `git_checkpoint` | Commit work with harness-friendly messages |
+| `initialize_project` | Manual recovery initializer (normal path uses metadata + planner) |
+
+The agent receives **HARNESS CURRENT FOCUS** in its handler input (active task, verification steps, completion ratio). Multi-worker patterns also prepend this focus to each worker task.
+
+---
+
+## Harness + frozen agents
+
+**Frozen** mode classifies once and replays the locked pattern on later calls. Harness still works:
+
+- **First frozen call** — harness metadata is included in the lock classify; ledger seeds from `harness_plan`
+- **Replay turns** — progress context + execution focus refresh; pattern routing is not re-run
+
+See [Frozen agents](frozen-agents.md) for batch translation and fixed-workflow use cases.
+
+---
 
 ## Harness + interactive frontends
 
-There is **one** library knob: **`create_agent(..., harness=True, harness_project_name=...)`**. Everything else is just how different launchers **set that argument**.
+| How you run agloom | Harness toggle |
+| --- | --- |
+| **Your Python app** | `harness=True` + `harness_metadata` on `create_agent` |
+| **`agloom-runtime serve`** | On when a store is open (unless `--no-harness`); default metadata for interactive sessions |
 
-| How you run agloom | How harness is toggled |
-| ------------------ | ---------------------- |
-| **Python / your app** | Pass **`harness=True`** (or `False`) to **`create_agent`**. No env vars are read inside the library. |
-| **`agloom` / `agloom-runtime serve`** | Runtime calls `create_agent(..., harness=use_harness)`. Default **`on`** when a LangGraph **`store`** is open; pass **`--no-harness`** to turn off (npm **`agloom --no-harness`** forwards this). |
-| **Scripts / CI** (optional) | Before spawning the runtime only: **`AGLOOM_HARNESS=0`** or **`AGLOOM_HARNESS_ENABLED=0`** — same effect as **`--no-harness`**. Not used when you call **`create_agent`** yourself. |
+---
 
-Typical behaviour with a project-local `.agloom/` layout:
+## Concurrency
 
-- **SQLite store:** `graph_store.sqlite` holds harness / skills durable state when a store is configured.
-- **Memory / checkpoints:** depend on your YAML and whether you pass a LangGraph checkpointer — mirror the same settings you would use for a pure-library deployment.
+A single `UnifiedAgent` instance **serializes** full turns (`_prepare_turn` → `run_fresh`) with an internal asyncio lock. Per-turn harness focus lives in isolated `invoke_config` state so overlapping `ainvoke` / `astream` calls on the **same instance** do not corrupt each other.
 
-## What gets injected
+For true parallel throughput across users, use **separate agent instances** or an external job queue.
 
-When the harness is active, **12 tools** are appended to your tool list (same set as `create_agent(..., harness=True)`):
+---
 
-Progress and git helpers are **async** LangChain tools. Agloom registers them with `coroutine=` (not plain `func=`) so invocations are awaited and never return a raw coroutine object to the model.
+## API reference (integrators)
 
-| Tool                 | Role                                                                                          |
-| -------------------- | --------------------------------------------------------------------------------------------- |
-| `git_status`         | Working tree summary.                                                                         |
-| `git_log`            | Recent commits.                                                                               |
-| `git_commit`         | Stage all and commit with a message.                                                          |
-| `git_checkpoint`     | Named checkpoint (tag-style) for recovery.                                                    |
-| `git_diff`           | Show working-tree or ref diffs.                                                               |
-| `git_revert_hint`    | Suggest recovery when the tree is broken.                                                     |
-| `bootstrap_progress` | Session start protocol: context, task list, suggested next task.                              |
-| `save_progress`      | Persist progress notes and artifact snapshot (long-term store + disk).                        |
-| `update_task`        | Update status, notes, errors, verification results.                                           |
-| `get_next_task`      | Claim the next pending task for the current session.                                          |
-| `add_task`           | Add a task with optional verification steps.                                                  |
-| `initialize_project` | First-run decomposition: goal → structured task list + briefing (uses the agent LLM + store). |
+| Symbol | Role |
+| --- | --- |
+| `HarnessMetadata` | Project contract at `create_agent` |
+| `plan_turn` / `analyze_query` | Turn planner LLM call (`analyze_query` is the legacy alias) |
+| `TurnPlan` | Alias for `QueryAnalysis` on `result.analysis` |
+| `needs_harness_plan` | Seed gate heuristic |
+| `sync_harness_from_analysis` | Persist planner output to artifact |
+| `seed_harness_tasks` | Programmatic pre-seed |
 
-## How the agent “sees” progress
-
-On each turn (non-frozen path), the agent may prepend a **cross-session progress** summary — a structured block (often under a heading like `=== CROSS-SESSION PROGRESS ===`) built from the live progress artifact. That keeps **routing / classification** aligned with the current task graph.
-
-When the harness is enabled, the runtime also **ties progress state to the effective session thread** so new turns start with consistent bootstrap context.
-
-Clients using **`astream_events()`** or AGP may see **`progress.step`** with `phase: harness_init` when the harness loads an artifact that already has tasks — e.g. `Harness ready · N task(s) · …`. When there are **no tasks yet**, bootstrap is **silent on the wire** (debug log only); use `initialize_project` to seed tasks. See [Thinking trace & reasoning streams](thinking-events.md).
-
-## Storage and disk
-
-- **Long-term store:** progress and harness metadata live in store namespaces reserved for this feature (not intended for direct editing).
-- **Disk mirror:** tools can write **`agloom-progress.json`** for human inspection or recovery alongside long-term storage.
+---
 
 ## Related
 
-- [All Parameters](../configuration/parameters.md) — `harness`, `harness_project_name`
-- [The create_agent API](../concepts/create-agent.md)
+- [All parameters](../configuration/parameters.md) — `harness`, `harness_metadata`
 - [Memory & store](memory.md) — `store=` prerequisite
+- [How it works](../concepts/how-it-works.md) — full turn pipeline
+- [Thinking events](thinking-events.md) — `harness_init` on the wire

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from agloom.hitl_contract import HITLEvent
+from agloom.src.hitl_contract import HITLEvent
 from agloom.protocol import (
     HITLAllowlisted,
     HITLDenied,

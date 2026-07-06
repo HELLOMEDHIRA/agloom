@@ -7,7 +7,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, field_validator
 
-from ..models import ExecutionResult, OrchestrationContext, PatternType, SpawnInstruction
+from ..src.models import ExecutionResult, OrchestrationContext, PatternType, SpawnInstruction
 
 _ORCH_EVAL_SYSTEM = """
 You evaluate one step of a recursive AI orchestration run.
@@ -97,7 +97,7 @@ def _minimal_fallback_evaluation(
 def _resolve_eval_llm(agent: dict[str, Any]) -> Any:
     dedicated = agent.get("orchestration_evaluation_llm")
     if dedicated is not None:
-        from ..unified_agent import resolve_model
+        from ..src.unified_agent import resolve_model
 
         return resolve_model(dedicated)
     return agent.get("llm")
@@ -137,7 +137,7 @@ Error: {result.error or 'none'}
 Output preview:
 {out[:800]}
 """.strip()
-    from ..llm_utils import robust_structured_call
+    from ..src.llm_utils import robust_structured_call
 
     timeout = min(float(agent.get("llm_timeout", 120.0)), 45.0)
     score = await robust_structured_call(
@@ -190,7 +190,7 @@ Original task:
 Parallel worker outputs:
 {preview}
 """.strip()
-    from ..llm_utils import robust_structured_call
+    from ..src.llm_utils import robust_structured_call
 
     timeout = min(float(agent.get("llm_timeout", 120.0)), 30.0)
     score = await robust_structured_call(
@@ -226,7 +226,7 @@ async def evaluate_execution(
     ctx.confidence_scores.append(evaluation.confidence)
     ctx.quality_scores.append(evaluation.quality_score)
     if evaluation.failure_detected:
-        from ..models import FailureRecord
+        from ..src.models import FailureRecord
 
         ctx.failure_history.append(
             FailureRecord(

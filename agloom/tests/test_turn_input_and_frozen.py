@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from agloom.frozen import clear_frozen_plan, frozen_replay_active, get_frozen_plan
-from agloom.models import PatternType, QueryAnalysis
-from agloom.turn_input import normalize_turn_input
-from agloom.unified_agent import _HANDLERS, create_agent
+from agloom.src.frozen import clear_frozen_plan, frozen_replay_active, get_frozen_plan
+from agloom.src.models import PatternType, QueryAnalysis
+from agloom.src.turn_input import normalize_turn_input
+from agloom.src.unified_agent import _HANDLERS, create_agent
 
 
 class _StubChatModel:
@@ -68,7 +68,7 @@ async def test_frozen_false_classifies_every_turn() -> None:
     classify_mock = AsyncMock(return_value=_direct_analysis())
     agent = await create_agent(model=_StubChatModel(), name="dyn", query_cache=False, frozen=False)
     inp = {"messages": [{"role": "user", "content": "one"}]}
-    with patch("agloom.unified_agent.analyze_query", classify_mock):
+    with patch("agloom.src.unified_agent.analyze_query", classify_mock):
         try:
             await agent.ainvoke(inp, thread_id="dyn-1")
             await agent.ainvoke(
@@ -91,7 +91,7 @@ async def test_frozen_true_classifies_once_replays_second() -> None:
         frozen=True,
         system_prompt="Translate to French.",
     )
-    with patch("agloom.unified_agent.analyze_query", classify_mock):
+    with patch("agloom.src.unified_agent.analyze_query", classify_mock):
         try:
             await agent.ainvoke(
                 {"messages": [{"role": "user", "content": "Hello"}]},
@@ -118,7 +118,7 @@ async def test_frozen_true_classifies_once_replays_second() -> None:
 async def test_frozen_string_sugar_same_as_messages() -> None:
     classify_mock = AsyncMock(return_value=_direct_analysis())
     agent = await create_agent(model=_StubChatModel(), name="frz-str", query_cache=False, frozen=True)
-    with patch("agloom.unified_agent.analyze_query", classify_mock):
+    with patch("agloom.src.unified_agent.analyze_query", classify_mock):
         try:
             await agent.ainvoke("first", thread_id="fs-1")
             classify_mock.reset_mock()
@@ -132,7 +132,7 @@ async def test_frozen_string_sugar_same_as_messages() -> None:
 async def test_frozen_astream_events_same_plan() -> None:
     classify_mock = AsyncMock(return_value=_direct_analysis())
     agent = await create_agent(model=_StubChatModel(), name="frz-ev", query_cache=False, frozen=True)
-    with patch("agloom.unified_agent.analyze_query", classify_mock):
+    with patch("agloom.src.unified_agent.analyze_query", classify_mock):
         try:
             async for _ in agent.astream_events(
                 {"messages": [{"role": "user", "content": "a"}]},
@@ -155,7 +155,7 @@ async def test_frozen_astream_events_same_plan() -> None:
 async def test_reset_frozen_reclassifies() -> None:
     classify_mock = AsyncMock(return_value=_direct_analysis())
     agent = await create_agent(model=_StubChatModel(), name="frz-rst", query_cache=False, frozen=True)
-    with patch("agloom.unified_agent.analyze_query", classify_mock):
+    with patch("agloom.src.unified_agent.analyze_query", classify_mock):
         try:
             await agent.ainvoke({"messages": [{"role": "user", "content": "x"}]}, thread_id="rst-1")
             agent.reset_frozen()
@@ -173,7 +173,7 @@ async def test_frozen_prelocked_skips_classify() -> None:
     analysis = _direct_analysis()
     agent.config["frozen_analysis"] = analysis
     agent.config["_frozen_handler"] = _HANDLERS[PatternType.DIRECT]
-    from agloom.frozen import build_execution_plan
+    from agloom.src.frozen import build_execution_plan
 
     build_execution_plan(
         agent.config,
@@ -182,7 +182,7 @@ async def test_frozen_prelocked_skips_classify() -> None:
         classify_text="locked",
         execution_mode="handler",
     )
-    with patch("agloom.unified_agent.analyze_query", classify_mock):
+    with patch("agloom.src.unified_agent.analyze_query", classify_mock):
         try:
             result = await agent.ainvoke(
                 {"messages": [{"role": "user", "content": "anything"}]},

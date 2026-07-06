@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..models import SignalType, WorkerResult
+from ..src.models import SignalType, WorkerResult
 
 
 def worker_execution_failed(signal: SignalType) -> bool:

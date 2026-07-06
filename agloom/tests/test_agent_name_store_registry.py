@@ -8,11 +8,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from agloom.memory.store import LongTermStore
-from agloom.unified_agent import _register_agent_name, _unregister_agent_name
+from agloom.src.unified_agent import _register_agent_name, _unregister_agent_name
 
 
 def test_duplicate_agent_name_warns_same_store_not_different_store(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.WARNING, logger="agloom.unified_agent")
+    caplog.set_level(logging.WARNING, logger="agloom.src.unified_agent")
     backend_a = MagicMock()
     backend_b = MagicMock()
     store_a = LongTermStore(backend_a)
@@ -32,7 +32,7 @@ def test_duplicate_agent_name_warns_same_store_not_different_store(caplog: pytes
 
 
 def test_no_store_never_warns_on_duplicate(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.WARNING, logger="agloom.unified_agent")
+    caplog.set_level(logging.WARNING, logger="agloom.src.unified_agent")
     _register_agent_name("solo", None)
     _register_agent_name("solo", None)
     assert not any("Multiple agents" in r.message for r in caplog.records)

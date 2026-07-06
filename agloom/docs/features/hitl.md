@@ -63,7 +63,7 @@ Read operations proceed automatically; destructive operations require approval.
 ### Wildcards (L2 and L3)
 
 | List | Match all | Match one id |
-|------|-----------|----------------|
+| --- | --- | --- |
 | `interrupt_before_tools` / `interrupt_after_tools` | Include the literal token `tools` (every registered tool name) | List individual tool names, e.g. `delete_file` |
 | `interrupt_before_workers` / `interrupt_after_workers` | `*` or `__all__` | List a worker id, e.g. `deployer` |
 
@@ -94,8 +94,7 @@ For programmatic control during execution. Each `ainvoke()` normally allocates a
 
 ```python
 import asyncio
-from agloom import SignalType
-from agloom.models import Signal
+from agloom import Signal, SignalType
 
 async def run_with_halt(agent):
     signal_queue = asyncio.Queue()

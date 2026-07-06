@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from agloom.worker import _hitl_middleware_for_invoke
+from agloom.src.worker import _hitl_middleware_for_invoke
 
 
 def test_hitl_middleware_empty_without_parent() -> None:

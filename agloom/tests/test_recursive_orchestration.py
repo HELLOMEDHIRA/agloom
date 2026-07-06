@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agloom.models import (
+from agloom.src.models import (
     ExecutionResult,
     OrchestrationBudgetExceeded,
     OrchestrationContext,
@@ -24,7 +24,7 @@ from agloom.orchestrator import (
     orchestration_enabled,
     resolve_turn_orchestration,
 )
-from agloom.models import SpawnedPatternRecord
+from agloom.src.models import SpawnedPatternRecord
 from agloom.orchestrator.safety import apply_timeout, check_cycle, hash_task
 
 
@@ -72,7 +72,7 @@ def test_per_turn_plan_in_fresh_context() -> None:
 
 
 def test_agent_config_default_max_pattern_depth() -> None:
-    from agloom.models import AgentConfig
+    from agloom.src.models import AgentConfig
 
     cfg = AgentConfig(model="openai:gpt-4o-mini", name="t")
     assert cfg.max_pattern_depth == 0
@@ -174,7 +174,7 @@ async def test_evaluate_execution_uses_llm_when_enabled(
         )
 
     monkeypatch.setattr(
-        "agloom.llm_utils.robust_structured_call",
+        "agloom.src.llm_utils.robust_structured_call",
         _fake_structured,
     )
     agent = _agent(enable_orchestration_llm_eval=True)
@@ -231,7 +231,7 @@ async def test_dispatch_merges_escalation_child(monkeypatch: pytest.MonkeyPatch)
         )
 
     monkeypatch.setattr(
-        "agloom.llm_utils.robust_structured_call",
+        "agloom.src.llm_utils.robust_structured_call",
         _fake_structured,
     )
     call_count = {"n": 0}
@@ -291,7 +291,7 @@ async def test_trace_recorded_in_metadata(monkeypatch: pytest.MonkeyPatch) -> No
         )
 
     monkeypatch.setattr(
-        "agloom.llm_utils.robust_structured_call",
+        "agloom.src.llm_utils.robust_structured_call",
         _fake_structured,
     )
 
@@ -340,7 +340,7 @@ def test_detect_perspective_conflict() -> None:
 @pytest.mark.asyncio
 async def test_recover_failed_workers_replaces_failure() -> None:
     from agloom.orchestrator.hooks import recover_failed_workers
-    from agloom.models import SignalType, WorkerResult
+    from agloom.src.models import SignalType, WorkerResult
 
     async def _spawn(pattern, task, **kwargs):
         return ExecutionResult(
@@ -401,7 +401,7 @@ async def test_detect_conflicts_via_llm(monkeypatch: pytest.MonkeyPatch) -> None
         return ConflictEvalScore(has_conflicts=True, reasoning="contradictory claims")
 
     monkeypatch.setattr(
-        "agloom.llm_utils.robust_structured_call",
+        "agloom.src.llm_utils.robust_structured_call",
         _fake_structured,
     )
     agent = _agent(enable_orchestration_llm_eval=True)
@@ -411,7 +411,7 @@ async def test_detect_conflicts_via_llm(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_translator_orchestration_event() -> None:
-    from agloom.models import AgentEvent
+    from agloom.src.models import AgentEvent
     from agloom.protocol import SessionEmitter
     from agloom.runtime.translator import translate
 

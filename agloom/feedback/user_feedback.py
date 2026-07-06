@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from .store import FeedbackStore
 
-from ..logging_utils import get_logger
+from ..src.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

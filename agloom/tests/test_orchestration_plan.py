@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agloom.models import QueryAnalysis, PatternType
+from agloom.src.models import QueryAnalysis, PatternType
 from agloom.orchestrator.plan import derive_orchestration_from_complexity, resolve_turn_orchestration
 
 

@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from agloom.hitl_contract import HITLEvent
+from agloom.src.hitl_contract import HITLEvent
 from agloom.patterns.hitl_tool_coalesce import build_default_hitl_coalescer, reset_hitl_turn_coalescer
 from agloom.patterns.middleware import HumanApprovalMiddleware, UserAbort
 

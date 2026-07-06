@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..models import ExecutionResult, OrchestrationContext, PatternType, QueryAnalysis, SpawnInstruction
+from ..src.models import ExecutionResult, OrchestrationContext, PatternType, QueryAnalysis, SpawnInstruction
 from .context import fresh_orchestration_context, orchestration_enabled
 from .dispatch import SpawnAPI, dispatch_pattern
 from .evaluation import ExecutionEvaluation, evaluate_execution

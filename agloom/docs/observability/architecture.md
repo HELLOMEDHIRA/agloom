@@ -35,7 +35,7 @@ The default stack uses SQLite only. Heavier analytics backends can be layered on
 Public API (import from **`agloom.observability`**):
 
 | Component | Role |
-| ----------- | ---- |
+| --- | --- |
 | **ObservabilityStore** | Append AGP envelopes; query by session |
 | **MetricsAggregator** | Per-session token / turn aggregates |
 | **ReplayEngine** | Re-emit stored events (real-time or accelerated) |
@@ -81,17 +81,17 @@ CREATE TABLE sessions (
 
 Derived on-demand from the `events` table — no separate write path needed.
 
-| Metric               | Derived from                                            | Unit  |
-| -------------------- | ------------------------------------------------------- | ----- |
-| `input_tokens`       | `metric.tokens` events                                  | count |
-| `output_tokens`      | `metric.tokens` events                                  | count |
-| `llm_latency_ms`     | `thinking.step` with `elapsed_ms` where step='llm_call' | ms    |
-| `tool_duration_ms`   | `tool.result` with `duration_ms`                        | ms    |
-| `worker_duration_ms` | `worker.completed` with `duration_ms`                   | ms    |
-| `node_duration_ms`   | `graph.node.exit` with `duration_ms`                    | ms    |
-| `hitl_gates`         | `hitl.request` event count                              | count |
-| `retries`            | `error.transient` event count                           | count |
-| `turn_count`         | `message.user` event count                              | count |
+| Metric | Derived from | Unit |
+| --- | --- | --- |
+| `input_tokens` | `metric.tokens` events | count |
+| `output_tokens` | `metric.tokens` events | count |
+| `llm_latency_ms` | `thinking.step` with `elapsed_ms` where step='llm_call' | ms |
+| `tool_duration_ms` | `tool.result` with `duration_ms` | ms |
+| `worker_duration_ms` | `worker.completed` with `duration_ms` | ms |
+| `node_duration_ms` | `graph.node.exit` with `duration_ms` | ms |
+| `hitl_gates` | `hitl.request` event count | count |
+| `retries` | `error.transient` event count | count |
+| `turn_count` | `message.user` event count | count |
 
 ### 2.4 Replay Architecture
 

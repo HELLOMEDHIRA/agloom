@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from agloom.models import AgentEvent
+from agloom.src.models import AgentEvent
 from agloom.runtime.translator import translate
 
 

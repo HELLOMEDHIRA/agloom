@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 from typing import Any
 
-from agloom.compat import safe_writer_write
+from agloom.src.compat import safe_writer_write
 
 
 class _Cp1252Writer:

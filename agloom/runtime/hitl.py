@@ -35,8 +35,8 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from uuid import uuid4
 
-from ..hitl_contract import HITLEvent
-from ..logging_utils import get_logger
+from ..src.hitl_contract import HITLEvent
+from ..src.logging_utils import get_logger
 from ..protocol import HITLDecision, HITLKind, SessionEmitter
 from .hitl_allowlist import (
     HitlAllowlistPolicy,
@@ -373,7 +373,7 @@ class HITLBridge:
 
     async def request_clarification(self, question: str, choices: list[str] | None = None) -> str:
         """Emit a ``hitl.request`` of kind ``clarification`` and await ``command.hitl.respond``."""
-        from ..hitl_contract import HITLEvent
+        from ..src.hitl_contract import HITLEvent
 
         payload: dict[str, Any] = {
             "question": question,

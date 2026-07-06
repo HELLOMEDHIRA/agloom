@@ -1,6 +1,6 @@
 # Choosing an execution pattern
 
-You rarely pick a pattern manually — agloom’s **classifier** does. This page helps you **predict** what will run and **steer** behavior when the default routing is not ideal.
+You rarely pick a pattern manually — agloom’s **turn planner** does. This page helps you **predict** what will run and **steer** behavior when the default routing is not ideal.
 
 ## Start here
 
@@ -9,7 +9,7 @@ Read **[Execution patterns](../concepts/patterns.md)** for the nine patterns, di
 ## Decision guide
 
 | Your query looks like… | Likely pattern | How to steer |
-| ---------------------- | -------------- | ------------ |
+| --- | --- | --- |
 | Short fact or greeting | **DIRECT** | Omit tools; keep query simple |
 | Needs calculator, search, APIs | **REACT** | Register tools; clear tool descriptions |
 | Investigate logs, metrics, traces (MCP) | **REACT** | Configure `mcp_servers`; avoid REFLECTION for raw fetch — see below |
@@ -23,7 +23,7 @@ Read **[Execution patterns](../concepts/patterns.md)** for the nine patterns, di
 
 ## Practical shortcuts
 
-- **Tool-heavy exploration** — register tools; classifier usually picks **REACT**.
+- **Tool-heavy exploration** — register tools; turn planner usually picks **REACT**.
 - **Known fixed workflow** — describe ordered steps; **PIPELINE** or **PLANNER** often win.
 - **LCEL inside one capability** — wrap chains as tools ([LCEL as tools](lcel-as-tools.md)); orchestration stays automatic.
 
@@ -36,7 +36,7 @@ When **`mcp_servers`** is set (Grafana, Loki, Elasticsearch, custom observabilit
 - Workers in multi-worker patterns **inherit all agent tools** when `required_tools` is empty but the worker task needs tools.
 - Keep **`react_force_tool_choice_on_user_turn=True`** (default). Groq-style models get opening-turn `required`; Qwen/LiteLLM get provider-default `tool_choice` with message flattening via the LLM wrapper.
 
-Details: [MCP Server Integration](../features/mcp.md#classifier-routing-with-mcp).
+Details: [MCP Server Integration](../features/mcp.md#turn-planner-routing-with-mcp).
 
 ## Live bias (CLI / web / custom AGP client)
 
@@ -46,7 +46,7 @@ Send **`command.config.set`** with **`pattern`** when your client supports runti
 
 1. Enable **`debug=True`** or check **`result.pattern_used`**.
 2. Review **`result.steps`** for the classify step metadata.
-3. If you use LangSmith, open the trace for the classifier span.
+3. If you use LangSmith, open the trace for the turn planner / `analyze_query` span.
 4. Avoid registering tools you do not want the model to use — tools strongly bias toward **REACT**.
 
 ## See also

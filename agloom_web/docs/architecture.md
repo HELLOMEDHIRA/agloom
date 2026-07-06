@@ -30,6 +30,21 @@ This guarantees AGP remains the single stable runtime abstraction across all fro
 
 ---
 
+## Harness parity (CLI + web)
+
+Both clients consume the same harness wire events:
+
+| Event | UI |
+| --- | --- |
+| `runtime.ready.harness_enabled` | Header badge (web) / metrics row (CLI) |
+| `pattern.classified.harness_plan` | Seeds ledger preview before `harness.synced` |
+| `harness.synced` | Task ledger panel (web **Harness** tab; CLI metrics sidebar) |
+| `command.harness.git` | CLI slash commands; web `/git`, `/checkpoint`, `/diff`, `/hint` |
+
+Disable harness on the runtime with `--no-harness` or `--agent-store none`.
+
+---
+
 ## 2. Technology Stack
 
 | Concern       | Technology                  | Version | Reason                                          |

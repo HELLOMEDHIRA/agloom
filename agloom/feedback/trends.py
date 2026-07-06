@@ -12,7 +12,7 @@ from pydantic import BaseModel, field_validator
 if TYPE_CHECKING:
     from .store import FeedbackStore
 
-from ..logging_utils import get_logger
+from ..src.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
@@ -87,7 +87,7 @@ class TrendDetector:
         """Increment counter; fire background analysis every N runs."""
         self._run_count += 1
         if self._run_count % self._run_every == 0:
-            from ..llm_utils import safe_create_task
+            from ..src.llm_utils import safe_create_task
 
             safe_create_task(self._analyze(), name=f"trend-{self._agent}")
 
@@ -110,7 +110,7 @@ class TrendDetector:
             stats = self._aggregate(records)
             prompt = self._build_prompt(stats, len(records))
 
-            from ..llm_utils import robust_structured_call
+            from ..src.llm_utils import robust_structured_call
 
             report = await robust_structured_call(
                 self._llm,

@@ -14,7 +14,7 @@ agent = await create_agent(model=llm, name="demo")
 ```
 
 | Helper | Use |
-| ------ | --- |
+| --- | --- |
 | `get_model` | Turn a descriptor into a chat model instance |
 | `try_resolve_llm_from_api_keys` | Pick a default from environment keys (interactive vs CI behavior differs) |
 | `describe_llm` | Log-friendly description of a bound model |
@@ -27,7 +27,7 @@ Missing keys or optional extras raise clear errors (`MissingProviderApiKey`, `Mi
 ## Naming conventions
 
 | Style | Example |
-| ----- | ------- |
+| --- | --- |
 | **Recommended** | `groq:meta-llama/llama-3.3-70b-versatile`, `openai:gpt-4o` |
 | LiteLLM bridge | `litellm:provider/model` |
 | LangChain init | `lc:package:ClassName` |
@@ -49,7 +49,7 @@ Omitting the provider prefix works in some environments (e.g. `deepseek/deepseek
 Self-hosted **Qwen3** models (e.g. `litellm:qwen36fp8`, `vllm:Qwen/...`) use Jinja chat templates that are strict about message shape. Agloom handles this inside REACT and worker agents:
 
 | Behavior | Detail |
-| -------- | ------ |
+| --- | --- |
 | **Qwen detection** | Model id contains `qwen` / `qwq`, or LiteLLM/vLLM routing (incl. opaque model groups like `qwen36fp8`) |
 | **tool_choice** | Strict-template models: **no override** (provider default). Groq-style: `required` on opening turn only |
 | **User content** | LangChain multimodal content blocks are flattened to plain strings before each LLM call |

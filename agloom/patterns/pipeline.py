@@ -1,7 +1,7 @@
 """Pipeline pattern — strictly sequential transformation chain (A→B→C), stops on first failure."""
 
-from ..logging_utils import get_logger
-from ..models import (
+from ..src.logging_utils import get_logger
+from ..src.models import (
     ExecutionResult,
     PatternType,
     QueryAnalysis,

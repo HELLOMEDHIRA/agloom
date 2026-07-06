@@ -53,7 +53,7 @@ def _shared_processors() -> list[Any]:
 def _final_renderer() -> Any:
     if _log_format() == "json":
         return structlog.processors.JSONRenderer()
-    return structlog.dev.ConsoleRenderer(colors=False, pad_event=24)
+    return structlog.dev.ConsoleRenderer(colors=False, pad_event_to=24)
 
 
 def configure_package_logging(debug: bool = False) -> None:

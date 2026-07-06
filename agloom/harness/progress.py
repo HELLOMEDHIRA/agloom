@@ -14,7 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..logging_utils import get_logger
+from ..src.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
@@ -170,6 +170,10 @@ class ProgressArtifact(BaseModel):
     updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     total_sessions: int = Field(default=0, description="Number of sessions that have run")
     version: int = Field(default=1, description="Artifact schema version")
+    work_kind: str = Field(
+        default="",
+        description="Runtime label from classifier pattern (e.g. REACT, WORKERS) after first plan sync",
+    )
 
     @property
     def pending_tasks(self) -> list[Task]:
@@ -231,7 +235,7 @@ class ProgressArtifact(BaseModel):
                 goal = (self.description or "").strip()
                 if goal:
                     return f"Harness: no tasks yet. Goal: {goal[:240]}"
-                return "Harness: no tasks yet (call initialize_project to create tasks)."
+                return "Harness: no tasks yet (turn planner may add tasks after triage)."
             return (
                 f"Progress: {len(self.passing_tasks)}/{len(self.tasks)} tasks complete. "
                 "All tasks passing."

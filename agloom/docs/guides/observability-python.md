@@ -20,7 +20,7 @@ Each ingested envelope is keyed by **session** and **sequence** so you can list 
 ## Metrics and replay
 
 | Component | Purpose |
-| --------- | ------- |
+| --- | --- |
 | Metrics aggregator | Per-session token/cost/graph summaries |
 | Replay engine | SSE-style replay of stored events for a session |
 

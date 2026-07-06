@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import type { AGPEvent, AGPKnownEvent } from '../lib/agp/types.js'
 import { isAgpKnownEvent } from '../lib/agp/agpEventGuards.js'
+import { harnessLedgerFromWire, harnessPlanToLedgerRows } from '../lib/agp/harnessWire.js'
 import {
   finalizeAssistantMessage,
   formatTurnTokenRollup,
@@ -60,6 +61,7 @@ export interface ActiveTurnState {
   streamedTokens: string
   streamedReasoning: string
   pattern: string | null
+  harnessWorkKind?: string | null
 }
 
 export interface TraceEvent {
@@ -93,6 +95,16 @@ export interface SessionStore {
   /** From last `runtime.config`. */
   toolNames: string[] | null
   capabilities: string[] | null
+  /** From ``runtime.ready.harness_enabled``. */
+  harnessEnabled: boolean | null
+  harnessLedgerTasks: Array<{
+    task_id: string
+    description: string
+    category?: string
+    status?: string
+    priority?: string
+    verification_step_count?: number
+  }> | null
   /** Recent AGP informational lines (runtime acks, memory, resume, …). */
   protocolNotes: string[]
   totalInputTokens: number
@@ -239,6 +251,10 @@ const summarise = (evt: AGPKnownEvent): string => {
     }
     case 'thinking.step':
       return `thinking: ${evt.data.label ?? evt.data.step}`
+    case 'progress.step':
+      return `progress: ${evt.data.label ?? evt.data.phase ?? 'step'}`
+    case 'harness.synced':
+      return `harness.synced · ${evt.data.action} · ${evt.data.task_count ?? 0} tasks`
     case 'token.delta':
       return `token: "${evt.data.text}"`
     case 'message.user':
@@ -369,6 +385,8 @@ export const useSessionStore = create<SessionStore>((set) => ({
   model: null,
   toolNames: null,
   capabilities: null,
+  harnessEnabled: null,
+  harnessLedgerTasks: null,
   protocolNotes: [],
   totalInputTokens: 0,
   totalOutputTokens: 0,
@@ -481,12 +499,17 @@ export const useSessionStore = create<SessionStore>((set) => ({
       case 'runtime.ready': {
         const cli =
           evt.data.cli_tools_count != null ? ` · cli_tools=${evt.data.cli_tools_count}` : ''
+        const harness =
+          evt.data.harness_enabled != null
+            ? ` · harness=${evt.data.harness_enabled ? 'on' : 'off'}`
+            : ''
         return {
           ...s,
           executionTrace: trace,
+          harnessEnabled: evt.data.harness_enabled ?? s.harnessEnabled,
           protocolNotes: pushProtocolNotes(
             s.protocolNotes,
-            `Runtime ready (${evt.data.agent_name ?? 'agent'})${cli}`,
+            `Runtime ready (${evt.data.agent_name ?? 'agent'})${cli}${harness}`,
           ),
         }
       }
@@ -671,14 +694,26 @@ export const useSessionStore = create<SessionStore>((set) => ({
           budgetLast: null,
         }
 
-      case 'pattern.classified':
+      case 'pattern.classified': {
         if (!s.activeTurn) return { ...s, executionTrace: trace }
-        return { ...s, executionTrace: trace, activeTurn: { ...s.activeTurn, pattern: evt.data.pattern } }
+        const planRows = harnessPlanToLedgerRows(evt.data.harness_plan)
+        return {
+          ...s,
+          executionTrace: trace,
+          ...(planRows.length ? { harnessLedgerTasks: planRows } : {}),
+          activeTurn: {
+            ...s.activeTurn,
+            pattern: evt.data.pattern,
+            harnessWorkKind: evt.data.harness_work_kind ?? s.activeTurn.harnessWorkKind ?? null,
+          },
+        }
+      }
 
       case 'plan.preview': {
         const steps = evt.data.steps ?? []
         const joined = steps.join('\n')
-        const line = `plan.preview · ${evt.data.pattern} · c=${evt.data.complexity ?? 0}${joined ? `\n${joined}` : ''}`
+        const harnessN = evt.data.harness_plan?.length ?? 0
+        const line = `plan.preview · ${evt.data.pattern} · c=${evt.data.complexity ?? 0}${harnessN ? ` · harness=${harnessN}` : ''}${joined ? `\n${joined}` : ''}`
         const next = { ...s, executionTrace: trace, protocolNotes: pushProtocolNotes(s.protocolNotes, line) }
         if (!s.activeTurn) return next
         const planDetail = evt.data.reasoning?.trim() || undefined
@@ -697,6 +732,17 @@ export const useSessionStore = create<SessionStore>((set) => ({
               },
             ],
           },
+        }
+      }
+
+      case 'harness.synced': {
+        const tasks = harnessLedgerFromWire(evt.data.tasks)
+        const note = `harness.synced · ${evt.data.action} · ${evt.data.task_count ?? tasks.length} task(s) · ${Math.round((evt.data.completion_ratio ?? 0) * 100)}%`
+        return {
+          ...s,
+          executionTrace: trace,
+          harnessLedgerTasks: tasks.length ? tasks : s.harnessLedgerTasks,
+          protocolNotes: pushProtocolNotes(s.protocolNotes, note),
         }
       }
 
@@ -1251,6 +1297,8 @@ export const useSessionStore = create<SessionStore>((set) => ({
     sessionOpenedAtMs: null,
     toolNames: null,
     capabilities: null,
+    harnessEnabled: null,
+    harnessLedgerTasks: null,
     totalInputTokens: 0,
     totalOutputTokens: 0,
     lastMetricTokensSeq: 0,

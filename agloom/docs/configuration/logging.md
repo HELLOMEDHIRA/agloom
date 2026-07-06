@@ -13,7 +13,7 @@ async def main():
 
 ```text
 21:04:29 DEBUG agent — [my-agent] Analysis: {pattern: DIRECT, complexity: 0, ...}
-21:04:29 INFO  classifier — [Classifier] Pattern=DIRECT | Complexity=0/10
+21:04:29 INFO  classifier — [Turn planner] Pattern=DIRECT | Complexity=0/10
 21:04:29 INFO  agent — [my-agent] DIRECT short-circuit — 1 LLM call total.
 21:04:29 DEBUG agent — [my-agent] SessionMemory auto-created with ephemeral InMemoryStore.
 ```
@@ -21,11 +21,14 @@ async def main():
 ### Default (`debug=False`)
 
 ```text
-21:04:29 INFO  classifier — [Classifier] Pattern=DIRECT | Complexity=0/10
+21:04:29 INFO  classifier — [Turn planner] Pattern=DIRECT | Complexity=0/10
 21:04:29 INFO  agent — [my-agent] DIRECT short-circuit — 1 LLM call total.
 ```
 
-DEBUG lines (full classifier JSON, cache keys, injection detail) are suppressed.
+DEBUG lines (full turn-plan JSON, cache keys, injection detail) are suppressed.
+
+!!! note "Logger name"
+    The turn planner still logs under the historical logger name **`agloom.classifier`** so existing filters and dashboards keep working.
 
 ---
 
@@ -33,27 +36,27 @@ DEBUG lines (full classifier JSON, cache keys, injection detail) are suppressed.
 
 Set **`LOG_FORMAT`** for aggregators:
 
-=== "Text (default)"
+### Text (default)
 
-    ```bash
-    export LOG_FORMAT=text
-    ```
+```bash
+export LOG_FORMAT=text
+```
 
-    ```text
-    21:04:29 INFO  classifier — [Classifier] Pattern=DIRECT | Complexity=0/10
-    ```
+```text
+21:04:29 INFO  classifier — [Turn planner] Pattern=DIRECT | Complexity=0/10
+```
 
-=== "JSON"
+### JSON
 
-    ```bash
-    export LOG_FORMAT=json
-    ```
+```bash
+export LOG_FORMAT=json
+```
 
-    ```json
-    {"event": "[Classifier] Pattern=DIRECT | Complexity=0/10", "level": "info", "ts": "2026-04-12T21:04:29.123456Z", "logger": "agloom.classifier"}
-    ```
+```json
+{"event": "[Turn planner] Pattern=DIRECT | Complexity=0/10", "level": "info", "ts": "2026-04-12T21:04:29.123456Z", "logger": "agloom.classifier"}
+```
 
-    Logs are emitted via **structlog** (stdlib integration); field names are stable for aggregators.
+Logs are emitted via **structlog** (stdlib integration); field names are stable for aggregators.
 
 ---
 
@@ -71,8 +74,8 @@ configure_package_logging(debug=False)  # INFO (default)
 ## What gets logged
 
 | Area | INFO (typical) | DEBUG (extra) |
-| ---- | -------------- | ------------- |
-| Classifier | Pattern + complexity score | Full analysis payload |
+| --- | --- | --- |
+| Turn planner | Pattern + complexity score | Full analysis payload |
 | Agent run | Pattern start, step counts | Memory injection, cache hits |
 | Workers | Start / end, retries | Worker config |
 | Feedback | Score applied | Handler details |

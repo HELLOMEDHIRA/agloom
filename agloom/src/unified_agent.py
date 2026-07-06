@@ -38,7 +38,7 @@ from .delegation import (
 from .hitl_contract import HITLEvent, call_user_callback
 from .logging_utils import configure_package_logging, get_logger
 from .mcp_support import MCPConnectionError, MCPServerConfig, aclose_mcp_client
-from .memory import (
+from ..memory import (
     LongTermStore,
     SessionMemory,
     build_memory_context,
@@ -58,22 +58,23 @@ from .models import (
     _extract_token_usage,
     _make_step,
     _merge_token_usage,
+    resolve_turn_planner_timeout,
 )
 from .multimodal import merge_context_into_user_turn, text_from_user_turn
 from .turn_input import TurnInput
-from .patterns.blackboard import handle_blackboard
-from .patterns.hybrid_dag import handle_hybrid_dag
-from .patterns.pipeline import handle_pipeline
-from .patterns.planner_executor import handle_planner_executor
-from .patterns.react import handle_react
-from .patterns.reflection import handle_reflection
-from .patterns.supervisor import handle_supervisor
-from .patterns.swarm import handle_swarm
+from ..patterns.blackboard import handle_blackboard
+from ..patterns.hybrid_dag import handle_hybrid_dag
+from ..patterns.pipeline import handle_pipeline
+from ..patterns.planner_executor import handle_planner_executor
+from ..patterns.react import handle_react
+from ..patterns.reflection import handle_reflection
+from ..patterns.supervisor import handle_supervisor
+from ..patterns.swarm import handle_swarm
 from .wire_execution_result import execution_result_wire_dict
 from .wire_tokens import record_emitted_usage
 
 try:
-    from .feedback.wireup import (
+    from ..feedback.wireup import (
         apply_user_feedback,
         build_feedback_system,
         run_fresh_feedback_hooks,
@@ -94,7 +95,7 @@ except ImportError:
 
 
 try:
-    from .harness.git import (
+    from ..harness.git import (
         GitSession,
         git_checkpoint_tool,
         git_commit_tool,
@@ -103,8 +104,8 @@ try:
         git_revert_hint_tool,
         git_status_tool,
     )
-    from .harness.initializer import create_initializer_tool
-    from .harness.progress import (
+    from ..harness.initializer import create_initializer_tool
+    from ..harness.progress import (
         ProgressTracker,
         add_task_tool,
         bootstrap_progress_tool,
@@ -288,6 +289,7 @@ async def _emit_graph_node_event(config: dict, event_type: str, *, node: str, pa
 
 _PREP_PROGRESS_PHASES: dict[str, str] = {
     "harness_bootstrap": "harness_init",
+    "harness_plan": "harness_plan",
     "analyze_query": "classify",
     "skills_bootstrap": "skills_init",
 }
@@ -375,7 +377,7 @@ def _build_classifier_augmented_query(
     """Merge memory / harness snippets ahead of the user query for ``analyze_query``."""
     mem = memory_ctx.strip()
     har = harness_ctx.strip()
-    harness_block = f"\n\n=== CROSS-SESSION PROGRESS ===\n{har}\n" if har else ""
+    harness_block = f"\n\n=== HARNESS ===\n{har}\n" if har else ""
     if mem:
         return f"{mem}{harness_block}\n{processed_query}"
     if harness_block:
@@ -410,19 +412,132 @@ async def _resolve_system_prompt_for_turn(
     return config
 
 
-async def _build_harness_context_for_classify(config: dict[str, Any], *, is_frozen: bool) -> str:
-    """Cross-session progress snippet for the classifier (skipped when frozen or harness off)."""
-    if is_frozen or not config.get("_harness_enabled"):
+async def _build_harness_context_for_classify(
+    config: dict[str, Any],
+    *,
+    is_frozen: bool,
+    user_query: str,
+) -> str:
+    """Harness metadata + artifact state for the turn planner (progress-only on frozen replay)."""
+    if not config.get("_harness_enabled"):
         return ""
     progress_tracker: ProgressTracker | None = config.get("_progress_tracker")
     if progress_tracker is None:
         return ""
     try:
-        return progress_tracker.get_classifier_context()
+        progress_snippet = progress_tracker.get_classifier_context()
+        if is_frozen:
+            return progress_snippet.strip()
+        from ..harness.metadata import build_harness_classifier_context
+        from ..harness.planning import needs_harness_plan, needs_harness_replan
+
+        metadata = config.get("_harness_metadata")
+        needs_plan = needs_harness_plan(
+            progress_tracker,
+            harness_enabled=True,
+            user_query=user_query,
+            metadata=metadata,
+        )
+        needs_replan = needs_harness_replan(
+            progress_tracker,
+            harness_enabled=True,
+            user_query=user_query,
+            allow_replan=bool(getattr(metadata, "allow_replan", False)),
+        )
+        return build_harness_classifier_context(
+            metadata,
+            progress_snippet,
+            needs_plan=needs_plan,
+            needs_replan=needs_replan,
+        )
     except Exception as exc:
         name = config.get("name", "Agent")
-        logger.warning(f"[{name}] harness bootstrap failed ({exc!r}) — proceeding")
+        logger.warning(f"[{name}] harness context build failed ({exc!r}) — proceeding")
         return ""
+
+
+def _turn_state(invoke_config: dict[str, Any] | None) -> dict[str, Any]:
+    """Per-invoke scratch space (safe for concurrent ``ainvoke`` on one agent)."""
+    if invoke_config is None:
+        return {}
+    return invoke_config.setdefault("agloom_turn", {})
+
+
+def _turn_harness_focus(invoke_config: dict[str, Any] | None) -> str:
+    return (_turn_state(invoke_config).get("_harness_execution_context") or "").strip()
+
+
+async def _apply_harness_focus(
+    config: dict[str, Any],
+    analysis: QueryAnalysis | None,
+    *,
+    sync_from_analysis: bool,
+    event_queue: asyncio.Queue | None = None,
+    invoke_config: dict[str, Any] | None = None,
+) -> None:
+    """Sync harness ledger (optional) and set per-turn execution focus."""
+    turn = _turn_state(invoke_config)
+    turn.pop("_harness_execution_context", None)
+    config.pop("_harness_execution_context", None)
+    if not config.get("_harness_enabled"):
+        return
+    progress_tracker: ProgressTracker | None = config.get("_progress_tracker")
+    if progress_tracker is None:
+        return
+    from ..harness.planning import build_harness_execution_context, sync_harness_from_analysis
+
+    name = config.get("name", "Agent")
+    eq = event_queue or config.get("_event_queue")
+    metadata = config.get("_harness_metadata")
+    allow_replan = bool(getattr(metadata, "allow_replan", False))
+    try:
+        if sync_from_analysis and analysis is not None:
+            had_tasks = bool(progress_tracker.artifact.tasks)
+            planned = await sync_harness_from_analysis(
+                progress_tracker,
+                analysis,
+                allow_replan=allow_replan,
+            )
+            from ..protocol.harness_wire import (
+                harness_plan_tasks_wire,
+                harness_sync_action,
+                harness_work_kind_wire,
+                ledger_tasks_wire,
+            )
+
+            artifact = progress_tracker.artifact
+            sync_payload = {
+                "action": harness_sync_action(had_tasks=had_tasks, tasks_synced=planned),
+                "tasks_synced": planned,
+                "work_kind": (artifact.work_kind or harness_work_kind_wire(analysis) or None),
+                "completion_ratio": artifact.completion_ratio,
+                "task_count": len(artifact.tasks),
+                "harness_plan": [t.model_dump() for t in harness_plan_tasks_wire(analysis)],
+                "tasks": [t.model_dump() for t in ledger_tasks_wire(progress_tracker)],
+            }
+            if eq is not None:
+                await eq.put(AgentEvent(type="harness.synced", data=sync_payload))
+            if planned > 0:
+                ratio = artifact.completion_ratio
+                logger.event(
+                    f"[{name}] harness planned from turn planner: {planned} task(s), "
+                    f"work_kind={artifact.work_kind!r}"
+                )
+                if eq is not None:
+                    await _emit_preparation_thinking(
+                        eq,
+                        name="harness_plan",
+                        detail=(
+                            f"Harness planned · {planned} task(s) · "
+                            f"{ratio:.0%} complete"
+                        ),
+                    )
+        exec_ctx = build_harness_execution_context(progress_tracker)
+        if exec_ctx:
+            turn["_harness_execution_context"] = exec_ctx
+            config["_harness_execution_context"] = exec_ctx
+    except Exception as exc:
+        logger.warning(f"[{name}] harness focus sync failed ({exc!r}) — proceeding")
 
 
 _SKILL_CONTEXT_PREVIEW_MAX_CHARS = 8192
@@ -455,7 +570,7 @@ async def _build_skill_context_for_classify(
             else:
                 skill_ctx = await skill_injector.get_context(processed_query)
                 if skill_ctx:
-                    from .skills.injector import parse_skill_names_from_context
+                    from ..skills.injector import parse_skill_names_from_context
 
                     skill_names = parse_skill_names_from_context(skill_ctx)
         except Exception as exc:
@@ -484,7 +599,7 @@ async def _emit_skill_context_event(config: dict[str, Any], skill_ctx: str, skil
         AgentEvent(
             type="skill_context",
             data={
-                "phase": "classifier",
+                "phase": "turn_planner",
                 "injected_chars": len(skill_ctx),
                 "skills": skills,
                 "context_preview": preview,
@@ -524,19 +639,34 @@ async def _execute_analyze_query(
     *,
     augmented_query: str,
     skill_context: str,
+    user_query: str,
 ) -> QueryAnalysis:
-    """Invoke :func:`~agloom.classifier.analyze_query` using classifier fields from *cfg*."""
+    """Invoke :func:`~agloom.classifier.plan_turn` using planner fields from *cfg*."""
+    from ..harness.planning import classifier_harness_wire_enabled
+
     fp = cfg.get("fallback_pattern")
     fallback = fp if isinstance(fp, PatternType) else None
+    harness_enabled = bool(cfg.get("_harness_enabled"))
+    tracker = cfg.get("_progress_tracker")
+    metadata = cfg.get("_harness_metadata")
+    harness_needs_plan = classifier_harness_wire_enabled(
+        tracker,
+        harness_enabled=harness_enabled,
+        user_query=user_query,
+        metadata=metadata,
+    )
+
     return await analyze_query(
         llm=cfg["llm"],
         query=augmented_query,
         tools=list(cfg.get("tools") or []),
         skill_context=skill_context,
-        classifier_timeout=float(cfg.get("classifier_timeout", 60.0)),
+        classifier_timeout=resolve_turn_planner_timeout(cfg),
         structured_max_retries=int(cfg.get("structured_max_retries", 2)),
         fallback_pattern=fallback,
         mcp_configured=bool(cfg.get("_mcp_servers")),
+        harness_enabled=harness_enabled,
+        harness_needs_plan=harness_needs_plan,
     )
 
 
@@ -1109,8 +1239,8 @@ async def _ensure_mcp_connected(config: dict) -> None:
             sys.stderr.flush()
 
         try:
-            from .runtime.invocation_context import get_invocation_emitter
-            from .runtime.session_bootstrap import emit_agent_tool_catalog
+            from ..runtime.invocation_context import get_invocation_emitter
+            from ..runtime.session_bootstrap import emit_agent_tool_catalog
 
             wire_emitter = get_invocation_emitter()
             if wire_emitter is not None:
@@ -1182,6 +1312,11 @@ async def _ensure_skills_bootstrapped(
         config["_skills_bootstrapped"] = True
 
 
+_HARNESS_EMPTY_DETAIL = (
+    "Harness bound · no tasks yet — turn planner may add tasks after triage"
+)
+
+
 async def _ensure_harness_bootstrapped(
     config: dict,
     effective_thread_id: str,
@@ -1210,10 +1345,16 @@ async def _ensure_harness_bootstrapped(
         return
 
     try:
-        await tracker.bootstrap(
-            session_id=effective_thread_id,
-            goal=query if isinstance(query, str) else str(query),
-        )
+        metadata = config.get("_harness_metadata")
+        if metadata is not None:
+            from ..harness.metadata import bind_harness_project
+
+            await bind_harness_project(tracker, metadata, session_id=effective_thread_id)
+        else:
+            await tracker.bootstrap(
+                session_id=effective_thread_id,
+                goal=query if isinstance(query, str) else str(query),
+            )
         tracker._bootstrapped_for_thread = effective_thread_id
         n_tasks = len(tracker.artifact.tasks)
         ratio = tracker.artifact.completion_ratio
@@ -1227,6 +1368,12 @@ async def _ensure_harness_bootstrapped(
                 eq,
                 name="harness_bootstrap",
                 detail=f"Harness ready · {n_tasks} task(s) · {ratio:.0%} complete",
+            )
+        else:
+            await _emit_preparation_thinking(
+                eq,
+                name="harness_bootstrap",
+                detail=_HARNESS_EMPTY_DETAIL,
             )
     except Exception as exc:
         logger.warning(f"[{config.get('name', 'Agent')}] harness bootstrap failed ({exc!r}) — proceeding")
@@ -1247,7 +1394,7 @@ async def _ensure_frozen_plan(config: dict, turn: TurnInput) -> None:
         clear_frozen_plan,
         get_frozen_plan,
     )
-    from .orchestrator import orchestration_enabled
+    from ..orchestrator import orchestration_enabled
     frozen_ttl = config.get("frozen_analysis_ttl", 0)
     if get_frozen_plan(config) is not None:
         if frozen_ttl <= 0:
@@ -1272,16 +1419,24 @@ async def _ensure_frozen_plan(config: dict, turn: TurnInput) -> None:
 
         name = config.get("name", "Agent")
         classify_input = classify_text_for_freeze(config, turn)
-        logger.event(f"[{name}] frozen agent — classifying: {classify_input[:120]!r}")
+        harness_ctx = await _build_harness_context_for_classify(
+            config, is_frozen=False, user_query=classify_input
+        )
+        classify_augmented = (
+            f"{harness_ctx}\n{classify_input}" if harness_ctx else classify_input
+        )
+        logger.event(f"[{name}] frozen agent — classifying: {classify_augmented[:120]!r}")
 
         analysis = await _execute_analyze_query(
             config,
-            augmented_query=classify_input,
+            augmented_query=classify_augmented,
             skill_context="",
+            user_query=classify_input,
         )
 
         registry = config.get("registry", _HANDLERS)
         analysis = _coerce_unknown_pattern_handler(config, analysis, registry=registry)
+        await _apply_harness_focus(config, analysis, sync_from_analysis=True)
         handler = registry.get(analysis.pattern)
         if handler is None:
             logger.warning(
@@ -1343,6 +1498,30 @@ async def run_fresh(
     *,
     turn: Any | None = None,
 ) -> ExecutionResult:
+    """Execute one user turn. Callers should hold ``_run_fresh_lock`` when concurrent."""
+    return await _run_fresh_impl(
+        config,
+        query,
+        effective_thread_id,
+        effective_ltns,
+        invoke_config,
+        context,
+        user_id,
+        turn=turn,
+    )
+
+
+async def _run_fresh_impl(
+    config: dict,
+    query: str | dict | list,
+    effective_thread_id: str,
+    effective_ltns: tuple,
+    invoke_config: dict,
+    context: dict,
+    user_id: str | None = None,
+    *,
+    turn: Any | None = None,
+) -> ExecutionResult:
     """Execute one user turn: middleware, memory, classify (unless frozen), handlers, skills, feedback hooks.
 
     ``config`` is the agent dict (see ``create_agent``). ``invoke_config`` carries per-run
@@ -1366,6 +1545,9 @@ async def run_fresh(
     from .wire_tokens import emit_remaining_token_usage, reset_wire_emitted_usage
 
     reset_wire_emitted_usage(config)
+
+    _turn_state(invoke_config).pop("_harness_execution_context", None)
+    config.pop("_harness_execution_context", None)
 
     from .frozen import apply_frozen_turn, frozen_replay_active
     from .turn_input import TurnInput, normalize_turn_input
@@ -1414,7 +1596,9 @@ async def run_fresh(
 
     is_frozen = frozen_replay_active(config)
 
-    harness_ctx = await _build_harness_context_for_classify(config, is_frozen=is_frozen)
+    harness_ctx = await _build_harness_context_for_classify(
+        config, is_frozen=is_frozen, user_query=processed_query
+    )
     if harness_ctx and not is_frozen:
         progress_tracker: ProgressTracker | None = config.get("_progress_tracker")
         if progress_tracker is not None:
@@ -1437,6 +1621,7 @@ async def run_fresh(
             f"[{name}] frozen replay — pattern={pattern_val} mode={frozen_execution_mode} "
             f"(skipped classify; classifier-derived plan)"
         )
+        await _apply_harness_focus(config, None, sync_from_analysis=False, invoke_config=invoke_config)
     else:
         handoff_targets = config.get("_handoff_targets") or []
         delegate_targets = config.get("_delegate_targets") or []
@@ -1456,14 +1641,19 @@ async def run_fresh(
             config,
             augmented_query=augmented_query,
             skill_context=skill_ctx,
+            user_query=processed_query,
         )
         classify_ms = round((time.perf_counter() - t_classify) * 1000, 1)
         sub_lines = [f"- {st.worker_id}: {st.task}" for st in analysis.subtasks]
         sub_block = "\n".join(sub_lines) if sub_lines else "(none)"
+        harness_lines = [f"- {hp.task_id}: {hp.description}" for hp in analysis.harness_plan]
+        harness_block = "\n".join(harness_lines) if harness_lines else "(none)"
         classify_output = (
             f"pattern={analysis.pattern.value} complexity={analysis.complexity}\n"
             f"reasoning:\n{analysis.reasoning or ''}\n"
-            f"subtasks ({len(analysis.subtasks)}):\n{sub_block}"
+            f"subtasks ({len(analysis.subtasks)}):\n{sub_block}\n"
+            f"harness_work_kind={analysis.harness_work_kind or '(none)'}\n"
+            f"harness_plan ({len(analysis.harness_plan)}):\n{harness_block}"
         )
         classify_step = _make_step(
             StepType.CLASSIFY,
@@ -1476,6 +1666,8 @@ async def run_fresh(
         )
         _steps.append(classify_step)
         if eq is not None:
+            from ..protocol.harness_wire import harness_plan_tasks_wire, harness_work_kind_wire
+
             await eq.put(
                 AgentEvent(
                     type="classify",
@@ -1485,6 +1677,10 @@ async def run_fresh(
                         "reason": analysis.reasoning or "",
                         "output": classify_output,
                         "duration_ms": classify_ms,
+                        "harness_work_kind": harness_work_kind_wire(analysis),
+                        "harness_plan": [
+                            t.model_dump() for t in harness_plan_tasks_wire(analysis)
+                        ],
                     },
                 )
             )
@@ -1503,6 +1699,13 @@ async def run_fresh(
             f"[{name}] classify → pattern={analysis.pattern.value} "
             f"complexity={analysis.complexity} "
             f"subtasks={len(analysis.subtasks)}"
+        )
+        await _apply_harness_focus(
+            config,
+            analysis,
+            sync_from_analysis=True,
+            event_queue=eq,
+            invoke_config=invoke_config,
         )
         ms = getattr(analysis, "matched_skill", None)
         logger.debug(
@@ -1713,8 +1916,11 @@ async def run_fresh(
     exec_invoke_config = {**exec_base, "_steps": _steps}
     t_exec = time.perf_counter()
     await _emit_graph_node_event(config, "graph_node_enter", node=pattern_val, pattern=pattern_val, input_preview=augmented_query)
+    exec_harness = _turn_harness_focus(invoke_config) or (config.get("_harness_execution_context") or "").strip()
+    if exec_harness:
+        augmented_query = f"{augmented_query}\n\n{exec_harness}"
     handler_user_turn = merge_context_into_user_turn(augmented_query, user_turn)
-    from .orchestrator import dispatch_pattern, orchestration_enabled
+    from ..orchestrator import dispatch_pattern, orchestration_enabled
     from .models import SpawnInstruction
 
     use_dispatch = (
@@ -1949,7 +2155,9 @@ class UnifiedAgent:
     Public entrypoints: ``ainvoke``, ``invoke``, ``astream``, ``astream_events``, ``abatch``.
 
     Each ``ainvoke`` allocates a new ``signal_queue`` and ``clarification_queues`` in
-    ``invoke_config`` so parallel calls do not mix HITL signals.
+    ``invoke_config`` so parallel calls do not mix HITL signals. Concurrent ``ainvoke`` /
+    ``astream`` on the **same** instance are serialized via ``_run_fresh_lock`` so shared
+    turn state (``_turn_input``, harness focus) cannot cross between overlapping calls.
 
     Default execution goes through ``run_fresh`` and pattern handlers. A compiled graph
     is created on demand for ``resume``, ``get_state``, and ``get_history`` when a
@@ -1964,6 +2172,16 @@ class UnifiedAgent:
     def __init__(self, config: dict) -> None:
         ensure_langchain_pending_deprecation_suppressed()
         self.config = config
+
+    @staticmethod
+    @contextlib.asynccontextmanager
+    async def _hold_turn_lock(config: dict):
+        lock = config.get("_run_fresh_lock")
+        if lock is not None:
+            async with lock:
+                yield
+        else:
+            yield
 
     async def __aenter__(self) -> UnifiedAgent:
         return self
@@ -2120,38 +2338,39 @@ class UnifiedAgent:
         execution plan (pattern, subtasks, orchestration). Later calls reuse that plan with
         new user messages only. ``system_prompt`` at ``create_agent`` carries fixed instructions.
         """
-        effective_thread_id, effective_ltns, invoke_config = await self._prepare_turn(
-            query,
-            thread_id=thread_id,
-            user_id=user_id,
-            lt_namespace=lt_namespace,
-            context=context,
-        )
+        async with self._hold_turn_lock(self.config):
+            effective_thread_id, effective_ltns, invoke_config = await self._prepare_turn(
+                query,
+                thread_id=thread_id,
+                user_id=user_id,
+                lt_namespace=lt_namespace,
+                context=context,
+            )
 
-        run_config = {
-            **self.config,
-            "signal_queue": invoke_config["configurable"]["signal_queue"],
-            "clarification_queues": invoke_config["configurable"]["clarification_queues"],
-        }
+            run_config = {
+                **self.config,
+                "signal_queue": invoke_config["configurable"]["signal_queue"],
+                "clarification_queues": invoke_config["configurable"]["clarification_queues"],
+            }
 
-        result = await run_fresh(
-            config=run_config,
-            query=query,
-            effective_thread_id=effective_thread_id,
-            effective_ltns=effective_ltns,
-            invoke_config=invoke_config,
-            context=context or {},
-            user_id=user_id,
-        )
+            result = await run_fresh(
+                config=run_config,
+                query=query,
+                effective_thread_id=effective_thread_id,
+                effective_ltns=effective_ltns,
+                invoke_config=invoke_config,
+                context=context or {},
+                user_id=user_id,
+            )
 
-        await _save_checkpoint(
-            self.config.get("checkpointer"),
-            effective_thread_id,
-            result,
-            _wire_query_snapshot(query),
-        )
+            await _save_checkpoint(
+                self.config.get("checkpointer"),
+                effective_thread_id,
+                result,
+                _wire_query_snapshot(query),
+            )
 
-        return result
+            return result
 
     async def astream(
         self,
@@ -2265,7 +2484,9 @@ class UnifiedAgent:
                 last_n=_memory_injection_last_n(cfg),
             )
 
-            harness_ctx = await _build_harness_context_for_classify(cfg, is_frozen=False)
+            harness_ctx = await _build_harness_context_for_classify(
+                cfg, is_frozen=False, user_query=processed_query
+            )
             skill_ctx, skill_names = await _build_skill_context_for_classify(
                 cfg, processed_query=processed_query
             )
@@ -2275,6 +2496,7 @@ class UnifiedAgent:
                 cfg,
                 augmented_query=augmented_query,
                 skill_context=skill_ctx,
+                user_query=processed_query,
             )
 
             if analysis.pattern != PatternType.DIRECT:
@@ -2366,45 +2588,46 @@ class UnifiedAgent:
 
         async def _run_and_push() -> None:
             try:
-                effective_thread_id, effective_ltns, invoke_config = await self._prepare_turn(
-                    query,
-                    thread_id=thread_id,
-                    user_id=user_id,
-                    lt_namespace=lt_namespace,
-                    context=context,
-                    event_queue=event_queue,
-                )
-
-                run_config = {
-                    **self.config,
-                    "signal_queue": invoke_config["configurable"]["signal_queue"],
-                    "clarification_queues": invoke_config["configurable"]["clarification_queues"],
-                    "_event_queue": event_queue,
-                }
-
-                result = await run_fresh(
-                    config=run_config,
-                    query=query,
-                    effective_thread_id=effective_thread_id,
-                    effective_ltns=effective_ltns,
-                    invoke_config=invoke_config,
-                    context=context or {},
-                    user_id=user_id,
-                )
-
-                await _save_checkpoint(
-                    self.config.get("checkpointer"),
-                    effective_thread_id,
-                    result,
-                    _wire_query_snapshot(query),
-                )
-
-                await event_queue.put(
-                    AgentEvent(
-                        type="done",
-                        data={"result": execution_result_wire_dict(result)},
+                async with self._hold_turn_lock(self.config):
+                    effective_thread_id, effective_ltns, invoke_config = await self._prepare_turn(
+                        query,
+                        thread_id=thread_id,
+                        user_id=user_id,
+                        lt_namespace=lt_namespace,
+                        context=context,
+                        event_queue=event_queue,
                     )
-                )
+
+                    run_config = {
+                        **self.config,
+                        "signal_queue": invoke_config["configurable"]["signal_queue"],
+                        "clarification_queues": invoke_config["configurable"]["clarification_queues"],
+                        "_event_queue": event_queue,
+                    }
+
+                    result = await run_fresh(
+                        config=run_config,
+                        query=query,
+                        effective_thread_id=effective_thread_id,
+                        effective_ltns=effective_ltns,
+                        invoke_config=invoke_config,
+                        context=context or {},
+                        user_id=user_id,
+                    )
+
+                    await _save_checkpoint(
+                        self.config.get("checkpointer"),
+                        effective_thread_id,
+                        result,
+                        _wire_query_snapshot(query),
+                    )
+
+                    await event_queue.put(
+                        AgentEvent(
+                            type="done",
+                            data={"result": execution_result_wire_dict(result)},
+                        )
+                    )
             except Exception as exc:
                 await event_queue.put(
                     AgentEvent(
@@ -2473,8 +2696,8 @@ class UnifiedAgent:
         """
         from uuid import uuid4 as _uuid4
 
-        from .protocol import SessionEmitter
-        from .runtime.translator import translate
+        from ..protocol import SessionEmitter
+        from ..runtime.translator import translate
 
         eff_session = session_id or f"sess_{_uuid4().hex[:16]}"
         eff_thread = thread_id or f"thread_{_uuid4().hex[:16]}"
@@ -2940,6 +3163,8 @@ async def create_agent(
     retry_delay: float = 1.0,
     llm_timeout: float = 120.0,
     react_graph_timeout: float | None = None,
+    react_recursion_limit: int = 25,
+    turn_planner_timeout: float | None = None,
     classifier_timeout: float = 60.0,
     structured_max_retries: int = 2,
     rate_limit: float | None = None,
@@ -2962,7 +3187,7 @@ async def create_agent(
     frozen: bool = False,
     frozen_analysis_ttl: float = 0,
     harness: bool = False,
-    harness_project_name: str = "project",
+    harness_metadata: Any = None,
     cli_tools: bool | dict[str, Any] | None = None,
     require_tool_approval_for_cli_tools: bool = True,
     skills_disk_mirror: Path | str | None = None,
@@ -2989,7 +3214,9 @@ async def create_agent(
     ``frozen``: first ``ainvoke`` / ``astream`` classifies once and locks routing; later calls
     reuse the plan. Invoke input is ``{"messages": [...]}`` (LangChain shape). Semantic cache is
     off by default when ``frozen=True``.
-    ``harness`` with ``store``: adds progress/git tools; ignored without ``store``.
+    ``harness`` with ``store`` and ``harness_metadata``: injects progress/git tools and binds a
+    durable project before classification. ``harness_metadata`` must include ``project_name``,
+    ``goal``, and ``init_git``; tasks may be empty until the classifier produces subtasks.
     ``query_cache``: ``None`` (default) enables an in-memory semantic cache (see
     :func:`agloom.cache.default_query_cache`). Pass ``False`` to disable caching entirely, or pass
     the dict returned by :func:`agloom.cache.create_cache` for custom embeddings / Qdrant.
@@ -3001,13 +3228,18 @@ async def create_agent(
     :func:`~agloom.llm.qwen_compat.wrap_chat_model_for_react_compat` (always on).
     ``react_graph_timeout``: optional wall clock (seconds) for streamed REACT graphs.
     Default ``max(llm_timeout × 4, 300)``. Applies to **REACT** and **workers**.
+    ``react_recursion_limit``: LangGraph step cap for REACT/worker tool loops (default ``25``).
 
     Also registers the agent name against the store for duplicate-name warnings and may
     extend ``tools`` (memory load_skill, harness tools).
     """
     configure_package_logging(debug)
 
-    from .cli_tools import CLI_TOOLS_SYSTEM_APPENDIX, get_cli_tools, normalize_cli_tools_kwargs
+    resolved_turn_planner_timeout = (
+        turn_planner_timeout if turn_planner_timeout is not None else classifier_timeout
+    )
+
+    from ..cli_tools import CLI_TOOLS_SYSTEM_APPENDIX, get_cli_tools, normalize_cli_tools_kwargs
 
     cli_tools_kw = normalize_cli_tools_kwargs(cli_tools)
     ibi_merged = list(interrupt_before_tools or [])
@@ -3019,7 +3251,7 @@ async def create_agent(
         if require_tool_approval_for_cli_tools and user_callback:
             ibi_merged.insert(0, "tools")
         else:
-            from .cli_tools.safety_metadata import tools_hitl_granular_interrupt
+            from ..cli_tools.safety_metadata import tools_hitl_granular_interrupt
 
             for token in tools_hitl_granular_interrupt(
                 allow_shell=bool(cli_tools_kw.get("allow_shell", True)),
@@ -3068,7 +3300,8 @@ async def create_agent(
         retry_delay=retry_delay,
         llm_timeout=llm_timeout,
         react_graph_timeout=react_graph_timeout,
-        classifier_timeout=classifier_timeout,
+        react_recursion_limit=react_recursion_limit,
+        turn_planner_timeout=resolved_turn_planner_timeout,
         structured_max_retries=structured_max_retries,
         rate_limit=rate_limit,
         low_score_threshold=low_score_threshold,
@@ -3152,6 +3385,7 @@ async def create_agent(
     if memory_budget is None:
         memory_budget = _max_tokens_budget_from_chat_model(resolved_llm)
     resolved_memory = memory
+    memory_user_supplied = memory is not None
     if resolved_memory is None:
         try:
             from langgraph.store.memory import InMemoryStore as LGStore
@@ -3187,19 +3421,28 @@ async def create_agent(
     ):
         resolved_memory.summarize_max_tokens_budget = memory_budget
 
+    from ..harness.metadata import validate_harness_create_agent_kwargs
+
+    resolved_harness_metadata = validate_harness_create_agent_kwargs(
+        harness=harness,
+        harness_metadata=harness_metadata,
+        store=resolved_store,
+        harness_available=_HARNESS_AVAILABLE,
+    )
+
     _harness_enabled = False
     _git_session: Any = None
     _progress_tracker_factory: Callable | None = None
     _harness_progress_tracker: Any = None
+    harness_project_name = (
+        resolved_harness_metadata.project_name if resolved_harness_metadata is not None else "project"
+    )
 
-    if harness and resolved_store is not None and _HARNESS_AVAILABLE:
+    if harness and resolved_harness_metadata is not None and _HARNESS_AVAILABLE:
         _harness_enabled = True
         assert GitSession is not None
         assert create_initializer_tool is not None
         _git_session = GitSession()
-        # Progress tool factories require a tracker instance; await singleton creation here
-        # (create_agent is async — safe). Without this, ``bootstrap_progress_tool()`` etc.
-        # raised TypeError (missing ``tracker``).
         _aw_get_pt = cast(
             "Callable[[Any, str, str], Awaitable[Any]]",
             get_progress_tracker,
@@ -3239,13 +3482,21 @@ async def create_agent(
             _make_tool(update_task_tool, _harness_progress_tracker),
             _make_tool(get_next_task_tool, _harness_progress_tracker),
             _make_tool(add_task_tool, _harness_progress_tracker),
-            _make_tool(create_initializer_tool, resolved_llm, resolved_store, agent_name, harness_project_name),
+            _make_tool(
+                create_initializer_tool,
+                resolved_llm,
+                resolved_store,
+                agent_name,
+                harness_project_name,
+                default_init_git=resolved_harness_metadata.init_git,
+            ),
         ]
         resolved_tools = resolved_tools + harness_tools
         logger.info(f"{agent_name}: Harness enabled — {len(harness_tools)} tools injected (progress + git)")
+        from ..harness.metadata import HARNESS_TOOLS_APPENDIX
 
-    elif harness and resolved_store is None:
-        logger.warning(f"{agent_name}: harness=True requires store= to be provided. Harness disabled.")
+        if isinstance(resolved_prompt, str):
+            resolved_prompt = resolved_prompt.rstrip() + HARNESS_TOOLS_APPENDIX
 
     config: dict = {
         "name": agent_name,
@@ -3262,7 +3513,9 @@ async def create_agent(
         "retry_delay": retry_delay,
         "llm_timeout": llm_timeout,
         "react_graph_timeout": react_graph_timeout,
-        "classifier_timeout": classifier_timeout,
+        "react_recursion_limit": react_recursion_limit,
+        "turn_planner_timeout": resolved_turn_planner_timeout,
+        "classifier_timeout": resolved_turn_planner_timeout,
         "structured_max_retries": structured_max_retries,
         "rate_limit": rate_limit,
         "low_score_threshold": low_score_threshold,
@@ -3286,6 +3539,7 @@ async def create_agent(
         "clarification_queues": {},
         "_feedback": {},
         "_harness_enabled": _harness_enabled,
+        "_harness_metadata": resolved_harness_metadata,
         "_harness_project": harness_project_name,
         "_progress_tracker": _harness_progress_tracker,
         "_progress_tracker_factory": _progress_tracker_factory,
@@ -3296,6 +3550,7 @@ async def create_agent(
         "_frozen_handler": None,
         "_frozen_replay": False,
         "_frozen_lock": asyncio.Lock(),
+        "_run_fresh_lock": asyncio.Lock(),
         "frozen_analysis_ttl": frozen_analysis_ttl,
         "_frozen_analysis_ts": 0,
         "_frozen_classify_text": "",
@@ -3357,12 +3612,12 @@ async def create_agent(
     config["_skills_lock"] = asyncio.Lock()
 
     if resolved_store is not None:
-        from .skills.generator import SkillGenerator
-        from .skills.injector import SkillInjector
-        from .skills.learner import SkillLearner
-        from .skills.lifecycle import SkillLifecycleManager
-        from .skills.loader import make_load_skill_tool
-        from .skills.registry import SkillRegistry
+        from ..skills.generator import SkillGenerator
+        from ..skills.injector import SkillInjector
+        from ..skills.learner import SkillLearner
+        from ..skills.lifecycle import SkillLifecycleManager
+        from ..skills.loader import make_load_skill_tool
+        from ..skills.registry import SkillRegistry
 
         skill_registry = SkillRegistry(
             resolved_store,
@@ -3432,7 +3687,7 @@ async def create_agent(
         f"create_agent: name={agent_name!r} "
         f"model={type(resolved_llm).__name__} "
         f"tools={[t.name for t in resolved_tools]} "
-        f"memory={'yes' if resolved_memory else 'no'} "
+        f"memory={'yes' if memory_user_supplied else 'auto'} "
         f"store={'yes' if resolved_store else 'no'} "
         f"cache={'yes' if resolved_query_cache else 'no'} "
         f"feedback={'yes' if config['_feedback'] else 'no'}"

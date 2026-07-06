@@ -8,10 +8,10 @@ from typing import Any, cast
 
 from langchain_core.messages import HumanMessage
 
-from .. import worker as worker_module
-from ..llm_streaming import stream_or_invoke_llm
-from ..logging_utils import get_logger
-from ..models import (
+from ..src import worker as worker_module
+from ..src.llm_streaming import stream_or_invoke_llm
+from ..src.logging_utils import get_logger
+from ..src.models import (
     ExecutionResult,
     PatternType,
     QueryAnalysis,
@@ -22,7 +22,7 @@ from ..models import (
     _make_step,
     _merge_token_usage,
 )
-from ..worker import extend_invoke_config_with_event_queue
+from ..src.worker import extend_invoke_config_with_event_queue
 from ._blackboard_state import BlackboardState
 from ._resolve import resolve_worker_configs
 from ._steps_accounting import steps_taken_from_audit

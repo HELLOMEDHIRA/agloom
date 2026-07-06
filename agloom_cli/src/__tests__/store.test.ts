@@ -424,6 +424,54 @@ describe('reset', () => {
     expect(s.status).toBe('idle')
     expect(s.protocolNotes).toHaveLength(0)
     expect(s.toolNames).toBeNull()
+    expect(s.harnessEnabled).toBeNull()
+    expect(s.harnessLedgerTasks).toBeNull()
+  })
+})
+
+describe('runtime.ready', () => {
+  it('sets harnessEnabled from wire payload', () => {
+    dispatch({ ...env(), type: 'runtime.ready', data: { agent_name: 'a', harness_enabled: true } })
+    expect(state().harnessEnabled).toBe(true)
+    dispatch({ ...env(), type: 'runtime.ready', data: { agent_name: 'a', harness_enabled: false } })
+    expect(state().harnessEnabled).toBe(false)
+  })
+})
+
+describe('harness.synced', () => {
+  it('stores ledger tasks from wire payload', () => {
+    dispatch({
+      ...env(),
+      type: 'harness.synced',
+      data: {
+        action: 'seed',
+        task_count: 1,
+        tasks: [{ task_id: 't1', description: 'Collect logs', status: 'pending' }],
+        completion_ratio: 0,
+      },
+    })
+    expect(state().harnessLedgerTasks).toEqual([
+      { task_id: 't1', description: 'Collect logs', status: 'pending' },
+    ])
+  })
+})
+
+describe('pattern.classified harness', () => {
+  it('seeds harnessLedgerTasks from harness_plan', () => {
+    dispatch({ ...env(), type: 'message.user', data: { content: 'q' } })
+    dispatch({
+      ...env(),
+      type: 'pattern.classified',
+      data: {
+        pattern: 'REACT',
+        harness_work_kind: 'investigation',
+        harness_plan: [{ task_id: 'ctx-1', description: 'Timeline', verification_steps: ['doc'] }],
+      },
+    })
+    expect(state().harnessLedgerTasks).toEqual([
+      expect.objectContaining({ task_id: 'ctx-1', description: 'Timeline', verification_step_count: 1 }),
+    ])
+    expect(state().activeTurn?.harnessWorkKind).toBe('investigation')
   })
 })
 

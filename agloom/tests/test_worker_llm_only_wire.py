@@ -9,9 +9,9 @@ from unittest.mock import MagicMock
 import pytest
 from langchain_core.messages import AIMessage
 
-from agloom.models import ResolvedWorkerConfig
-from agloom.worker import _run_llm_only
-from agloom.wire_tokens import emitted_usage, reset_wire_emitted_usage
+from agloom.src.models import ResolvedWorkerConfig
+from agloom.src.worker import _run_llm_only
+from agloom.src.wire_tokens import emitted_usage, reset_wire_emitted_usage
 
 
 class _StreamingLLM:

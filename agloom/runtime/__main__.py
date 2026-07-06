@@ -44,8 +44,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from ..compat import configure_stdio_utf8, ensure_langchain_pending_deprecation_suppressed
-from ..mcp_support import MCPConnectionError
+from ..src.compat import configure_stdio_utf8, ensure_langchain_pending_deprecation_suppressed
+from ..src.mcp_support import MCPConnectionError
 from ..protocol import SessionEmitter
 from ..protocol.commands import command_adapter
 from ..protocol.envelope import Envelope
@@ -400,12 +400,16 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             raise
         agent_holder["_mem_cleanup"] = mem_cleanup_acc
         try:
+            from agloom.harness.metadata import runtime_default_harness_metadata
+
+            harness_meta = runtime_default_harness_metadata() if use_harness else None
             agent = await create_agent(
                 model=llm,
                 name="agloom-runtime",
                 user_callback=hitl_bridge.callback,
                 store=lg_store,
                 harness=use_harness,
+                harness_metadata=harness_meta,
                 cli_tools=cli_tools_options_from_args(args),
                 **ca_kw,
             )
@@ -417,22 +421,21 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
         agent.config["_hitl_tool_coalescer"] = _hitl_coalescer
         agent_holder["agent"] = agent
         attach_session_memory_to_session_marker(agent.config.get("memory"), _sd, session_id)
-        _ct_en, _ct_ct = runtime_cli_tool_metrics(agent)
         llm_obj = agent.config.get("llm")
         model_id_guess = None
         if llm_obj is not None:
             model_id_guess = getattr(llm_obj, "model_name", None) or getattr(llm_obj, "model", None)
             if model_id_guess is None:
                 model_id_guess = type(llm_obj).__name__
-        tool_objs = agent.config.get("tools", []) or []
-        emitter.emit_runtime_config(
+        from agloom.runtime.session_bootstrap import emit_agent_runtime_config_pre_mcp
+
+        emit_agent_runtime_config_pre_mcp(
+            emitter,
+            agent,
             model_id=str(model_id_guess) if model_id_guess else None,
-            tool_names=[getattr(t, "name", str(t)) for t in tool_objs],
-            cli_tools_enabled=_ct_en,
-            cli_tools_count=_ct_ct,
         )
         if agent.config.get("_mcp_servers"):
-            from agloom.unified_agent import _ensure_mcp_connected
+            from agloom.src.unified_agent import _ensure_mcp_connected
 
             try:
                 await _ensure_mcp_connected(agent.config)
@@ -473,12 +476,9 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
             emitter.write_replay_dict(evt_dict)
     else:
         emitter.open()
-    _ready_sidebar = runtime_ready_sidebar_from_args(args)
-    emitter.emit_runtime_ready(
-        agent_name="agloom-runtime",
-        harness_enabled=use_harness,
-        **_ready_sidebar,
-    )
+    from agloom.runtime.session_bootstrap import emit_control_plane_runtime_ready
+
+    emit_control_plane_runtime_ready(emitter, args, harness_enabled=use_harness)
 
     budget_tracker = None
     bt_n = getattr(args, "budget_tokens", None)

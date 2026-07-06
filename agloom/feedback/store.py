@@ -16,7 +16,7 @@ from ..memory.store import LongTermStore
 if TYPE_CHECKING:
     from .evaluator import RunRecord
 
-from ..logging_utils import get_logger
+from ..src.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

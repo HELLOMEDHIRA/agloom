@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agloom.models import PatternType, QueryAnalysis, StepType, _make_step
+from agloom.src.models import PatternType, QueryAnalysis, StepType, _make_step
 from agloom.patterns.react import (
     _MAX_TOOL_RETRIES,
     _emit_react_tool_steps_to_event_queue,
@@ -97,7 +97,7 @@ async def test_collect_tool_steps_false_preserves_stream_tool_steps() -> None:
 async def test_emit_tool_steps_skips_wire_emitted_but_emits_new_results() -> None:
     import asyncio
 
-    from agloom.models import AgentEvent
+    from agloom.src.models import AgentEvent
 
     queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
     agent = {"_event_queue": queue}

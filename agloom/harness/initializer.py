@@ -1,4 +1,4 @@
-"""First-run setup: decompose a goal into tasks, seed the progress artifact, and bootstrap git."""
+"""First-run setup: manual task decomposition via ``initialize_project`` (escape hatch)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..logging_utils import get_logger
+from ..src.logging_utils import get_logger
 from .progress import (
     TaskPriority,
     TaskStep,
@@ -14,6 +14,21 @@ from .progress import (
 )
 
 logger = get_logger(__name__)
+
+_DECOMPOSE_PROMPT = """\
+Decompose the following goal into a structured list of concrete, verifiable tasks.
+
+Rules:
+  - Every task MUST have end-to-end verification steps.
+  - Order tasks logically for the goal (foundation first when applicable).
+  - Category labels: functional, infra, testing, context, evidence, validation, report, general
+  - Priority: critical, high, medium, low
+
+Goal:
+{goal}
+
+Return a structured list of tasks.
+"""
 
 
 class TaskDecompositionToolPayload(BaseModel):
@@ -39,25 +54,6 @@ class InitializerResult(BaseModel):
     project_description: str = Field(description="The expanded project description.")
 
 
-INITIALIZER_PROMPT = """\
-You are an expert software project planner. Your job is to decompose a high-level
-project goal into a structured list of concrete, verifiable tasks.
-
-Rules:
-  - Every task MUST have end-to-end verification steps (things a human tester
-    would do to confirm the feature works).
-  - Tasks are ordered: foundation/infrastructure first, then features, then polish.
-  - "mark passes=true after careful testing" — do NOT mark tasks as done without steps.
-  - Category labels: functional, infra, testing, polish, docs
-  - Priority: critical (MVP), high (important), medium (nice-to-have), low (polish)
-
-Project goal to decompose:
-{goal}
-
-Return a structured list of tasks.
-"""
-
-
 async def run_initializer(
     llm: Any,
     store: Any,
@@ -67,30 +63,13 @@ async def run_initializer(
     *,
     max_tasks: int = 50,
     llm_timeout: float = 60.0,
-    init_git: bool = True,
+    init_git: bool = False,
     git_initial_snapshot: bool = False,
 ) -> InitializerResult:
     """
-    Initialize a new project: decompose goal → seed ProgressArtifact → setup git.
+    Manual harness seeding via ``initialize_project`` tool only.
 
-    This should be called once at the start of a new project, before any
-    coding sessions begin. It replaces the Anthropic "initializer agent" with
-    a single structured LLM call.
-
-    Args:
-        llm: BaseChatModel-compatible model (used for task decomposition).
-        store: LongTermStore (used to persist the ProgressArtifact).
-        agent_name: Name of the agent that will work on this project.
-        project_name: Project name used in the progress artifact.
-        goal: The user's original project goal.
-        max_tasks: Maximum number of tasks to generate (prevents runaway generation).
-        llm_timeout: Timeout for the LLM decomposition call.
-        init_git: If True, run ``git init`` when the cwd is not already a repository.
-        git_initial_snapshot: When True (and ``init_git``), also ``git add`` and create an initial
-            commit. Default False so harness runs do not mass-stage secrets or build artifacts.
-
-    Returns:
-        InitializerResult with briefing text, tasks created, and setup status.
+    Normal flows use classifier subtasks + ``sync_harness_from_analysis`` — not this LLM call.
     """
     from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -114,9 +93,9 @@ async def run_initializer(
             project_description=tracker.artifact.description,
         )
 
-    prompt = INITIALIZER_PROMPT.format(goal=goal)
+    prompt = _DECOMPOSE_PROMPT.format(goal=goal)
 
-    from ..llm_utils import robust_structured_call
+    from ..src.llm_utils import robust_structured_call
 
     try:
         raw = await robust_structured_call(
@@ -124,7 +103,7 @@ async def run_initializer(
             TaskDecompositionToolPayload,
             [
                 SystemMessage(
-                    content="You are a software project planner. Decompose the following goal into verifiable tasks."
+                    content="You are a project planner. Decompose the goal into verifiable tasks."
                 ),
                 HumanMessage(content=prompt),
             ],
@@ -239,31 +218,23 @@ def create_initializer_tool(
     store: Any,
     agent_name: str,
     project_name: str,
+    *,
+    default_init_git: bool = False,
 ):
-    """
-    Factory: returns an initialize_project tool for the agent to call.
-
-    Usage:
-        tool = create_initializer_tool(llm, store, "coder", "my-project")
-        # agent.tools.append(tool)
-    """
+    """Factory: returns ``initialize_project`` — manual recovery only; classifier owns normal planning."""
 
     async def initialize_project(
         goal: str,
-        init_git: bool = True,
+        init_git: bool | None = None,
         git_initial_snapshot: bool = False,
     ) -> str:
         """
-        Initialize a new project. This decomposes your goal into a structured
-        task list and sets up the progress tracking system.
-
-        Call this ONCE at the very start of a new project, before doing any
-        other work. After initialization, use bootstrap_progress to begin.
+        Manually decompose a goal into harness tasks. Prefer classifier subtasks in normal flows.
 
         Args:
-            goal: The overall project goal (e.g. "Build a chat app with auth").
-            init_git: Whether to initialize a git repository (default: True).
-            git_initial_snapshot: Whether to stage and commit all files after ``git init`` (default: False).
+            goal: The overall project goal.
+            init_git: Whether to initialize a git repository (default from harness_metadata).
+            git_initial_snapshot: Stage and commit all files after ``git init`` (default: False).
         """
         result = await run_initializer(
             llm=llm,
@@ -271,7 +242,7 @@ def create_initializer_tool(
             agent_name=agent_name,
             project_name=project_name,
             goal=goal,
-            init_git=init_git,
+            init_git=default_init_git if init_git is None else init_git,
             git_initial_snapshot=git_initial_snapshot,
         )
         return result.briefing

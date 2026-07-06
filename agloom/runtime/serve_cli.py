@@ -19,7 +19,7 @@ from agloom.llm.llm_provider_params import normalize_provider_slug
 from agloom.llm.model_resolver import split_provider_prefix
 from agloom.llm.provider_registry import PROVIDER_ENV_KEYS
 from agloom.llm.sampling_presets import build_sampling_section_for_session_marker, infer_provider_slug_from_args
-from agloom.mcp_support import MCPServerConfig
+from agloom.src.mcp_support import MCPServerConfig
 from agloom.memory.session import SessionMemory
 
 _log = logging.getLogger(__name__)

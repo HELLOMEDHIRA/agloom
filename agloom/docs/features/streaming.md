@@ -3,7 +3,7 @@
 Build responsive chat UIs with **token streaming**, **live step events**, or **AGP wire envelopes** — same turn, three levels of detail.
 
 | API | Best for |
-| --- | -------- |
+| --- | --- |
 | `astream()` | Simple chat bubbles (text chunks) |
 | `astream_events()` | Thinking spinners, tool rows, worker progress |
 | `astream_agp_events()` | CLI/web-compatible NDJSON types |
@@ -125,22 +125,22 @@ async for event in agent.astream_events("Explain gravity"):
 
 ### Event types
 
-| Event          | When emitted               | Key data fields                         |
-| -------------- | -------------------------- | --------------------------------------- |
-| `thinking`     | Setup / progress lines     | `name`, `output` (e.g. classify, harness bootstrap) |
-| `classify`     | Classifier finished        | `pattern`, `reason`, `complexity`, `duration_ms` |
-| `token`        | LLM token chunk arrives    | `content`; optional `role` (`assistant`, `reasoning`, `tool`) |
-| `llm_call`     | LLM response completed     | `name`, `output`, `duration_ms`         |
-| `tool_call`    | Tool invoked               | `id`, `name`, `input`                   |
-| `tool_result`  | Tool returned              | `id`, `name`, `output`                  |
-| `worker_start` | Worker began executing     | `name`                                  |
-| `worker_end`   | Worker completed           | `name`, `output`, `duration_ms`         |
-| `cache_hit`    | Cached result found        | `output`                                |
-| `reflection`   | Reflection iteration ran   | `output`                                |
-| `fallback`     | Pattern fallback triggered | `output`                                |
-| `interrupt`    | HITL interrupt fired       | `name`                                  |
-| `done`         | Execution complete         | `result` (full ExecutionResult as dict) |
-| `error`        | Execution failed           | `error` (error message)                 |
+| Event | When emitted | Key data fields |
+| --- | --- | --- |
+| `thinking` | Setup / progress lines | `name`, `output` (e.g. classify, harness bootstrap) |
+| `classify` | Classifier finished | `pattern`, `reason`, `complexity`, `duration_ms` |
+| `token` | LLM token chunk arrives | `content`; optional `role` (`assistant`, `reasoning`, `tool`) |
+| `llm_call` | LLM response completed | `name`, `output`, `duration_ms` |
+| `tool_call` | Tool invoked | `id`, `name`, `input` |
+| `tool_result` | Tool returned | `id`, `name`, `output` |
+| `worker_start` | Worker began executing | `name` |
+| `worker_end` | Worker completed | `name`, `output`, `duration_ms` |
+| `cache_hit` | Cached result found | `output` |
+| `reflection` | Reflection iteration ran | `output` |
+| `fallback` | Pattern fallback triggered | `output` |
+| `interrupt` | HITL interrupt fired | `name` |
+| `done` | Execution complete | `result` (full ExecutionResult as dict) |
+| `error` | Execution failed | `error` (error message) |
 
 ### Tool call correlation with `id`
 
@@ -321,11 +321,11 @@ To get token usage, just access `result.token_usage` after any `ainvoke` call.
 
 ## Choosing the Right API
 
-| Need                         | API                                          | Details                                                                    |
-| ---------------------------- | -------------------------------------------- | -------------------------------------------------------------------------- |
-| Simple chat UI               | `astream()`                                  | Token chunks only, simplest integration                                    |
-| Rich "thinking" UI           | `astream_events()`                           | Trace steps + reasoning/answer tokens + tools — see [thinking-events.md](thinking-events.md) |
-| Same shapes as AGP / runtime | `astream_agp_events()`                       | Typed `Envelope` subclasses; bracketed `session.opened` / `session.closed` |
-| Post-run analysis            | `ainvoke()` + `result.steps`                 | Full trace with timing data                                                |
-| Raw message access           | `ainvoke()` + `result.messages`              | Full LangChain message objects                                             |
-| NDJSON / SSE bridges         | `astream_agp_events()` or `astream_events()` | AGP events serialize to JSON lines; agent events via `model_dump_json()`   |
+| Need | API | Details |
+| --- | --- | --- |
+| Simple chat UI | `astream()` | Token chunks only, simplest integration |
+| Rich "thinking" UI | `astream_events()` | Trace steps + reasoning/answer tokens + tools — see [thinking-events.md](thinking-events.md) |
+| Same shapes as AGP / runtime | `astream_agp_events()` | Typed `Envelope` subclasses; bracketed `session.opened` / `session.closed` |
+| Post-run analysis | `ainvoke()` + `result.steps` | Full trace with timing data |
+| Raw message access | `ainvoke()` + `result.messages` | Full LangChain message objects |
+| NDJSON / SSE bridges | `astream_agp_events()` or `astream_events()` | AGP events serialize to JSON lines; agent events via `model_dump_json()` |

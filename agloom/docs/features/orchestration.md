@@ -7,16 +7,16 @@ Optional **recursive pattern dispatch** lets agloom spawn follow-up patterns ins
 ## Mental model
 
 | Layer | Who decides | What it controls |
-| ----- | ----------- | ---------------- |
-| **Classifier** (per turn) | LLM | Pattern, complexity, subtasks, optional **orchestration plan** fields |
+| --- | --- | --- |
+| **Turn planner** (per turn) | LLM | Pattern, complexity, subtasks, optional **orchestration plan** fields |
 | **Agent config** (`create_agent`) | You | **Ceilings** (max depth, tokens, LLM calls) and whether escalation is allowed |
 | **Runtime guardrails** | Built-in | Cycle detection, budget checks, follow-up spawns, optional LLM evaluation |
 
-Think of orchestration as a **safety net and observability layer**, not a replacement for the nine execution patterns. The classifier still picks the primary pattern; orchestration may add bounded follow-up work when enabled.
+Think of orchestration as a **safety net and observability layer**, not a replacement for the nine execution patterns. The turn planner still picks the primary pattern; orchestration may add bounded follow-up work when enabled.
 
 ## Enabling orchestration
 
-Set a **non-zero ceiling** on depth. The classifier (or complexity heuristics) picks the **actual** depth per turn, clamped to your ceiling.
+Set a **non-zero ceiling** on depth. The turn planner (or complexity heuristics) picks the **actual** depth per turn, clamped to your ceiling.
 
 ```python
 from agloom import create_agent
@@ -32,21 +32,21 @@ agent = await create_agent(
 )
 ```
 
-With `max_pattern_depth=0`, no recursive dispatch runs and classifier orchestration fields are ignored.
+With `max_pattern_depth=0`, no recursive dispatch runs and turn-planner orchestration fields are ignored.
 
 ### Static vs per-turn limits
 
 | `orchestration_plan_from_classifier` | Behavior |
-| ------------------------------------ | -------- |
-| `True` (default) | Classifier (or complexity-derived defaults) sets depth, token/LLM budgets, and escalation hint **per turn**, clamped to agent ceilings. Simple queries (complexity 0–2) typically get depth `0` even when the ceiling is `5`. |
+| --- | --- |
+| `True` (default) | Turn planner (or complexity-derived defaults) sets depth, token/LLM budgets, and escalation hint **per turn**, clamped to agent ceilings. Simple queries (complexity 0–2) typically get depth `0` even when the ceiling is `5`. |
 | `False` | Legacy mode: use agent ceilings directly every turn (`max_pattern_depth` is the active depth, not just a cap). |
 
-## Classifier orchestration fields
+## Turn planner orchestration fields
 
-When the classifier runs, optional fields appear on **`result.analysis`** (and in AGP as part of classification):
+When the turn planner runs, optional fields appear on **`result.analysis`** (and in AGP as part of classification):
 
 | Field | Purpose |
-| ----- | ------- |
+| --- | --- |
 | `orchestration_depth` | Suggested max recursive depth for this turn |
 | `orchestration_token_budget` | Suggested total orchestration token budget |
 | `orchestration_llm_call_budget` | Suggested max orchestration LLM calls |
@@ -58,7 +58,7 @@ Empty or omitted fields fall back to **complexity-derived defaults** (e.g. compl
 
 ## Safety (hard stops)
 
-These limits apply regardless of classifier output:
+These limits apply regardless of turn-planner output:
 
 - **Depth** — `current_depth >= max_depth` → `OrchestrationBudgetExceeded`
 - **Cycles** — same `(pattern, task_hash)` on the ancestor chain, or three identical spawns in a row → `OrchestrationCycleDetected`
@@ -81,7 +81,7 @@ Conflict detection for SWARM/BLACKBOARD spawn hints uses the **LLM eval** path, 
 When orchestration is on and `enable_pattern_spawns=True` (default):
 
 | Pattern | Behavior |
-| ------- | -------- |
+| --- | --- |
 | **REACT** | Failed run may spawn REFLECTION recovery |
 | **SUPERVISOR** | Failed workers may recover; optional per-worker sub-patterns when `enable_supervisor_worker_dispatch=True` |
 | **SWARM / BLACKBOARD** | LLM-detected conflicts may spawn deliberation |
@@ -96,7 +96,7 @@ When orchestration is on and `enable_pattern_spawns=True` (default):
 
 ## Tuning without custom code
 
-You control recursion from **`create_agent`** and per-turn classifier hints — no need to call internal orchestration APIs:
+You control recursion from **`create_agent`** and per-turn turn-planner hints — no need to call internal orchestration APIs:
 
 ```python
 agent = await create_agent(

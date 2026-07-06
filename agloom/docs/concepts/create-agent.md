@@ -2,7 +2,7 @@
 
 `create_agent` is the **only entry point** you need for production agents. Pass a LangChain-compatible model (and optional tools, memory store, policies); it returns an agent object with `ainvoke`, streaming helpers, and cleanup.
 
-Under the hood agloom wires classification, pattern handlers, guardrails, and optional MCP — you do not assemble those pieces yourself.
+Under the hood agloom wires the **turn planner**, pattern handlers, guardrails, and optional MCP — you do not assemble those pieces yourself.
 
 !!! tip "Coming from LangChain `create_agent`?"
     agloom uses the **same invoke shape** (`{"messages": [...]}`) as [LangChain’s `create_agent`](https://docs.langchain.com/oss/python/langchain/agents). The factory is **async**, and `ainvoke` returns an **`ExecutionResult`** (not a raw graph state dict). Full porting guide: **[Migrating from LangChain — `create_agent`](../guides/migration-from-langchain.md#from-langchain-create_agent)**.
@@ -32,29 +32,33 @@ See [All Parameters](../configuration/parameters.md) for the complete reference.
 
 ### Long-running harness (optional)
 
-For agents that keep a **structured task graph**, **verification steps**, and **git** workflows across sessions, pass **`harness=True`** together with a LangGraph **`store=`**. That appends tools such as `bootstrap_progress`, `get_next_task`, `update_task`, and `git_status` / `git_commit`, and feeds **cross-session progress** into classification. **`harness=True` without `store=` is ignored** (with a log warning). The **agloom CLI** turns this on by default and supplies a **SQLite** LangGraph store (`graph_store.sqlite` under `.agloom/`) even when session memory is off. Details: [Harness](../features/harness.md).
+For agents that keep a **structured task ledger**, **verification steps**, and **git** workflows across sessions, pass **`harness=True`**, **`harness_metadata=`**, and a LangGraph **`store=`**.
+
+On each turn the **turn planner** may emit a durable **`harness_plan`** (turn 1 or when `allow_replan=True`). agloom syncs that plan to the progress artifact, injects **HARNESS CURRENT FOCUS** into the pattern handler, and appends progress/git tools. **`harness=True` without `harness_metadata` or `store=` raises `ValueError`**.
+
+The **agloom CLI** enables harness when a store is open and supplies default metadata for interactive sessions. Full guide: [Long-running harness](../features/harness.md).
 
 ### Recursive orchestration (optional)
 
-Pass **`max_pattern_depth > 0`** to enable bounded recursive pattern dispatch (self-healing recovery, optional auto-escalation). Default is **`0`** (off). Agent parameters are **ceilings**; when **`orchestration_plan_from_classifier=True`** (default), the classifier sets per-turn depth and budgets inside those limits. Details: [Recursive orchestration](../features/orchestration.md).
+Pass **`max_pattern_depth > 0`** to enable bounded recursive pattern dispatch (self-healing recovery, optional auto-escalation). Default is **`0`** (off). Agent parameters are **ceilings**; when **`orchestration_plan_from_classifier=True`** (default), the turn planner sets per-turn depth and budgets inside those limits. Details: [Recursive orchestration](../features/orchestration.md).
 
 ### Frozen agents (optional)
 
-Pass **`frozen=True`** to classify **once** per agent instance and replay the **classifier-derived plan** (pattern, subtasks, handler vs `dispatch_pattern`, orchestration limits) on every later call with new `messages` only. Same invoke shape as above. Details: [Frozen agents](../features/frozen-agents.md).
+Pass **`frozen=True`** to run the turn planner **once** per agent instance and replay the **locked plan** (pattern, subtasks, handler vs `dispatch_pattern`, orchestration limits) on every later call with new `messages` only. Harness ledger sync on the first call is supported. Same invoke shape as above. Details: [Frozen agents](../features/frozen-agents.md).
 
 ## What It Returns
 
 The agent object exposes these methods:
 
-| Method                                           | Description                                     |
-| ------------------------------------------------ | ----------------------------------------------- |
-| `await agent.ainvoke(input)`                     | Run the full pipeline, return `ExecutionResult` |
-| `async for token in agent.astream(input)`        | Stream tokens as they arrive                    |
-| `async for event in agent.astream_events(input)` | Stream structured events + real-time tokens     |
-| `await agent.abatch(inputs)`                   | Process multiple inputs in parallel           |
-| `await agent.feedback(run_id, rating)`           | Submit user feedback for a run                  |
-| `agent.register_pattern(pattern_type, handler)`  | Register a custom pattern handler               |
-| `async with agent:`                              | Context manager for graceful cleanup            |
+| Method | Description |
+| --- | --- |
+| `await agent.ainvoke(input)` | Run the full pipeline, return `ExecutionResult` |
+| `async for token in agent.astream(input)` | Stream tokens as they arrive |
+| `async for event in agent.astream_events(input)` | Stream structured events + real-time tokens |
+| `await agent.abatch(inputs)` | Process multiple inputs in parallel |
+| `await agent.feedback(run_id, rating)` | Submit user feedback for a run |
+| `agent.register_pattern(pattern_type, handler)` | Register a custom pattern handler |
+| `async with agent:` | Context manager for graceful cleanup |
 
 ### Invoke input (LangChain shape)
 
@@ -153,12 +157,12 @@ agent.register_pattern(
 
 The `thread_id` and `user_id` parameters (passed at **call time**) control memory isolation:
 
-| Parameter                       | Effect                                                                 |
-| ------------------------------- | ---------------------------------------------------------------------- |
-| `thread_id=None`                | Ephemeral UUID — no cross-call session memory                          |
-| `thread_id="t1"`                | Stateful session — session memory active across calls with same ID     |
-| `user_id="u123"` (at call time) | Stable cross-session LT namespace → `(agent_name, "u123")`             |
-| `lt_namespace=(...)`            | Explicit shared namespace (multi-agent coordination, highest priority) |
+| Parameter | Effect |
+| --- | --- |
+| `thread_id=None` | Ephemeral UUID — no cross-call session memory |
+| `thread_id="t1"` | Stateful session — session memory active across calls with same ID |
+| `user_id="u123"` (at call time) | Stable cross-session LT namespace → `(agent_name, "u123")` |
+| `lt_namespace=(...)` | Explicit shared namespace (multi-agent coordination, highest priority) |
 
 !!! warning "`user_id` at create_agent vs call time"
     `create_agent(user_id="u123")` sets a config default but does **not** automatically scope long-term memory. You must pass `user_id=` on each `ainvoke()` / `astream()` / `astream_events()` call for it to take effect.

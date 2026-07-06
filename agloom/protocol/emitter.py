@@ -22,7 +22,7 @@ from queue import Full as QueueFull
 from collections.abc import Callable
 from typing import IO, Any, Literal, cast
 
-from ..compat import safe_writer_write
+from ..src.compat import safe_writer_write
 from .envelope import PROTOCOL_MODULE_VERSION, Envelope
 from .events import (
     AgentBusy,
@@ -82,6 +82,10 @@ from .events import (
     PatternClassifiedData,
     PlanPreview,
     PlanPreviewData,
+    HarnessSynced,
+    HarnessSyncedData,
+    HarnessPlanTaskWire,
+    HarnessLedgerTaskWire,
     PromptCancelled,
     PromptCancelledData,
     PromptRequested,
@@ -489,6 +493,8 @@ class SessionEmitter:
         complexity: int | None = None,
         confidence: float | None = None,
         reason: str | None = None,
+        harness_work_kind: str | None = None,
+        harness_plan: list[HarnessPlanTaskWire] | None = None,
         parent: str | None = None,
     ) -> PatternClassified:
         evt = PatternClassified(
@@ -501,6 +507,8 @@ class SessionEmitter:
                 complexity=complexity,
                 confidence=confidence,
                 reason=reason,
+                harness_work_kind=harness_work_kind,
+                harness_plan=list(harness_plan or []),
             ),
         )
         self._write(evt)
@@ -513,9 +521,11 @@ class SessionEmitter:
         complexity: int = 0,
         reasoning: str = "",
         steps: list[str] | None = None,
+        harness_work_kind: str | None = None,
+        harness_plan: list[HarnessPlanTaskWire] | None = None,
         parent: str | None = None,
     ) -> PlanPreview:
-        """Emit classifier-only plan (``command.plan.preview``)."""
+        """Emit turn-planner preview (``command.plan.preview``)."""
         evt = PlanPreview(
             session=self._session,
             thread=self._thread,
@@ -526,6 +536,38 @@ class SessionEmitter:
                 complexity=complexity,
                 reasoning=reasoning,
                 steps=list(steps or []),
+                harness_work_kind=harness_work_kind,
+                harness_plan=list(harness_plan or []),
+            ),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_harness_synced(
+        self,
+        *,
+        action: str,
+        tasks_synced: int = 0,
+        work_kind: str | None = None,
+        completion_ratio: float = 0.0,
+        task_count: int = 0,
+        harness_plan: list[HarnessPlanTaskWire] | None = None,
+        tasks: list[HarnessLedgerTaskWire] | None = None,
+        parent: str | None = None,
+    ) -> HarnessSynced:
+        evt = HarnessSynced(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=HarnessSyncedData(
+                action=action,  # type: ignore[arg-type]
+                tasks_synced=tasks_synced,
+                work_kind=work_kind,
+                completion_ratio=completion_ratio,
+                task_count=task_count,
+                harness_plan=list(harness_plan or []),
+                tasks=list(tasks or []),
             ),
         )
         self._write(evt)

@@ -7,7 +7,7 @@ from typing import Any
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from ..logging_utils import get_logger
+from ..src.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

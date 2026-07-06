@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from agloom.delegation import HandoffTarget
-from agloom.models import PatternType, QueryAnalysis
-from agloom.unified_agent import _extract_delegate_from_analysis
+from agloom.src.delegation import HandoffTarget
+from agloom.src.models import PatternType, QueryAnalysis
+from agloom.src.unified_agent import _extract_delegate_from_analysis
 
 
 def test_delegate_requires_word_boundary() -> None:

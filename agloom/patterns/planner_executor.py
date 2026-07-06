@@ -5,9 +5,9 @@ import time
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from ..llm_streaming import stream_or_invoke_llm
-from ..logging_utils import get_logger
-from ..models import (
+from ..src.llm_streaming import stream_or_invoke_llm
+from ..src.logging_utils import get_logger
+from ..src.models import (
     ExecutionResult,
     PatternType,
     QueryAnalysis,
@@ -18,7 +18,7 @@ from ..models import (
     _make_step,
     _merge_token_usage,
 )
-from ..wire_tokens import llm_label_from_run_config
+from ..src.wire_tokens import llm_label_from_run_config
 from ._resolve import resolve_worker_configs
 from ._sequential import run_sequential_workers
 from ._steps_accounting import steps_taken_from_audit

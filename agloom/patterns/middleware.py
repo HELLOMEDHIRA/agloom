@@ -9,7 +9,7 @@ from typing import Any
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from ..hitl_contract import HITLEvent, call_user_callback
+from ..src.hitl_contract import HITLEvent, call_user_callback
 from ..llm.qwen_compat import (
     ensure_messages_for_chat_template,
     extract_model_label,
@@ -17,7 +17,7 @@ from ..llm.qwen_compat import (
     qwen_model_settings_patch,
     resolve_react_tool_choice,
 )
-from ..logging_utils import get_logger
+from ..src.logging_utils import get_logger
 from .hitl_tool_coalesce import CompositeToolHitlCoalescer, build_default_hitl_coalescer
 
 logger = get_logger(__name__)

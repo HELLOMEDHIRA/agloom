@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from agloom.classifier import CLASSIFIER_PROMPT
-from agloom.models import PatternType
-from agloom.unified_agent import _HANDLERS
+from agloom.src.classifier import CLASSIFIER_PROMPT
+from agloom.src.models import PatternType
+from agloom.src.unified_agent import _HANDLERS
 
 
 def test_classifier_prompt_mentions_every_handler_pattern() -> None:

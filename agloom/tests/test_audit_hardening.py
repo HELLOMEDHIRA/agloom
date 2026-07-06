@@ -6,10 +6,10 @@ import uuid
 
 import pytest
 
-from agloom.delegation import BackgroundDelegationManager
-from agloom.logging_utils import get_logger
-from agloom.models import _extract_token_usage
-from agloom.multimodal import model_id_supports_vision
+from agloom.src.delegation import BackgroundDelegationManager
+from agloom.src.logging_utils import get_logger
+from agloom.src.models import _extract_token_usage
+from agloom.src.multimodal import model_id_supports_vision
 
 
 def test_model_id_supports_vision_no_false_positive_on_no_vision_slug() -> None:
@@ -65,7 +65,7 @@ def test_extract_token_usage_sums_all_messages() -> None:
 def test_extend_invoke_config_merges_signal_queues_from_agent() -> None:
     import asyncio
 
-    from agloom.worker import extend_invoke_config_with_event_queue
+    from agloom.src.worker import extend_invoke_config_with_event_queue
 
     eq = object()
     sq = asyncio.Queue()
@@ -81,7 +81,7 @@ def test_extend_invoke_config_merges_signal_queues_from_agent() -> None:
 def test_extend_invoke_config_keeps_existing_signal_queue() -> None:
     import asyncio
 
-    from agloom.worker import extend_invoke_config_with_event_queue
+    from agloom.src.worker import extend_invoke_config_with_event_queue
 
     sq1 = asyncio.Queue()
     sq2 = asyncio.Queue()
@@ -101,7 +101,7 @@ async def test_background_delegation_manager_shutdown_empty() -> None:
 
 
 def test_get_logger_dedupes_tracked_list() -> None:
-    from agloom import logging_utils as lu
+    from agloom.src import logging_utils as lu
 
     name = f"agloom.tests.audit_hardening_dup_{uuid.uuid4().hex[:10]}"
     n_before = len(lu._tracked_loggers)

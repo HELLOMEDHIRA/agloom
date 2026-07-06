@@ -4,6 +4,7 @@ import type { RightTab } from '../../routes/SessionWorkspace.js'
 import { RuntimeGraph } from './RuntimeGraph.js'
 import { WorkerTree } from './WorkerTree.js'
 import { ExecutionTrace } from './ExecutionTrace.js'
+import { HarnessLedgerPanel } from './HarnessLedgerPanel.js'
 import { ArtifactViewer } from '../artifacts/ArtifactViewer.js'
 
 interface Props {
@@ -15,6 +16,7 @@ export const RuntimePanel = ({ activeTab }: Props): React.ReactElement => {
     case 'graph':     return <RuntimeGraph />
     case 'workers':   return <WorkerTree />
     case 'trace':     return <ExecutionTrace />
+    case 'harness':   return <HarnessLedgerPanel />
     case 'artifacts': return <ArtifactViewer />
   }
 }

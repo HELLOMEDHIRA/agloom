@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 from pydantic import BaseModel
 
-from agloom.llm_utils import _build_structured, exercise_llm_weak_dict_paths, llm_weak_dict_key_ok
+from agloom.src.llm_utils import _build_structured, exercise_llm_weak_dict_paths, llm_weak_dict_key_ok
 
 
 class _Schema(BaseModel):

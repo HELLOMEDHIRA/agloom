@@ -45,7 +45,7 @@ await agent.feedback(
 ## Where feedback is stored
 
 | Handler | Behavior |
-| ------- | -------- |
+| --- | --- |
 | **Default with `store=`** | Persists to long-term storage; low ratings can decay related skills |
 | **Webhook** | POST JSON to your URL for CRM or analytics |
 | **Composite** | Run multiple handlers in parallel |
@@ -68,7 +68,7 @@ Without a **`store=`** and without a custom **`feedback_handler`**, feedback is 
 ## Trends and skill lifecycle
 
 | Setting | Default | Effect |
-| ------- | ------- | ------ |
+| --- | --- | --- |
 | `review_every_n_runs` | `25` | Periodic quality review |
 | `trend_every_n_runs` | `100` | Detect regressions over time |
 | `low_score_threshold` | `0.40` | Scores below this decay skills |

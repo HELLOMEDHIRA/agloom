@@ -6,8 +6,8 @@ import time
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel as PydanticBaseModel
 
-from ..logging_utils import get_logger
-from ..models import (
+from ..src.logging_utils import get_logger
+from ..src.models import (
     AgentEvent,
     ExecutionResult,
     PatternType,
@@ -20,7 +20,7 @@ from ..models import (
     _merge_token_usage,
     _trunc,
 )
-from ..llm_streaming import astream_llm_to_event_queue
+from ..src.llm_streaming import astream_llm_to_event_queue
 from ._resolve import resolve_worker_configs
 from ._steps_accounting import steps_taken_from_audit
 from ._synthesis_contract import ALL_PATTERN_WORKERS_FAILED_ERROR, pattern_synthesis_success
@@ -211,7 +211,7 @@ async def handle_supervisor(
     agg_ms = round((time.perf_counter() - t_agg) * 1000, 1)
     if agg_usage:
         usage = _merge_token_usage(usage, agg_usage)
-    from ..wire_tokens import llm_label_from_run_config
+    from ..src.wire_tokens import llm_label_from_run_config
 
     steps.append(
         _make_step(
@@ -283,7 +283,7 @@ async def plan_via_manager_llm(
 ) -> list[WorkerPlan]:
     tool_names = [t.name for t in agent["tools"]]
     try:
-        from ..llm_utils import robust_structured_call
+        from ..src.llm_utils import robust_structured_call
 
         result = await robust_structured_call(
             agent["llm"],
@@ -369,7 +369,7 @@ async def aggregate_results(
             output, last_chunk, stream_usage = await astream_llm_to_event_queue(
                 agent["llm"], messages, event_queue, timeout=agg_timeout
             )
-            from ..wire_tokens import emit_usage_from_llm_response, llm_label_from_run_config
+            from ..src.wire_tokens import emit_usage_from_llm_response, llm_label_from_run_config
 
             agg_usage = await emit_usage_from_llm_response(
                 agent,
@@ -385,7 +385,7 @@ async def aggregate_results(
                 agent["llm"].ainvoke(messages),
                 timeout=agg_timeout,
             )
-            from ..wire_tokens import emit_usage_from_llm_response, llm_label_from_run_config
+            from ..src.wire_tokens import emit_usage_from_llm_response, llm_label_from_run_config
 
             agg_usage = await emit_usage_from_llm_response(
                 agent,

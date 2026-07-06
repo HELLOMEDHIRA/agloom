@@ -9,7 +9,8 @@ import pytest
 from langchain_core.tools import BaseTool
 from langgraph.store.memory import InMemoryStore
 
-from agloom.unified_agent import create_agent, normalize_tools
+from agloom.harness.metadata import HarnessMetadata
+from agloom.src.unified_agent import create_agent, normalize_tools
 
 # Tools safe to invoke with {} or minimal args in CI (no network / git / destructive FS).
 _SAFE_INVOKE: dict[str, dict] = {
@@ -60,7 +61,17 @@ async def test_harness_tools_async_registration_matrix() -> None:
     llm = MagicMock()
     llm.ainvoke = AsyncMock(return_value=MagicMock())
     store = InMemoryStore()
-    agent = await create_agent(model=llm, store=store, harness=True, name="matrix-harness")
+    agent = await create_agent(
+        model=llm,
+        store=store,
+        harness=True,
+        harness_metadata=HarnessMetadata(
+            project_name="matrix",
+            goal="Tool matrix harness",
+            init_git=False,
+        ),
+        name="matrix-harness",
+    )
     harness_names = {
         "git_status",
         "git_log",

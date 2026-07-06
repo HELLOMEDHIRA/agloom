@@ -5,7 +5,7 @@ Ship agloom agents behind APIs, workers, and multi-tenant products. This guide c
 ## Production checklist
 
 | Concern | What to configure |
-| -------- | ----------------- |
+| --- | --- |
 | **Secrets** | Provider API keys via env / secret store — never bake into images |
 | **Persistence** | `checkpointer` + durable `store` for threads; SQLite or your own `BaseStore` backend |
 | **Timeouts** | `llm_timeout`, `classifier_timeout` — see [Timeouts & retries](../configuration/reliability.md) |
@@ -194,7 +194,7 @@ async def main():
 Callable **`state`** keys:
 
 | Key | Description |
-| --- | ----------- |
+| --- | --- |
 | `query` | Raw user message |
 | `thread_id` | Conversation thread |
 | `user_id` | Caller id when passed to `ainvoke` / `astream_events` |
@@ -261,7 +261,7 @@ if state:
     print(f"Output: {data['output']}")
 ```
 
-Checkpoints store the classifier decision (**`analysis`**) so **`resume()`** after HITL does not re-route to a different pattern mid-interrupt.
+Checkpoints store the turn planner decision (**`analysis`**) so **`resume()`** after HITL does not re-route to a different pattern mid-interrupt.
 
 ### History
 
@@ -302,7 +302,7 @@ async def chat(tenant_id: str, query: str, user_id: str):
 ```
 
 | Data | Isolation key |
-| ---- | ------------- |
+| --- | --- |
 | Session memory | `thread_id` |
 | Long-term memory | `lt_namespace` or `user_id` |
 | Skills / feedback | Agent `name` + `store` |
@@ -370,5 +370,5 @@ For **runtime + web** stacks, see [Production deployment](deployment.md).
 
 - [Timeouts & retries](../configuration/reliability.md)
 - [Parameters](../configuration/parameters.md)
-- [Patterns](../concepts/patterns.md) — what the classifier picks
+- [Patterns](../concepts/patterns.md) — what the turn planner picks
 - [Embedding the runtime](embedding-runtime.md) — custom AGP servers

@@ -7,9 +7,9 @@ from typing import Any, cast
 import pytest
 from pydantic import ValidationError
 
-from agloom.frozen import validate_frozen_params
-from agloom.models import AgentConfig, PatternType, QueryAnalysis, SubTask
-from agloom.frozen import analysis_for_turn
+from agloom.src.frozen import validate_frozen_params
+from agloom.src.models import AgentConfig, PatternType, QueryAnalysis, SubTask
+from agloom.src.frozen import analysis_for_turn
 
 
 def test_valid_config_passes() -> None:
@@ -38,6 +38,10 @@ def test_rejects_invalid_agent_config() -> None:
         AgentConfig(model="m", max_concurrent=cast("Any", 33))
     with pytest.raises(ValidationError):
         AgentConfig(model="m", max_retries=cast("Any", 11))
+    with pytest.raises(ValidationError):
+        AgentConfig(model="m", react_recursion_limit=cast("Any", 0))
+    with pytest.raises(ValidationError):
+        AgentConfig(model="m", react_recursion_limit=cast("Any", 501))
 
 
 def test_frozen_params_noop() -> None:

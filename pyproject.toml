@@ -1,6 +1,6 @@
 [project]
 name = "agloom"
-version = "0.0.1.7"
+version = "0.0.1.10"
 description = "Production agent framework on LangChain/LangGraph: nine execution patterns, persistent memory, skills, feedback, multi-level HITL, MCP, AGP protocol, runtime bridge, and observability hooks."
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -292,4 +292,7 @@ filterwarnings = [
     "ignore::DeprecationWarning:huggingface_hub",
     "ignore::DeprecationWarning:transformers",
     "ignore::DeprecationWarning:torch",
+    # langchain_core on Python 3.13+ (and some 3.14 dev builds): Pydantic v1 shim notice.
+    "ignore:Core Pydantic V1 functionality isn't compatible:UserWarning",
+    "ignore:Core Pydantic V1 functionality isn't compatible:UserWarning:langchain_core._api.deprecation",
 ]

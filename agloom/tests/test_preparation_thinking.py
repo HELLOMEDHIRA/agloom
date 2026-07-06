@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agloom.models import AgentEvent
+from agloom.harness.metadata import HarnessMetadata
+from agloom.src.models import AgentEvent
 from agloom.runtime.translator import translate
 from agloom.tests.test_runtime_bridge import capture_emitter
-from agloom.unified_agent import (
+from agloom.src.unified_agent import (
     _emit_preparation_progress,
     _ensure_harness_bootstrapped,
 )
@@ -56,7 +57,7 @@ async def test_harness_bootstrap_emits_progress_when_tasks_exist() -> None:
 
 
 @pytest.mark.asyncio
-async def test_harness_bootstrap_silent_when_no_tasks() -> None:
+async def test_harness_bootstrap_emits_empty_state_when_no_tasks() -> None:
     q: asyncio.Queue = asyncio.Queue()
     artifact = MagicMock()
     artifact.tasks = []
@@ -69,10 +70,16 @@ async def test_harness_bootstrap_silent_when_no_tasks() -> None:
     config = {
         "_harness_enabled": True,
         "_progress_tracker": tracker,
+        "_harness_metadata": HarnessMetadata(project_name="demo", goal="my goal", init_git=False),
         "name": "demo",
     }
-    await _ensure_harness_bootstrapped(config, "thread_a", (), "my goal", event_queue=q)
+    with patch("agloom.harness.metadata.bind_harness_project", AsyncMock()):
+        await _ensure_harness_bootstrapped(config, "thread_a", (), "my goal", event_queue=q)
 
+    evt = await q.get()
+    assert evt.type == "progress"
+    assert evt.data["phase"] == "harness_init"
+    assert "turn planner" in evt.data["output"]
     assert q.empty()
 
 

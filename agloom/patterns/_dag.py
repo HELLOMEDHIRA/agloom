@@ -1,7 +1,7 @@
 """Group ``ResolvedWorkerConfig`` into parallel levels for HYBRID_DAG (same level parallel, levels sequential)."""
 
-from ..logging_utils import get_logger
-from ..models import ResolvedWorkerConfig, SignalType, WorkerResult
+from ..src.logging_utils import get_logger
+from ..src.models import ResolvedWorkerConfig, SignalType, WorkerResult
 
 logger = get_logger(__name__)
 

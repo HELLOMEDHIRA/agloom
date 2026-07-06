@@ -52,16 +52,62 @@ export interface SessionClosedEvent extends Envelope {
   }
 }
 
+// harness wire (shared payloads)
+
+export interface HarnessPlanTaskWire {
+  task_id: string
+  description: string
+  category?: string
+  priority?: string
+  verification_steps?: string[]
+}
+
+export interface HarnessLedgerTaskWire {
+  task_id: string
+  description: string
+  category?: string
+  status?: string
+  priority?: string
+  verification_step_count?: number
+}
+
 // pattern.*
 
 export interface PatternClassifiedEvent extends Envelope {
   type: 'pattern.classified'
-  data: { pattern: string; complexity?: number; confidence?: number; reason?: string }
+  data: {
+    pattern: string
+    complexity?: number
+    confidence?: number
+    reason?: string
+    harness_work_kind?: string
+    harness_plan?: HarnessPlanTaskWire[]
+  }
 }
 
 export interface PlanPreviewEvent extends Envelope {
   type: 'plan.preview'
-  data: { pattern: string; complexity?: number; reasoning?: string; steps?: string[] }
+  data: {
+    pattern: string
+    complexity?: number
+    reasoning?: string
+    steps?: string[]
+    harness_work_kind?: string
+    harness_plan?: HarnessPlanTaskWire[]
+  }
+}
+
+export interface HarnessSyncedEvent extends Envelope {
+  type: 'harness.synced'
+  data: {
+    action: 'seed' | 'append' | 'skip'
+    tasks_synced?: number
+    work_kind?: string
+    completion_ratio?: number
+    task_count?: number
+    harness_plan?: HarnessPlanTaskWire[]
+    tasks?: HarnessLedgerTaskWire[]
+  }
 }
 
 // thinking.*
@@ -355,7 +401,7 @@ export interface SkillLoadedEvent extends Envelope {
 export interface SkillAppliedEvent extends Envelope {
   type: 'skill.applied'
   data: {
-    phase?: 'classifier' | 'worker' | string
+    phase?: 'turn_planner' | 'classifier' | 'worker' | string
     injected_chars?: number
     skills?: string[]
     /** @deprecated use `skills` */
@@ -526,7 +572,9 @@ export type AGPKnownEvent =
   | SessionHeartbeatEvent
   | PatternClassifiedEvent
   | PlanPreviewEvent
+  | HarnessSyncedEvent
   | ThinkingStepEvent
+  | ProgressStepEvent
   | TokenDeltaEvent
   | MessageUserEvent
   | MessageAssistantEvent

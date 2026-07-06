@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ..cli_tools.subprocess_env import safe_subprocess_env
-from ..logging_utils import get_logger
+from ..src.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

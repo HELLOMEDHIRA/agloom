@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from agloom.graph import _make_classify_node
-from agloom.models import PatternType, QueryAnalysis
+from agloom.src.graph import _make_classify_node
+from agloom.src.models import PatternType, QueryAnalysis
 
 
 @pytest.mark.asyncio
@@ -23,7 +23,7 @@ async def test_graph_classify_forwards_classifier_config(monkeypatch: pytest.Mon
         captured["skill_context"] = skill_context
         return QueryAnalysis(pattern=PatternType.DIRECT, complexity=1, reasoning="ok", subtasks=[])
 
-    monkeypatch.setattr("agloom.unified_agent._execute_analyze_query", fake_execute)
+    monkeypatch.setattr("agloom.src.unified_agent._execute_analyze_query", fake_execute)
 
     agent = {
         "name": "graph-test",
@@ -59,7 +59,7 @@ async def test_graph_classify_injects_skill_context(monkeypatch: pytest.MonkeyPa
         async def get_context(self, query: str) -> str:
             return f"skills-for-{query}"
 
-    monkeypatch.setattr("agloom.unified_agent._execute_analyze_query", fake_execute)
+    monkeypatch.setattr("agloom.src.unified_agent._execute_analyze_query", fake_execute)
 
     agent = {"name": "graph-test", "llm": object(), "skill_injector": _Injector()}
     node = _make_classify_node(agent)
@@ -88,7 +88,7 @@ async def test_graph_classify_skill_injector_failure_proceeds(
         async def get_context(self, query: str) -> str:
             raise RuntimeError("injector down")
 
-    monkeypatch.setattr("agloom.unified_agent._execute_analyze_query", fake_execute)
+    monkeypatch.setattr("agloom.src.unified_agent._execute_analyze_query", fake_execute)
 
     agent = {"name": "graph-test", "llm": object(), "skill_injector": _BrokenInjector()}
     node = _make_classify_node(agent)
@@ -102,7 +102,7 @@ async def test_graph_classify_noop_when_preclassified(monkeypatch: pytest.Monkey
     async def fail_execute(*_a: object, **_k: object) -> QueryAnalysis:
         raise AssertionError("classify should not run when analysis is preset")
 
-    monkeypatch.setattr("agloom.unified_agent._execute_analyze_query", fail_execute)
+    monkeypatch.setattr("agloom.src.unified_agent._execute_analyze_query", fail_execute)
 
     pre = QueryAnalysis(pattern=PatternType.SUPERVISOR, complexity=5, reasoning="preset", subtasks=[])
     agent = {"name": "graph-test", "llm": object()}

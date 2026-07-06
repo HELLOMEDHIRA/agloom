@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from agloom.models import PatternType, QueryAnalysis
-from agloom.unified_agent import (
+from agloom.src.models import PatternType, QueryAnalysis
+from agloom.src.unified_agent import (
     _analysis_from_checkpointer_tuple,
     _analysis_from_checkpoint_values,
 )

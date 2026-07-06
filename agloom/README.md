@@ -1,6 +1,6 @@
 # agloom (Python package)
 
-The **`agloom`** PyPI package is a production-minded agent framework on LangChain/LangGraph: nine execution patterns, automatic routing, memory, streaming, skills, and optional harness tooling.
+The **`agloom`** PyPI package is a production-minded agent framework on LangChain/LangGraph: nine execution patterns, automatic per-turn routing, optional long-running **harness**, memory, streaming, skills, and production guardrails.
 
 ---
 
@@ -47,8 +47,9 @@ asyncio.run(main())
 
 | You write | agloom runs |
 | --------- | ----------- |
-| Model + tools | Pattern selection per turn |
+| Model + tools | Turn planner + pattern selection per message |
 | `thread_id` | Session memory |
+| `store=` + `harness_metadata` | Cross-session task ledger + progress/git tools |
 | `store=` | Long-term memory, skills, quality scoring |
 | `astream_events()` | Live “thinking”, tools, tokens |
 | Production knobs | Timeouts, retries, rate limits, circuit breaker |
@@ -62,3 +63,9 @@ asyncio.run(main())
 3. **AGP clients** — `agloom-runtime serve` + CLI/web ([integration overview](https://agloom.readthedocs.io/_packages/agloom/guides/developer-overview/))
 
 Examples: `agloom/examples/` on GitHub.
+
+---
+
+## Package layout (contributors)
+
+Kernel modules live under **`agloom/src/`** (models, unified agent, graph wiring, MCP helpers). Subpackages at the package root (`patterns/`, `harness/`, `memory/`, `runtime/`, …) stay where they are. Public imports use **`from agloom import …`**; internal code uses **`agloom.src.*`** or relative imports. Submodules such as `agloom.models` are not re-export shims — use `agloom.src.models` only when importing implementation details in tests or extensions.

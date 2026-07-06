@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .models import QueryAnalysis
-from .orchestrator.plan import TurnOrchestrationPlan, resolve_turn_orchestration
+from ..orchestrator.plan import TurnOrchestrationPlan, resolve_turn_orchestration
 from .turn_input import TurnInput
 
 ExecutionMode = Literal["handler", "dispatch"]

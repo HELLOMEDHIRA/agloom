@@ -17,6 +17,7 @@ import { runDirect } from './direct.js'
 import { bannerEnvDisabled, formatBannerLine, readCliPackageVersion } from './banner.js'
 import { applyAgloomConfigLayers, buildResolvedConfigSnapshot } from './config.js'
 import { resetTerminalForShell } from './utils/terminalReset.js'
+import { buildRuntimeArgs } from './utils/buildRuntimeArgs.js'
 import type { AGPEvent, InvokeAttachment } from './types/agp.js'
 
 type CliOpts = {
@@ -27,6 +28,8 @@ type CliOpts = {
   diag: boolean
   noCliTools: boolean
   noHarness: boolean
+  agentStore?: string
+  agentStorePath?: string
   noRequireToolApproval: boolean
   noShellTool: boolean
   noNetworkTools: boolean
@@ -245,6 +248,11 @@ mainProgram
   .option('--no-cli-tools', 'omit --with-cli-tools (default: CLI tools on)', false)
   .option('--no-harness', 'forward --no-harness (disable progress/git harness tools)', false)
   .option(
+    '--agent-store <kind>',
+    'LangGraph store: none | memory | sqlite | sqlite-sync (default at runtime: sqlite)',
+  )
+  .option('--agent-store-path <path>', 'SQLite path for --agent-store=sqlite|sqlite-sync')
+  .option(
     '--no-require-tool-approval',
     'forward: allow CLI tools without per-tool HITL (matches agloom.yaml safety.require_approval: false)',
     false,
@@ -409,61 +417,45 @@ if (themeRaw !== 'dark' && themeRaw !== 'light') {
 }
 const themeUi: AgloomTheme = themeRaw === 'light' ? 'light' : 'dark'
 
-const buildRuntimeArgs = (o: CliOpts, resolvedThread: string): string[] => {
-  const turns = o.maxTurns ?? o.sessionMaxTurns
-  const parts: string[] = []
-  parts.push('--store', o.store)
-  if (o.store === 'sqlite') {
-    parts.push('--store-path', o.storePath ?? '.agloom/agp_events.db')
-  }
-  if (o.session) parts.push('--session', o.session)
-  const tid = resolvedThread.trim()
-  if (tid) parts.push('--thread', tid)
-  const modelArg = typeof o.model === 'string' ? o.model.trim() : o.model != null ? String(o.model).trim() : ''
-  if (modelArg && modelArg.toLowerCase() !== 'auto') parts.push('--model', modelArg)
-  if (o.provider) parts.push('--provider', o.provider)
-  if (o.apiKeyEnv) parts.push('--api-key-env', o.apiKeyEnv)
-  if (o.persistApiKeyInSessionMarker) parts.push('--persist-api-key-in-session-marker')
-  if (o.temperature !== undefined) parts.push('--temperature', String(o.temperature))
-  if (o.topP !== undefined && !Number.isNaN(o.topP)) parts.push('--top-p', String(o.topP))
-  if (o.topK !== undefined && !Number.isNaN(o.topK)) parts.push('--top-k', String(o.topK))
-  if (o.maxTokens !== undefined) parts.push('--max-tokens', String(o.maxTokens))
-  if (o.frequencyPenalty !== undefined && !Number.isNaN(o.frequencyPenalty)) {
-    parts.push('--frequency-penalty', String(o.frequencyPenalty))
-  }
-  if (o.presencePenalty !== undefined && !Number.isNaN(o.presencePenalty)) {
-    parts.push('--presence-penalty', String(o.presencePenalty))
-  }
-  for (const m of o.mcp ?? []) {
-    parts.push('--mcp', m)
-  }
-  if (o.systemPrompt) parts.push('--system-prompt', o.systemPrompt)
-  if (o.systemPromptFile) parts.push('--system-prompt-file', o.systemPromptFile)
-  if (o.memory) parts.push('--memory', o.memory)
-  if (o.memoryPath) parts.push('--memory-path', o.memoryPath)
-  if (o.skillsDir) parts.push('--skills-dir', o.skillsDir)
-  if (o.summarizerModel) parts.push('--summarizer-model', o.summarizerModel)
-  if (o.noAutoSummarize) parts.push('--no-auto-summarize')
-  parts.push('--session-max-turns', String(turns))
-  if (o.budgetTokens !== undefined && !Number.isNaN(o.budgetTokens) && o.budgetTokens > 0) {
-    parts.push('--budget-tokens', String(Math.floor(o.budgetTokens)))
-  }
-  if (o.budgetCostUsd !== undefined && !Number.isNaN(o.budgetCostUsd) && o.budgetCostUsd > 0) {
-    parts.push('--budget-cost-usd', String(o.budgetCostUsd))
-  }
-  if (!o.noCliTools) {
-    parts.push('--with-cli-tools', '--cli-tools-working-dir', cwd)
-  }
-  if (o.noRequireToolApproval) {
-    parts.push('--no-require-tool-approval')
-  }
-  if (o.noShellTool) parts.push('--cli-tools-no-shell')
-  if (o.noNetworkTools) parts.push('--cli-tools-no-network')
-  if (o.unrestricted) parts.push('--cli-tools-no-sandbox')
-  if (o.noHarness) parts.push('--no-harness')
-  parts.push(...passthroughRuntime)
-  return parts
-}
+const runtimeArgsForOpts = (o: CliOpts, resolvedThread: string): string[] =>
+  buildRuntimeArgs({
+    store: o.store,
+    storePath: o.storePath,
+    session: o.session,
+    thread: resolvedThread,
+    model: o.model,
+    provider: o.provider,
+    apiKeyEnv: o.apiKeyEnv,
+    persistApiKeyInSessionMarker: o.persistApiKeyInSessionMarker,
+    temperature: o.temperature,
+    topP: o.topP,
+    topK: o.topK,
+    maxTokens: o.maxTokens,
+    frequencyPenalty: o.frequencyPenalty,
+    presencePenalty: o.presencePenalty,
+    mcp: o.mcp,
+    systemPrompt: o.systemPrompt,
+    systemPromptFile: o.systemPromptFile,
+    memory: o.memory,
+    memoryPath: o.memoryPath,
+    skillsDir: o.skillsDir,
+    summarizerModel: o.summarizerModel,
+    noAutoSummarize: o.noAutoSummarize,
+    sessionMaxTurns: o.sessionMaxTurns,
+    maxTurns: o.maxTurns,
+    budgetTokens: o.budgetTokens,
+    budgetCostUsd: o.budgetCostUsd,
+    noCliTools: o.noCliTools,
+    noHarness: o.noHarness,
+    noRequireToolApproval: o.noRequireToolApproval,
+    noShellTool: o.noShellTool,
+    noNetworkTools: o.noNetworkTools,
+    unrestricted: o.unrestricted,
+    agentStore: o.agentStore,
+    agentStorePath: o.agentStorePath,
+    cliToolsWorkingDir: cwd,
+    passthrough: passthroughRuntime,
+  })
 
 const stdinPrompt = await readStdinIfPiped()
 const explicitPrompt = opts.prompt ?? positionalPrompt
@@ -472,7 +464,7 @@ const directPrompt = explicitPrompt ?? (stdinPrompt || undefined)
 const directExec = Boolean(directPrompt && directPrompt.length > 0)
 
 const thread = opts.thread ?? `t_${Date.now().toString(36)}`
-const runtimeArgs = buildRuntimeArgs(opts, thread)
+const runtimeArgs = runtimeArgsForOpts(opts, thread)
 
 if (directExec) {
   const bridge = createAGPBridge()

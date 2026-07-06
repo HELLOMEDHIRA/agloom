@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agloom.mcp_support import (
+from agloom.src.mcp_support import (
     MCP_SYSTEM_APPENDIX_MARKER,
     append_mcp_system_appendix_to_agent,
     build_mcp_system_appendix,

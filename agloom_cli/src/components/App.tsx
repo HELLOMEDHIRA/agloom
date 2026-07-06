@@ -262,6 +262,18 @@ export const App = ({
 
   const handleSlashCommand = (cmd: string) => {
     const [command, ...rest] = cmd.split(/\s+/)
+    const requireHarness = (): boolean => {
+      const on = useSessionStore.getState().harnessEnabled
+      if (on === false) {
+        appendProtocolNote(`${command} · harness is off (use default sqlite store; omit --no-harness)`)
+        return false
+      }
+      if (on == null) {
+        appendProtocolNote(`${command} · waiting for runtime.ready harness status…`)
+        return false
+      }
+      return true
+    }
 
     switch (command) {
       case '/help':
@@ -309,6 +321,7 @@ export const App = ({
       }
 
       case '/checkpoint': {
+        if (!requireHarness()) break
         const name = (rest[0] ?? 'cli').trim() || 'cli'
         const description = rest.slice(1).join(' ').trim() || 'CLI /checkpoint'
         bridge.harnessGit('checkpoint', { name, description })
@@ -316,6 +329,7 @@ export const App = ({
       }
 
       case '/diff': {
+        if (!requireHarness()) break
         let cached = false
         const pathParts: string[] = []
         for (const p of rest) {
@@ -327,6 +341,7 @@ export const App = ({
       }
 
       case '/hint':
+        if (!requireHarness()) break
         bridge.harnessGit('revert_hint', {})
         break
 
@@ -341,6 +356,7 @@ export const App = ({
       }
 
       case '/git': {
+        if (!requireHarness()) break
         const sub = (rest[0] ?? 'status').toLowerCase()
         if (sub === 'status') bridge.harnessGit('status', {})
         else if (sub === 'checkpoints' || sub === 'list') bridge.harnessGit('checkpoints', {})

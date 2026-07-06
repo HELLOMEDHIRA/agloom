@@ -1,4 +1,4 @@
-"""Query classification: ``analyze_query`` maps user text to ``QueryAnalysis`` (pattern, subtasks, DIRECT answer).
+"""Turn planning: ``plan_turn`` / ``analyze_query`` maps user text to ``TurnPlan`` (pattern, harness, subtasks).
 
 Uses structured output / tool-calling on ``BaseChatModel``. Provider payloads are normalized through
 ``QueryAnalysisToolPayload`` before building canonical ``QueryAnalysis``.
@@ -15,6 +15,8 @@ from .models import (
     PatternType,
     QueryAnalysis,
     QueryAnalysisToolPayload,
+    TurnPlan,
+    classifier_tool_payload_type,
     normalize_reflection_analysis,
     query_analysis_from_tool_payload,
 )
@@ -209,6 +211,9 @@ log/metrics/trace/dashboard queries, ``read_resource_*``, ``get_prompt_*``, or s
     dashboard, alert, incident, outage, spike, last hour, query loki, prometheus, elasticsearch.
 
 
+<<<HARNESS_SECTION>>>
+
+
 ═══════════════════════════════════════════════════════════
 STRICT FIELD RULES
 ═══════════════════════════════════════════════════════════
@@ -281,6 +286,28 @@ Query: {query}
 """
 
 _QUERY_SLOT_MARKER_PREFIX = "\ufeffAGLOOM_CLASSIFIER_QUERY_"
+
+HARNESS_CLASSIFIER_SECTION = """
+═══════════════════════════════════════════════════════════
+HARNESS RULE  (harness project active)
+═══════════════════════════════════════════════════════════
+
+  ``subtasks`` = this turn's execution routing. ``harness_plan`` = durable cross-session ledger.
+  ``harness_work_kind`` = short label (investigation, implementation, triage, review).
+
+  When multi-step durable work is needed: set ``harness_work_kind`` and populate ``harness_plan``
+  (even for REACT with ``subtasks = []``). Each entry needs task_id, description, category,
+  priority, verification_steps. Trivial turns: leave harness_plan empty.
+
+  Multi-worker patterns may use ``subtasks`` only — runtime can derive harness_plan from them.
+
+"""
+
+TURN_PLANNER_SYSTEM = (
+    "You are a turn planner for an adaptive AI agent system. "
+    "Route the query to an execution pattern, optionally answer DIRECT queries inline, "
+    "plan harness tasks when the HARNESS RULE applies, and plan worker subtasks for multi-worker patterns."
+)
 
 # Observability / investigation fetch — used for post-classify coercion when MCP tools exist.
 _OBSERVABILITY_FETCH_RE = re.compile(
@@ -397,10 +424,16 @@ def coerce_analysis_when_tools_required(
     if not coerce:
         return analysis
 
+    from ..harness.planning import merge_harness_plan_from_subtasks
+
+    analysis = merge_harness_plan_from_subtasks(analysis)
+    preserved_plan = list(analysis.harness_plan)
+    preserved_kind = analysis.harness_work_kind
+
     prev = analysis.pattern.value
     note = f"[coerced {prev}→REACT: query requires registered tool calls]"
     logger.warning(
-        f"[Classifier] {note} — pattern was {prev!r}, query matched tool-required heuristic."
+        f"[Turn planner] {note} — pattern was {prev!r}, query matched tool-required heuristic."
     )
     return analysis.model_copy(
         update={
@@ -408,6 +441,8 @@ def coerce_analysis_when_tools_required(
             "direct_response": None,
             "subtasks": [],
             "needs_reflection": False,
+            "harness_plan": preserved_plan,
+            "harness_work_kind": preserved_kind,
             "reasoning": f"{(analysis.reasoning or '').strip()} {note}".strip(),
         }
     )
@@ -439,19 +474,50 @@ def query_looks_like_observability_fetch(query: str) -> bool:
     return _OBSERVABILITY_FETCH_RE.search(text) is not None
 
 
-def build_classifier_user_prompt(*, tools_desc: str, query: str) -> str:
-    """Fill :data:`CLASSIFIER_PROMPT` so user *query* and *tools_desc* cannot corrupt each other.
-
-    Uses a per-call random slot marker so a user query cannot collide with the placeholder.
-    Only the dedicated ``Query: …`` slot is substituted (``replace(..., 1)``).
-    """
+def build_classifier_user_prompt(
+    *,
+    tools_desc: str,
+    query: str,
+    harness_needs_plan: bool = False,
+) -> str:
+    """Fill turn planner prompt; user *query* and *tools_desc* cannot corrupt each other."""
     import secrets
 
+    harness_block = HARNESS_CLASSIFIER_SECTION if harness_needs_plan else ""
+    body = CLASSIFIER_PROMPT.replace("<<<HARNESS_SECTION>>>", harness_block)
     marker = f"{_QUERY_SLOT_MARKER_PREFIX}{secrets.token_hex(8)}\ufeff"
     return (
-        CLASSIFIER_PROMPT.replace("{query}", marker, 1)
+        body.replace("{query}", marker, 1)
         .replace("{tools}", tools_desc, 1)
         .replace(marker, query, 1)
+    )
+
+
+async def plan_turn(
+    llm,
+    query: str,
+    tools: list,
+    skill_context: str = "",
+    *,
+    classifier_timeout: float = 60.0,
+    structured_max_retries: int = 2,
+    fallback_pattern: PatternType | None = None,
+    mcp_configured: bool = False,
+    harness_enabled: bool = False,
+    harness_needs_plan: bool = False,
+) -> TurnPlan:
+    """Single structured LLM call → route, optional harness plan, optional worker subtasks."""
+    return await analyze_query(
+        llm,
+        query,
+        tools,
+        skill_context,
+        classifier_timeout=classifier_timeout,
+        structured_max_retries=structured_max_retries,
+        fallback_pattern=fallback_pattern,
+        mcp_configured=mcp_configured,
+        harness_enabled=harness_enabled,
+        harness_needs_plan=harness_needs_plan,
     )
 
 
@@ -465,9 +531,13 @@ async def analyze_query(
     structured_max_retries: int = 2,
     fallback_pattern: PatternType | None = None,
     mcp_configured: bool = False,
+    harness_enabled: bool = False,
+    harness_needs_plan: bool = False,
 ) -> QueryAnalysis:
     """
-    Single LLM call → QueryAnalysis.
+    Single LLM call → :class:`~agloom.models.TurnPlan` (alias ``QueryAnalysis``).
+
+    Prefer :func:`plan_turn` for new code. ``harness_needs_plan`` controls harness schema + prompt.
 
     Parameters
     ----------
@@ -477,6 +547,8 @@ async def analyze_query(
                      **or** an empty list when no tools are registered.
     skill_context  : Optional skill manifest lines injected by SkillInjector.
                      When present, added to the prompt before the query section.
+    harness_enabled: When True, the query includes harness metadata.
+    harness_needs_plan: When True, include HARNESS RULE and ``harness_plan`` wire fields.
     mcp_configured : When True, included for API compatibility; post-classify coercion uses
                      :func:`coerce_analysis_when_tools_required` for all tool-dependent queries.
 
@@ -496,7 +568,11 @@ async def analyze_query(
     """
     tools_desc = "\n".join(f"  - {t.name}: {getattr(t, 'description', '')}" for t in tools) or "none"
 
-    prompt = build_classifier_user_prompt(tools_desc=tools_desc, query=query)
+    prompt = build_classifier_user_prompt(
+        tools_desc=tools_desc,
+        query=query,
+        harness_needs_plan=harness_needs_plan,
+    )
 
     if skill_context:
         prompt = prompt.replace(
@@ -505,19 +581,18 @@ async def analyze_query(
             1,
         )
 
+    if harness_enabled and "=== HARNESS PROJECT ===" not in query:
+        logger.debug("harness_enabled=True but query lacks HARNESS PROJECT block")
+
+    wire_model = classifier_tool_payload_type(harness_needs_plan=harness_needs_plan)
     has_tools = bool(tools)
 
     try:
         raw = await robust_structured_call(
             llm,
-            QueryAnalysisToolPayload,
+            wire_model,
             [
-                SystemMessage(
-                    content=(
-                        "You are a query classifier for an adaptive AI agent system. "
-                        "Analyze the query and return a structured classification."
-                    )
-                ),
+                SystemMessage(content=TURN_PLANNER_SYSTEM),
                 HumanMessage(content=prompt),
             ],
             max_retries=structured_max_retries,
@@ -532,7 +607,7 @@ async def analyze_query(
         )
         if analysis.pattern == PatternType.REFLECTION and not analysis.subtasks:
             logger.warning(
-                "[Classifier] REFLECTION without subtasks — synthesizing goal from user query."
+                "[Turn planner] REFLECTION without subtasks — synthesizing goal from user query."
             )
         analysis = normalize_reflection_analysis(analysis, query)
         analysis = coerce_analysis_when_tools_required(
@@ -544,7 +619,7 @@ async def analyze_query(
 
         reasoning = (analysis.reasoning or "").strip()
         logger.event(
-            f"[Classifier] ✅ Pattern={analysis.pattern.value:<20} "
+            f"[Turn planner] ✅ Pattern={analysis.pattern.value:<20} "
             f"| Complexity={analysis.complexity}/10 "
             f"| {reasoning}"
         )
@@ -553,7 +628,7 @@ async def analyze_query(
     except Exception as e:
         default_fb = fallback_pattern or (PatternType.REACT if has_tools else PatternType.DIRECT)
         logger.warning(
-            f"[Classifier] ⚠ Structured output failed ({e}) — falling back to {default_fb.value}. "
+            f"[Turn planner] ⚠ Structured output failed ({e}) — falling back to {default_fb.value}. "
             "If logs show TimeoutError on json_schema/function_calling, increase "
             "`execution.classifier_timeout` (seconds per attempt; slow models often need 90–120)."
         )

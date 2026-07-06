@@ -507,7 +507,7 @@ class CommandHarnessGit(_CmdBase):
 
 
 class CommandPlanPreviewData(_CmdBase):
-    """Run classifier only; emits ``plan.preview`` (no agent execution)."""
+    """Run turn planner only; emits ``plan.preview`` (no agent execution)."""
 
     prompt: str
 

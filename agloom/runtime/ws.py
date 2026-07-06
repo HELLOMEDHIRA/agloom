@@ -159,7 +159,8 @@ async def _session_loop(
     )
     from agloom.runtime.session_bootstrap import (
         connect_mcp_or_raise,
-        emit_agent_runtime_ready,
+        emit_agent_runtime_config_pre_mcp,
+        emit_control_plane_runtime_ready,
         make_hitl_bridge,
         prepare_runtime_session,
         teardown_runtime_session,
@@ -204,12 +205,6 @@ async def _session_loop(
         )
         return
 
-    ca_kw = build_create_agent_kwargs(merged_args)
-    mem_cleanup: Any = None
-    sm_mem, mem_cleanup = await open_isolated_session_memory(merged_args, agp_session_id=session_id)
-    if sm_mem is not None:
-        ca_kw["memory"] = sm_mem
-
     emitter = AsyncSessionEmitter(
         session=session_id,
         thread=initial_thread,
@@ -219,35 +214,6 @@ async def _session_loop(
     )
 
     hitl_bridge = make_hitl_bridge(emitter, prepared)
-
-    agent: Any | None = None
-    try:
-        agent = await create_agent(
-            model=llm,
-            name="agloom-runtime",
-            user_callback=hitl_bridge.callback,
-            store=lg_store,
-            harness=use_harness,
-            cli_tools=cli_tools_options_from_args(merged_args),
-            **ca_kw,
-        )
-    except Exception as exc:
-        await _send_error(f"agent initialization failed: {exc!s}")
-        try:
-            emitter.close(reason="error", error=str(exc))
-        except Exception:
-            pass
-        if mem_cleanup is not None:
-            await mem_cleanup()
-        return
-
-    agent.config["_hitl_tool_allowlist"] = hitl_bridge._tool_allowlist
-    agent.config["_hitl_tool_coalescer"] = prepared.coalescer
-    attach_session_memory_to_session_marker(
-        agent.config.get("memory"),
-        prepared.sessions_dir,
-        session_id,
-    )
 
     budget_tracker = None
     if (budget_tokens is not None and budget_tokens > 0) or (
@@ -265,29 +231,78 @@ async def _session_loop(
 
     thread_tasks: dict[str, asyncio.Task[None]] = {}
     invocation_tasks: set[asyncio.Task[None]] = set()
-    mem_cleanups: list[Any] = [mem_cleanup] if mem_cleanup is not None else []
+    mem_cleanups: list[Any] = []
 
     stop_hb = asyncio.Event()
     hb_task: asyncio.Task[None] | None = None
-    if heartbeat_interval > 0:
-        started_mono = time.perf_counter()
-
-        async def _heartbeat() -> None:
-            while not stop_hb.is_set():
-                await asyncio.sleep(heartbeat_interval)
-                if stop_hb.is_set():
-                    break
-                emitter.emit_session_heartbeat(
-                    uptime_ms=int((time.perf_counter() - started_mono) * 1000),
-                )
-
-        hb_task = asyncio.create_task(_heartbeat(), name="agp-ws-session-heartbeat")
 
     close_reason = "disconnect"
     async with emitter:
         emitter.open()
+        emit_control_plane_runtime_ready(emitter, merged_args, harness_enabled=use_harness)
+
+        ca_kw = build_create_agent_kwargs(merged_args)
+        mem_cleanup: Any = None
+        sm_mem, mem_cleanup = await open_isolated_session_memory(merged_args, agp_session_id=session_id)
+        if sm_mem is not None:
+            ca_kw["memory"] = sm_mem
+        if mem_cleanup is not None:
+            mem_cleanups.append(mem_cleanup)
+
+        agent: Any | None = None
         try:
-            await emit_agent_runtime_ready(emitter, agent, harness_enabled=use_harness)
+            from agloom.harness.metadata import runtime_default_harness_metadata
+
+            harness_meta = runtime_default_harness_metadata() if use_harness else None
+            agent = await create_agent(
+                model=llm,
+                name="agloom-runtime",
+                user_callback=hitl_bridge.callback,
+                store=lg_store,
+                harness=use_harness,
+                harness_metadata=harness_meta,
+                cli_tools=cli_tools_options_from_args(merged_args),
+                **ca_kw,
+            )
+        except Exception as exc:
+            await _send_error(f"agent initialization failed: {exc!s}")
+            await teardown_runtime_session(
+                agent=None,
+                emitter=emitter,
+                hitl_bridge=hitl_bridge,
+                thread_tasks=thread_tasks,
+                invocation_tasks=invocation_tasks,
+                mem_cleanups=mem_cleanups,
+                stop_heartbeat=stop_hb,
+                heartbeat_task=hb_task,
+                close_reason="error",
+            )
+            return
+
+        agent.config["_hitl_tool_allowlist"] = hitl_bridge._tool_allowlist
+        agent.config["_hitl_tool_coalescer"] = prepared.coalescer
+        attach_session_memory_to_session_marker(
+            agent.config.get("memory"),
+            prepared.sessions_dir,
+            session_id,
+        )
+
+        if heartbeat_interval > 0:
+            started_mono = time.perf_counter()
+
+            async def _heartbeat() -> None:
+                while not stop_hb.is_set():
+                    await asyncio.sleep(heartbeat_interval)
+                    if stop_hb.is_set():
+                        break
+                    emitter.emit_session_heartbeat(
+                        uptime_ms=int((time.perf_counter() - started_mono) * 1000),
+                    )
+
+            hb_task = asyncio.create_task(_heartbeat(), name="agp-ws-session-heartbeat")
+
+        try:
+            emit_agent_runtime_config_pre_mcp(emitter, agent)
             await connect_mcp_or_raise(agent, emitter)
         except Exception:
             await teardown_runtime_session(

@@ -10,10 +10,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, field_validator
 
 if TYPE_CHECKING:
-    from ..models import ExecutionResult
+    from ..src.models import ExecutionResult
     from .store import FeedbackStore
 
-from ..logging_utils import get_logger
+from ..src.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
@@ -132,7 +132,7 @@ class AutoEvaluator:
         except Exception as exc:
             logger.debug(f"AutoEvaluator: could not set run_id on result: {exc!r}")
 
-        from ..llm_utils import safe_create_task
+        from ..src.llm_utils import safe_create_task
 
         safe_create_task(
             self._score_and_store(result, query, skill_used, run_id),
@@ -224,7 +224,7 @@ Output       :
 {worker_summary}
 """.strip()
 
-        from ..llm_utils import robust_structured_call
+        from ..src.llm_utils import robust_structured_call
 
         return await robust_structured_call(
             self._llm,

@@ -3,7 +3,19 @@
 from __future__ import annotations
 
 import os
+import warnings
 from collections.abc import Iterator
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"Core Pydantic V1 functionality isn't compatible.*",
+    category=UserWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"The `pad_event` argument is deprecated.*",
+    category=DeprecationWarning,
+)
 
 import pytest
 
@@ -27,10 +39,18 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 @pytest.fixture(scope="session", autouse=True)
+def _suppress_langchain_shim_warnings() -> Iterator[None]:
+    from agloom.src.compat import ensure_langchain_pending_deprecation_suppressed
+
+    ensure_langchain_pending_deprecation_suppressed()
+    yield
+
+
+@pytest.fixture(scope="session", autouse=True)
 def _shutdown_qdrant_thread_pool_after_tests() -> Iterator[None]:
     yield
     try:
-        from agloom.cache import shutdown_qdrant_pool
+        from agloom.src.cache import shutdown_qdrant_pool
 
         shutdown_qdrant_pool(wait=False, cancel_futures=True)
     except ImportError:

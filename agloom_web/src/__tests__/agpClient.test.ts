@@ -173,6 +173,28 @@ describe('createAGPClient', () => {
     })
   })
 
+  it('harnessGit maps to command.harness.git', async () => {
+    const client = createAGPClient('ws://example.test/agp', 100)
+    client.connect()
+    await flushMicrotasks()
+    client.harnessGit('status', {})
+    expect(JSON.parse(mockSocketInstances[0]?.sent[0] ?? '{}')).toMatchObject({
+      type: 'command.harness.git',
+      data: { op: 'status' },
+    })
+  })
+
+  it('planPreview maps to command.plan.preview', async () => {
+    const client = createAGPClient('ws://example.test/agp', 100)
+    client.connect()
+    await flushMicrotasks()
+    client.planPreview('investigate outage')
+    expect(JSON.parse(mockSocketInstances[0]?.sent[0] ?? '{}')).toEqual({
+      type: 'command.plan.preview',
+      data: { prompt: 'investigate outage' },
+    })
+  })
+
   it('disconnect clears reconnect and closes socket', async () => {
     const client = createAGPClient('ws://example.test/agp', 100)
     client.connect()

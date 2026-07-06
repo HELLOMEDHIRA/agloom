@@ -4,12 +4,12 @@ agloom provides four composable delegation patterns that let agents hand off wor
 
 ## Overview
 
-| Pattern                    | Mechanism                             | Use Case                          |
-| -------------------------- | ------------------------------------- | --------------------------------- |
-| **as_tool()**              | Agent wrapped as a LangChain tool     | Parent calls child via tool loop  |
-| **register_handoff()**     | Transparent classifier-driven routing | Auto-route queries to specialists |
-| **delegates=[]**           | Hierarchical delegation at creation   | Pre-configured child agents       |
-| **adelegate_background()** | Fire-and-forget async tasks           | Long-running background work      |
+| Pattern | Mechanism | Use Case |
+| --- | --- | --- |
+| **as_tool()** | Agent wrapped as a LangChain tool | Parent calls child via tool loop |
+| **register_handoff()** | Transparent turn-planner routing | Auto-route queries to specialists |
+| **delegates=[]** | Hierarchical delegation at creation | Pre-configured child agents |
+| **adelegate_background()** | Fire-and-forget async tasks | Long-running background work |
 
 ## Pattern 1: Agent as Tool — `as_tool()`
 
@@ -47,7 +47,7 @@ tool = agent.as_tool(
 
 ## Pattern 2: Transparent Hand-off — `register_handoff()`
 
-Register delegates that the classifier can route to automatically. The hand-off is transparent — the caller receives the delegate's result as if the parent handled it.
+Register delegates that the turn planner can route to automatically. The hand-off is transparent — the caller receives the delegate's result as if the parent handled it.
 
 ```python
 async def main():
@@ -58,7 +58,7 @@ async def main():
     parent.register_handoff(researcher, description="Research and summarize academic papers")
     parent.register_handoff(coder, description="Write, review, and debug code")
 
-    # Classifier sees delegate descriptions and routes automatically
+    # Turn planner sees delegate descriptions and routes automatically
     result = await parent.ainvoke("Find papers about transformer architectures")
     # → routed to researcher transparently
 ```
@@ -100,7 +100,7 @@ parent.register_handoff(target)
 
 ## Pattern 3: Hierarchical Delegation — `delegates=[]`
 
-Pass delegate agents at creation time. They become available for both transparent hand-off (classifier routing) and explicit delegation via `adelegate()`.
+Pass delegate agents at creation time. They become available for both transparent hand-off (turn planner routing) and explicit delegation via `adelegate()`.
 
 ```python
 async def main():
@@ -116,7 +116,7 @@ async def main():
     # Explicit delegation
     result = await parent.adelegate("Find RLHF papers", delegate_name="researcher")
 
-    # Or let the classifier route automatically
+    # Or let the turn planner route automatically
     result = await parent.ainvoke("Find papers about transformers")
 ```
 
@@ -225,22 +225,22 @@ HandoffTarget(
 
 ### Delegation methods on the agent
 
-| Method                                | Returns            | Description                           |                              |
-| ------------------------------------- | ------------------ | ------------------------------------- | ---------------------------- |
-| `as_tool(name=, description=)`        | `BaseTool`         | Wrap agent as LangChain tool          |                              |
-| `register_handoff(target, ...)`       | `None`             | Register transparent hand-off target  |                              |
-| `adelegate(query, delegate_name=)`    | `ExecutionResult`  | Explicit async delegation             |                              |
-| `adelegate_background(query, ...)`    | `str` (task_id)    | Fire-and-forget background delegation |                              |
-| `await_background(task_id, timeout=)` | `ExecutionResult \ | None`                                 | Wait for background result   |
-| `background_status(task_id)`          | `BackgroundTask \  | None`                                 | Check background task status |
-| `cancel_background(task_id)`          | `bool`             | Cancel a running background task      |                              |
+| Method | Returns | Description |
+| --- | --- | --- |
+| `as_tool(name=, description=)` | `BaseTool` | Wrap agent as LangChain tool |
+| `register_handoff(target, ...)` | `None` | Register transparent hand-off target |
+| `adelegate(query, delegate_name=)` | `ExecutionResult` | Explicit async delegation |
+| `adelegate_background(query, ...)` | `str` (task_id) | Fire-and-forget background delegation |
+| `await_background(task_id, timeout=)` | `ExecutionResult` or `None` | Wait for background result |
+| `background_status(task_id)` | `BackgroundTask` or `None` | Check background task status |
+| `cancel_background(task_id)` | `bool` | Cancel a running background task |
 
 ### BackgroundTaskStatus
 
-| Value       | Description                      |
-| ----------- | -------------------------------- |
-| `pending`   | Task created but not yet started |
-| `running`   | Task is currently executing      |
-| `completed` | Task finished successfully       |
-| `failed`    | Task failed with an error        |
-| `cancelled` | Task was cancelled               |
+| Value | Description |
+| --- | --- |
+| `pending` | Task created but not yet started |
+| `running` | Task is currently executing |
+| `completed` | Task finished successfully |
+| `failed` | Task failed with an error |
+| `cancelled` | Task was cancelled |

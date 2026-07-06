@@ -75,7 +75,7 @@ await node.stop()
 Use an **async** writer so the event loop is not blocked while flushing NDJSON.
 
 | Need | Approach |
-| ---- | -------- |
+| --- | --- |
 | Single request/response in tests | `run_invocation` / `run_invocation_to_writer` |
 | Chat server with many sessions | `agloom-runtime serve` + WebSocket |
 | Custom queue inside your app | `RuntimeNode` + `submit_invoke` |

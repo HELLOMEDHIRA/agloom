@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, field_validator
 
-from ..logging_utils import get_logger
+from ..src.logging_utils import get_logger
 
 logger = get_logger(__name__)
 
@@ -86,7 +86,7 @@ Each skill should represent a common task pattern this agent will face.
 """.strip()
 
         try:
-            from ..llm_utils import robust_structured_call
+            from ..src.llm_utils import robust_structured_call
 
             result = await robust_structured_call(
                 self._llm,
@@ -132,7 +132,7 @@ The skill name should be general enough to cover similar future queries.
 """.strip()
 
         try:
-            from ..llm_utils import robust_structured_call
+            from ..src.llm_utils import robust_structured_call
 
             skill = await robust_structured_call(
                 self._llm,

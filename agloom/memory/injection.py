@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..logging_utils import get_logger
+from ..src.logging_utils import get_logger
 
 if TYPE_CHECKING:
     from .session import SessionMemory

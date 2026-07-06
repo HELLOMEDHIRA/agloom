@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agloom.mcp_support import format_mcp_inventory_text, mcp_configured_server_names
+from agloom.src.mcp_support import format_mcp_inventory_text, mcp_configured_server_names
 
 
 def test_format_mcp_inventory_text_from_rows() -> None:

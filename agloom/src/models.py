@@ -8,13 +8,26 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .logging_utils import get_logger
 
 _cfg_logger = get_logger(__name__)
 
 from agloom.prompts.core import DEFAULT_SYSTEM_PROMPT  # noqa: F401 — public re-export
+
+
+def resolve_turn_planner_timeout(
+    cfg: dict[str, Any] | Any,
+    *,
+    default: float = 60.0,
+) -> float:
+    """Read turn-planner timeout from agent config (``turn_planner_timeout`` or legacy ``classifier_timeout``)."""
+    if isinstance(cfg, dict):
+        raw = cfg.get("turn_planner_timeout", cfg.get("classifier_timeout"))
+        if raw is not None:
+            return float(raw)
+    return default
 
 
 class SignalType(str, Enum):
@@ -141,8 +154,25 @@ class SubTask(BaseModel):
         return {str(k): val if isinstance(val, str) else str(val) for k, val in v.items()}
 
 
+class HarnessPlanTask(BaseModel):
+    """
+    Durable harness work item planned by the classifier (separate from pattern ``subtasks``).
+
+    Populated when harness is enabled so REACT turns can still seed the task ledger.
+    """
+
+    task_id: str = Field(description="Stable harness task id, e.g. ctx-001, feat-auth")
+    description: str = Field(description="What must be accomplished for this harness task")
+    category: str = Field(default="planned", description="Label: context, evidence, functional, …")
+    priority: str = Field(default="medium", description="critical | high | medium | low")
+    verification_steps: list[str] = Field(
+        default_factory=list,
+        description="How to verify this task is done end-to-end",
+    )
+
+
 class QueryAnalysis(BaseModel):
-    """Output of analyze_query() — classifier's full reasoning."""
+    """Output of :func:`~agloom.classifier.plan_turn` — route, harness, and worker plan."""
 
     pattern: PatternType
     complexity: int = Field(ge=0, le=10)
@@ -152,6 +182,14 @@ class QueryAnalysis(BaseModel):
     needs_reflection: bool = False
     estimated_steps: int = Field(default=1, ge=1)
     subtasks: list[SubTask] = Field(default_factory=list)
+    harness_work_kind: str = Field(
+        default="",
+        description="Harness-only label for this turn (investigation, implementation, triage, …).",
+    )
+    harness_plan: list[HarnessPlanTask] = Field(
+        default_factory=list,
+        description="Durable harness tasks when harness is enabled (independent of pattern subtasks).",
+    )
     matched_skill: str | None = None
     orchestration_depth: int | None = Field(
         default=None,
@@ -199,6 +237,10 @@ class QueryAnalysis(BaseModel):
         return v
 
 
+TurnPlan = QueryAnalysis
+"""Alias: output of :func:`agloom.classifier.plan_turn` (route + optional harness + workers)."""
+
+
 # Common truthy/falsy spellings from LLM tool JSON (only "true"/"false" is schema-safe).
 _WIRE_BOOL_TRUE = frozenset({"true", "1", "yes", "y", "on"})
 _WIRE_BOOL_FALSE = frozenset({"false", "0", "no", "n", "off"})
@@ -225,6 +267,29 @@ def parse_wire_bool(value: Any) -> bool:
         return False
 
 
+class QueryAnalysisToolPayloadCore(BaseModel):
+    """Wire format without harness fields (used when harness planning is not needed)."""
+
+    pattern: str
+    complexity: str = "5"
+    reasoning: str = ""
+    direct_response: str | None = None
+    can_parallelize: str = "false"
+    needs_reflection: str = "false"
+    estimated_steps: str = "1"
+    subtasks: list[SubTask] = Field(default_factory=list)
+    matched_skill: str | None = None
+    orchestration_depth: str = ""
+    orchestration_token_budget: str = ""
+    orchestration_llm_call_budget: str = ""
+    orchestration_auto_escalation: str = ""
+
+
+def classifier_tool_payload_type(*, harness_needs_plan: bool) -> type:
+    """Structured-output schema: full payload only when harness planning is active."""
+    return QueryAnalysisToolPayload if harness_needs_plan else QueryAnalysisToolPayloadCore
+
+
 class QueryAnalysisToolPayload(BaseModel):
     """
     Wire format for classifier structured output / tool calls (any chat provider).
@@ -243,6 +308,8 @@ class QueryAnalysisToolPayload(BaseModel):
     needs_reflection: str = "false"
     estimated_steps: str = "1"
     subtasks: list[SubTask] = Field(default_factory=list)
+    harness_work_kind: str = ""
+    harness_plan: list[HarnessPlanTask] = Field(default_factory=list)
     matched_skill: str | None = None
     orchestration_depth: str = ""
     orchestration_token_budget: str = ""
@@ -317,8 +384,12 @@ class QueryAnalysisToolPayload(BaseModel):
         return "true" if parse_wire_bool(v) else "false"
 
 
+QueryAnalysisToolPayloadWire = QueryAnalysisToolPayloadCore | QueryAnalysisToolPayload
+"""Either classifier wire shape (core or full harness fields)."""
+
+
 def query_analysis_from_tool_payload(
-    raw: QueryAnalysisToolPayload,
+    raw: QueryAnalysisToolPayloadWire,
     tools_available: bool = False,
 ) -> QueryAnalysis:
     """
@@ -355,6 +426,9 @@ def query_analysis_from_tool_payload(
     direct_response = raw.direct_response if pattern == PatternType.DIRECT else None
 
     subtasks = raw.subtasks if isinstance(raw.subtasks, list) else []
+    raw_harness_plan = getattr(raw, "harness_plan", None)
+    harness_plan = raw_harness_plan if isinstance(raw_harness_plan, list) else []
+    harness_work_kind = (getattr(raw, "harness_work_kind", None) or "").strip()
 
     matched_skill = getattr(raw, "matched_skill", None)
     if matched_skill and isinstance(matched_skill, str):
@@ -383,6 +457,8 @@ def query_analysis_from_tool_payload(
         reasoning=reasoning,
         direct_response=direct_response,
         subtasks=subtasks,
+        harness_work_kind=harness_work_kind,
+        harness_plan=harness_plan,
         estimated_steps=estimated_steps,
         can_parallelize=can_parallelize,
         needs_reflection=needs_reflection,
@@ -477,6 +553,7 @@ class ResolvedWorkerConfig(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
     llm_timeout: float = 120.0
+    recursion_limit: int = 25
     max_retries: int = 2
     retry_delay: float = 1.0
     interrupt_before_tools: list[str] = Field(default_factory=list)
@@ -993,9 +1070,23 @@ class AgentConfig(BaseModel):
             "Default max(llm_timeout×4, 300) when None."
         ),
     )
-    classifier_timeout: float = Field(
-        default=60.0, ge=1.0, description="Timeout (s) for the classifier structured call"
+    react_recursion_limit: int = Field(
+        default=25,
+        ge=1,
+        le=500,
+        description="LangGraph recursion_limit for REACT and worker tool loops (graph steps).",
     )
+    turn_planner_timeout: float = Field(
+        default=60.0,
+        ge=1.0,
+        validation_alias=AliasChoices("turn_planner_timeout", "classifier_timeout"),
+        description="Timeout (s) for turn planning (plan_turn / analyze_query).",
+    )
+
+    @property
+    def classifier_timeout(self) -> float:
+        """Deprecated alias for :attr:`turn_planner_timeout` (YAML / older callers)."""
+        return self.turn_planner_timeout
     structured_max_retries: int = Field(
         default=2, ge=0, le=10, description="Max retries inside robust_structured_call()"
     )

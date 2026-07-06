@@ -12,6 +12,7 @@ import type {
 } from './session.js'
 import type { AGPEvent } from '../types/agp.js'
 import { isAgpKnownEvent } from '../types/agpEventGuards.js'
+import { harnessLedgerFromWire, harnessPlanToLedgerRows } from './harnessWire.js'
 import {
   finalizeAssistantMessage,
   formatTurnTokenRollup,
@@ -474,17 +475,25 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         budgetUi: 'ok',
       }
 
-    case 'pattern.classified':
+    case 'pattern.classified': {
       if (!s.activeTurn) return s
+      const planRows = harnessPlanToLedgerRows(evt.data.harness_plan)
       return {
         ...s,
-        activeTurn: { ...s.activeTurn, pattern: evt.data.pattern },
+        ...(planRows.length ? { harnessLedgerTasks: planRows } : {}),
+        activeTurn: {
+          ...s.activeTurn,
+          pattern: evt.data.pattern,
+          harnessWorkKind: evt.data.harness_work_kind ?? s.activeTurn.harnessWorkKind ?? null,
+        },
       }
+    }
 
     case 'plan.preview': {
       const steps = evt.data.steps ?? []
       const joined = steps.join('\n')
-      const line = `plan.preview · ${evt.data.pattern} · c=${evt.data.complexity ?? 0}${joined ? `\n${joined}` : ''}`
+      const harnessN = evt.data.harness_plan?.length ?? 0
+      const line = `plan.preview · ${evt.data.pattern} · c=${evt.data.complexity ?? 0}${harnessN ? ` · harness=${harnessN}` : ''}${joined ? `\n${joined}` : ''}`
       const next = { ...s, protocolNotes: pushProtocolNotes(s.protocolNotes, line) }
       if (!s.activeTurn) return next
       const planDetail = evt.data.reasoning?.trim() || undefined
@@ -503,6 +512,16 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
             },
           ],
         },
+      }
+    }
+
+    case 'harness.synced': {
+      const tasks = harnessLedgerFromWire(evt.data.tasks)
+      const note = `harness.synced · ${evt.data.action} · ${evt.data.task_count ?? tasks.length} task(s) · ${Math.round((evt.data.completion_ratio ?? 0) * 100)}%`
+      return {
+        ...s,
+        harnessLedgerTasks: tasks.length ? tasks : s.harnessLedgerTasks,
+        protocolNotes: pushProtocolNotes(s.protocolNotes, note),
       }
     }
 

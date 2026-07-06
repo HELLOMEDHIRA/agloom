@@ -23,6 +23,10 @@ const mockClient = {
   attachFile: jest.fn(),
   listProviders: jest.fn(),
   configSet: jest.fn(),
+  memoryClear: jest.fn(),
+  memoryPopLastTurn: jest.fn(),
+  planPreview: jest.fn(),
+  harnessGit: jest.fn(),
 } satisfies Partial<AGPClient>
 
 const wrap = (ui: React.ReactElement) => (

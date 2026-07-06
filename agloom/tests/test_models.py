@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from agloom.feedback import EvalScore, RunRecord
-from agloom.models import (
+from agloom.src.models import (
     ExecutionResult,
     PatternType,
     QueryAnalysis,

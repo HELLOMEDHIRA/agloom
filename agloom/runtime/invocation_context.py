@@ -62,7 +62,7 @@ def get_invocation_agent_config() -> dict[str, Any] | None:
 async def runtime_hitl_user_callback(event_type: str, message: Any) -> Any:
     """``user_callback`` for shared agents (e.g. WebSocket) — delegates to the bridge for the
     active invocation (set via :func:`attach_invocation_context`)."""
-    from ..hitl_contract import HITLEvent
+    from ..src.hitl_contract import HITLEvent
 
     bridge = get_invocation_hitl_bridge()
     if bridge is None:

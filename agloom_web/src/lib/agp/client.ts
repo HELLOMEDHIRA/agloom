@@ -22,6 +22,13 @@ export interface AGPClient {
   attachFile(filename: string, contentBase64: string, thread?: string): void
   listProviders(): void
   configSet(data: CommandConfigSetCmd['data']): void
+  memoryClear(thread?: string): void
+  memoryPopLastTurn(thread?: string): void
+  planPreview(prompt: string): void
+  harnessGit(
+    op: 'checkpoint' | 'diff' | 'status' | 'checkpoints' | 'revert_hint',
+    data?: { name?: string; description?: string; path?: string; cached?: boolean },
+  ): void
   onEvent(listener: Listener<AGPEvent>): () => void
   onStatus(listener: Listener<ConnectionStatus>): () => void
   onDiagnostic(listener: Listener<string>): () => void
@@ -153,6 +160,22 @@ export const createAGPClient = (
 
     configSet(data: CommandConfigSetCmd['data']): void {
       api.send({ type: 'command.config.set', data })
+    },
+
+    memoryClear(thread?: string): void {
+      api.send({ type: 'command.memory.clear', data: { thread } })
+    },
+
+    memoryPopLastTurn(thread?: string): void {
+      api.send({ type: 'command.memory.pop_last_turn', data: { thread } })
+    },
+
+    planPreview(prompt: string): void {
+      api.send({ type: 'command.plan.preview', data: { prompt } })
+    },
+
+    harnessGit(op, data = {}): void {
+      api.send({ type: 'command.harness.git', data: { op, ...data } })
     },
 
     onEvent(listener: Listener<AGPEvent>): () => void {

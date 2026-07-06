@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from agloom.models import QueryAnalysis, PatternType, SubTask
+from agloom.src.models import QueryAnalysis, PatternType, SubTask
 from agloom.patterns._resolve import resolve_worker_configs
 
 

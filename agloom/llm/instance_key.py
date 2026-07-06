@@ -33,7 +33,7 @@ class LlmInstanceKey:
 
 def llm_cache_key(llm: Any) -> Any:
     """Return *llm* when it can index ``WeakKeyDictionary``; else :class:`LlmInstanceKey`."""
-    from agloom.llm_utils import llm_weak_dict_key_ok
+    from agloom.src.llm_utils import llm_weak_dict_key_ok
 
     if llm_weak_dict_key_ok(llm):
         return llm

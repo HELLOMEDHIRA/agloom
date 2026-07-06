@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from agloom.classifier import (
+from agloom.src.classifier import (
     coerce_analysis_when_tools_required,
     query_is_purely_conceptual,
     query_needs_registered_tools,
 )
-from agloom.models import PatternType, QueryAnalysis, SubTask
+from agloom.src.models import PatternType, QueryAnalysis, SubTask
 
 
 def test_query_needs_registered_tools_observability() -> None:

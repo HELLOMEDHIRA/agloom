@@ -3,7 +3,7 @@
  */
 import React, { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { LayoutGrid, Settings, Activity, GitBranch, Terminal, Package, BarChart2, Menu } from 'lucide-react'
+import { LayoutGrid, Settings, Activity, GitBranch, Terminal, Package, BarChart2, Menu, ListChecks } from 'lucide-react'
 import { cn } from '../../lib/utils/cn.js'
 import { useSessionStore } from '../../store/session.js'
 import type { RightTab } from '../../routes/SessionWorkspace.js'
@@ -24,6 +24,7 @@ const RIGHT_TABS: { id: RightTab; label: string; icon: React.ReactNode }[] = [
   { id: 'graph',     label: 'Graph',   icon: <GitBranch size={13} /> },
   { id: 'workers',   label: 'Workers', icon: <Activity size={13} /> },
   { id: 'trace',     label: 'Trace',   icon: <Terminal size={13} /> },
+  { id: 'harness',   label: 'Harness', icon: <ListChecks size={13} /> },
   { id: 'artifacts', label: 'Files',   icon: <Package size={13} /> },
 ]
 
@@ -34,6 +35,7 @@ export const WorkspaceLayout = ({ leftSlot, centerSlot, rightSlot, rightTab, onR
   const [sessionSearch, setSessionSearch] = useState('')
   const connStatus = useSessionStore((s) => s.connectionStatus)
   const status = useSessionStore((s) => s.status)
+  const harnessEnabled = useSessionStore((s) => s.harnessEnabled)
   const lastProtocolNote = useSessionStore((s) => s.protocolNotes.at(-1) ?? '')
   const sessionCatalogIds = useSessionStore((s) => s.sessionCatalogIds)
 
@@ -85,6 +87,23 @@ export const WorkspaceLayout = ({ leftSlot, centerSlot, rightSlot, rightTab, onR
         </div>
 
         <div className="flex items-center gap-1">
+          {harnessEnabled != null && (
+            <span
+              className={cn(
+                'text-xs px-2 py-0.5 rounded-full border mr-2',
+                harnessEnabled
+                  ? theme === 'light'
+                    ? 'text-emerald-700 border-emerald-300'
+                    : 'text-emerald-400 border-emerald-800'
+                  : theme === 'light'
+                    ? 'text-neutral-500 border-neutral-300'
+                    : 'text-neutral-500 border-neutral-700',
+              )}
+              title="Long-running harness (progress + git tools)"
+            >
+              harness {harnessEnabled ? 'on' : 'off'}
+            </span>
+          )}
           {status !== 'idle' && (
             <span
               className={cn(
@@ -125,7 +144,7 @@ export const WorkspaceLayout = ({ leftSlot, centerSlot, rightSlot, rightTab, onR
       {lastProtocolNote ? (
         <div
           className={cn(
-            'shrink-0 px-4 py-1.5 text-xs whitespace-pre-wrap break-words border-b',
+            'shrink-0 px-4 py-1.5 text-xs whitespace-pre-wrap wrap-break-word border-b',
             theme === 'light'
               ? 'text-amber-900 bg-amber-100 border-amber-200'
               : 'text-amber-300/90 bg-amber-950/30 border-amber-900/40',

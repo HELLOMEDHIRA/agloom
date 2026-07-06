@@ -3,8 +3,8 @@
 import re
 import time
 
-from ..logging_utils import get_logger
-from ..models import (
+from ..src.logging_utils import get_logger
+from ..src.models import (
     ExecutionResult,
     PatternType,
     QueryAnalysis,
@@ -17,7 +17,7 @@ from ..models import (
     _trunc,
     normalize_reflection_analysis,
 )
-from ..worker import extend_invoke_config_with_event_queue
+from ..src.worker import extend_invoke_config_with_event_queue
 from ._resolve import resolve_worker_configs
 from ._steps_accounting import steps_taken_from_audit
 from .hitl import run_workers_with_hitl

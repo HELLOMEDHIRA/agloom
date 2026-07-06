@@ -25,7 +25,7 @@ from collections.abc import AsyncIterable
 from typing import Any, Protocol
 from uuid import uuid4
 
-from ..models import AgentEvent
+from ..src.models import AgentEvent
 from ..protocol import SessionEmitter
 from .hitl import HITLBridge
 from .invocation_context import attach_invocation_context, reset_invocation_context
@@ -178,7 +178,7 @@ def _stringify_prompt(prompt: dict | list) -> str:
     wire still carries *something* faithful.
     """
     if isinstance(prompt, list):
-        from ..multimodal import text_from_user_turn
+        from ..src.multimodal import text_from_user_turn
 
         return text_from_user_turn(prompt)
     for key in ("content", "input", "prompt", "query", "text", "message"):

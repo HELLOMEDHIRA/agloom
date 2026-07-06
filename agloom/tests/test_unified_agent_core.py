@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 from langchain_core.messages import SystemMessage
 
-from agloom.models import DEFAULT_SYSTEM_PROMPT, ExecutionResult, PatternType
+from agloom.src.models import DEFAULT_SYSTEM_PROMPT, ExecutionResult, PatternType
 from agloom.prompts.core import ANSWER_CONTRACT_MARKER
-from agloom.unified_agent import _wire_query_snapshot, normalize_tools, resolve_model, resolve_system_prompt
+from agloom.src.unified_agent import _wire_query_snapshot, normalize_tools, resolve_model, resolve_system_prompt
 
 
 def test_resolve_system_prompt_none() -> None:

@@ -16,7 +16,7 @@ def test_classifier_context_no_tasks_not_finished() -> None:
 def test_classifier_context_no_tasks_no_goal() -> None:
     artifact = ProgressArtifact()
     text = artifact.to_classifier_context()
-    assert "initialize_project" in text
+    assert "turn planner" in text.lower()
 
 
 def test_classifier_context_all_passing_with_tasks() -> None:

@@ -1477,6 +1477,218 @@
       "title": "HITLRequestData",
       "type": "object"
     },
+    "HarnessLedgerTaskWire": {
+      "additionalProperties": true,
+      "description": "Task row from the persisted progress artifact (``harness.synced``).",
+      "properties": {
+        "task_id": {
+          "title": "Task Id",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "category": {
+          "default": "planned",
+          "title": "Category",
+          "type": "string"
+        },
+        "status": {
+          "default": "pending",
+          "title": "Status",
+          "type": "string"
+        },
+        "priority": {
+          "default": "medium",
+          "title": "Priority",
+          "type": "string"
+        },
+        "verification_step_count": {
+          "default": 0,
+          "title": "Verification Step Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "task_id",
+        "description"
+      ],
+      "title": "HarnessLedgerTaskWire",
+      "type": "object"
+    },
+    "HarnessPlanTaskWire": {
+      "additionalProperties": true,
+      "description": "Durable harness task from the turn planner (``harness_plan``).",
+      "properties": {
+        "task_id": {
+          "title": "Task Id",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "category": {
+          "default": "planned",
+          "title": "Category",
+          "type": "string"
+        },
+        "priority": {
+          "default": "medium",
+          "title": "Priority",
+          "type": "string"
+        },
+        "verification_steps": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Verification Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "task_id",
+        "description"
+      ],
+      "title": "HarnessPlanTaskWire",
+      "type": "object"
+    },
+    "HarnessSynced": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "harness.synced",
+          "default": "harness.synced",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/HarnessSyncedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "HarnessSynced",
+      "type": "object"
+    },
+    "HarnessSyncedData": {
+      "additionalProperties": true,
+      "description": "Structured harness ledger snapshot after turn-planner sync.",
+      "properties": {
+        "action": {
+          "enum": [
+            "seed",
+            "append",
+            "skip"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "tasks_synced": {
+          "default": 0,
+          "title": "Tasks Synced",
+          "type": "integer"
+        },
+        "work_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Work Kind"
+        },
+        "completion_ratio": {
+          "default": 0.0,
+          "title": "Completion Ratio",
+          "type": "number"
+        },
+        "task_count": {
+          "default": 0,
+          "title": "Task Count",
+          "type": "integer"
+        },
+        "harness_plan": {
+          "items": {
+            "$ref": "#/$defs/HarnessPlanTaskWire"
+          },
+          "title": "Harness Plan",
+          "type": "array"
+        },
+        "tasks": {
+          "items": {
+            "$ref": "#/$defs/HarnessLedgerTaskWire"
+          },
+          "title": "Tasks",
+          "type": "array"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "title": "HarnessSyncedData",
+      "type": "object"
+    },
     "MemoryLtRecall": {
       "additionalProperties": false,
       "properties": {
@@ -3227,6 +3439,25 @@
           ],
           "default": null,
           "title": "Reason"
+        },
+        "harness_work_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Harness Work Kind"
+        },
+        "harness_plan": {
+          "items": {
+            "$ref": "#/$defs/HarnessPlanTaskWire"
+          },
+          "title": "Harness Plan",
+          "type": "array"
         }
       },
       "required": [
@@ -3311,7 +3542,7 @@
     },
     "PlanPreviewData": {
       "additionalProperties": true,
-      "description": "Classifier-only plan (``command.plan.preview``); does not run tools or patterns.",
+      "description": "Turn-planner preview (``command.plan.preview``); does not run tools or patterns.",
       "properties": {
         "pattern": {
           "title": "Pattern",
@@ -3333,12 +3564,156 @@
           },
           "title": "Steps",
           "type": "array"
+        },
+        "harness_work_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Harness Work Kind"
+        },
+        "harness_plan": {
+          "items": {
+            "$ref": "#/$defs/HarnessPlanTaskWire"
+          },
+          "title": "Harness Plan",
+          "type": "array"
         }
       },
       "required": [
         "pattern"
       ],
       "title": "PlanPreviewData",
+      "type": "object"
+    },
+    "ProgressStep": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "progress.step",
+          "default": "progress.step",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/ProgressStepData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "ProgressStep",
+      "type": "object"
+    },
+    "ProgressStepData": {
+      "additionalProperties": true,
+      "description": "Infrastructure setup lines (harness bootstrap, classify spinner, skills seed, \u2026).",
+      "properties": {
+        "phase": {
+          "title": "Phase",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "elapsed_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Elapsed Ms"
+        }
+      },
+      "required": [
+        "phase"
+      ],
+      "title": "ProgressStepData",
       "type": "object"
     },
     "PromptCancelled": {
@@ -5492,9 +5867,10 @@
       "description": "Skill-related context was injected into the model prompt (pre-classify catalogue).",
       "properties": {
         "phase": {
-          "default": "classifier",
+          "default": "turn_planner",
           "enum": [
             "classifier",
+            "turn_planner",
             "worker"
           ],
           "title": "Phase",
@@ -5510,15 +5886,6 @@
             "type": "string"
           },
           "title": "Skills",
-          "type": "array",
-          "default": []
-        },
-        "skill_names": {
-          "description": "Deprecated — use skills. Accepted on parse for backward compatibility.",
-          "items": {
-            "type": "string"
-          },
-          "title": "Skill Names",
           "type": "array"
         },
         "context_preview": {
@@ -6018,131 +6385,6 @@
         "step"
       ],
       "title": "ThinkingStepData",
-      "type": "object"
-    },
-    "ProgressStep": {
-      "additionalProperties": false,
-      "properties": {
-        "v": {
-          "const": "1",
-          "default": "1",
-          "title": "V",
-          "type": "string"
-        },
-        "id": {
-          "title": "Id",
-          "type": "string"
-        },
-        "ts": {
-          "format": "date-time",
-          "title": "Ts",
-          "type": "string"
-        },
-        "session": {
-          "title": "Session",
-          "type": "string"
-        },
-        "thread": {
-          "title": "Thread",
-          "type": "string"
-        },
-        "seq": {
-          "minimum": 0,
-          "title": "Seq",
-          "type": "integer"
-        },
-        "parent": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Parent"
-        },
-        "trace": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Trace"
-        },
-        "type": {
-          "const": "progress.step",
-          "default": "progress.step",
-          "title": "Type",
-          "type": "string"
-        },
-        "data": {
-          "$ref": "#/$defs/ProgressStepData"
-        }
-      },
-      "required": [
-        "session",
-        "thread",
-        "seq",
-        "data"
-      ],
-      "title": "ProgressStep",
-      "type": "object"
-    },
-    "ProgressStepData": {
-      "additionalProperties": true,
-      "description": "Infrastructure setup status (classify spinner, harness init, skills seed) — not model chain-of-thought.",
-      "properties": {
-        "phase": {
-          "title": "Phase",
-          "type": "string"
-        },
-        "label": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Label"
-        },
-        "detail": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Detail"
-        },
-        "elapsed_ms": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Elapsed Ms"
-        }
-      },
-      "required": [
-        "phase"
-      ],
-      "title": "ProgressStepData",
       "type": "object"
     },
     "TodosUpdated": {
@@ -7793,7 +8035,7 @@
     },
     "CommandPlanPreviewData": {
       "additionalProperties": true,
-      "description": "Run classifier only; emits ``plan.preview`` (no agent execution).",
+      "description": "Run turn planner only; emits ``plan.preview`` (no agent execution).",
       "properties": {
         "prompt": {
           "title": "Prompt",
@@ -8352,6 +8594,7 @@
       "feedback.scored": "#/$defs/FeedbackScored",
       "graph.node.enter": "#/$defs/GraphNodeEnter",
       "graph.node.exit": "#/$defs/GraphNodeExit",
+      "harness.synced": "#/$defs/HarnessSynced",
       "hitl.allowlisted": "#/$defs/HITLAllowlisted",
       "hitl.denied": "#/$defs/HITLDenied",
       "hitl.granted": "#/$defs/HITLGranted",
@@ -8371,6 +8614,7 @@
       "orchestration.step": "#/$defs/OrchestrationStep",
       "pattern.classified": "#/$defs/PatternClassified",
       "plan.preview": "#/$defs/PlanPreview",
+      "progress.step": "#/$defs/ProgressStep",
       "prompt.cancelled": "#/$defs/PromptCancelled",
       "prompt.requested": "#/$defs/PromptRequested",
       "runtime.config": "#/$defs/RuntimeConfig",
@@ -8393,7 +8637,6 @@
       "skill.applied": "#/$defs/SkillApplied",
       "skill.learned": "#/$defs/SkillLearned",
       "skill.loaded": "#/$defs/SkillLoaded",
-      "progress.step": "#/$defs/ProgressStep",
       "stream.heartbeat": "#/$defs/StreamHeartbeat",
       "thinking.step": "#/$defs/ThinkingStep",
       "todos.updated": "#/$defs/TodosUpdated",
@@ -8477,6 +8720,9 @@
     },
     {
       "$ref": "#/$defs/PlanPreview"
+    },
+    {
+      "$ref": "#/$defs/HarnessSynced"
     },
     {
       "$ref": "#/$defs/ThinkingStep"

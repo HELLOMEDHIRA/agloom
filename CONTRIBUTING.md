@@ -122,7 +122,7 @@ docs: add streaming examples to README
 
 2. Before opening a PR, ensure:
 
-   - Tests pass: `uv run pytest`
+   - Tests pass: `make test-all` (or `uv run pytest` for Python only)
    - Lint: `uv run ruff check agloom`
    - Format: `uv run ruff format --check agloom`
    - Types: `uv run pyrefly check agloom`
@@ -152,12 +152,12 @@ The terminal client (`agloom_cli/`, npm package **`agloom-cli`**) spawns **`aglo
 
 ### Layout
 
-| Area                         | Role                                                                                                         |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `src/runtime/bridge.ts`      | `createAGPBridge()` — spawns `agloom-runtime`, parses NDJSON, typed `on`/`emit` via internal `EventEmitter`. |
-| `src/store/session.ts`       | Single zustand reducer: **`dispatch(AGPEvent)`** updates UI state + **Wire notes**.                          |
-| `src/hooks/useAGPStream.tsx` | Subscribes the bridge to the store (strict-mode safe).                                                       |
-| `src/components/*`           | Interactive TUI (React); slash commands are handled in `App.tsx`.                                                             |
+| Area | Role |
+| --- | --- |
+| `src/runtime/bridge.ts` | `createAGPBridge()` — spawns `agloom-runtime`, parses NDJSON, typed `on`/`emit` via internal `EventEmitter`. |
+| `src/store/session.ts` | Single zustand reducer: **`dispatch(AGPEvent)`** updates UI state + **Wire notes**. |
+| `src/hooks/useAGPStream.tsx` | Subscribes the bridge to the store (strict-mode safe). |
+| `src/components/*` | Interactive TUI (React); slash commands are handled in `App.tsx`. |
 
 ### Adding a new inbound event type
 

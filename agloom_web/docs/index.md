@@ -28,6 +28,8 @@ Production: **`npm run build`** → serve **`dist/`** with **`VITE_AGP_WS_URL=ws
 
 The web app is an **AGP consumer** — it does not run Python in the browser.
 
+When the runtime opens with a LangGraph store (default), **harness** is usually on: the header shows **harness on/off**, and `progress.step` lines (`Harness bound`, `Harness planned`, …) appear in the chat trace. Disable with `agloom-runtime serve --no-harness`.
+
 ---
 
 ## Routes
@@ -57,6 +59,7 @@ The web app is an **AGP consumer** — it does not run Python in the browser.
 Both clients:
 
 - Dispatch AGP events through a **Zustand `dispatch` reducer**
+- Show **harness on/off** from `runtime.ready.harness_enabled` and a **Harness** tab for `harness.synced` task ledger
 - Prefer **`message.assistant`** for final text (not raw tool JSON)
 - Show **full** tool results and reasoning traces
 - Roll up tokens from **`metric.tokens`** (`↑` / `↓` display)

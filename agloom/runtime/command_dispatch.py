@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from ..mcp_support import MCPConnectionError
+from ..src.mcp_support import MCPConnectionError
 from ..protocol import SessionEmitter
 from ..protocol.commands import (
     CommandAttachFile,
@@ -360,8 +360,8 @@ async def dispatch_command(
             runtime_log("[agloom-runtime] command.snapshot.request: no checkpointer configured")
         else:
             try:
-                from ..models import ExecutionResult, PatternType
-                from ..unified_agent import _save_checkpoint
+                from ..src.models import ExecutionResult, PatternType, resolve_turn_planner_timeout
+                from ..src.unified_agent import _save_checkpoint
                 dummy_result = ExecutionResult(
                     pattern_used=PatternType.DIRECT,
                     query="",
@@ -401,7 +401,7 @@ async def dispatch_command(
             return DispatchResult.CONTINUE
 
         if agent.config.get("_mcp_servers"):
-            from agloom.unified_agent import _ensure_mcp_connected
+            from agloom.src.unified_agent import _ensure_mcp_connected
 
             try:
                 await _ensure_mcp_connected(agent.config)
@@ -558,7 +558,7 @@ async def dispatch_command(
             return DispatchResult.CONTINUE
 
         try:
-            from agloom.unified_agent import resolve_model, resolve_system_prompt
+            from agloom.src.unified_agent import resolve_model, resolve_system_prompt
 
             data = cmd.data
             if data.model_id:
@@ -783,22 +783,39 @@ async def dispatch_command(
             emitter.emit_error(severity="transient", message="no LLM configured", stage="plan.preview")
             return DispatchResult.CONTINUE
 
-        from agloom.classifier import analyze_query
+        from agloom.src.classifier import analyze_query
+        from agloom.harness.planning import classifier_harness_wire_enabled
+        from agloom.src.models import resolve_turn_planner_timeout
 
         try:
+            harness_on = bool(cfg.get("_harness_enabled"))
+            tracker = cfg.get("_progress_tracker")
+            metadata = cfg.get("_harness_metadata")
+            wire_harness = classifier_harness_wire_enabled(
+                tracker,
+                harness_enabled=harness_on,
+                user_query=prompt,
+                metadata=metadata,
+            )
             analysis = await analyze_query(
                 llm,
                 prompt,
                 cfg.get("tools") or [],
                 skill_context="",
-                classifier_timeout=float(cfg.get("classifier_timeout", 60.0)),
+                classifier_timeout=resolve_turn_planner_timeout(cfg),
                 structured_max_retries=int(cfg.get("structured_max_retries", 2)),
                 fallback_pattern=cfg.get("fallback_pattern"),
                 mcp_configured=bool(cfg.get("_mcp_servers")),
+                harness_enabled=harness_on,
+                harness_needs_plan=wire_harness,
             )
+            from agloom.protocol.harness_wire import harness_plan_tasks_wire, harness_work_kind_wire
+
             steps: list[str] = []
             for i, st in enumerate(analysis.subtasks):
                 steps.append(f"{i + 1}. [{st.worker_id}] {st.task}")
+            for i, hp in enumerate(analysis.harness_plan):
+                steps.append(f"H{i + 1}. [{hp.task_id}] {hp.description}")
             if not steps:
                 steps.append(f"1. Run as {analysis.pattern.value} (no worker subtasks returned).")
             emitter.emit_plan_preview(
@@ -806,6 +823,8 @@ async def dispatch_command(
                 complexity=analysis.complexity,
                 reasoning=(analysis.reasoning or ""),
                 steps=steps,
+                harness_work_kind=harness_work_kind_wire(analysis),
+                harness_plan=harness_plan_tasks_wire(analysis),
             )
         except Exception as exc:
             emitter.emit_error(severity="transient", message=str(exc), stage="plan.preview")

@@ -11,7 +11,7 @@ from datetime import UTC
 from pathlib import Path
 from typing import Any
 
-from ..logging_utils import get_logger
+from ..src.logging_utils import get_logger
 from .skill import (
     SkillContent,
     SkillManifest,

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agloom.mcp_support import (
+from agloom.src.mcp_support import (
     MCPServerConfig,
     _adapter_transport,
     _build_server_dict,
@@ -113,7 +113,7 @@ async def test_load_mcp_capabilities_reports_rich_error_after_retry() -> None:
 
 @pytest.mark.asyncio
 async def test_connect_mcp_servers_fails_when_server_returns_zero_tools() -> None:
-    from agloom.mcp_support import MCPConnectionError, connect_mcp_servers
+    from agloom.src.mcp_support import MCPConnectionError, connect_mcp_servers
 
     cfg = MCPServerConfig(name="empty", transport="sse", url="http://127.0.0.1/mcp")
     agent: dict = {"tools": [], "name": "test-agent"}

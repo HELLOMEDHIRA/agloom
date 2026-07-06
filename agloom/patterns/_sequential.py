@@ -2,11 +2,11 @@
 
 from collections import deque
 
-from .. import worker as worker_module
-from ..logging_utils import get_logger
-from ..models import PatternType, QueryAnalysis, ResolvedWorkerConfig, SignalType, WorkerResult
+from ..src import worker as worker_module
+from ..src.logging_utils import get_logger
+from ..src.models import PatternType, QueryAnalysis, ResolvedWorkerConfig, SignalType, WorkerResult
 from ._worker_signals import halted_worker_result, worker_execution_failed
-from ..worker import extend_invoke_config_with_event_queue
+from ..src.worker import extend_invoke_config_with_event_queue
 from ._upstream_context import format_upstream_block, format_upstream_blocks
 from .worker_gates import drain_for_halt, get_signal_queue
 

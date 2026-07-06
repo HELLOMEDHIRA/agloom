@@ -68,6 +68,7 @@ export interface ActiveTurnState {
   /** Live model-native reasoning stream (``token.delta`` with ``role=reasoning``). */
   streamedReasoning: string
   pattern: string | null
+  harnessWorkKind?: string | null
   graphNodes: string[]
 }
 
@@ -157,6 +158,15 @@ export interface SessionStore {
   memoryEnabled: boolean | null
   skillsEnabled: boolean | null
   harnessEnabled: boolean | null
+  /** Latest structured ledger from ``harness.synced`` (task board). */
+  harnessLedgerTasks: Array<{
+    task_id: string
+    description: string
+    category?: string
+    status?: string
+    priority?: string
+    verification_step_count?: number
+  }> | null
   cliToolsEnabled: boolean | null
   cliToolsCount: number | null
   mcpServerNames: string[]
@@ -222,6 +232,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
   memoryEnabled: null,
   skillsEnabled: null,
   harnessEnabled: null,
+  harnessLedgerTasks: null,
   cliToolsEnabled: null,
   cliToolsCount: null,
   mcpServerNames: [],
@@ -289,6 +300,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
       memoryEnabled: null,
       skillsEnabled: null,
       harnessEnabled: null,
+      harnessLedgerTasks: null,
       cliToolsEnabled: null,
       cliToolsCount: null,
       diagnostics: [],

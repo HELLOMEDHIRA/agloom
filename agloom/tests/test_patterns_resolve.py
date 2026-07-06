@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agloom.models import WorkerPlan
+from agloom.src.models import WorkerPlan
 from agloom.patterns._resolve import resolve_worker_configs
 
 

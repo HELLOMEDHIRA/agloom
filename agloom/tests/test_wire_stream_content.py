@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from agloom.multimodal import content_blocks_to_text
-from agloom.wire_stream_content import (
+from agloom.src.multimodal import content_blocks_to_text
+from agloom.src.wire_stream_content import (
     answer_text_from_content,
     emit_llm_chunk_to_event_queue,
     split_stream_parts_from_chunk,

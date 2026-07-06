@@ -1,8 +1,8 @@
 """Tool resolution — maps required_tools name strings to actual tool objects."""
 
-from ..classifier import query_needs_registered_tools
-from ..logging_utils import get_logger
-from ..models import AgentEvent, QueryAnalysis, ResolvedWorkerConfig, SubTask, WorkerPlan
+from ..src.classifier import query_needs_registered_tools
+from ..src.logging_utils import get_logger
+from ..src.models import AgentEvent, QueryAnalysis, ResolvedWorkerConfig, SubTask, WorkerPlan
 
 logger = get_logger(__name__)
 
@@ -46,10 +46,14 @@ def resolve_worker_configs(
 
     tool_map = {t.name: t for t in agent["tools"]}
     configs = []
+    harness_focus = (agent.get("_harness_execution_context") or "").strip()
 
     for subtask in subtasks:
         resolved_tools = []
         missing_tools: list[str] = []
+        task_text = subtask.task
+        if harness_focus:
+            task_text = f"{harness_focus}\n\n{task_text}"
 
         if subtask.required_tools:
             for tool_name in subtask.required_tools:
@@ -58,7 +62,7 @@ def resolve_worker_configs(
                     resolved_tools.append(tool)
                 else:
                     missing_tools.append(tool_name)
-        elif tool_map and query_needs_registered_tools(subtask.task or ""):
+        elif tool_map and query_needs_registered_tools(task_text or ""):
             resolved_tools = list(tool_map.values())
             logger.event(
                 f"[Resolve] Worker '{subtask.worker_id}' inherited all {len(resolved_tools)} "
@@ -80,15 +84,21 @@ def resolve_worker_configs(
             default_sp = raw_sp.strip()
         else:
             default_sp = "You are a helpful AI assistant."
+        try:
+            rl = int(agent.get("react_recursion_limit", 25))
+        except (TypeError, ValueError):
+            rl = 25
+        rl = max(1, min(rl, 500))
         configs.append(
             ResolvedWorkerConfig(
                 worker_id=subtask.worker_id,
-                task=subtask.task,
+                task=task_text,
                 system_prompt=instr if instr else default_sp,
                 tools=resolved_tools,
                 depends_on=subtask.depends_on or [],
                 context=dict(subtask.context) if subtask.context else {},
                 llm_timeout=float(agent.get("llm_timeout", 120.0)),
+                recursion_limit=rl,
                 max_retries=agent.get("max_retries", 2),
                 retry_delay=agent.get("retry_delay", 1.0),
                 missing_tools=missing_tools,

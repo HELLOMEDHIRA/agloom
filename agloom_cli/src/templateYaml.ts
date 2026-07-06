@@ -27,6 +27,7 @@ skills:
 rules:
   dir: ''
   refresh: false
+# Harness (progress ledger + git) is on when agloom-runtime has a LangGraph store; CLI omits --no-harness by default.
 
 execution:
   max_concurrent: 4
@@ -66,6 +67,7 @@ skills:
 rules:
   dir: ''
   refresh: false
+# Harness (progress ledger + git) is on when agloom-runtime has a LangGraph store; CLI omits --no-harness by default.
 
 execution:
   max_concurrent: 4

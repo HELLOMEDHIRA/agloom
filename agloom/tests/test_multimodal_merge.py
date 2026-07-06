@@ -1,6 +1,6 @@
 """Multimodal merge and content normalization."""
 
-from agloom.multimodal import content_blocks_to_text, merge_context_into_user_turn
+from agloom.src.multimodal import content_blocks_to_text, merge_context_into_user_turn
 
 
 def test_content_blocks_to_text_extracts_anthropic_blocks() -> None:

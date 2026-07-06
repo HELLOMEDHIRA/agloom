@@ -15,7 +15,7 @@ from .user_feedback import (
 if TYPE_CHECKING:
     from ..memory.store import LongTermStore
 
-from ..logging_utils import get_logger
+from ..src.logging_utils import get_logger
 
 logger = get_logger(__name__)
 

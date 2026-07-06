@@ -40,25 +40,24 @@ async def main():
 !!! warning "Context manager required"
     Always use `async with` or call `await agent.aclose()` to close MCP connections:
 
-    ```python
-    async with await create_agent(model=llm, mcp_servers=[...], name="mcp-agent") as agent:
-        result = await agent.ainvoke("List files in /data")
-    # MCP connections closed automatically
-    ```
+```python
+async with await create_agent(model=llm, mcp_servers=[...], name="mcp-agent") as agent:
+    result = await agent.ainvoke("List files in /data")
+# MCP connections closed automatically
+```
 
 ## Transport Types
 
-| Transport         | Use case                            | Required fields                                |
-| ----------------- | ----------------------------------- | ---------------------------------------------- |
-| `stdio`           | Local process (npx, python, etc.)   | `command`, `args` (optional), `env` (optional) |
-| `sse`             | Remote HTTP with Server-Sent Events | `url`                                          |
+| Transport | Use case | Required fields |
+| --- | --- | --- |
+| `stdio` | Local process (npx, python, etc.) | `command`, `args` (optional), `env` (optional) |
+| `sse` | Remote HTTP with Server-Sent Events | `url` |
 | `streamable_http` | Remote HTTP with streaming (MCP SDK default for HTTP) | `url`, `headers` (optional) |
-| `http`            | Alias for `streamable_http` in Agloom | `url`, `headers` (optional)                    |
+| `http` | Alias for `streamable_http` in Agloom | `url`, `headers` (optional) |
 
 !!! tip "Choosing HTTP transport"
     Many modern MCP servers (including Elastic Agent Builder) speak **streamable HTTP**, not legacy SSE.
     Prefer **`transport="streamable_http"`** (or **`http`**, which Agloom maps to the same adapter transport).
-
     If you configure **`sse`** and connect fails, Agloom **retries once** with `streamable_http` before surfacing an error.
     Connect failures include **server name, URL, transport, and the root cause** (not opaque `TaskGroup` wrappers).
 
@@ -111,17 +110,17 @@ Partial failures close the shared client before raising — do not reuse handles
 
 Error messages include **server name**, **transport**, **URL** (for HTTP), and the **root cause** (unwrapped from `ExceptionGroup` / `TaskGroup` when present).
 
-## Classifier routing with MCP
+## Turn planner routing with MCP
 
-When **`mcp_servers`** is configured, MCP tools are merged **before** `analyze_query` runs on the first turn. The classifier prompt includes a high-priority **MCP / observability rule**:
+When **`mcp_servers`** is configured, MCP tools are merged **before** `analyze_query` runs on the first turn. The turn planner prompt includes a high-priority **MCP / observability rule**:
 
 - Investigation, log, metrics, trace, and dashboard fetch queries → **REACT** (not DIRECT or REFLECTION)
-- The classifier must not hallucinate telemetry in `direct_response`
+- The turn planner must not hallucinate telemetry in `direct_response`
 
 Agloom applies **post-classify coercion** and **runtime guards**:
 
 | Situation | Result |
-| --------- | ------ |
+| --- | --- |
 | **DIRECT** + tools + tool-requiring query | Coerced to **REACT**; DIRECT short-circuit blocked at runtime |
 | **REFLECTION** + tool-requiring query | Coerced to **REACT** |
 | **SUPERVISOR** / other multi-worker patterns with empty `required_tools` on all subtasks | Coerced to **REACT**, or workers **inherit all agent tools** if the pattern still runs |

@@ -8,7 +8,7 @@ import mimetypes
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..multimodal import guess_model_id, model_id_supports_vision
+from ..src.multimodal import guess_model_id, model_id_supports_vision
 from .path_safety import assert_resolved_path_under_root, safe_single_segment_filename
 
 if TYPE_CHECKING:

@@ -1,8 +1,8 @@
 """Single-task workers used by supervisor/swarm/pipeline patterns.
 
 Each ``run_worker`` builds a short-lived LangChain ReAct agent (when tools exist),
-runs one assignment, and returns ``WorkerResult``. Recursion/time limits align with
-``patterns.react.REACT_RECURSION_LIMIT`` where applicable.
+runs one assignment, and returns ``WorkerResult``. Recursion limits follow
+``create_agent(react_recursion_limit=…)`` (default 25).
 """
 
 from __future__ import annotations
@@ -32,8 +32,6 @@ from .models import (
 )
 
 logger = get_logger(__name__)
-
-WORKER_RECURSION_LIMIT = 25
 
 REACT_DISCIPLINE = """
 TOOL USAGE RULES
@@ -205,7 +203,7 @@ def _build_graph_config(
         "depends_on": config.depends_on,
     }
 
-    base["recursion_limit"] = WORKER_RECURSION_LIMIT
+    base["recursion_limit"] = config.recursion_limit
 
     return base
 
@@ -436,11 +434,13 @@ async def _run_react(
             raise
 
         except GraphRecursionError as e:
-            logger.error(f"[{config.worker_id}] recursion limit {WORKER_RECURSION_LIMIT} — not retrying. {e}")
+            logger.error(
+                f"[{config.worker_id}] recursion limit {config.recursion_limit} — not retrying. {e}"
+            )
             return WorkerResult(
                 worker_id=config.worker_id,
                 task=config.task,
-                output=f"Recursion limit reached: {e}",
+                output=f"Recursion limit reached after {config.recursion_limit} graph steps: {e}",
                 signal=SignalType.FAILED,
                 error=str(e),
                 attempt=attempt,

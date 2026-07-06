@@ -11,8 +11,8 @@ import os
 from typing import Any
 from uuid import uuid4
 
-from ..logging_utils import get_logger
-from ..models import AgentEvent
+from ..src.logging_utils import get_logger
+from ..src.models import AgentEvent
 from ..protocol import SessionEmitter
 from ..protocol.emitter import _lit_token_role
 
@@ -50,6 +50,7 @@ _TRANSLATED_AGENT_EVENT_TYPES: frozenset[str] = frozenset(
         "graph_node_exit",
         "skill_context",
         "progress",
+        "harness.synced",
         "skill_learned",
         "memory_lt_recall",
         "memory_session_write",
@@ -151,14 +152,20 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> str | None:
         return
 
     if et == "classify":
-        # Classification events from analyze_query: payload includes pattern + complexity.
+        # Turn planner output from analyze_query / plan_turn.
         pattern = _str(data.get("pattern")) or "UNKNOWN"
         reason = _str(data.get("reason"))
+        from agloom.protocol.harness_wire import harness_plan_tasks_wire_from_wire
+
+        harness_plan = harness_plan_tasks_wire_from_wire(data.get("harness_plan"))
+        harness_work_kind = _str(data.get("harness_work_kind")) or None
         emitter.emit_pattern_classified(
             pattern=pattern,
             complexity=_int(data.get("complexity")),
             confidence=_float(data.get("confidence")),
             reason=reason or None,
+            harness_work_kind=harness_work_kind,
+            harness_plan=harness_plan,
         )
         # Trace pane: routing rationale only — not the full classifier blob (subtasks belong in observability).
         emitter.emit_thinking_step(
@@ -356,11 +363,28 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> str | None:
         )
         return
 
+    if et == "harness.synced":
+        from agloom.protocol.harness_wire import (
+            harness_plan_tasks_wire_from_wire,
+            ledger_tasks_wire_from_wire,
+        )
+
+        emitter.emit_harness_synced(
+            action=_str(data.get("action")) or "skip",
+            tasks_synced=_int(data.get("tasks_synced")) or 0,
+            work_kind=_str(data.get("work_kind")) or None,
+            completion_ratio=float(data.get("completion_ratio") or 0.0),
+            task_count=_int(data.get("task_count")) or 0,
+            harness_plan=harness_plan_tasks_wire_from_wire(data.get("harness_plan")),
+            tasks=ledger_tasks_wire_from_wire(data.get("tasks")),
+        )
+        return
+
     if et == "skill_context":
         raw = data.get("skills") or data.get("skill_names")
         skills = [str(n) for n in raw if n is not None] if isinstance(raw, list) else []
         emitter.emit_skill_applied(
-            phase=_str(data.get("phase")) or "classifier",
+            phase=_str(data.get("phase")) or "turn_planner",
             injected_chars=_int(data.get("injected_chars")) or 0,
             skills=skills,
             context_preview=_str(data.get("context_preview")) or "",

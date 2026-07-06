@@ -22,19 +22,19 @@ local ↔ remote workers, runtime ↔ frontend, runtime ↔ observability, runti
 
 ## 2. Responsibility Split
 
-| Concern                     | agloom-core                   | agloom-runtime       |
-| --------------------------- | ----------------------------- | -------------------- |
-| Orchestration semantics     | ✅ LangGraph graphs           | ❌                   |
-| Memory / knowledge          | ✅ LTM, episodic, session     | ❌                   |
-| Tools / MCP                 | ✅ tool definitions, adapters | ❌                   |
-| Agent logic / patterns      | ✅ REACT, SUPERVISOR, etc.    | ❌                   |
-| LangGraph checkpoints       | ✅ saves/restores             | runtime triggers     |
-| **Worker lifecycle**        | ❌                            | ✅                   |
-| **Task scheduling**         | ❌                            | ✅                   |
-| **Distributed routing**     | ❌                            | ✅                   |
-| **Fault tolerance**         | ❌                            | ✅                   |
-| **Transport layer**         | ❌                            | ✅ stdio / ws / HTTP |
-| **Execution observability** | emits AgentEvents             | ✅ translates → AGP  |
+| Concern | agloom-core | agloom-runtime |
+| --- | --- | --- |
+| Orchestration semantics | ✅ LangGraph graphs | ❌ |
+| Memory / knowledge | ✅ LTM, episodic, session | ❌ |
+| Tools / MCP | ✅ tool definitions, adapters | ❌ |
+| Agent logic / patterns | ✅ REACT, SUPERVISOR, etc. | ❌ |
+| LangGraph checkpoints | ✅ saves/restores | runtime triggers |
+| **Worker lifecycle** | ❌ | ✅ |
+| **Task scheduling** | ❌ | ✅ |
+| **Distributed routing** | ❌ | ✅ |
+| **Fault tolerance** | ❌ | ✅ |
+| **Transport layer** | ❌ | ✅ stdio / ws / HTTP |
+| **Execution observability** | emits AgentEvents | ✅ translates → AGP |
 
 The boundary is clean: the **agent library** produces an internal event stream;
 **agloom-runtime** schedules work, maps those events to **AGP envelopes**, and
@@ -117,10 +117,10 @@ class BaseWorker(ABC):
 
 ### Worker types (shipped)
 
-| Type            | Description                                          |
-| --------------- | ---------------------------------------------------- |
+| Type | Description |
+| --- | --- |
 | Local AI worker | Runs `create_agent` invocations in-process, streams progress to AGP |
-| `ToolWorker`    | Executes a single tool call in isolation             |
+| `ToolWorker` | Executes a single tool call in isolation |
 
 Additional worker kinds (remote brokers, GPU pools, browsers, etc.) are **extension points** for integrators building on the same AGP contracts.
 
@@ -231,7 +231,7 @@ Heartbeat + capability refresh every 30s.
 
 ## 8. Checkpoint / Recovery Architecture
 
-LangGraph checkpoints remain inside the Python agent library. Saved state includes classifier output when a turn was classified, so **`agent.resume()`** can continue without re-picking a pattern. The runtime's role is:
+LangGraph checkpoints remain inside the Python agent library. Saved state includes turn planner output when a turn was classified, so **`agent.resume()`** can continue without re-picking a pattern. The runtime's role is:
 
 1. **Trigger**: `command.snapshot.request` → asks the agent to persist a checkpoint
 2. **Observe**: `checkpoint.saved` / `checkpoint.restored` events on the AGP wire
@@ -337,13 +337,13 @@ class RetryPolicy:
 
 Rough **current** sizing assumptions for the in-process runtime:
 
-| Dimension         | Typical range                   |
-| ----------------- | ------------------------------- |
-| Workers per node  | 1–8                             |
+| Dimension | Typical range |
+| --- | --- |
+| Workers per node | 1–8 |
 | Sessions per node | up to ~100 (workload-dependent) |
-| Nodes             | 1                               |
-| Event throughput  | ~1k/s order of magnitude        |
-| State store       | in-process / SQLite             |
+| Nodes | 1 |
+| Event throughput | ~1k/s order of magnitude |
+| State store | in-process / SQLite |
 
 **Bottleneck note**: event translation runs in the asyncio loop; very high event rates may need a dedicated outbound path.
 
@@ -365,11 +365,11 @@ The runtime is a single Python package: transport, AGP bridging, translation int
 
 ## 15. Architectural risks
 
-| Risk                                         | Severity | Mitigation                                                              |
-| -------------------------------------------- | -------- | ----------------------------------------------------------------------- |
-| Worker crashes leak session state            | High     | WorkerPool supervisor restarts workers; emit `error.transient`          |
-| Scheduler queue grows unbounded              | Medium   | Configurable `max_queue_depth`; back-pressure signal to frontend        |
-| AGP `astream_events()` is a public hook      | Medium   | Already behind `Translator` layer; keep Translator as the only consumer |
-| Single-node EventStore                       | Low      | Acceptable for local dev; scale-out swaps storage behind the same API   |
-| Over-engineering distributed infra too early | High     | Ship asyncio-first; add brokers only when measured need exists          |
-| Thread-safety of emitters in async pool      | Low      | Each worker gets its own emitter instance; no sharing                     |
+| Risk | Severity | Mitigation |
+| --- | --- | --- |
+| Worker crashes leak session state | High | WorkerPool supervisor restarts workers; emit `error.transient` |
+| Scheduler queue grows unbounded | Medium | Configurable `max_queue_depth`; back-pressure signal to frontend |
+| AGP `astream_events()` is a public hook | Medium | Already behind `Translator` layer; keep Translator as the only consumer |
+| Single-node EventStore | Low | Acceptable for local dev; scale-out swaps storage behind the same API |
+| Over-engineering distributed infra too early | High | Ship asyncio-first; add brokers only when measured need exists |
+| Thread-safety of emitters in async pool | Low | Each worker gets its own emitter instance; no sharing |

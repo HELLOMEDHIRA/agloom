@@ -112,6 +112,63 @@ export const ChatPane = ({ client, thread, workspaceSessionId }: Props): React.R
 
   const handleSubmit = (text: string) => {
     if (!text.trim()) return
+    const trimmed = text.trim()
+    if (trimmed.startsWith('/')) {
+      const [command, ...rest] = trimmed.split(/\s+/)
+      const appendNote = (line: string) => useSessionStore.getState().appendProtocolNote(line)
+      const requireHarness = (): boolean => {
+        const on = useSessionStore.getState().harnessEnabled
+        if (on === false) {
+          appendNote(`${command} · harness is off`)
+          return false
+        }
+        if (on == null) {
+          appendNote(`${command} · waiting for runtime.ready…`)
+          return false
+        }
+        return true
+      }
+      switch (command) {
+        case '/plan': {
+          const goal = rest.join(' ').trim()
+          if (!goal) appendNote('/plan · usage: /plan <goal>')
+          else client.planPreview(goal)
+          return
+        }
+        case '/checkpoint': {
+          if (!requireHarness()) return
+          const name = (rest[0] ?? 'web').trim() || 'web'
+          const description = rest.slice(1).join(' ').trim() || 'Web /checkpoint'
+          client.harnessGit('checkpoint', { name, description })
+          return
+        }
+        case '/diff': {
+          if (!requireHarness()) return
+          let cached = false
+          const pathParts: string[] = []
+          for (const p of rest) {
+            if (p === '--staged' || p === '--cached') cached = true
+            else if (!p.startsWith('-')) pathParts.push(p)
+          }
+          client.harnessGit('diff', { path: pathParts.join(' ').trim(), cached })
+          return
+        }
+        case '/hint':
+          if (!requireHarness()) return
+          client.harnessGit('revert_hint', {})
+          return
+        case '/git': {
+          if (!requireHarness()) return
+          const sub = (rest[0] ?? 'status').toLowerCase()
+          if (sub === 'status') client.harnessGit('status', {})
+          else if (sub === 'checkpoints' || sub === 'list') client.harnessGit('checkpoints', {})
+          else appendNote('/git · usage: /git status | /git checkpoints')
+          return
+        }
+        default:
+          break
+      }
+    }
     const paths = pendingAttachmentPaths
     const prefix =
       paths.length > 0

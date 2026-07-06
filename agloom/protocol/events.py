@@ -12,7 +12,7 @@ The :data:`Event` type alias is a discriminated union over ``type``; use it (or 
 **Event domains shipped**:
 
 - ``session.*`` — lifecycle (opened, resumed, closed)
-- ``pattern.*`` — classifier output
+- ``pattern.*`` — turn planner output (routing + optional harness plan)
 - ``progress.*`` — infrastructure / setup status (classify spinner, harness init, …)
 - ``thinking.*`` — reasoning trace lines
 - ``token.*`` — incremental LLM tokens
@@ -22,7 +22,7 @@ The :data:`Event` type alias is a discriminated union over ``type``; use it (or 
 - ``worker.*`` — multi-agent worker tree (spawned, completed, failed)
 - ``graph.*`` — execution DAG node enter/exit
 - ``memory.*`` — session and long-term memory reads/writes
-- ``skill.*`` — skill registry lifecycle (loaded into context, classifier injection, learned)
+- ``skill.*`` — skill registry lifecycle (loaded into context, turn-planner injection, learned)
 - ``prompt.*`` — user-turn prompt lifecycle (requested, cancelled)
 - ``checkpoint.*`` — LangGraph checkpoint persistence
 - ``feedback.*`` — user feedback on a completed turn
@@ -70,6 +70,30 @@ class SessionOpened(Envelope):
     data: SessionOpenedData
 
 
+# ── harness wire payloads (shared) ────────────────────────────────────────────
+
+
+class HarnessPlanTaskWire(_DataBase):
+    """Durable harness task from the turn planner (``harness_plan``)."""
+
+    task_id: str
+    description: str
+    category: str = "planned"
+    priority: str = "medium"
+    verification_steps: list[str] = Field(default_factory=list)
+
+
+class HarnessLedgerTaskWire(_DataBase):
+    """Task row from the persisted progress artifact (``harness.synced``)."""
+
+    task_id: str
+    description: str
+    category: str = "planned"
+    status: str = "pending"
+    priority: str = "medium"
+    verification_step_count: int = 0
+
+
 # ── pattern.classified ────────────────────────────────────────────────────────
 
 
@@ -78,6 +102,8 @@ class PatternClassifiedData(_DataBase):
     complexity: int | None = None
     confidence: float | None = None
     reason: str | None = None
+    harness_work_kind: str | None = None
+    harness_plan: list[HarnessPlanTaskWire] = Field(default_factory=list)
 
 
 class PatternClassified(Envelope):
@@ -89,17 +115,42 @@ class PatternClassified(Envelope):
 
 
 class PlanPreviewData(_DataBase):
-    """Classifier-only plan (``command.plan.preview``); does not run tools or patterns."""
+    """Turn-planner preview (``command.plan.preview``); does not run tools or patterns."""
 
     pattern: str
     complexity: int = 0
     reasoning: str = ""
     steps: list[str] = Field(default_factory=list)
+    harness_work_kind: str | None = None
+    harness_plan: list[HarnessPlanTaskWire] = Field(default_factory=list)
 
 
 class PlanPreview(Envelope):
     type: Literal["plan.preview"] = "plan.preview"
     data: PlanPreviewData
+
+
+# ── harness.synced ─────────────────────────────────────────────────────────────
+
+
+HarnessSyncAction = Literal["seed", "append", "skip"]
+
+
+class HarnessSyncedData(_DataBase):
+    """Structured harness ledger snapshot after turn-planner sync."""
+
+    action: HarnessSyncAction
+    tasks_synced: int = 0
+    work_kind: str | None = None
+    completion_ratio: float = 0.0
+    task_count: int = 0
+    harness_plan: list[HarnessPlanTaskWire] = Field(default_factory=list)
+    tasks: list[HarnessLedgerTaskWire] = Field(default_factory=list)
+
+
+class HarnessSynced(Envelope):
+    type: Literal["harness.synced"] = "harness.synced"
+    data: HarnessSyncedData
 
 
 # ── thinking.step ─────────────────────────────────────────────────────────────
@@ -689,7 +740,7 @@ class SkillLoaded(Envelope):
     data: SkillLoadedData
 
 
-SkillAppliedPhase = Literal["classifier", "worker"]
+SkillAppliedPhase = Literal["classifier", "turn_planner", "worker"]
 
 # Cap for ``skill.applied.context_preview`` on the wire (full text still goes to the LLM).
 SKILL_APPLIED_PREVIEW_MAX_CHARS = 8192
@@ -698,7 +749,7 @@ SKILL_APPLIED_PREVIEW_MAX_CHARS = 8192
 class SkillAppliedData(_DataBase):
     """Skill-related context was injected into the model prompt (pre-classify catalogue)."""
 
-    phase: SkillAppliedPhase = "classifier"
+    phase: SkillAppliedPhase = "turn_planner"
     injected_chars: int = 0
     skills: list[str] = Field(default_factory=list)
     context_preview: str = ""
@@ -1102,6 +1153,7 @@ Event = Annotated[
     | StreamHeartbeat
     | PatternClassified
     | PlanPreview
+    | HarnessSynced
     | ThinkingStep
     | ProgressStep
     | TokenDelta
@@ -1255,6 +1307,11 @@ __all__ = [
     "RuntimeToolInvokeResultData",
     "RuntimeToolsPayload",
     "RuntimeToolsPayloadData",
+    "HarnessLedgerTaskWire",
+    "HarnessPlanTaskWire",
+    "HarnessSyncAction",
+    "HarnessSynced",
+    "HarnessSyncedData",
     "PatternClassified",
     "PatternClassifiedData",
     "PlanPreview",

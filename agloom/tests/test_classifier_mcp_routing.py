@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from agloom.classifier import (
+from agloom.src.classifier import (
     CLASSIFIER_PROMPT,
     coerce_analysis_for_mcp_observability,
     query_looks_like_observability_fetch,
 )
-from agloom.models import PatternType, QueryAnalysis
+from agloom.src.models import PatternType, QueryAnalysis
 
 
 def test_classifier_prompt_mentions_mcp_observability_rule() -> None:

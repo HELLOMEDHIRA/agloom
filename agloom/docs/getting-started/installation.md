@@ -2,6 +2,10 @@
 
 Install the **`agloom`** Python package, add the provider extra you need, set an API key, then follow the [Quickstart](quickstart.md).
 
+## Python version
+
+agloom targets **Python 3.12** (`requires-python = ">=3.12,<3.13"` in `pyproject.toml`). Use 3.12 for local development and CI. Newer interpreters (e.g. 3.13+) are not supported until the project widens that constraint.
+
 ## Install from PyPI
 
 === "pip"
@@ -56,10 +60,8 @@ agloom supports multiple LLM providers. Install only what you need:
 
 ## Verify Installation
 
-```python
-import agloom
-print(agloom.__version__)  # installed version from importlib.metadata
-```
+    import agloom
+    print(agloom.__version__)  # installed version from importlib.metadata
 
 ## Environment Variables
 
@@ -87,25 +89,21 @@ Set your LLM provider API key:
 
 To enable tracing with LangSmith, set these environment variables. agloom auto-detects them — no code changes needed.
 
-```bash
-export LANGSMITH_API_KEY="lsv2_..."  # pragma: allowlist secret
-export LANGSMITH_TRACING=true
-export LANGSMITH_PROJECT="my-project"
-```
+    export LANGSMITH_API_KEY="lsv2_..."  # pragma: allowlist secret
+    export LANGSMITH_TRACING=true
+    export LANGSMITH_PROJECT="my-project"
 
 To **disable** LangSmith tracing:
 
-```bash
-export LANGSMITH_TRACING=false
-# or simply don't set LANGSMITH_API_KEY
-```
+    export LANGSMITH_TRACING=false
+    # or simply don't set LANGSMITH_API_KEY
 
 See [Observability & LangSmith](../features/observability.md) for details.
 
 ## Next steps
 
 | Goal | Doc |
-| ---- | --- |
+| --- | --- |
 | First agent in 5 minutes | [Quickstart](quickstart.md) |
 | Port from LangChain `create_agent` | [LangChain → agloom](../guides/migration-from-langchain.md#from-langchain-create_agent) |
 | Why teams use agloom | [Why agloom?](why-agloom.md) |

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agloom.models import StepType, _make_step
+from agloom.src.models import StepType, _make_step
 from agloom.patterns.react import _resolve_wire_tool_call_id_for_step
 
 

@@ -6,11 +6,11 @@ import asyncio
 import contextlib
 from typing import Any, cast
 
-from .. import worker as worker_module
-from ..hitl_contract import HITLEvent, call_user_callback
-from ..logging_utils import get_logger
-from ..models import ResolvedWorkerConfig, Signal, SignalType, WorkerResult
-from ..worker import extend_invoke_config_with_event_queue
+from ..src import worker as worker_module
+from ..src.hitl_contract import HITLEvent, call_user_callback
+from ..src.logging_utils import get_logger
+from ..src.models import ResolvedWorkerConfig, Signal, SignalType, WorkerResult
+from ..src.worker import extend_invoke_config_with_event_queue
 from ._worker_signals import halted_worker_result
 from .worker_gates import get_signal_queue
 

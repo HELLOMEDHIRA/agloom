@@ -7,7 +7,7 @@ Build agents that **route themselves** — one `create_agent` call, nine executi
 ## Start here
 
 | Step | Guide |
-| ---- | ----- |
+| --- | --- |
 | Why teams pick agloom | [Why agloom?](getting-started/why-agloom.md) |
 | Install & API keys | [Installation](getting-started/installation.md) |
 | First working agent | [Quick start](getting-started/quickstart.md) |
@@ -19,8 +19,9 @@ Build agents that **route themselves** — one `create_agent` call, nine executi
 ## Build features
 
 | Topic | Guide |
-| ----- | ----- |
+| --- | --- |
 | Tools & ReAct loops | [Tool calling](features/tools.md) |
+| Multi-session coding & RCA | [Long-running harness](features/harness.md) |
 | Conversation memory | [Memory](features/memory.md) |
 | Live UIs | [Streaming & events](features/streaming.md) · [Thinking & reasoning](features/thinking-events.md) |
 | Approvals | [Human-in-the-loop](features/hitl.md) |
@@ -46,4 +47,3 @@ Build agents that **route themselves** — one `create_agent` call, nine executi
 - [Recursive orchestration](features/orchestration.md)
 
 **CLI** and **web workspace** are documented in the main site nav — they consume the same AGP events your custom client can use.
-

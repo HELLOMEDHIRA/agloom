@@ -11,7 +11,7 @@ import { ChatPane } from '../components/chat/ChatPane.js'
 import { RuntimePanel } from '../components/runtime/RuntimePanel.js'
 import { ArtifactViewer } from '../components/artifacts/ArtifactViewer.js'
 
-export type RightTab = 'graph' | 'workers' | 'trace' | 'artifacts'
+export type RightTab = 'graph' | 'workers' | 'trace' | 'harness' | 'artifacts'
 
 export const SessionWorkspace = (): React.ReactElement => {
   const { sessionId } = useParams<{ sessionId: string }>()

@@ -39,17 +39,17 @@ Use ``async with agent:`` or ``await agent.aclose()`` to release MCP clients and
 from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
 from importlib.metadata import version as _version
 
-from .delegation import (
+from .src.delegation import (
     BackgroundDelegationManager,
     BackgroundTask,
     BackgroundTaskStatus,
     HandoffTarget,
 )
-from .hitl_contract import HITLEvent
-from .logging_utils import configure_package_logging
+from .src.hitl_contract import HITLEvent
+from .src.logging_utils import configure_package_logging
 from .memory.session import SessionMemory
 from .memory.store import LongTermStore
-from .models import (
+from .src.models import (
     AgentConfig,
     AgentEvent,
     AgentStep,
@@ -57,23 +57,26 @@ from .models import (
     PatternType,
     QueryAnalysis,
     ResolvedWorkerConfig,
+    Signal,
     SignalType,
     StepType,
     SubTask,
     WorkerPlan,
     WorkerResult,
 )
-from .unified_agent import UnifiedAgent, create_agent, create_agent_sync
+from .src.unified_agent import UnifiedAgent, create_agent, create_agent_sync
 
 try:
     from .harness import (
         BootstrapState,
+        HarnessMetadata,
         ProgressArtifact,
         ProgressTracker,
         Task,
         TaskPriority,
         TaskStatus,
         TaskStep,
+        seed_harness_tasks,
     )
     from .harness.git import GitSession
 
@@ -87,6 +90,8 @@ except ImportError:
     TaskStatus = None
     TaskStep = None
     BootstrapState = None
+    HarnessMetadata = None
+    seed_harness_tasks = None
     _HARNESS_AVAILABLE = False
 
 try:
@@ -106,6 +111,7 @@ __all__ = [
     "PatternType",
     "QueryAnalysis",
     "ResolvedWorkerConfig",
+    "Signal",
     "SignalType",
     "StepType",
     "SubTask",
@@ -132,19 +138,21 @@ if _HARNESS_AVAILABLE:
     __all__ += [
         "BootstrapState",
         "GitSession",
+        "HarnessMetadata",
         "ProgressArtifact",
         "ProgressTracker",
         "Task",
         "TaskPriority",
         "TaskStatus",
         "TaskStep",
+        "seed_harness_tasks",
     ]
 
 
 def __getattr__(name: str):
     """Lazy-export heavy submodules: cache (Qdrant), CLI tool registry."""
     if name in ("cache_get", "cache_set", "create_cache"):
-        from . import cache as _cache
+        from .src import cache as _cache
 
         return getattr(_cache, name)
     if name in ("CLI_TOOL_NAMES", "SafetyContext", "get_cli_tools"):

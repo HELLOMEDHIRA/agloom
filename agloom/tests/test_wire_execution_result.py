@@ -7,8 +7,8 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from agloom.models import ExecutionResult, PatternType
-from agloom.wire_execution_result import (
+from agloom.src.models import ExecutionResult, PatternType
+from agloom.src.wire_execution_result import (
     chat_message_wire_dict,
     execution_result_wire_dict,
 )

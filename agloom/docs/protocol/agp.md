@@ -27,18 +27,18 @@ One JSON object per line (NDJSON over stdio; one frame per WebSocket message whe
 }
 ```
 
-| Field     | Type            | Required | Notes                                                           |                                                 |
-| --------- | --------------- | -------- | --------------------------------------------------------------- | ----------------------------------------------- |
-| `v`       | `"1"`           | yes      | Major protocol version. Bumped only on breaking schema changes. |                                                 |
-| `id`      | `string`        | yes      | Opaque, time-ordered-ish unique id (currently `evt_<24 hex>`).  |                                                 |
-| `ts`      | ISO-8601 string | yes      | Aware UTC timestamp.                                            |                                                 |
-| `session` | `string`        | yes      | Session id; stable across reconnects.                           |                                                 |
-| `thread`  | `string`        | yes      | LangGraph thread id (resume key).                               |                                                 |
-| `seq`     | `int >= 0`      | yes      | Monotonic per session — gap detection.                          |                                                 |
-| `parent`  | `string \       | null`    | no                                                              | Causal parent event id.                         |
-| `trace`   | `string \       | null`    | no                                                              | OpenTelemetry trace id when tracing is enabled. |
-| `type`    | `string`        | yes      | Dotted namespace (`<domain>.<entity>.<phase>`).                 |                                                 |
-| `data`    | `object`        | yes      | Type-specific payload.                                          |                                                 |
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `v` | `"1"` | yes | Major protocol version. Bumped only on breaking schema changes. |
+| `id` | `string` | yes | Opaque, time-ordered-ish unique id (currently `evt_<24 hex>`). |
+| `ts` | ISO-8601 string | yes | Aware UTC timestamp. |
+| `session` | `string` | yes | Session id; stable across reconnects. |
+| `thread` | `string` | yes | LangGraph thread id (resume key). |
+| `seq` | `int >= 0` | yes | Monotonic per session — gap detection. |
+| `parent` | `string` or `null` | no | Causal parent event id. |
+| `trace` | `string` or `null` | no | OpenTelemetry trace id when tracing is enabled. |
+| `type` | `string` | yes | Dotted namespace (`<domain>.<entity>.<phase>`). |
+| `data` | `object` | yes | Type-specific payload. |
 
 **Forward compatibility**: consumers MUST forward unknown `type` values (and unknown fields on `data`) rather than crash. Strict parsers may validate against the **v1 catalog** below; production UIs should parse the envelope generically, then dispatch on `type`.
 
@@ -76,7 +76,7 @@ Emitted once per runtime attachment after workspace/bootstrap checks and **befor
     "agent_name": "default",
     "cli_tools_enabled": true,
     "cli_tools_count": 26,
-    "harness_enabled": false,
+    "harness_enabled": true,
     "session_memory_mode": "sqlite",
     "agent_store_kind": "sqlite",
     "mcp_servers_configured": ["filesystem"]
@@ -86,6 +86,8 @@ Emitted once per runtime attachment after workspace/bootstrap checks and **befor
 `session_memory_mode` is `sqlite` | `in-memory` | `none` (ephemeral in-process session memory when omitted on the CLI). `mcp_servers_configured` lists names from argv/YAML — servers connect lazily on first invoke.
 
 `cli_tools_count` is the number of bundled workspace tools when `--with-cli-tools` is on (currently **26** including `list_mcp_servers`).
+
+`harness_enabled` is **`true`** when a LangGraph agent store is open and harness is not disabled (`--no-harness` / `AGLOOM_HARNESS=0`). Omitted only on very old runtimes; clients should treat missing as unknown until `runtime.config` arrives.
 
 ### `runtime.config`
 
@@ -127,7 +129,7 @@ Emitted after the first successful MCP connect in a session (and when the catalo
 ```
 
 | Field | Meaning |
-| ----- | ------- |
+| --- | --- |
 | `server_names` | Configured server ids (same order as connect attempt) |
 | `servers[].ok` | Whether tools loaded for that server |
 | `servers[].error` | Connect/load error string when `ok` is false |
@@ -202,12 +204,52 @@ Only emitted when orchestration runs; omitted for legacy single-pass agents (`ma
 
 ### `pattern.classified`
 
-Emitted after the classifier runs (`thinking.step` with `step: "analyze_query"`). Tells the UI which of the 9 patterns will execute (REACT, SUPERVISOR, etc.).
+Emitted after the turn planner runs (`thinking.step` with `step: "analyze_query"`). Tells the UI which of the 9 patterns will execute (REACT, SUPERVISOR, etc.). When harness is on, may also include **`harness_work_kind`** and **`harness_plan`** (structured durable tasks).
 
 ```jsonc
 { "type": "pattern.classified",
-  "data": { "pattern": "REACT", "complexity": 5, "confidence": 0.9, "reason": "single-tool query" } }
+  "data": {
+    "pattern": "REACT",
+    "complexity": 5,
+    "confidence": 0.9,
+    "reason": "single-tool query",
+    "harness_work_kind": "investigation",
+    "harness_plan": [
+      {
+        "task_id": "ctx-001",
+        "description": "Collect alert timeline",
+        "category": "planned",
+        "priority": "high",
+        "verification_steps": ["Timeline documented"]
+      }
+    ]
+  } }
 ```
+
+### `harness.synced`
+
+Emitted after the runtime syncs the turn planner output to the progress artifact. Use this (not `progress.step` text alone) to drive a **harness task board**.
+
+```jsonc
+{ "type": "harness.synced",
+  "data": {
+    "action": "seed",
+    "tasks_synced": 3,
+    "work_kind": "investigation",
+    "completion_ratio": 0.0,
+    "task_count": 3,
+    "harness_plan": [ { "task_id": "ctx-001", "description": "…" } ],
+    "tasks": [
+      { "task_id": "ctx-001", "description": "…", "status": "pending", "priority": "high", "verification_step_count": 1 }
+    ]
+  } }
+```
+
+`action` is `seed` (empty ledger), `append` (`allow_replan`), or `skip` (no new tasks this turn). **`tasks`** is always the current ledger snapshot.
+
+### `plan.preview`
+
+Emitted for `command.plan.preview` (turn planner only — no agent run). Same routing fields as `pattern.classified`, plus human-readable **`steps`** (subtasks + harness lines).
 
 ### `thinking.step`
 
@@ -218,7 +260,7 @@ Infrastructure setup (classify spinner, harness bootstrap, skills seed) uses **`
 Common `label` values (non-exhaustive):
 
 | `label` | Typical `detail` |
-| ------- | ---------------- |
+| --- | --- |
 | `analyze_query` | Routing line after `pattern.classified` (`Routing · REACT`) |
 | `tool_resolve` | Tool registry warnings for a worker plan |
 
@@ -237,7 +279,7 @@ Common `label` values (non-exhaustive):
 Infrastructure / setup status — distinct from model reasoning. Emitted during pre-REACT bootstrap (harness load, classify spinner, skills seed). UIs should **not** treat these as chain-of-thought.
 
 | `phase` | Typical `label` | Meaning |
-| ------- | ----------------- | ------- |
+| --- | --- | --- |
 | `classify` | `analyze_query` | Classifier running |
 | `harness_init` | `harness_bootstrap` | Harness progress artifact loaded |
 | `skills_init` | `skills_bootstrap` | Auto-generating seed skills |
@@ -259,7 +301,7 @@ See [Thinking trace & reasoning streams](../features/thinking-events.md) for con
 Streaming text chunk. **`role`** discriminates answer vs reasoning vs tool output:
 
 | `role` | Meaning |
-| ------ | ------- |
+| --- | --- |
 | `assistant` | User-visible answer (default) |
 | `reasoning` | Provider-native reasoning stream (when supported) — show separately from the answer |
 | `tool` | Tool output surfaced as a token delta (rare) |
@@ -296,10 +338,10 @@ Emitted once per invocation immediately after `message.user`. Marks that the run
 
 Emitted when an invocation ends early before a normal assistant completion — immediately before the matching `session.closed` on that invocation’s emitter.
 
-| `reason`       | When                                                                                                                                    |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `user_aborted` | `command.cancel` (or targeted cancellation) — user stopped the turn. `detail` is typically `invocation_cancelled`.                      |
-| `shutdown`     | Process/WebSocket teardown or `command.runtime.shutdown` — runtime cancelled in-flight tasks. `detail` is typically `runtime_shutdown`. |
+| `reason` | When |
+| --- | --- |
+| `user_aborted` | `command.cancel` (or targeted cancellation) — user stopped the turn. `detail` is typically `invocation_cancelled`. |
+| `shutdown` | Process/WebSocket teardown or `command.runtime.shutdown` — runtime cancelled in-flight tasks. `detail` is typically `runtime_shutdown`. |
 
 ```jsonc
 { "type": "prompt.cancelled",
@@ -329,10 +371,10 @@ Emitted when the agent successfully loads a skill body via the `load_skill` tool
 
 ### `skill.applied`
 
-Emitted when skill-related context is injected into the classifier turn (non-empty skill/delegation catalogue before `analyze_query`). The LLM receives the full text in-process; the wire event carries observability fields:
+Emitted when skill-related context is injected into the turn planner step (non-empty skill/delegation catalogue before `analyze_query`). The LLM receives the full text in-process; the wire event carries observability fields:
 
 | Field | Meaning |
-| ----- | ------- |
+| --- | --- |
 | `injected_chars` | Length of the full injected block |
 | `skills` | Manifest ids from semantic search (empty when only delegation text was injected). Legacy wire field `skill_names` is accepted on parse. |
 | `context_preview` | Copy of the injected catalogue (capped at 8192 chars) |
@@ -343,7 +385,7 @@ Full SKILL.md bodies are **not** included — use `load_skill` → `skill.loaded
 ```jsonc
 { "type": "skill.applied",
   "data": {
-    "phase": "classifier",
+    "phase": "turn_planner",
     "injected_chars": 420,
     "skills": ["lint_python", "deploy_checklist"],
     "context_preview": "=== RELEVANT SKILLS ===\n  - [lint_python]: Lint Python sources\n...",
@@ -413,13 +455,13 @@ Runtime asks the user to gate something. The frontend MUST reply with `command.h
 
 `kind` is one of:
 
-| `kind`             | Options                           | Response                      |
-| ------------------ | --------------------------------- | ----------------------------- |
-| `tool_approval`    | `accept` / `reject` / `allowlist` | discrete                      |
-| `pattern_approval` | `accept` / `reject` / `allowlist` | discrete                      |
-| `worker_approval`  | `accept` / `reject` / `allowlist` | discrete                      |
-| `react_recovery`   | `retry` / `stop`                  | discrete (no allowlist scope) |
-| `clarification`    | (none)                            | free text via `text` field    |
+| `kind` | Options | Response |
+| --- | --- | --- |
+| `tool_approval` | `accept` / `reject` / `allowlist` | discrete |
+| `pattern_approval` | `accept` / `reject` / `allowlist` | discrete |
+| `worker_approval` | `accept` / `reject` / `allowlist` | discrete |
+| `react_recovery` | `retry` / `stop` | discrete (no allowlist scope) |
+| `clarification` | (none) | free text via `text` field |
 
 ```jsonc
 { "type": "hitl.request",
@@ -740,9 +782,9 @@ The `EventStore` is an append-only, session-scoped event log wired into every `S
 
 Two concrete implementations:
 
-| Class              | Persistence | Use case                                  |
-| ------------------ | ----------- | ----------------------------------------- |
-| `MemoryEventStore` | in-process  | tests, single-process deploys             |
+| Class | Persistence | Use case |
+| --- | --- | --- |
+| `MemoryEventStore` | in-process | tests, single-process deploys |
 | `SqliteEventStore` | SQLite file | durable tracing, multi-turn observability |
 
 Wire it in via `--store` flag:
@@ -782,7 +824,7 @@ For application authors, prefer **`agent.astream_agp_events()`** — see [AGP fr
 For custom transports and replay stores, the Python package provides:
 
 | Capability | Module / command |
-| ---------- | ---------------- |
+| --- | --- |
 | Emit NDJSON from Python | `agloom.protocol` (`SessionEmitter`, `AsyncSessionEmitter`) |
 | Parse inbound lines | `event_adapter`, `command_adapter` |
 | Persist sessions | `MemoryEventStore`, `SqliteEventStore` |

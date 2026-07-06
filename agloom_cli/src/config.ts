@@ -1,6 +1,6 @@
 /** Project + user `agloom.yaml` layers, env fallbacks, and merge with Commander CLI state.
  * Precedence (low → high): defaults < user `~/.agloom/agloom.yaml` < walk-up `.agloom/agloom.yaml` then `./agloom.yaml` < `AGLOOM_*` env < explicit `--config` file < remaining CLI flags.
- * TUI **multiline** comes from merged YAML only (default on when omitted). Routing pattern is **not** user-configurable — the runtime classifier selects it.
+ * TUI **multiline** comes from merged YAML only (default on when omitted). Routing pattern is **not** user-configurable — the runtime turn planner selects it.
  */
 
 import { existsSync, readFileSync } from 'node:fs'

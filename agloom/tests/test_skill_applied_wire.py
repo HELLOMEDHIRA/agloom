@@ -6,12 +6,12 @@ import asyncio
 
 import pytest
 
-from agloom.models import AgentEvent
+from agloom.src.models import AgentEvent
 from agloom.protocol.events import SkillAppliedData
 from agloom.runtime.translator import translate
 from agloom.skills.injector import SkillInjector, parse_skill_names_from_context
 from agloom.tests.test_runtime_bridge import capture_emitter
-from agloom.unified_agent import (
+from agloom.src.unified_agent import (
     _build_skill_context_for_classify,
     _emit_skill_context_event,
     _wire_context_preview,

@@ -25,6 +25,7 @@ from .serve_cli import (
     merge_api_key_env_from_session_marker,
     merge_base_url_from_session_marker,
     merge_ws_connection_args,
+    runtime_ready_sidebar_from_args,
     session_started_snapshot_from_args,
 )
 from .workspace_bootstrap import (
@@ -131,6 +132,54 @@ def _agent_config_dict(agent: Any) -> dict[str, Any]:
     return inner if isinstance(inner, dict) else {}
 
 
+def emit_control_plane_runtime_ready(
+    emitter: SessionEmitter,
+    args: Namespace,
+    *,
+    harness_enabled: bool,
+    agent_name: str = "agloom-runtime",
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Emit pre-bootstrap ``runtime.ready`` (stdio before agent exists; shared with WS bootstrap)."""
+    ready_kw: dict[str, Any] = {
+        "agent_name": agent_name,
+        "harness_enabled": harness_enabled,
+        **runtime_ready_sidebar_from_args(args),
+    }
+    if extra:
+        ready_kw.update(extra)
+    emitter.emit_runtime_ready(**ready_kw)
+
+
+def emit_agent_runtime_config_pre_mcp(
+    emitter: SessionEmitter,
+    agent: Any,
+    *,
+    model_id: str | None = None,
+) -> None:
+    """Emit ``runtime.config`` after agent bootstrap, before MCP connect (stdio + WS)."""
+    from agloom.cli_tools import CLI_TOOL_NAMES
+
+    cfg = _agent_config_dict(agent)
+    tool_objs = cfg.get("tools", []) or []
+    names_set = {getattr(t, "name", None) for t in tool_objs}
+    cli_count = sum(1 for n in names_set if n in CLI_TOOL_NAMES)
+    cli_en = cli_count > 0
+    mid = model_id
+    if mid is None:
+        llm_obj = cfg.get("llm")
+        if llm_obj is not None:
+            mid = getattr(llm_obj, "model_name", None) or getattr(llm_obj, "model", None)
+            if mid is None:
+                mid = type(llm_obj).__name__
+    emitter.emit_runtime_config(
+        model_id=str(mid) if mid else None,
+        tool_names=[getattr(t, "name", str(t)) for t in tool_objs],
+        cli_tools_enabled=cli_en,
+        cli_tools_count=cli_count,
+    )
+
+
 def emit_agent_tool_catalog(
     emitter: SessionEmitter,
     agent: Any,
@@ -176,7 +225,7 @@ async def emit_agent_runtime_ready(
     harness_enabled: bool = False,
     sidebar: dict[str, Any] | None = None,
 ) -> None:
-    """Emit ``runtime.ready`` + ``runtime.config`` after agent bootstrap."""
+    """Emit ``runtime.ready`` + ``runtime.config`` after agent bootstrap (legacy single-shot)."""
     from agloom.cli_tools import CLI_TOOL_NAMES
 
     tool_objs = getattr(agent, "config", {}).get("tools", []) or []
@@ -197,8 +246,7 @@ async def emit_agent_runtime_ready(
     }
     if sidebar:
         ready_kw.update(sidebar)
-    if harness_enabled:
-        ready_kw["harness_enabled"] = True
+    ready_kw["harness_enabled"] = harness_enabled
     emitter.emit_runtime_ready(**ready_kw)
     emitter.emit_runtime_config(
         model_id=str(model_id_guess) if model_id_guess else None,
@@ -212,7 +260,7 @@ async def connect_mcp_or_raise(agent: Any, emitter: SessionEmitter) -> None:
     """Connect MCP servers configured on *agent*; emit fatal error and raise on failure."""
     if not agent.config.get("_mcp_servers"):
         return
-    from agloom.unified_agent import _ensure_mcp_connected
+    from agloom.src.unified_agent import _ensure_mcp_connected
 
     try:
         await _ensure_mcp_connected(agent.config)
@@ -336,8 +384,10 @@ __all__ = [
     "PreparedRuntimeSession",
     "cancel_runtime_invocations",
     "connect_mcp_or_raise",
+    "emit_agent_runtime_config_pre_mcp",
     "emit_agent_tool_catalog",
     "emit_agent_runtime_ready",
+    "emit_control_plane_runtime_ready",
     "make_hitl_bridge",
     "open_event_store_from_args",
     "prepare_runtime_session",

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from agloom.models import ResolvedWorkerConfig, SignalType, WorkerResult
+from agloom.src.models import ResolvedWorkerConfig, SignalType, WorkerResult
 from agloom.patterns._sequential import (
     inject_pipeline_input,
     inject_planner_context,

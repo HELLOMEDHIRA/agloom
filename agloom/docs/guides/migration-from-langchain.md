@@ -16,7 +16,7 @@ LangChain and agloom both expose **`create_agent`** with the same **invoke input
 ### Side-by-side
 
 | Topic | LangChain `create_agent` | agloom `create_agent` |
-| ----- | ------------------------ | --------------------- |
+| --- | --- | --- |
 | Import | `from langchain.agents import create_agent` | `from agloom import create_agent` |
 | Factory | Sync — returns a compiled graph | **Async** — `agent = await create_agent(...)` (or `create_agent_sync`) |
 | Invoke input | `{"messages": [{"role": "user", "content": "..."}]}` | **Same** (+ optional plain `str` sugar) |
@@ -71,7 +71,7 @@ print(result.output)  # final assistant text
 ### Reading the result
 
 | LangChain habit | agloom equivalent |
-| --------------- | ----------------- |
+| --- | --- |
 | `result["messages"][-1].content` | `result.output` or last AI message in `result.messages` |
 | Final text only | `result.output` |
 | Tool / AI message trail | `result.messages` |
@@ -112,7 +112,7 @@ Pass a LangGraph **`checkpointer`** if you use graph interrupts and **`agent.res
 You do **not** need these on day one; add them when you want the behavior:
 
 | Parameter | Purpose |
-| --------- | ------- |
+| --- | --- |
 | `store=` | Long-term memory, skills, feedback ([Memory](../features/memory.md)) |
 | `thread_id` / `user_id` at **call time** | Session and user-scoped memory ([create_agent — identity](../concepts/create-agent.md#identity-resolution)) |
 | `interrupt_before` / `user_callback` | Human-in-the-loop ([HITL](../features/hitl.md)) |
@@ -126,7 +126,7 @@ You do **not** need these on day one; add them when you want the behavior:
 1. **Forgetting `await` on the factory** — `create_agent` is async; use `await create_agent(...)` or `create_agent_sync(...)`.
 2. **Expecting a graph dict back** — use `ExecutionResult.output` / `.messages`, not `result["messages"]` unless you read `.messages` on the result object.
 3. **`user_id` only at build time** — long-term user scope requires `user_id=` on each `ainvoke` / `astream`, not only on `create_agent`.
-4. **Assuming a single REACT loop** — agloom may choose DIRECT, SUPERVISOR, PIPELINE, etc. per turn; tools still run when the classifier routes through REACT or worker plans.
+4. **Assuming a single REACT loop** — agloom may choose DIRECT, SUPERVISOR, PIPELINE, etc. per turn; tools still run when the turn planner routes through REACT or worker plans.
 5. **Dict invoke without `messages`** — only `{"messages": [...]}`, a plain string, or a multimodal block list are valid; arbitrary dict keys are rejected.
 
 ### Sync scripts
@@ -147,7 +147,7 @@ You have **`ChatOpenAI`**, **`create_tool_calling_agent`**, **`AgentExecutor`**,
 ### Mental model
 
 | LangChain building block | In agloom |
-| ------------------------ | --------- |
+| --- | --- |
 | Manual loop / `AgentExecutor` | Single **`create_agent()`** — patterns chosen per query |
 | Tool list | Same tools; optional **CLI tools**, MCP, harness tools |
 | Memory / checkpoints | **`memory=`**, **`store=`**, LangGraph checkpointers — see [Memory](../features/memory.md) |
@@ -179,7 +179,7 @@ result = await agent.ainvoke(
 
 ### Step 3 — Gradually adopt patterns
 
-Start with defaults (**auto pattern**). Routing is chosen by the built-in classifier; see [Execution Patterns](../concepts/patterns.md).
+Start with defaults (**auto pattern**). Routing is chosen by the built-in turn planner; see [Execution Patterns](../concepts/patterns.md).
 
 ### Step 4 — Runtime bridge (optional)
 

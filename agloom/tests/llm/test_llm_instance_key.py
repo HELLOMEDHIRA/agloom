@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from agloom.llm.instance_key import LlmInstanceKey, llm_cache_key
-from agloom.llm_utils import _circuit_breaker_for, _structured_inner_get_or_create
+from agloom.src.llm_utils import _circuit_breaker_for, _structured_inner_get_or_create
 
 
 class _UnhashableChat:

@@ -14,6 +14,7 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, model_validator
 
 from .logging_utils import get_logger
+from .exception_utils import unwrap_exception as _unwrap_exception
 
 logger = get_logger(__name__)
 
@@ -23,24 +24,6 @@ def _adapter_transport(transport: str) -> str:
     if transport == "http":
         return "streamable_http"
     return transport
-
-
-def _unwrap_exception(exc: BaseException) -> BaseException:
-    """Return the deepest useful leaf from ExceptionGroup / cause chains."""
-    current = exc
-    seen: set[int] = set()
-    while id(current) not in seen:
-        seen.add(id(current))
-        group_types: tuple[type, ...] = (ExceptionGroup, BaseExceptionGroup)
-        if isinstance(current, group_types) and getattr(current, "exceptions", None):
-            current = current.exceptions[0]
-            continue
-        cause = current.__cause__ or current.__context__
-        if cause is not None and cause is not current:
-            current = cause
-            continue
-        break
-    return current
 
 
 def format_mcp_connect_error(

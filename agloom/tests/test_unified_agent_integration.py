@@ -15,8 +15,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from langchain_core.messages import AIMessage
 
-from agloom.models import ExecutionResult, PatternType, QueryAnalysis
-from agloom.unified_agent import UnifiedAgent, create_agent, create_agent_sync
+from agloom.src.models import ExecutionResult, PatternType, QueryAnalysis
+from agloom.src.unified_agent import UnifiedAgent, create_agent, create_agent_sync
 
 
 class _StubChatModel:
@@ -58,7 +58,7 @@ def stub_llm():
 async def test_ainvoke_direct_shortcircuit_patched_classifier(stub_llm) -> None:
     """Classifier returns DIRECT + ``direct_response`` → no pattern handler / main LLM call."""
     want = "Answer from classifier direct_response."
-    with patch("agloom.unified_agent.analyze_query", new=AsyncMock(return_value=_analysis_direct_shortcircuit(want))):
+    with patch("agloom.src.unified_agent.analyze_query", new=AsyncMock(return_value=_analysis_direct_shortcircuit(want))):
         agent = await create_agent(
             model=stub_llm,
             name="integration-direct",
@@ -94,7 +94,7 @@ async def test_ainvoke_routes_to_registry_stub_handler(stub_llm) -> None:
             steps=list(invoke_config.get("_steps") or []),
         )
 
-    with patch("agloom.unified_agent.analyze_query", new=AsyncMock(return_value=_analysis_react())):
+    with patch("agloom.src.unified_agent.analyze_query", new=AsyncMock(return_value=_analysis_react())):
         agent = await create_agent(
             model=stub_llm,
             name="integration-react",
@@ -118,7 +118,7 @@ async def test_ainvoke_records_session_memory(stub_llm) -> None:
     """``_record_turn`` should append via ``SessionMemory.aadd_turn`` after a successful run."""
     want = "memorized-output"
     tid = "thread-memory-1"
-    with patch("agloom.unified_agent.analyze_query", new=AsyncMock(return_value=_analysis_direct_shortcircuit(want))):
+    with patch("agloom.src.unified_agent.analyze_query", new=AsyncMock(return_value=_analysis_direct_shortcircuit(want))):
         agent = await create_agent(
             model=stub_llm,
             name="integration-memory",
@@ -139,7 +139,7 @@ async def test_ainvoke_records_session_memory(stub_llm) -> None:
 def test_create_agent_sync_and_invoke_without_running_loop(stub_llm) -> None:
     """``create_agent_sync`` + ``invoke`` use nested ``asyncio.run`` when pytest has no loop."""
     want = "sync-path-output"
-    with patch("agloom.unified_agent.analyze_query", new=AsyncMock(return_value=_analysis_direct_shortcircuit(want))):
+    with patch("agloom.src.unified_agent.analyze_query", new=AsyncMock(return_value=_analysis_direct_shortcircuit(want))):
         agent = create_agent_sync(
             model=stub_llm,
             name="integration-sync",

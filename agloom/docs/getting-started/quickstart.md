@@ -35,10 +35,10 @@ asyncio.run(main())
 
 ### What happened
 
-1. `create_agent` wired up the full pipeline — classifier, pattern handlers, error handling
+1. `create_agent` wired up the full pipeline — turn planner, pattern handlers, error handling
 
 If you are porting from **LangChain’s** `create_agent`, see [Migrating from LangChain](../guides/migration-from-langchain.md#from-langchain-create_agent).
-2. `ainvoke` classified the query and routed it to a pattern (often **DIRECT** for short factual questions — the exact pattern depends on the model and tools)
+2. `ainvoke` planned the turn and routed it to a pattern (often **DIRECT** for short factual questions — the exact pattern depends on the model and tools)
 3. The handler ran and returned the result
 
 ## Inspecting the Result
@@ -49,7 +49,7 @@ If you are porting from **LangChain’s** `create_agent`, see [Migrating from La
 result = await agent.ainvoke("Explain photosynthesis briefly")
 
 print(result.output)                  # The LLM's response text
-print(result.pattern_used)            # Pattern the classifier chose (e.g. DIRECT, REACT, …)
+print(result.pattern_used)            # Pattern the turn planner chose (e.g. DIRECT, REACT, …)
 print(result.run_id)                  # Unique ID for this run
 print(result.steps)                   # Step-by-step trace
 print(result.token_usage)             # {'input_tokens': ..., 'output_tokens': ...}
@@ -185,11 +185,11 @@ See the CLI overview: [GitHub source: `agloom_cli/docs/index.md`](https://github
 
 ## What's Next?
 
-| Topic                     | Link                                                   |
-| ------------------------- | ------------------------------------------------------ |
-| Understand the 9 patterns | [Execution Patterns](../concepts/patterns.md)          |
-| CLI (Node / TUI)          | [CLI on Read the Docs](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/) · [source `agloom_cli/docs/`](https://github.com/HELLOMEDHIRA/agloom/tree/main/agloom_cli/docs) |
-| Every parameter explained | [All Parameters](../configuration/parameters.md)       |
-| Add memory to your agent  | [Memory](../features/memory.md)                        |
-| Build streaming UIs       | [Streaming & Events](../features/streaming.md)         |
-| Enable LangSmith tracing  | [Observability](../features/observability.md)          |
+| Topic | Link |
+| --- | --- |
+| Understand the 9 patterns | [Execution Patterns](../concepts/patterns.md) |
+| CLI (Node / TUI) | [CLI on Read the Docs](https://agloom.readthedocs.io/en/latest/_packages/agloom_cli/) · [source `agloom_cli/docs/`](https://github.com/HELLOMEDHIRA/agloom/tree/main/agloom_cli/docs) |
+| Every parameter explained | [All Parameters](../configuration/parameters.md) |
+| Add memory to your agent | [Memory](../features/memory.md) |
+| Build streaming UIs | [Streaming & Events](../features/streaming.md) |
+| Enable LangSmith tracing | [Observability](../features/observability.md) |

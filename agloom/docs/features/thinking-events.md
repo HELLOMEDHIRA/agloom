@@ -9,7 +9,7 @@ agloom surfaces all three through the same streaming APIs you already use — no
 ## Two kinds of “thinking”
 
 | Kind | What the user sees | In-process (`astream_events`) | On the wire (AGP) |
-| ---- | ------------------ | ----------------------------- | ----------------- |
+| --- | --- | --- | --- |
 | **Trace steps** | Short status lines (“Classifying query…”, “Routing · REACT”) | `AgentEvent` with `type="progress"` or `type="classify"` | `progress.step`, `pattern.classified`, `thinking.step` (routing rationale) |
 | **Reasoning tokens** | Collapsible reasoning panel (provider-dependent) | `AgentEvent` with `type="token"` and `data["role"] == "reasoning"` | `token.delta` with `role: "reasoning"` |
 | **Answer tokens** | Main chat bubble | `type="token"`, default role | `token.delta`, `role: "assistant"` |
@@ -29,7 +29,7 @@ sequenceDiagram
     UI->>Agent: user message
     Note over Agent,UI: optional progress.step (harness_init, classify)
     Agent-->>UI: progress.step "Classifying query…"
-    Agent->>Model: classifier
+    Agent->>Model: turn planner
     Agent-->>UI: pattern.classified + thinking.step "Routing · REACT"
     loop ReAct / workers
         Agent-->>UI: token.delta role=reasoning (if model provides)
@@ -50,7 +50,7 @@ Subscribe to **`progress`**, **`thinking`**, and **`classify`** events. Infrastr
 Emitted **before and during** pre-REACT bootstrap (harness load, classify spinner, skills seed). Common `data` fields:
 
 | Field | Meaning |
-| ----- | ------- |
+| --- | --- |
 | `phase` | Setup phase (`classify`, `harness_init`, `skills_init`) |
 | `name` | Step id (e.g. `analyze_query`, `harness_bootstrap`) |
 | `output` | Human-readable line for a trace pane |
@@ -62,7 +62,7 @@ On AGP this becomes **`progress.step`**.
 Emitted for routing rationale and other non-infra trace lines (not replayed at the end for prep spinners). Common `data` fields:
 
 | Field | Meaning |
-| ----- | ------- |
+| --- | --- |
 | `name` | Step id for your UI (e.g. `analyze_query`, `harness_bootstrap`) |
 | `output` | Human-readable line to show in a trace pane |
 | `duration_ms` | Optional, when timing is known |
@@ -93,17 +93,24 @@ async for event in agent.astream_events(
 Fires when classification finishes. Use it to show the chosen pattern and rationale:
 
 | Field | Meaning |
-| ----- | ------- |
+| --- | --- |
 | `pattern` | Execution pattern for this turn (e.g. `REACT`, `SUPERVISOR`) |
-| `complexity` | Classifier score when present |
+| `complexity` | Turn planner score when present |
 | `reason` | Short routing explanation |
-| `duration_ms` | Classifier latency |
+| `duration_ms` | Turn planner latency |
 
 On AGP this becomes **`pattern.classified`** plus a **`thinking.step`** whose label looks like `Routing · REACT` (see [AGP — thinking.step](../protocol/agp.md#thinkingstep)).
 
 ### Harness-enabled sessions
 
-With **`harness=True`** and a LangGraph **`store`**, you may see **`progress.step`** with `phase: harness_init` before classification when tasks exist — e.g. harness ready summary. Same when `task_count == 0`: silent on the wire (debug log only). Details in [Long-running harness](harness.md).
+With **`harness=True`** and a LangGraph **`store`**, you may see **`progress.step`** with `phase: harness_init`:
+
+| `task_count` | Typical wire detail |
+| --- | --- |
+| `0` | `Harness bound · no tasks yet — turn planner may add tasks after triage` |
+| `> 0` | `Harness ready · N task(s) · X% complete` |
+
+After the turn planner syncs a new ledger, look for `Harness planned · …`. Full flow: [Long-running harness](harness.md).
 
 ---
 
@@ -124,7 +131,7 @@ Infrastructure setup uses **`progress.step`**; routing rationale after classify 
 ```
 
 | Field | Use in UI |
-| ----- | --------- |
+| --- | --- |
 | `phase` | Setup phase (`classify`, `harness_init`, `skills_init`) |
 | `label` | Step id (`analyze_query`, `harness_bootstrap`, …) |
 | `detail` | Body text for the trace row |
@@ -143,13 +150,13 @@ Infrastructure setup uses **`progress.step`**; routing rationale after classify 
 ```
 
 | Field | Use in UI |
-| ----- | --------- |
+| --- | --- |
 | `label` | Primary step id (often routing line after `pattern.classified`) |
 | `detail` | Body text for the trace row |
 | `step` | Event category on the wire |
 | `elapsed_ms` | Optional timing badge |
 
-**`pattern.classified`** — emit once per turn after the classifier; drive pattern badges and analytics.
+**`pattern.classified`** — emit once per turn after the turn planner; drive pattern badges and analytics.
 
 ```json
 {
@@ -189,7 +196,7 @@ Full catalog: [AGP — Agloom Protocol](../protocol/agp.md).
 When the provider streams **reasoning separately from the final answer**, agloom forwards it as normal token events with an explicit role:
 
 | API | Field |
-| --- | ----- |
+| --- | --- |
 | `astream_events()` | `event.data["role"] == "reasoning"`, text in `content` |
 | AGP | `token.delta` with `"role": "reasoning"` |
 

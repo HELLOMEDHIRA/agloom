@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-from ..models import ExecutionResult, PatternType, QueryAnalysis, SignalType, WorkerResult, _merge_token_usage
+from ..src.models import ExecutionResult, PatternType, QueryAnalysis, SignalType, WorkerResult, _merge_token_usage
 
 if TYPE_CHECKING:
     from .dispatch import SpawnAPI
@@ -168,8 +168,8 @@ async def run_dag_node_or_dispatch(
     complexity_threshold: int = 7,
 ) -> WorkerResult:
     """HYBRID_DAG node: reclassify + dispatch only for tool nodes or high complexity."""
-    from .. import worker as worker_module
-    from ..worker import extend_invoke_config_with_event_queue
+    from ..src import worker as worker_module
+    from ..src.worker import extend_invoke_config_with_event_queue
     from ..patterns.hitl import run_workers_with_hitl
 
     if agent.get("_frozen_replay"):
@@ -236,7 +236,7 @@ async def run_dag_level_workers(
     """Run a DAG level — parallel dynamic dispatch or standard HITL batch."""
     import asyncio
 
-    from ..models import SignalType
+    from ..src.models import SignalType
     from ..patterns.hitl import run_workers_with_hitl
 
     dynamic = bool(agent.get("enable_dynamic_dag_nodes", True)) and pattern_spawns_enabled(
@@ -276,8 +276,8 @@ async def run_worker_or_dispatch(
     complexity_threshold: int = 7,
 ) -> WorkerResult:
     """Run a sequential step via ``run_worker`` or dynamic ``dispatch_pattern``."""
-    from .. import worker as worker_module
-    from ..worker import extend_invoke_config_with_event_queue
+    from ..src import worker as worker_module
+    from ..src.worker import extend_invoke_config_with_event_queue
 
     spawn_api = get_spawn_api(invoke_config)
     use_dispatch = (

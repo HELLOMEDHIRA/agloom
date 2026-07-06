@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
-from agloom.models import ExecutionResult, PatternType, QueryAnalysis
-from agloom.unified_agent import _analysis_from_checkpoint_values, _save_checkpoint
+from agloom.src.models import ExecutionResult, PatternType, QueryAnalysis
+from agloom.src.unified_agent import _analysis_from_checkpoint_values, _save_checkpoint
 
 
 @pytest.mark.asyncio

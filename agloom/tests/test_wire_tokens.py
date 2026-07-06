@@ -6,8 +6,8 @@ import asyncio
 
 import pytest
 
-from agloom.models import AgentStep, StepType, _make_step
-from agloom.wire_tokens import (
+from agloom.src.models import AgentStep, StepType, _make_step
+from agloom.src.wire_tokens import (
     accumulate_stream_usage,
     emit_llm_call_usage,
     emit_remaining_token_usage,
@@ -135,7 +135,7 @@ async def test_emit_llm_call_from_step() -> None:
         usage={"input_tokens": 3, "output_tokens": 7},
         phase="swarm_synthesis",
     )
-    from agloom.wire_tokens import emit_llm_call_from_step
+    from agloom.src.wire_tokens import emit_llm_call_from_step
 
     await emit_llm_call_from_step(cfg, step)
     assert step.metadata.get("_wire_emitted") is True

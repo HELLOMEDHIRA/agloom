@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..models import AgentEvent, OrchestrationContext, OrchestrationStep, PatternType
+from ..src.models import AgentEvent, OrchestrationContext, OrchestrationStep, PatternType
 
 
 def record_step(

@@ -5,10 +5,11 @@ Production agents need bounded latency, retries on transient failures, and prote
 ## Quick reference
 
 | Parameter | Default | Purpose |
-| --------- | ------- | ------- |
+| --- | --- | --- |
 | `llm_timeout` | `120.0` s | Max time per REACT/worker model call |
 | `react_graph_timeout` | `max(llm_timeout × 4, 300)` s | Max wall clock for streamed REACT (`astream_events`) |
-| `classifier_timeout` | `60.0` s | Max time for query classification |
+| `react_recursion_limit` | `25` | LangGraph step cap for REACT and worker tool loops (`success=False` when hit) |
+| `turn_planner_timeout` | `60.0` s | Max time for turn planning (`plan_turn` / `analyze_query`). Legacy key: `classifier_timeout`. |
 | `max_retries` | `2` | Worker retries (0–10) |
 | `retry_delay` | `1.0` s | Pause between worker retries |
 | `structured_max_retries` | `2` | Retries for `response_format` formatting |
@@ -28,7 +29,9 @@ async def main():
     )
 ```
 
-When a timeout fires, REACT returns an actionable message (not a bare ``TimeoutError``). Tighten **`classifier_timeout`** in latency-sensitive APIs; for self-hosted Qwen + MCP tool loops use **`llm_timeout=300`** and **`react_graph_timeout=600`** (or higher).
+When a timeout fires, REACT returns `success=False` with an actionable message (not a bare ``TimeoutError``) and emits an ``error`` AgentEvent on streamed runs. Tighten **`classifier_timeout`** in latency-sensitive APIs; for self-hosted Qwen + MCP tool loops use **`llm_timeout=300`** and **`react_graph_timeout=600`** (or higher).
+
+When LangGraph hits **`react_recursion_limit`** (default 25 graph steps), REACT also returns **`success=False`** — not a partial answer from the last model turn. Raise **`react_recursion_limit`** for long investigations (e.g. `50`–`100` for MCP-heavy RCA).
 
 ---
 
@@ -45,7 +48,7 @@ async def main():
 ```
 
 | Retry scope | What it covers |
-| ----------- | -------------- |
+| --- | --- |
 | **`max_retries` / `retry_delay`** | Failed **workers** in supervisor-style patterns |
 | **`structured_max_retries`** | Post-run formatting when **`response_format=`** is set |
 
@@ -122,7 +125,7 @@ flowchart LR
 ## Tuning for production
 
 | Scenario | Suggested starting point |
-| -------- | ------------------------ |
+| --- | --- |
 | Interactive API | `llm_timeout=90`, `classifier_timeout=20`, `max_concurrent=4` |
 | Batch analytics | `max_concurrent=8–16`, `rate_limit` = provider quota ÷ safety factor |
 | Strict JSON APIs | `structured_max_retries=3`, validate output in your handler |

@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agloom.cli_tools import get_cli_tools
-from agloom.models import ExecutionResult, PatternType
+from agloom.src.models import ExecutionResult, PatternType
 
 
 def _tools(tmp_path: Path, *, shell: bool = True, network: bool = True):
@@ -254,8 +254,8 @@ async def test_read_url_markdown_falls_back_when_trafilatura_none(
 
 @pytest.mark.asyncio
 async def test_task_tool_invokes_delegate(tmp_path: Path) -> None:
-    from agloom.delegation import HandoffTarget
-    from agloom.unified_agent import create_agent
+    from agloom.src.delegation import HandoffTarget
+    from agloom.src.unified_agent import create_agent
 
     sub = MagicMock()
     sub.name = "worker"
@@ -283,7 +283,7 @@ async def test_task_tool_invokes_delegate(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_task_tool_no_delegate_message(tmp_path: Path) -> None:
-    from agloom.unified_agent import create_agent
+    from agloom.src.unified_agent import create_agent
 
     llm = MagicMock()
     llm.ainvoke = AsyncMock(return_value=MagicMock())

@@ -13,7 +13,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_core.tools.base import InjectedToolArg
 
-from ..logging_utils import get_logger
+from ..src.logging_utils import get_logger
 
 if TYPE_CHECKING:
     from .store import LongTermStore

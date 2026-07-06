@@ -51,6 +51,20 @@ fix: lint-fix format ## Auto-fix lint issues and format code (does not run pyref
 test: ## Run pytest suite (no API keys required)
 	uv run pytest -q
 
+.PHONY: test-cli
+test-cli: ## Run agloom_cli Jest suite
+	cd agloom_cli && npm test
+
+.PHONY: test-web
+test-web: ## Run agloom_web Jest suite
+	cd agloom_web && npm test
+
+.PHONY: test-all
+test-all: test test-cli test-web ## Run Python + CLI + Web test suites (matches CI)
+
+.PHONY: check-all
+check-all: check test-all ## Lint, format, typecheck, and all tests
+
 # ── Build & Publish ──────────────────────────────────────────────────────────
 
 .PHONY: build

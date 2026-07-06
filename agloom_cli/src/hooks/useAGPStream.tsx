@@ -6,6 +6,7 @@ import { useEffect, useRef } from 'react'
 import type { AGPBridge, BridgeExitInfo } from '../runtime/bridge.js'
 import { useSessionStore } from '../store/session.js'
 import type { AGPEvent } from '../types/agp.js'
+import { bannerEnvDisabled } from '../banner.js'
 
 export const useAGPStream = (bridge: AGPBridge): void => {
   // Ref-guard prevents double-subscription in React 18+ strict mode.
@@ -16,6 +17,10 @@ export const useAGPStream = (bridge: AGPBridge): void => {
     attachedRef.current = true
 
     const onEvent = (evt: AGPEvent) => {
+      if (evt.type === 'runtime.ready' && evt.data.harness_enabled != null && !bannerEnvDisabled()) {
+        const on = evt.data.harness_enabled
+        process.stderr.write(`[agloom] harness ${on ? 'on' : 'off'}\n`)
+      }
       useSessionStore.getState().dispatch(evt)
     }
     const onDiag = (line: string) => {

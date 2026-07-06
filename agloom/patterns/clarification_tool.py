@@ -13,8 +13,8 @@ import os
 from langchain_core.tools import BaseTool
 from langchain_core.tools import tool as make_tool
 
-from ..logging_utils import get_logger
-from ..models import Signal, SignalType
+from ..src.logging_utils import get_logger
+from ..src.models import Signal, SignalType
 
 logger = get_logger(__name__)
 

@@ -9,9 +9,9 @@ import pytest
 from langchain_core.tools import tool
 
 from agloom.cli_tools import CLI_TOOL_NAMES, CLI_TOOLS_SYSTEM_APPENDIX
-from agloom.models import DEFAULT_SYSTEM_PROMPT
+from agloom.src.models import DEFAULT_SYSTEM_PROMPT
 from agloom.prompts.core import ANSWER_CONTRACT_MARKER
-from agloom.unified_agent import create_agent
+from agloom.src.unified_agent import create_agent
 
 
 @pytest.mark.asyncio
