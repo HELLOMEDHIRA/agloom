@@ -18,18 +18,18 @@ classifiers = [
 dependencies = [
     "agsuperbrain>=0.0.1",
     "qdrant-client>=1.18.0",
-    "langchain>=1.3.9",
+    "langchain>=1.3.11",
     "langchain-mcp-adapters>=0.3.0",
-    "langgraph>=1.2.5",
+    "langgraph>=1.2.7",
     "pyyaml>=6.0.3",
     "tomli>=2.4.1",
     "httpx>=0.28.1",
     "tiktoken>=0.13.0",
     "langgraph-checkpoint-sqlite>=3.1.0",
-    "fastapi>=0.137.0",
-    "uvicorn[standard]>=0.49.0",
-    "sse-starlette>=3.4.4",
-    "structlog>=25.5.0",
+    "fastapi>=0.139.0",
+    "uvicorn[standard]>=0.50.2",
+    "sse-starlette>=3.4.5",
+    "structlog>=26.1.0",
 ]
 
 [project.urls]
@@ -46,40 +46,43 @@ agloom = "agloom.cli_notice:main"
 agloom-runtime = "agloom.runtime.__main__:main"
 
 [project.optional-dependencies]
-anthropic = ["langchain-anthropic>=1.4.6"]
-aws = ["langchain-aws>=1.5.1"]
-azure-ai = ["langchain-azure-ai>=1.2.3"]
+anthropic = ["langchain-anthropic>=1.4.8"]
+aws = ["langchain-aws>=1.6.1"]
+azure-ai = [
+    "langchain-azure-ai>=1.2.8",
+    "azure-ai-contentunderstanding>=1.2.0b2",
+]
 cerebras = ["langchain-cerebras>=0.8.2"]
 cohere = ["langchain-cohere>=0.6.0"]
 community = ["langchain-community>=0.4.2"]
 deepseek = ["langchain-deepseek>=1.1.0"]
-fireworks = ["langchain-fireworks>=1.3.1"]
-google-genai = ["langchain-google-genai>=4.2.5"]
-google-vertexai = ["langchain-google-vertexai>=3.2.3"]
+fireworks = ["langchain-fireworks>=1.3.1"]  # 1.4.x conflicts with agsuperbrain (pydantic<2.13 via fireworks-ai)
+google-genai = ["langchain-google-genai>=4.2.6"]
+google-vertexai = ["langchain-google-vertexai>=3.2.4"]
 groq = ["langchain-groq>=1.1.3"]
 huggingface = ["langchain-huggingface>=1.2.2"]
 ibm = ["langchain-ibm>=1.1.0"]
-litellm = ["langchain-litellm>=0.6.6"]
-mistralai = ["langchain-mistralai>=1.1.5"]
-nvidia = ["langchain-nvidia-ai-endpoints>=1.4.1"]
+litellm = ["langchain-litellm>=0.7.0"]
+mistralai = ["langchain-mistralai>=1.1.6"]
+nvidia = ["langchain-nvidia-ai-endpoints>=1.4.3"]
 ollama = ["langchain-ollama>=1.1.0"]
 otel = [
-    "opentelemetry-api>=1.42.1",
-    "opentelemetry-sdk>=1.42.1",
-    "opentelemetry-exporter-otlp-proto-http>=1.42.1",
+    "opentelemetry-api>=1.43.0",
+    "opentelemetry-sdk>=1.43.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.43.0",
 ]
-openai = ["langchain-openai>=1.3.2"]
-openrouter = ["langchain-openrouter>=0.2.3"]
+openai = ["langchain-openai>=1.3.3"]
+openrouter = ["langchain-openrouter>=0.2.6"]
 perplexity = ["langchain-perplexity>=1.4.0"]
-sambanova = ["langchain-sambanova>=1.1.0"]
+sambanova = ["langchain-sambanova>=1.1.1"]
 snowflake = ["langchain-snowflake>=0.2.3"]
 together = ["langchain-together>=0.4.0"]
 upstage = ["langchain-upstage>=0.7.7"]
 xai = ["langchain-xai>=1.2.2"]
 ws = ["websockets>=15.0.1,<16"]
-readability = ["trafilatura>=2.0.0"]
+readability = ["trafilatura>=2.1.0"]
 memory = [
-    "sentence-transformers>=5.5.1",
+    "sentence-transformers>=5.6.0",
     "langchain-huggingface>=1.2.2",
 ]
 superbrain = ["agsuperbrain>=0.0.1"]
@@ -96,35 +99,36 @@ docs = [
 
 [dependency-groups]
 dev = [
-    "opentelemetry-api>=1.42.1",
-    "opentelemetry-sdk>=1.42.1",
-    "opentelemetry-exporter-otlp-proto-http>=1.42.1",
-    "commitizen>=4.16.3",
+    "opentelemetry-api>=1.43.0",
+    "opentelemetry-sdk>=1.43.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.43.0",
+    "commitizen>=4.16.4",
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.7.6",
     "mkdocstrings[python]>=1.0.4",
     "mkdocs-gen-files>=0.6.1",
     "mkdocs-literate-nav>=0.6.3",
     "pre-commit>=4.6.0",
-    "pyrefly>=1.0.0",
-    "pytest>=9.0.3",
+    "pyrefly>=1.1.1",
+    "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
-    "ruff>=0.15.17",
-    "llama-cpp-python>=0.3.29",
+    "ruff>=0.15.20",
+    "llama-cpp-python>=0.3.33",
     "ipykernel>=7.3.0",
     "iprogress>=0.4",
     "types-pyyaml>=6.0.12.20260518",
 ]
 
-# Super-Brain (graspologic) requires numpy 1.x; cap so qdrant-client resolves to a compatible build.
+# ML stack floors: keep optional LangChain extras on a modern HF/transformers line (see uv.lock).
 [tool.uv]
-# NumPy: Super-Brain stack. ML pins: optional LangChain extras pull older ``tokenizers``/``transformers``
-# which downgrades the default env — overrides keep ``sentence-transformers`` on a modern HF stack.
+# Prereleases only when explicitly listed (e.g. ``azure-ai-contentunderstanding`` beta for azure-ai extra).
+prerelease = "if-necessary-or-explicit"
+# NumPy/transformers/tokenizers/huggingface-hub floors — aligned with ``uv lock --upgrade`` resolution.
 override-dependencies = [
-    "numpy>=1.26.4",
-    "transformers>=5.12.0",
+    "numpy>=2.5.1",
+    "transformers>=5.13.0",
     "tokenizers>=0.23.1",
-    "huggingface-hub>=1.19.0",
+    "huggingface-hub>=1.22.0",
 ]
 
 [build-system]

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from agloom.llm.qwen_compat import (

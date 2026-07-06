@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from agloom.eval.runner import run_eval_cli
 
 
-def _eval_args(path: Path, **overrides: object) -> argparse.Namespace:
-    base = {
+def _eval_args(path: Path, **overrides: bool | str | int | None) -> argparse.Namespace:
+    base: dict[str, bool | str | int | None] = {
         "eval_file": str(path),
         "eval_seed": None,
         "eval_keep_going": False,

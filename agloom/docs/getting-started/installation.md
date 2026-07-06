@@ -14,10 +14,10 @@ agloom targets **Python 3.12** (`requires-python = ">=3.12,<3.13"` in `pyproject
     pip install agloom
     ```
 
-    If dependency resolution pulls in **NumPy 2.x** and you hit binary or stack issues, constrain before or with the install (this matches the repo’s `uv` override):
+    The repo pins **NumPy 2.5+** via `uv` overrides (`numpy>=2.5.1`). If an older stack in your environment conflicts with NumPy 2.x, constrain explicitly before or with the install:
 
     ```bash
-    pip install "numpy>=1.26.4,<2" agloom
+    pip install "numpy>=2.5.1" agloom
     ```
 
 === "uv"

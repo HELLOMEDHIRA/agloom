@@ -86,6 +86,7 @@ def _make_classify_node(agent: dict):
             agent,
             augmented_query=state["query"],
             skill_context=skill_ctx,
+            user_query=state["query"],
         )
         logger.event(
             f"[Graph:classify] {agent.get('name')} → "
