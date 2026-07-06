@@ -10,8 +10,11 @@ from uuid import uuid4
 from ..llm.qwen_compat import (
     _DEFAULT_USER_TURN,
     ensure_messages_for_chat_template,
+    exception_indicates_missing_user_query,
     extract_model_label,
+    human_message_after_missing_user_query,
     model_needs_qwen_chat_template_compat,
+    repair_react_graph_state,
 )
 from ..src.multimodal import content_blocks_to_text, text_from_user_turn
 from ..src.wire_stream_content import (
@@ -325,6 +328,19 @@ def _react_opening_messages(query: str | list[Any]) -> list[Any]:
     return ensure_messages_for_chat_template([HumanMessage(content=text)])
 
 
+def _react_invoke_state(
+    agent: dict,
+    query: str | list[Any],
+    state: dict | None = None,
+) -> dict:
+    """Normalize LangGraph state before ``ainvoke`` (template-safe user turn)."""
+    if state is None:
+        return {"messages": _react_opening_messages(query)}
+    msgs = list(state.get("messages") or [])
+    repaired = repair_react_graph_state(msgs, query, state=state)
+    return {**state, "messages": repaired}
+
+
 def _langchain_react_middleware(agent: dict, *extra: Any) -> list[Any]:
     """Middleware for LangChain ``create_agent`` inside ReAct (tool_choice + optional HITL)."""
     return build_langchain_agent_middleware(
@@ -597,7 +613,7 @@ async def _run_react_ainvoke_with_retries(
         {**(config or {}), "recursion_limit": _react_recursion_limit(agent)},
     )
 
-    state = initial_state if initial_state is not None else {"messages": _react_opening_messages(query)}
+    state = _react_invoke_state(agent, query, initial_state)
     response = None
     user_cb = agent.get("user_callback")
     attempt = max(0, attempt_offset)
@@ -648,18 +664,22 @@ async def _run_react_ainvoke_with_retries(
                     f"— nudging provider; retries left={stray_remaining} (agent={name})."
                 )
                 await asyncio.sleep(_react_retry_delay(attempt))
-                state = {
-                    "messages": list(msgs)
-                    + [
-                        HumanMessage(
-                            content=_human_message_after_stray_tool_json(
-                                tool_result_already_present=any(
-                                    isinstance(m, ToolMessage) for m in msgs
+                state = _react_invoke_state(
+                    agent,
+                    query,
+                    {
+                        "messages": list(msgs)
+                        + [
+                            HumanMessage(
+                                content=_human_message_after_stray_tool_json(
+                                    tool_result_already_present=any(
+                                        isinstance(m, ToolMessage) for m in msgs
+                                    )
                                 )
                             )
-                        )
-                    ]
-                }
+                        ]
+                    },
+                )
                 continue
 
             output = _extract_last_ai_message(response)
@@ -713,18 +733,27 @@ async def _run_react_ainvoke_with_retries(
             )
 
         except Exception as exc:
-            if _exception_indicates_tool_use_failed(exc):
+            if _exception_indicates_tool_use_failed(exc) or exception_indicates_missing_user_query(exc):
                 if attempt < max_attempts:
+                    nudge = (
+                        _human_message_after_tool_use_failed(exc)
+                        if _exception_indicates_tool_use_failed(exc)
+                        else human_message_after_missing_user_query()
+                    )
                     logger.warning(
-                        f"{log_prefix} ⚠ tool_use_failed on attempt "
+                        f"{log_prefix} ⚠ model turn rejected on attempt "
                         f"{attempt}/{max_attempts} (agent={name}) "
-                        f"— retrying in {_RETRY_DELAY}s."
+                        f"— retrying in {_RETRY_DELAY}s: {format_exception_message(exc)}"
                     )
                     await asyncio.sleep(_react_retry_delay(attempt))
-                    state = {
-                        "messages": state["messages"]
-                        + [HumanMessage(content=_human_message_after_tool_use_failed(exc))]
-                    }
+                    state = _react_invoke_state(
+                        agent,
+                        query,
+                        {
+                            "messages": state["messages"]
+                            + [HumanMessage(content=nudge)]
+                        },
+                    )
                     continue
                 if user_cb and user_recovery_budget > 0:
                     user_recovery_budget -= 1
@@ -745,13 +774,22 @@ async def _run_react_ainvoke_with_retries(
                             f"REACT_TOOL_USE_FAILED (recovery rounds left={user_recovery_budget})."
                         )
                         await asyncio.sleep(_react_retry_delay(attempt))
-                        state = {
-                            "messages": state["messages"]
-                            + [HumanMessage(content=_human_message_after_tool_use_failed(exc))]
-                        }
+                        nudge = (
+                            _human_message_after_tool_use_failed(exc)
+                            if _exception_indicates_tool_use_failed(exc)
+                            else human_message_after_missing_user_query()
+                        )
+                        state = _react_invoke_state(
+                            agent,
+                            query,
+                            {
+                                "messages": state["messages"]
+                                + [HumanMessage(content=nudge)]
+                            },
+                        )
                         continue
 
-            logger.error(f"{log_prefix} ❌ Failed: {exc!r}")
+            logger.error(f"{log_prefix} ❌ Failed: {format_exception_message(exc)}")
             if isinstance(exc, TimeoutError):
                 return await _react_return_timeout_failure(
                     agent,
@@ -764,11 +802,14 @@ async def _run_react_ainvoke_with_retries(
                     steps=steps,
                     messages=(response or {}).get("messages", []),
                 )
-            fail_note = (
-                "Provider rejected the model's tool output (tool_use_failed — usually prose instead of a structured tool call). "
-                if _exception_indicates_tool_use_failed(exc)
-                else ""
-            )
+            if _exception_indicates_tool_use_failed(exc):
+                fail_note = (
+                    "Provider rejected the model's tool output (tool_use_failed — usually prose instead of a structured tool call). "
+                )
+            elif exception_indicates_missing_user_query(exc):
+                fail_note = "Chat template rejected the message list (no user query found). "
+            else:
+                fail_note = ""
             exc_str = format_exception_message(exc)
             return await _react_failure(
                 agent,
@@ -833,7 +874,7 @@ async def _handle_react_streaming(
         RunnableConfig,  # noqa: TC006
         {**(config or {}), "recursion_limit": _react_recursion_limit(agent)},
     )
-    state = {"messages": _react_opening_messages(query)}
+    state = _react_invoke_state(agent, query, {"messages": _react_opening_messages(query)})
 
     t0 = time.perf_counter()
     steps.append(
@@ -972,16 +1013,20 @@ async def _handle_react_streaming(
                 f"(retries left={stray_remaining}, agent={name})."
             )
             has_tool_result = any(isinstance(m, ToolMessage) for m in msgs)
-            recovery_state = {
-                "messages": msgs
-                + [
-                    HumanMessage(
-                        content=_human_message_after_stray_tool_json(
-                            tool_result_already_present=has_tool_result
+            recovery_state = _react_invoke_state(
+                agent,
+                query,
+                {
+                    "messages": msgs
+                    + [
+                        HumanMessage(
+                            content=_human_message_after_stray_tool_json(
+                                tool_result_already_present=has_tool_result
+                            )
                         )
-                    )
-                ]
-            }
+                    ]
+                },
+            )
             _wall_timeout = _react_llm_timeout(agent)
             final_response = await asyncio.wait_for(
                 cast(Any, react_agent).ainvoke(recovery_state, config=invoke_config),
@@ -1105,8 +1150,9 @@ async def _handle_react_streaming(
                 messages=(final_response or {}).get("messages", []),
                 event_queue=event_queue,
             )
+        root_msg = format_exception_message(exc)
         logger.warning(
-            f"[React|stream] astream_events failed ({type(exc).__name__}: {exc}) — "
+            f"[React|stream] astream_events failed ({root_msg}) — "
             f"continuing via ainvoke retry loop for {name}"
         )
         initial_state: dict | None = None
@@ -1115,13 +1161,27 @@ async def _handle_react_streaming(
             if msgs:
                 initial_state = {"messages": list(msgs)}
         if _exception_indicates_tool_use_failed(exc):
-            base_msgs = list(
-                (initial_state or {"messages": _react_opening_messages(query)})["messages"]
+            base = initial_state or {"messages": _react_opening_messages(query)}
+            initial_state = _react_invoke_state(
+                agent,
+                query,
+                {
+                    "messages": list(base["messages"])
+                    + [HumanMessage(content=_human_message_after_tool_use_failed(exc))]
+                },
             )
-            initial_state = {
-                "messages": base_msgs
-                + [HumanMessage(content=_human_message_after_tool_use_failed(exc))]
-            }
+        elif exception_indicates_missing_user_query(exc):
+            base = initial_state or {"messages": _react_opening_messages(query)}
+            initial_state = _react_invoke_state(
+                agent,
+                query,
+                {
+                    "messages": list(base["messages"])
+                    + [HumanMessage(content=human_message_after_missing_user_query())]
+                },
+            )
+        elif initial_state is not None:
+            initial_state = _react_invoke_state(agent, query, initial_state)
         return await _run_react_ainvoke_with_retries(
             agent=agent,
             query=query,

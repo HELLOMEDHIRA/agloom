@@ -7,6 +7,8 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, ToolMessage
 
+from ..src.exception_utils import unwrap_exception
+
 _TOOL_USE_FAILED = "tool_use_failed"
 
 # Keys commonly seen when models emit tool intent as JSON text instead of native tool_calls.
@@ -94,19 +96,30 @@ def last_ai_message_is_stray_tool_json(messages: list[Any], allowed_tool_names: 
 
 def exception_indicates_tool_use_failed(exc: BaseException) -> bool:
     """True when the provider rejected the model turn as invalid tool output (e.g. Groq)."""
+    return _walk_exception(exc)
+
+
+def _walk_exception(err: BaseException | None) -> bool:
+    if err is None:
+        return False
     visited: set[int] = set()
 
-    def _walk(err: BaseException | None) -> bool:
-        if err is None:
+    def _walk(current: BaseException | None) -> bool:
+        if current is None:
             return False
-        eid = id(err)
+        eid = id(current)
         if eid in visited:
             return False
         visited.add(eid)
-        low = str(err).lower()
+        group_types: tuple[type, ...] = (ExceptionGroup, BaseExceptionGroup)
+        if isinstance(current, group_types) and getattr(current, "exceptions", None):
+            for sub in current.exceptions:
+                if _walk(sub):
+                    return True
+        low = str(current).lower()
         if "tool_use_failed" in low or "failed_generation" in low:
             return True
-        body = getattr(err, "body", None)
+        body = getattr(current, "body", None)
         if isinstance(body, dict):
             nested = body.get("error")
             if isinstance(nested, dict):
@@ -114,7 +127,7 @@ def exception_indicates_tool_use_failed(exc: BaseException) -> bool:
                     return True
                 if _TOOL_USE_FAILED in str(nested.get("message", "")).lower():
                     return True
-        resp = getattr(err, "response", None)
+        resp = getattr(current, "response", None)
         if resp is not None:
             json_fn = getattr(resp, "json", None)
             if callable(json_fn):
@@ -126,15 +139,15 @@ def exception_indicates_tool_use_failed(exc: BaseException) -> bool:
                             return True
                 except Exception:
                     pass
-        cause = err.__cause__
+        cause = current.__cause__
         if cause is not None and _walk(cause):
             return True
-        ctx = err.__context__
+        ctx = current.__context__
         if ctx is not None and ctx is not cause and _walk(ctx):
             return True
         return False
 
-    return _walk(exc)
+    return _walk(unwrap_exception(err))
 
 
 def extract_failed_generation_snippet(exc: BaseException, *, max_len: int = 320) -> str:

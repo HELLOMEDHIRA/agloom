@@ -426,3 +426,64 @@ def resolve_react_tool_choice(
     if opening:
         return "required"
     return None
+
+
+def model_label_for_middleware(model: Any) -> str:
+    """Resolve model id for middleware when ``request.model`` may be a bound inner runnable."""
+    if isinstance(model, _ChatTemplateCompatProxy):
+        return model._label()
+    return extract_model_label(model)
+
+
+def repair_react_graph_state(
+    messages: list[Any],
+    query: str | list[Any],
+    *,
+    state: dict[str, Any] | None = None,
+) -> list[Any]:
+    """Repair LangGraph message lists before ``ainvoke`` / stream fallback (template-safe user turn)."""
+    from ..src.multimodal import text_from_user_turn
+
+    def _query_text() -> str:
+        if isinstance(query, str):
+            text = query.strip()
+        else:
+            text = text_from_user_turn(query).strip()
+        return text or _DEFAULT_USER_TURN
+
+    if not messages:
+        return ensure_messages_for_chat_template([HumanMessage(content=_query_text())])
+
+    repaired = normalize_messages_for_chat_template(list(messages))
+    if _has_nonempty_user_text(repaired):
+        return repaired
+
+    state_msgs = list((state or {}).get("messages") or [])
+    from_state = _latest_user_text_from_messages(state_msgs)
+    if from_state:
+        repaired = ensure_messages_for_chat_template(repaired, state=state)
+        if _has_nonempty_user_text(repaired):
+            return repaired
+
+    opening = ensure_messages_for_chat_template([HumanMessage(content=_query_text())])
+    tail = [m for m in repaired if not _is_human_message(m)]
+    logger.warning(
+        f"[qwen_compat] ReAct state missing user query — prepending opening turn ({len(tail)} trailing msgs)"
+    )
+    return opening + tail
+
+
+def exception_indicates_missing_user_query(exc: BaseException) -> bool:
+    """True when LiteLLM/vLLM/Qwen Jinja rejected the message list (no user role)."""
+    from ..src.exception_utils import unwrap_exception
+
+    low = str(unwrap_exception(exc)).lower()
+    return "no user query found" in low or "no user message" in low
+
+
+def human_message_after_missing_user_query() -> str:
+    return (
+        "The model API rejected the conversation because no user query was present in the message list. "
+        "Use the original user request above. Invoke tools only through structured tool calls, "
+        "then answer in normal prose."
+    )

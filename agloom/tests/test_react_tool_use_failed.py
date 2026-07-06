@@ -33,6 +33,12 @@ def test_tool_use_failed_chain() -> None:
         assert _exception_indicates_tool_use_failed(e)
 
 
+def test_tool_use_failed_exception_group() -> None:
+    inner = RuntimeError("tool_use_failed from provider")
+    outer = ExceptionGroup("unhandled errors in a TaskGroup (1 sub-exception)", [inner])
+    assert _exception_indicates_tool_use_failed(outer)
+
+
 def test_not_tool_use_failed() -> None:
     assert not _exception_indicates_tool_use_failed(ValueError("rate limit"))
 

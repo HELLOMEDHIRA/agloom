@@ -13,6 +13,7 @@ from ..src.hitl_contract import HITLEvent, call_user_callback
 from ..llm.qwen_compat import (
     ensure_messages_for_chat_template,
     extract_model_label,
+    model_label_for_middleware,
     model_needs_qwen_chat_template_compat,
     qwen_model_settings_patch,
     resolve_react_tool_choice,
@@ -81,7 +82,7 @@ def _prepare_react_model_request(request: Any, *, tool_choice_enabled: bool) -> 
         list(request.messages or []),
         state=state if isinstance(state, dict) else None,
     )
-    model_label = extract_model_label(request.model)
+    model_label = model_label_for_middleware(request.model)
     overrides: dict[str, Any] = {"messages": messages}
     if model_needs_qwen_chat_template_compat(model_label):
         overrides["model_settings"] = qwen_model_settings_patch(

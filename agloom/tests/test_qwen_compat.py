@@ -10,9 +10,11 @@ from agloom.llm.qwen_compat import (
     _ChatTemplateCompatProxy,
     ensure_messages_for_chat_template,
     extract_model_label,
+    model_label_for_middleware,
     model_needs_qwen_chat_template_compat,
     normalize_messages_for_chat_template,
     repair_messages_for_chat_template,
+    repair_react_graph_state,
     resolve_react_tool_choice,
     tag_llm_for_chat_template_compat,
     wrap_chat_model_for_react_compat,
@@ -137,3 +139,29 @@ def test_proxy_strips_tool_choice_on_bind_tools() -> None:
     wrapped = wrap_chat_model_for_react_compat(FakeLLM(), "litellm:qwen36fp8")
     wrapped.bind_tools([], tool_choice="required")
     assert "tool_choice" not in seen
+
+
+def test_model_label_for_middleware_uses_proxy_label() -> None:
+    class FakeLLM:
+        model = "opaque-alias"
+
+    wrapped = wrap_chat_model_for_react_compat(FakeLLM(), "litellm:qwen36fp8")
+    assert model_needs_qwen_chat_template_compat(model_label_for_middleware(wrapped))
+
+
+def test_repair_react_graph_state_prepends_user_when_missing() -> None:
+    msgs = [
+        AIMessage(content="", tool_calls=[{"name": "search", "args": {}, "id": "1"}]),
+        ToolMessage(content="ok", tool_call_id="1"),
+    ]
+    out = repair_react_graph_state(msgs, "investigate checkout latency")
+    assert isinstance(out[0], HumanMessage)
+    assert "checkout" in str(out[0].content)
+
+
+def test_exception_indicates_missing_user_query_unwraps_group() -> None:
+    from agloom.llm.qwen_compat import exception_indicates_missing_user_query
+
+    inner = RuntimeError("No user query found in messages.")
+    outer = ExceptionGroup("unhandled errors in a TaskGroup (1 sub-exception)", [inner])
+    assert exception_indicates_missing_user_query(outer)
