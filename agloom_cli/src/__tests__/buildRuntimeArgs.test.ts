@@ -41,7 +41,7 @@ describe('buildRuntimeArgs', () => {
       turnPlannerTimeout: 120,
       reactGraphTimeout: 900,
       reactRecursionLimit: 50,
-      harnessProjectName: 'rca-platform',
+      harnessProjectName: 'incident-8842',
       harnessGoal: 'Checkout latency RCA',
     })
     expect(args).toEqual(
@@ -55,7 +55,7 @@ describe('buildRuntimeArgs', () => {
         '--react-recursion-limit',
         '50',
         '--harness-project-name',
-        'rca-platform',
+        'incident-8842',
         '--harness-goal',
         'Checkout latency RCA',
       ]),

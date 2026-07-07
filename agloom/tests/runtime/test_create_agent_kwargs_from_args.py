@@ -34,10 +34,10 @@ def test_build_create_agent_kwargs_execution_fields() -> None:
 
 
 def test_harness_metadata_from_args() -> None:
-    args = Namespace(harness_project_name="rca-platform", harness_goal="Find root cause")
+    args = Namespace(harness_project_name="my-platform", harness_goal="Find root cause")
     meta = harness_metadata_from_args(args)
     assert meta is not None
-    assert meta.project_name == "rca-platform"
+    assert meta.project_name == "my-platform"
     assert meta.goal == "Find root cause"
 
 
@@ -73,11 +73,11 @@ def test_session_snapshot_includes_execution_fields() -> None:
         require_tool_approval=True,
         llm_timeout=800.0,
         turn_planner_timeout=120.0,
-        harness_project_name="rca-platform",
+        harness_project_name="my-platform",
         no_harness=False,
     )
     snap = session_started_snapshot_from_args(args)
     eff = snap["effective_config"]
     assert eff["llm_timeout"] == 800.0
     assert eff["turn_planner_timeout"] == 120.0
-    assert eff["harness_project_name"] == "rca-platform"
+    assert eff["harness_project_name"] == "my-platform"

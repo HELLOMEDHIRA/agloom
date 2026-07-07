@@ -1259,6 +1259,17 @@ async def _ensure_mcp_connected(config: dict) -> None:
         except Exception as exc:
             logger.debug("mcp_tool_catalog_wire_emit_failed", error=str(exc))
 
+        from agloom.context.tool_scratchpad import ensure_tool_scratchpad_config
+
+        ensure_tool_scratchpad_config(config)
+
+
+async def _ensure_tool_scratchpad(config: dict) -> None:
+    """Lazy scratchpad bootstrap when tools were added after create_agent (e.g. MCP connect)."""
+    from agloom.context.tool_scratchpad import ensure_tool_scratchpad_config
+
+    ensure_tool_scratchpad_config(config)
+
 
 async def _ensure_skills_bootstrapped(
     config: dict,
@@ -2319,6 +2330,7 @@ class UnifiedAgent:
         )
         self._merge_context_into_invoke_config(invoke_config, context)
         await _ensure_mcp_connected(self.config)
+        await _ensure_tool_scratchpad(self.config)
         await _ensure_skills_bootstrapped(self.config, event_queue=event_queue)
         await _ensure_harness_bootstrapped(
             self.config,
@@ -3211,6 +3223,7 @@ async def create_agent(
     react_tool_use_failed_auto_retries_hitl: int = 2,
     react_tool_use_failed_user_rounds: int = 3,
     context_window_tokens: int | None = None,
+    tool_digest_min_chars: int | None = None,
     max_pattern_depth: int = 0,
     max_orchestration_llm_calls: int = 100,
     max_orchestration_tokens: int = 0,
@@ -3241,6 +3254,8 @@ async def create_agent(
     the dict returned by :func:`agloom.cache.create_cache` for custom embeddings / Qdrant.
     ``checkpointer``: enables ``get_state``, ``get_history``, ``resume``.
     ``mcp_servers``: lazy MCP connect on first ``ainvoke`` (raises ``MCPConnectionError`` if a server exposes no tools).
+    ``tool_digest_min_chars``: when set, lower threshold for spilling large tool outputs to scratchpad digests
+    (default derived from context window; e.g. ``1500`` for log-heavy MCP tools).
     ``react_force_tool_choice_on_user_turn``: when True (default), Groq-style providers use
     ``tool_choice=required`` on the opening turn. Strict chat-template providers (vLLM, LiteLLM routers, self-hosted) use provider-default
     ``tool_choice`` (no override). All models get user-message flattening via
@@ -3392,14 +3407,17 @@ async def create_agent(
     agent_name = (name or "UnifiedAgent").strip()
     resolved_tools = normalize_tools(tools or [])
     from agloom.context.plane import compute_context_budget
-    from agloom.context.tool_scratchpad import ToolScratchpad, make_recall_tool_artifact
+    from agloom.context.tool_scratchpad import ToolScratchpad, attach_tool_scratchpad, MAX_TOOL_WIRE_CHARS
     from agloom.context.window import infer_context_window_tokens, reserved_output_tokens
     from agloom.transport.manager import TransportManager, TransportPolicy
 
     ctx_window = context_window_tokens or infer_context_window_tokens(resolved_llm, model)
     ctx_reserved = reserved_output_tokens(resolved_llm, context_window=ctx_window)
     _ctx_budget = compute_context_budget(resolved_llm, model_spec=model, context_window_tokens=ctx_window)
-    tool_digest_min_chars = _ctx_budget.digest_min_chars
+    if tool_digest_min_chars is not None:
+        tool_digest_min_chars = max(500, min(4000, tool_digest_min_chars))
+    else:
+        tool_digest_min_chars = _ctx_budget.digest_min_chars
     context_compact_ratio = 0.82
     tool_scratchpad_pad: ToolScratchpad | None = None
     _task_agent_cell: list[Any | None] | None = None
@@ -3425,12 +3443,6 @@ async def create_agent(
     resolved_store: LongTermStore | None = None
     if store is not None:
         resolved_store = store if isinstance(store, LongTermStore) else LongTermStore(store=store)
-
-    if resolved_tools:
-        scratch_store = resolved_store
-        tool_scratchpad_pad = ToolScratchpad(store=scratch_store, agent_key=agent_name)
-        resolved_tools = [*resolved_tools, make_recall_tool_artifact(tool_scratchpad_pad)]
-    _check_reserved_tool_names(resolved_tools[:-1] if tool_scratchpad_pad else resolved_tools)
 
     _register_agent_name(agent_name, resolved_store)
 
@@ -3554,6 +3566,15 @@ async def create_agent(
         if isinstance(resolved_prompt, str):
             resolved_prompt = resolved_prompt.rstrip() + HARNESS_TOOLS_APPENDIX
 
+    if resolved_tools:
+        tool_scratchpad_pad, resolved_tools = attach_tool_scratchpad(
+            resolved_tools,
+            store=resolved_store,
+            agent_key=agent_name,
+            existing_pad=tool_scratchpad_pad,
+        )
+    _check_reserved_tool_names(resolved_tools[:-1] if tool_scratchpad_pad else resolved_tools)
+
     config: dict = {
         "name": agent_name,
         "llm": resolved_llm,
@@ -3619,6 +3640,8 @@ async def create_agent(
         "tool_scratchpad": tool_scratchpad_pad is not None,
         "_tool_scratchpad": tool_scratchpad_pad,
         "tool_digest_min_chars": tool_digest_min_chars,
+        "max_tool_wire_chars": MAX_TOOL_WIRE_CHARS,
+        "summarizer_model": resolved_summarizer,
         "context_window_tokens": ctx_window,
         "context_reserved_output_tokens": ctx_reserved,
         "context_compact_ratio": context_compact_ratio,
@@ -3722,6 +3745,9 @@ async def create_agent(
         load_tool = make_load_skill_tool(skill_registry)
         resolved_tools.append(load_tool)
         config["tools"] = resolved_tools
+        from agloom.context.tool_scratchpad import ensure_tool_scratchpad_config
+
+        ensure_tool_scratchpad_config(config)
 
         config["skill_registry"] = skill_registry
         config["skill_injector"] = skill_injector

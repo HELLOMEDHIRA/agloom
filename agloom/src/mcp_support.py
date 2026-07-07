@@ -469,7 +469,7 @@ async def connect_mcp_servers(
     for cap in caps:
         for t in cap.all_tools():
             if t.name not in existing_names:
-                new_tools.append(t)
+                new_tools.append(_with_agloom_limit_hint(t))
                 existing_names.add(t.name)
 
         if cap.prompt_names:
@@ -513,6 +513,40 @@ async def connect_mcp_servers(
 MCP_SYSTEM_APPENDIX_MARKER = "=== MCP servers and tools ==="
 _MCP_DESC_MAX = 220
 _MCP_TOOLS_PER_SERVER_APPENDIX = 48
+_LIMIT_HINT_PARAMS = frozenset(
+    {"limit", "page_size", "max_results", "top_k", "per_page", "page_limit", "count", "max_count"}
+)
+_AGLOOM_LIMIT_HINT = " Agloom: pass limit≤100 on first call when available."
+
+
+def _tool_has_limit_param(tool: BaseTool) -> bool:
+    schema = getattr(tool, "args_schema", None)
+    if schema is None:
+        return False
+    fields = getattr(schema, "model_fields", None) or getattr(schema, "__fields__", None)
+    if not fields:
+        return False
+    return any(str(key).lower() in _LIMIT_HINT_PARAMS for key in fields)
+
+
+def _with_agloom_limit_hint(tool: BaseTool) -> BaseTool:
+    if not _tool_has_limit_param(tool):
+        return tool
+    desc = (tool.description or "").strip()
+    if "Agloom: pass limit" in desc:
+        return tool
+    new_desc = f"{desc}{_AGLOOM_LIMIT_HINT}".strip()
+    model_copy = getattr(tool, "model_copy", None)
+    if callable(model_copy):
+        try:
+            return cast(BaseTool, model_copy(update={"description": new_desc}))
+        except Exception:
+            pass
+    try:
+        tool.description = new_desc
+    except Exception:
+        pass
+    return tool
 
 
 def mcp_configured_server_names(agent: dict[str, Any]) -> list[str]:

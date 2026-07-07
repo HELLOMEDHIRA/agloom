@@ -67,7 +67,7 @@ execution:
   max_retries: 2
 
 harness:
-  project_name: rca-platform
+  project_name: incident-8842
   goal: Checkout latency RCA
   enabled: true                # false → same as agloom --no-harness
 

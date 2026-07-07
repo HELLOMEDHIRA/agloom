@@ -326,6 +326,8 @@ def _compact_react_state_for_context_pressure(agent: dict, state: dict) -> dict 
     pad = agent.get("_tool_scratchpad")
     if not isinstance(pad, ToolScratchpad):
         return None
+    from ..context.tool_scratchpad import MAX_TOOL_WIRE_CHARS
+
     window = int(agent.get("context_window_tokens") or infer_context_window_tokens(agent.get("llm")))
     reserved = int(
         agent.get("context_reserved_output_tokens")
@@ -333,10 +335,16 @@ def _compact_react_state_for_context_pressure(agent: dict, state: dict) -> dict 
     )
     ratio = float(agent.get("context_compact_ratio", 0.82))
     budget = max(2048, int(window * ratio) - reserved)
+    max_wire = int(agent.get("max_tool_wire_chars", MAX_TOOL_WIRE_CHARS))
     msgs = list(state.get("messages") or [])
     if not msgs:
         return None
-    compacted = compact_messages_for_budget(msgs, pad, target_input_tokens=budget)
+    compacted = compact_messages_for_budget(
+        msgs,
+        pad,
+        target_input_tokens=budget,
+        max_wire_chars=max_wire,
+    )
     compacted = append_context_compaction_recap(compacted, scratchpad=pad)
     if estimate_messages_tokens(compacted) >= estimate_messages_tokens(msgs):
         return None
@@ -453,6 +461,15 @@ REACT_TOOL_DISCIPLINE = """
 - Default length: a few sentences or a tiny bullet list. Go longer only when the user asks for depth, design, or teaching.
 """
 
+MCP_TOOL_DISCIPLINE = """
+
+=== MCP / EXTERNAL TOOL LIMITS (strict) ===
+- When a tool schema exposes ``limit``, ``page_size``, ``max_results``, ``top_k``, ``per_page``, or similar pagination fields, you **must** pass a conservative value on the **first** call (start with ≤50–100 unless the user asked for more).
+- Prefer **narrow** queries (time range, service name, log level, IDs) before broad “get everything” calls.
+- If a tool returns ``[agloom:tool_digest …]`` or ``complete=false``, use ``recall_tool_artifact(ref_id, offset, limit)`` to page — **never** repeat the same unbounded tool call with identical arguments.
+- Large digests mean the full payload is off-thread; recall slices are the correct next step, not a duplicate MCP call.
+"""
+
 
 def _react_base_system_prompt(agent: dict) -> str:
     """Resolve a string system prompt (never ``None``) for ReAct."""
@@ -465,7 +482,10 @@ def _react_base_system_prompt(agent: dict) -> str:
 
 
 def _react_system_prompt(agent: dict) -> str:
-    return _react_base_system_prompt(agent) + REACT_TOOL_DISCIPLINE
+    prompt = _react_base_system_prompt(agent) + REACT_TOOL_DISCIPLINE
+    if agent.get("_mcp_servers"):
+        prompt += MCP_TOOL_DISCIPLINE
+    return prompt
 
 
 async def handle_react(
@@ -750,6 +770,26 @@ async def _run_react_ainvoke_with_retries(
             )
 
         except Exception as exc:
+            from ..context.errors import ContextBudgetExceededError
+
+            if isinstance(exc, ContextBudgetExceededError):
+                return ExecutionResult(
+                    pattern_used=PatternType.REACT,
+                    query=query,
+                    output=str(exc),
+                    steps_taken=steps_taken_from_audit(steps),
+                    success=False,
+                    failure_class="context",
+                    retryable=False,
+                    analysis=analysis,
+                    steps=steps,
+                    messages=(response or {}).get("messages", []) if isinstance(response, dict) else [],
+                    metadata={
+                        "estimated_input_tokens": exc.estimated_tokens,
+                        "budget": exc.budget,
+                        "execution_path": f"{log_prefix}_context_budget",
+                    },
+                )
             if _exception_indicates_tool_use_failed(exc) or exception_indicates_missing_user_query(exc):
                 if attempt < max_attempts:
                     nudge = (
@@ -852,6 +892,8 @@ async def _run_react_ainvoke_with_retries(
                 fail_note = "Chat template rejected the message list (no user query found). "
             elif exception_indicates_context_window_exceeded(exc):
                 fail_note = "Context window exceeded after compaction retries. "
+            elif isinstance(exc, ContextBudgetExceededError):
+                fail_note = f"{exc} "
             elif exception_indicates_transient_transport_error(exc):
                 fail_note = (
                     "HTTP transport disconnected (LLM or MCP proxy) after transport retries. "
@@ -887,6 +929,9 @@ async def _handle_react_streaming(
     analysis: QueryAnalysis,
     config: dict | None = None,
     event_queue: asyncio.Queue | None = None,
+    *,
+    stream_compact_retry_remaining: int = 1,
+    initial_state: dict | None = None,
 ) -> ExecutionResult:
     """REACT with live token-by-token streaming via LangGraph astream_events.
 
@@ -922,7 +967,11 @@ async def _handle_react_streaming(
         RunnableConfig,  # noqa: TC006
         {**(config or {}), "recursion_limit": _react_recursion_limit(agent)},
     )
-    state = _react_invoke_state(agent, query, {"messages": _react_opening_messages(query)})
+    state = (
+        _react_invoke_state(agent, query, initial_state)
+        if initial_state is not None
+        else _react_invoke_state(agent, query, {"messages": _react_opening_messages(query)})
+    )
 
     t0 = time.perf_counter()
     steps.append(
@@ -1212,6 +1261,53 @@ async def _handle_react_streaming(
             )
         root_msg = format_exception_message(exc)
         stream_ctx = f" last_event={last_stream_kind!r}" if last_stream_kind else ""
+        from ..context.errors import ContextBudgetExceededError
+
+        if isinstance(exc, ContextBudgetExceededError):
+            return ExecutionResult(
+                pattern_used=PatternType.REACT,
+                query=query,
+                output=str(exc),
+                steps_taken=steps_taken_from_audit(steps),
+                success=False,
+                failure_class="context",
+                retryable=False,
+                analysis=analysis,
+                steps=steps,
+                messages=(final_response or {}).get("messages", []) if isinstance(final_response, dict) else [],
+                metadata={
+                    "estimated_input_tokens": exc.estimated_tokens,
+                    "budget": exc.budget,
+                    "execution_path": "stream_context_budget",
+                },
+            )
+        if (
+            exception_indicates_transient_transport_error(exc)
+            and stream_compact_retry_remaining > 0
+        ):
+            msgs = list(
+                (final_response or {}).get("messages")
+                or (initial_state or {}).get("messages")
+                or _react_opening_messages(query)
+            )
+            compacted = _compact_react_state_for_context_pressure(agent, {"messages": msgs})
+            if compacted is not None:
+                before = estimate_messages_tokens(msgs)
+                after = estimate_messages_tokens(compacted.get("messages") or [])
+                if after < before:
+                    logger.warning(
+                        f"[React|stream] transport error — stream_compact_retry "
+                        f"est_tokens {before} -> {after}{stream_ctx}"
+                    )
+                    return await _handle_react_streaming(
+                        agent,
+                        query,
+                        analysis,
+                        config=config,
+                        event_queue=event_queue,
+                        stream_compact_retry_remaining=stream_compact_retry_remaining - 1,
+                        initial_state=compacted,
+                    )
         if agent.get("strict_execution"):
             logger.warning(
                 f"[React|stream] astream_events failed ({root_msg}){stream_ctx} — strict_execution, no ainvoke fallback"

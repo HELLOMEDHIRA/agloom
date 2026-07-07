@@ -7,7 +7,12 @@ from typing import Any
 from langchain_core.messages import HumanMessage, ToolMessage
 
 from .tokens import estimate_messages_tokens
-from .tool_scratchpad import ToolScratchpad, extract_ref_id_from_digest
+from .tool_scratchpad import (
+    MAX_TOOL_WIRE_CHARS,
+    ToolScratchpad,
+    build_tool_digest,
+    extract_ref_id_from_digest,
+)
 
 
 def _tool_message_text(msg: ToolMessage) -> str:
@@ -38,19 +43,57 @@ def _replace_tool_content(msg: ToolMessage, new_content: str) -> ToolMessage:
     )
 
 
+def _force_wire_bound_tool_message(
+    scratchpad: ToolScratchpad,
+    msg: ToolMessage,
+    *,
+    max_wire_chars: int,
+) -> ToolMessage:
+    text = _tool_message_text(msg)
+    if len(text) <= max_wire_chars:
+        return msg
+    if text.startswith("[compacted ") or text.startswith("[agloom:tool_digest"):
+        ref = _ensure_stored(scratchpad, msg)
+        stub = scratchpad.compact_stub(ref)
+        if len(stub) <= max_wire_chars:
+            return _replace_tool_content(msg, stub)
+        return _replace_tool_content(
+            msg,
+            build_tool_digest(ref_id=ref, tool_name=msg.name or "tool", full_text=text, max_wire_chars=max_wire_chars),
+        )
+    ref = _ensure_stored(scratchpad, msg)
+    return _replace_tool_content(
+        msg,
+        build_tool_digest(ref_id=ref, tool_name=msg.name or "tool", full_text=text, max_wire_chars=max_wire_chars),
+    )
+
+
 def compact_messages_for_budget(
     messages: list[Any],
     scratchpad: ToolScratchpad,
     *,
     target_input_tokens: int,
     keep_recent_tool_rounds: int = 2,
+    max_wire_chars: int = MAX_TOOL_WIRE_CHARS,
 ) -> list[Any]:
-    """Compress older tool results to stubs; keep recent rounds and user turns intact."""
-    if not messages or estimate_messages_tokens(messages) <= target_input_tokens:
-        return list(messages)
+    """Compress older tool results to stubs; bound oversized tools regardless of recency."""
+    if not messages:
+        return []
 
     out = list(messages)
     tool_indices = [i for i, m in enumerate(out) if isinstance(m, ToolMessage)]
+
+    # Size pass: any tool message over max_wire_chars is digested/stubbed regardless of recency.
+    for idx in tool_indices:
+        msg = out[idx]
+        if not isinstance(msg, ToolMessage):
+            continue
+        if len(_tool_message_text(msg)) > max_wire_chars:
+            out[idx] = _force_wire_bound_tool_message(scratchpad, msg, max_wire_chars=max_wire_chars)
+
+    if estimate_messages_tokens(out) <= target_input_tokens:
+        return out
+
     if len(tool_indices) <= keep_recent_tool_rounds:
         return out
 
@@ -60,7 +103,7 @@ def compact_messages_for_budget(
         if not isinstance(msg, ToolMessage):
             continue
         text = _tool_message_text(msg)
-        if text.startswith("[compacted ") or _tool_message_text(msg).startswith("[agloom:tool_digest"):
+        if text.startswith("[compacted ") or text.startswith("[agloom:tool_digest"):
             ref = _ensure_stored(scratchpad, msg)
             out[idx] = _replace_tool_content(msg, scratchpad.compact_stub(ref))
             continue
@@ -76,13 +119,16 @@ def compact_messages_for_budget(
             text = _tool_message_text(msg)
             if text.startswith("[compacted ") or text.startswith("[agloom:tool_digest"):
                 continue
-            if len(text) >= digest_min:
+            if len(text) >= digest_min or len(text) > max_wire_chars:
                 ref = _ensure_stored(scratchpad, msg)
-                from .tool_scratchpad import build_tool_digest
-
                 out[idx] = _replace_tool_content(
                     msg,
-                    build_tool_digest(ref_id=ref, tool_name=msg.name or "tool", full_text=text),
+                    build_tool_digest(
+                        ref_id=ref,
+                        tool_name=msg.name or "tool",
+                        full_text=text,
+                        max_wire_chars=max_wire_chars,
+                    ),
                 )
 
     return out

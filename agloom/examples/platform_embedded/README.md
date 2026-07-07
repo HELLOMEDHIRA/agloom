@@ -1,6 +1,6 @@
 # Platform embedded
 
-Minimal `profile="platform_embedded"` recipe for rca-platform style embeds.
+Minimal `profile="platform_embedded"` recipe for embedded host apps.
 
 ```bash
 export GROQ_API_KEY=...

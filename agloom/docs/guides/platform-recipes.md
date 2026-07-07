@@ -1,6 +1,6 @@
 # Platform embedded recipes
 
-## rca-platform (minimal)
+## platform_embedded (minimal)
 
 ```python
 agent = await create_agent(

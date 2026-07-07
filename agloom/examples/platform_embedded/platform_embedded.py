@@ -1,4 +1,4 @@
-"""Platform embedded recipe — rca-platform style minimal agent."""
+"""Platform embedded recipe — minimal agent for embedded host apps."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ async def main() -> None:
         model=llm,
         store=store,
         profile="platform_embedded",
-        name="rca-agent",
+        name="embedded-agent",
         harness_metadata=HarnessMetadata(
             project_name=investigation_id,
             goal=goal,

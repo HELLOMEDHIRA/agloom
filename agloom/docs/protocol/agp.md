@@ -295,7 +295,7 @@ Emitted when a single harness ledger task changes (claim, status, notes). Client
     "task_id": "ctx-001",
     "status": "in_progress",
     "notes": "Collecting alert timeline",
-    "project": "rca-platform"
+    "project": "incident-8842"
   } }
 ```
 

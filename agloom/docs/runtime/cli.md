@@ -65,7 +65,7 @@ execution:
   llm_timeout: 800
   classifier_timeout: 120
 harness:
-  project_name: rca-platform
+  project_name: incident-8842
   goal: Checkout latency RCA
 ```
 

@@ -46,7 +46,7 @@ async def test_stream_fallback_repairs_state_after_missing_user_query() -> None:
         "llm": MagicMock(),
         "tools": [MagicMock(name="search_logs")],
         "system_prompt": "sys",
-        "name": "rca-test",
+        "name": "stream-fallback-test",
         "_event_queue": MagicMock(),
         "llm_timeout": 30.0,
     }
@@ -102,7 +102,7 @@ async def test_stream_fallback_sanitizes_partial_state_without_user() -> None:
         "llm": MagicMock(),
         "tools": [MagicMock(name="search_logs")],
         "system_prompt": "sys",
-        "name": "rca-test",
+        "name": "stream-fallback-test",
         "_event_queue": MagicMock(),
         "llm_timeout": 30.0,
     }

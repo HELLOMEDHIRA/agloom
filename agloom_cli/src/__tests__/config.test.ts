@@ -184,7 +184,7 @@ execution:
   react_graph_timeout: 900
   react_recursion_limit: 50
 harness:
-  project_name: rca-platform
+  project_name: incident-8842
   goal: Checkout latency RCA
 `)
     const y = parseAgloomYamlFile(p)
@@ -192,7 +192,7 @@ harness:
     expect(y.turn_planner_timeout).toBe(120)
     expect(y.react_graph_timeout).toBe(900)
     expect(y.react_recursion_limit).toBe(50)
-    expect(y.harness_project_name).toBe('rca-platform')
+    expect(y.harness_project_name).toBe('incident-8842')
     expect(y.harness_goal).toBe('Checkout latency RCA')
     unlinkSync(p)
   })

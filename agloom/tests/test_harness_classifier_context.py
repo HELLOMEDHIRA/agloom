@@ -6,11 +6,11 @@ from agloom.harness.progress import ProgressArtifact
 
 
 def test_classifier_context_no_tasks_not_finished() -> None:
-    artifact = ProgressArtifact(description="Build RCA platform")
+    artifact = ProgressArtifact(description="Build incident dashboard")
     text = artifact.to_classifier_context()
     assert "no tasks yet" in text.lower()
     assert "finished" not in text.lower()
-    assert "Build RCA platform" in text
+    assert "Build incident dashboard" in text
 
 
 def test_classifier_context_no_tasks_no_goal() -> None:
