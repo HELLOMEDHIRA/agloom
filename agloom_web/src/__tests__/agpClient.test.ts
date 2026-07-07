@@ -139,7 +139,7 @@ describe('createAGPClient', () => {
     expect(lines.some((l) => l.includes('non-JSON'))).toBe(true)
   })
 
-  it('send serializes commands only when socket is OPEN', async () => {
+  it('queues outbound while connecting then flushes on open', async () => {
     const client = createAGPClient('ws://example.test/agp', 100)
     client.send({ type: 'command.ping', data: {} })
     expect(mockSocketInstances).toHaveLength(0)
@@ -147,8 +147,8 @@ describe('createAGPClient', () => {
     client.connect()
     await flushMicrotasks()
     client.send({ type: 'command.ping', data: {} })
-    expect(mockSocketInstances[0]?.sent).toHaveLength(1)
-    expect(JSON.parse(mockSocketInstances[0]?.sent[0] ?? '{}')).toMatchObject({ type: 'command.ping' })
+    expect(mockSocketInstances[0]?.sent).toHaveLength(2)
+    expect(JSON.parse(mockSocketInstances[0]?.sent[1] ?? '{}')).toMatchObject({ type: 'command.ping' })
   })
 
   it('invoke maps to command.invoke', async () => {

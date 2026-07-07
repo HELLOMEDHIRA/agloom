@@ -19,6 +19,7 @@ import {
   stripAgloomToolResultEnvelope,
 } from '../utils/format.js'
 import { isStrayToolJsonText, stripStrayToolJsonFromStream } from '../utils/strayToolJson.js'
+import { replayResumeReset, shouldSkipReplayEvent, trackAgpEnvelope } from './agpDedup.js'
 
 const sanitizeAssistantText = (text: string, allowed: Set<string>): string => {
   if (!text.trim()) return text
@@ -95,6 +96,9 @@ const newActiveTurn = (userMessage: string): ActiveTurnState => ({
 
 /** Apply one inbound AGP event to the current store snapshot. */
 export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore => {
+  if (shouldSkipReplayEvent(s, evt)) return s
+  s = trackAgpEnvelope(s, evt)
+
   if (!isAgpKnownEvent(evt)) {
     return {
       ...s,
@@ -118,13 +122,21 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         budgetUi: 'ok',
         filesUpdated: [],
         lastMetricTokensSeq: 0,
+        lastMetricCostSeq: 0,
+        lastSeenSeq: evt.seq,
+        replayBaselineSeq: 0,
+        seenEventIds: [evt.id],
+        harnessLedgerRevision: 0,
       }
     }
 
     case 'session.resumed': {
       const now = new Date().toISOString()
+      const replayFrom = evt.data.replayed_from_seq ?? 0
+      const replayReset = replayFrom > 0 ? replayResumeReset(replayFrom) : {}
       return {
         ...s,
+        ...replayReset,
         sessionId: evt.session,
         activeThreadId: evt.thread ?? s.activeThreadId,
         runtimeVersion: evt.data.runtime_version,
@@ -136,6 +148,8 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         outboundPrompt: null,
         toolCallExpandedById: {},
         budgetUi: 'ok',
+        replayBaselineSeq: replayFrom > 0 ? replayFrom : s.replayBaselineSeq,
+        lastSeenSeq: replayFrom > 0 ? replayFrom : s.lastSeenSeq,
       }
     }
 
@@ -516,20 +530,33 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
     }
 
     case 'harness.synced': {
+      const rev = evt.data.ledger_revision ?? 0
+      if (rev > 0 && rev < (s.harnessLedgerRevision ?? 0)) {
+        return {
+          ...s,
+          protocolNotes: pushProtocolNotes(
+            s.protocolNotes,
+            `harness.synced · skipped stale revision ${rev} < ${s.harnessLedgerRevision}`,
+          ),
+        }
+      }
       const tasks = harnessLedgerFromWire(evt.data.tasks)
       const note = `harness.synced · ${evt.data.action} · ${evt.data.task_count ?? tasks.length} task(s) · ${Math.round((evt.data.completion_ratio ?? 0) * 100)}%`
       return {
         ...s,
         harnessLedgerTasks: tasks.length ? tasks : s.harnessLedgerTasks,
+        harnessLedgerRevision: Math.max(s.harnessLedgerRevision ?? 0, rev),
         protocolNotes: pushProtocolNotes(s.protocolNotes, note),
       }
     }
 
     case 'harness.task.updated': {
+      const rev = evt.data.ledger_revision ?? evt.seq
       const note = `harness.task.updated · ${evt.data.task_id} · ${evt.data.status}${evt.data.notes ? ` · ${evt.data.notes}` : ''}`
       return {
         ...s,
         harnessLedgerTasks: patchHarnessLedgerTask(s.harnessLedgerTasks ?? [], evt.data),
+        harnessLedgerRevision: Math.max(s.harnessLedgerRevision ?? 0, rev),
         protocolNotes: pushProtocolNotes(s.protocolNotes, note),
       }
     }
@@ -967,18 +994,22 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         totalOutputTokens: s.totalOutputTokens + outTok,
         lastMetricTokensSeq: evt.seq,
         turnInputTokens: s.activeTurn ? Math.max(s.turnInputTokens, inTok) : s.turnInputTokens,
-        turnOutputTokens: s.activeTurn ? s.turnOutputTokens + outTok : s.turnOutputTokens,
+        turnOutputTokens: s.activeTurn ? Math.max(s.turnOutputTokens, outTok) : s.turnOutputTokens,
         model: sessionModel,
         metricsHistory: hist,
       }
     }
 
     case 'metric.cost': {
+      if (evt.seq <= s.lastMetricCostSeq) {
+        return s
+      }
       const m = evt.data.model
       const sessionModel = m != null && m !== '' ? m : (s.model ?? null)
       return {
         ...s,
         totalCostUsd: s.totalCostUsd + evt.data.cost,
+        lastMetricCostSeq: evt.seq,
         model: sessionModel,
       }
     }

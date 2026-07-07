@@ -1828,6 +1828,11 @@
           "title": "Task Count",
           "type": "integer"
         },
+        "ledger_revision": {
+          "default": 0,
+          "title": "Ledger Revision",
+          "type": "integer"
+        },
         "harness_plan": {
           "items": {
             "$ref": "#/$defs/HarnessPlanTaskWire"
@@ -1951,6 +1956,11 @@
           ],
           "default": null,
           "title": "Project"
+        },
+        "ledger_revision": {
+          "default": 0,
+          "title": "Ledger Revision",
+          "type": "integer"
         }
       },
       "required": [

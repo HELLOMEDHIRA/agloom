@@ -28,12 +28,57 @@ async def test_progress_tracker_emits_task_updated():
     assert evt.data["task_id"] == "t1"
 
 
+@pytest.mark.asyncio
+async def test_emit_harness_task_updated_uses_event_queue_when_provided():
+    from agloom.observability.harness_events import emit_harness_task_updated
+
+    eq: asyncio.Queue = asyncio.Queue()
+    await emit_harness_task_updated(
+        task_id="t2",
+        status="done",
+        notes="ok",
+        event_queue=eq,
+    )
+    evt = await asyncio.wait_for(eq.get(), timeout=1.0)
+    assert isinstance(evt, AgentEvent)
+    assert evt.type == "harness_task_updated"
+    assert evt.data["task_id"] == "t2"
+
+
+def test_translate_fifo_harness_synced_before_task_updated():
+    import io
+    import json
+
+    from agloom.protocol import SessionEmitter
+    from agloom.runtime.translator import translate
+
+    buf = io.StringIO()
+    emitter = SessionEmitter(session="s", thread="t", writer=buf)
+    emitter.open()
+    translate(
+        AgentEvent(
+            type="harness.synced",
+            data={"action": "skip", "task_count": 1, "completion_ratio": 0.0},
+        ),
+        emitter,
+    )
+    translate(
+        AgentEvent(
+            type="harness_task_updated",
+            data={"task_id": "t1", "status": "in_progress", "notes": "n"},
+        ),
+        emitter,
+    )
+    lines = [json.loads(line) for line in buf.getvalue().splitlines() if line.strip()]
+    harness_types = [line["type"] for line in lines if line["type"].startswith("harness.")]
+    assert harness_types.index("harness.synced") < harness_types.index("harness.task.updated")
+
+
 def test_translator_emits_harness_task_updated_wire():
     import io
 
     from agloom.protocol import SessionEmitter
     from agloom.runtime.translator import translate
-    from agloom.src.models import AgentEvent
 
     class _Emitter(SessionEmitter):
         def __init__(self) -> None:

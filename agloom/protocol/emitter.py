@@ -309,6 +309,12 @@ class _SharedSeq:
     def value(self) -> int:
         return self._seq
 
+    def seed(self, minimum: int) -> None:
+        """Advance the counter to at least *minimum* (replay resume)."""
+        with self._lock:
+            if minimum > self._seq:
+                self._seq = minimum
+
 
 class _SubscriptionFilter:
     """Shared mutable prefix filter — forks reference the same instance so ``command.subscribe``
@@ -365,6 +371,11 @@ class SessionEmitter:
         self._trace_id: str | None = None
         self._last_event_id: str | None = None
         self.budget_tracker: Any | None = None
+        self._last_store_drop_warn: float = 0.0
+
+    def seed_seq(self, minimum: int) -> None:
+        """Set the live seq counter to at least *minimum* before resuming a persisted session."""
+        self._shared_seq.seed(max(0, minimum))
 
     @classmethod
     def for_callback_only(
@@ -567,6 +578,7 @@ class SessionEmitter:
         work_kind: str | None = None,
         completion_ratio: float = 0.0,
         task_count: int = 0,
+        ledger_revision: int = 0,
         harness_plan: list[HarnessPlanTaskWire] | None = None,
         tasks: list[HarnessLedgerTaskWire] | None = None,
         parent: str | None = None,
@@ -582,6 +594,7 @@ class SessionEmitter:
                 work_kind=work_kind,
                 completion_ratio=completion_ratio,
                 task_count=task_count,
+                ledger_revision=ledger_revision,
                 harness_plan=list(harness_plan or []),
                 tasks=list(tasks or []),
             ),
@@ -596,6 +609,7 @@ class SessionEmitter:
         status: str,
         notes: str = "",
         project: str | None = None,
+        ledger_revision: int = 0,
         parent: str | None = None,
     ) -> HarnessTaskUpdated:
         """Emit when a harness ledger task is claimed or updated."""
@@ -609,6 +623,7 @@ class SessionEmitter:
                 status=status,
                 notes=notes,
                 project=project,
+                ledger_revision=ledger_revision,
             ),
         )
         self._write(evt)
@@ -1833,6 +1848,7 @@ class SessionEmitter:
         stage: str | None = None,
         retryable: bool = False,
         parent: str | None = None,
+        persist: bool = True,
     ) -> ErrorTransient | ErrorFatal:
         """Emit ``error.transient`` or ``error.fatal`` based on *severity*.
 
@@ -1854,7 +1870,7 @@ class SessionEmitter:
             parent=parent,
             data=data,
         )
-        self._write(evt)
+        self._write(evt, persist=persist)
         return evt
 
     # ── introspection ────────────────────────────────────────────────────────
@@ -1964,6 +1980,7 @@ class SessionEmitter:
                 getattr(evt, "seq", "?"),
                 getattr(evt, "type", "?"),
             )
+            self._emit_store_append_dropped()
             return
         try:
             d = event_to_dict(evt)
@@ -1988,6 +2005,20 @@ class SessionEmitter:
             self._store_append_inflight.release()
             logger_emitter.debug("SessionEmitter store append scheduling failed (ignored)", exc_info=True)
 
+    def _emit_store_append_dropped(self) -> None:
+        import time
+
+        now = time.monotonic()
+        if now - self._last_store_drop_warn < 1.0:
+            return
+        self._last_store_drop_warn = now
+        self.emit_error(
+            severity="transient",
+            message="EventStore append dropped (inflight cap); reconnect replay may be incomplete.",
+            stage="store.append.dropped",
+            persist=False,
+        )
+
     async def drain_store_appends(self, timeout: float = 5.0) -> None:
         """Wait for in-flight EventStore append tasks (tests / shutdown)."""
         await self._store_append_inflight.drain(timeout=timeout)
@@ -2002,7 +2033,7 @@ class SessionEmitter:
             return evt.model_copy(update=updates)
         return evt
 
-    def _write(self, evt: Envelope) -> None:
+    def _write(self, evt: Envelope, *, persist: bool = True) -> None:
         evt = self._with_trace(evt)
         typ = str(getattr(evt, "type", ""))
         wire_ok = self._subscription_allows_wire(typ)
@@ -2020,7 +2051,7 @@ class SessionEmitter:
             except Exception:
                 # ``on_emit`` is observation-only; failures must not affect the wire.
                 logger_emitter.debug("SessionEmitter on_emit callback failed (ignored)", exc_info=True)
-        if self._store is not None:
+        if self._store is not None and persist:
             self._schedule_store_append(evt)
         self._last_event_id = evt.id
 
@@ -2121,7 +2152,7 @@ class AsyncSessionEmitter(SessionEmitter):
 
     # ── override _write to enqueue instead of block ─────────────────────────
 
-    def _write(self, evt: Envelope) -> None:
+    def _write(self, evt: Envelope, *, persist: bool = True) -> None:
         evt = self._with_trace(evt)
         typ = str(getattr(evt, "type", ""))
         wire_ok = self._subscription_allows_wire(typ)
@@ -2136,7 +2167,7 @@ class AsyncSessionEmitter(SessionEmitter):
                 self._on_emit(evt)
             except Exception:
                 logger_emitter.debug("AsyncSessionEmitter on_emit callback failed (ignored)", exc_info=True)
-        if self._store is not None:
+        if self._store is not None and persist:
             self._schedule_store_append(evt)
         self._last_event_id = evt.id
 

@@ -93,6 +93,7 @@ const d = {
     work_kind: z.string().optional(),
     completion_ratio: z.number().optional(),
     task_count: z.number().optional(),
+    ledger_revision: z.number().optional(),
     harness_plan: z.array(z.object({
       task_id: z.string(),
       description: z.string(),
@@ -114,6 +115,7 @@ const d = {
     status: z.string(),
     notes: z.string().optional(),
     project: z.string().optional(),
+    ledger_revision: z.number().optional(),
   }),
   contextSummarized: z.object({
     scope: z.enum(['session', 'harness', 'job', 'injection']),

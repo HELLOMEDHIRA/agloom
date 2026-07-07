@@ -377,8 +377,19 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> str | None:
             work_kind=_str(data.get("work_kind")) or None,
             completion_ratio=float(data.get("completion_ratio") or 0.0),
             task_count=_int(data.get("task_count")) or 0,
+            ledger_revision=_int(data.get("ledger_revision")) or 0,
             harness_plan=harness_plan_tasks_wire_from_wire(data.get("harness_plan")),
             tasks=ledger_tasks_wire_from_wire(data.get("tasks")),
+        )
+        return
+
+    if et in ("harness.task.updated", "harness_task_updated"):
+        emitter.emit_harness_task_updated(
+            task_id=_str(data.get("task_id")) or "",
+            status=_str(data.get("status")) or "",
+            notes=_str(data.get("notes")) or "",
+            project=_str(data.get("project")),
+            ledger_revision=_int(data.get("ledger_revision")) or 0,
         )
         return
 
@@ -409,15 +420,6 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> str | None:
             query_preview=_str(data.get("query_preview")),
             hits=_int(data.get("hits")) or 0,
             injected_chars=_int(data.get("injected_chars")) or 0,
-        )
-        return
-
-    if et in ("harness.task.updated", "harness_task_updated"):
-        emitter.emit_harness_task_updated(
-            task_id=_str(data.get("task_id")) or "",
-            status=_str(data.get("status")) or "",
-            notes=_str(data.get("notes")) or "",
-            project=_str(data.get("project")),
         )
         return
 

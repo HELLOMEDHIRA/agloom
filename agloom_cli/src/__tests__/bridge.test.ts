@@ -297,4 +297,38 @@ describe('AGPBridge — auto-reconnect', () => {
     expect(spawn).toHaveBeenCalledTimes(2)
     bridge.kill()
   })
+
+  it('clears eventPreBuffer on reconnect start', () => {
+    const { spawn } = jest.requireMock('node:child_process') as { spawn: jest.Mock }
+    spawn.mockClear()
+    exitListeners.length = 0
+    const bridge = createAGPBridge()
+    bridge.start([], { autoReconnect: true, reconnectDelayMs: 500, reconnectMaxAttempts: 2 })
+
+    const stale = JSON.stringify({
+      ...env(),
+      type: 'session.opened',
+      data: { runtime_version: '0.1.0', protocol_version: '1' },
+    })
+    mockStdoutEmitter.emit('data', `${stale}\n`)
+
+    for (const fn of exitListeners.splice(0)) {
+      fn(1, null)
+    }
+    jest.advanceTimersByTime(500)
+
+    const received: string[] = []
+    bridge.on('event', (e) => received.push(e.type))
+
+    const fresh = JSON.stringify({
+      ...env({ seq: 2, id: 'evt_2' }),
+      type: 'runtime.ready',
+      data: { agent_name: 'agent' },
+    })
+    mockStdoutEmitter.emit('data', `${fresh}\n`)
+
+    expect(received).not.toContain('session.opened')
+    expect(received).toContain('runtime.ready')
+    bridge.kill()
+  })
 })

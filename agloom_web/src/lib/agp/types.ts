@@ -105,6 +105,7 @@ export interface HarnessSyncedEvent extends Envelope {
     work_kind?: string
     completion_ratio?: number
     task_count?: number
+    ledger_revision?: number
     harness_plan?: HarnessPlanTaskWire[]
     tasks?: HarnessLedgerTaskWire[]
   }
@@ -117,6 +118,7 @@ export interface HarnessTaskUpdatedEvent extends Envelope {
     status: string
     notes?: string
     project?: string
+    ledger_revision?: number
   }
 }
 

@@ -159,14 +159,18 @@ class SessionMemory:
         if self.summarizer_model is None or len(turns) < 4:
             return turns
 
-        total = _total_tokens(turns)
-        if total <= self._effective_summarize_token_threshold():
-            return turns
-
-        compressed, _ = summarize_oldest_turns_sync(
-            turns,
-            summarizer_model=self.summarizer_model,
-        )
+        threshold = self._effective_summarize_token_threshold()
+        compressed = turns
+        for _ in range(3):
+            if _total_tokens(compressed) <= threshold or len(compressed) < 4:
+                break
+            next_turns, _ = summarize_oldest_turns_sync(
+                compressed,
+                summarizer_model=self.summarizer_model,
+            )
+            if len(next_turns) >= len(compressed):
+                break
+            compressed = next_turns
         return compressed
 
     async def _maybe_summarize(self, turns: list[dict]) -> tuple[list[dict], Any | None]:
@@ -339,43 +343,46 @@ class SessionMemory:
 
     def format_context(self, thread_id: str, last_n: int = 3) -> str:
         """SYNC — InMemoryStore only. Use aformat_context() for async stores."""
-        ns = self._ns(thread_id)
-        try:
-            item = self.store.get(ns, "turns")
-            turns = item.value.get("turns", []) if item else []
-        except Exception as exc:
-            logger.debug(f"SessionMemory.format_context read failed: {exc!r}")
-            return ""
-        return self._format_turns(turns, last_n)
+        with self._sync_turn_lock:
+            ns = self._ns(thread_id)
+            try:
+                item = self.store.get(ns, "turns")
+                turns = item.value.get("turns", []) if item else []
+            except Exception as exc:
+                logger.debug(f"SessionMemory.format_context read failed: {exc!r}")
+                return ""
+            return self._format_turns(turns, last_n)
 
     async def aformat_context(self, thread_id: str, last_n: int = 3) -> str:
         """Async version — works with all store backends."""
-        ns = self._ns(thread_id)
-        try:
-            item = await self.store.aget(ns, "turns")
-            turns = item.value.get("turns", []) if item else []
-        except Exception as exc:
-            logger.debug(f"SessionMemory.aformat_context read failed: {exc!r}")
-            return ""
-        return self._format_turns(turns, last_n)
+        async with self._turn_lock:
+            ns = self._ns(thread_id)
+            try:
+                item = await self.store.aget(ns, "turns")
+                turns = item.value.get("turns", []) if item else []
+            except Exception as exc:
+                logger.debug(f"SessionMemory.aformat_context read failed: {exc!r}")
+                return ""
+            return self._format_turns(turns, last_n)
 
     async def aclear_thread(self, thread_id: str) -> None:
         """Remove persisted turns for *thread_id* (short-term session memory key)."""
-        ns = self._ns(thread_id)
-        key = "turns"
-        if hasattr(self.store, "adelete"):
-            await self.store.adelete(ns, key)
-            return
-        if hasattr(self.store, "aput"):
-            await self.store.aput(ns, key, {"turns": []})
-            return
-        try:
-            delete = getattr(self.store, "delete", None)
-            if callable(delete):
-                delete(ns, key)
+        async with self._turn_lock:
+            ns = self._ns(thread_id)
+            key = "turns"
+            if hasattr(self.store, "adelete"):
+                await self.store.adelete(ns, key)
                 return
-            put = getattr(self.store, "put", None)
-            if callable(put):
-                put(ns, key, {"turns": []})
-        except Exception as exc:
-            logger.warning(f"SessionMemory.aclear_thread fallback failed: {exc!r}")
+            if hasattr(self.store, "aput"):
+                await self.store.aput(ns, key, {"turns": []})
+                return
+            try:
+                delete = getattr(self.store, "delete", None)
+                if callable(delete):
+                    delete(ns, key)
+                    return
+                put = getattr(self.store, "put", None)
+                if callable(put):
+                    put(ns, key, {"turns": []})
+            except Exception as exc:
+                logger.warning(f"SessionMemory.aclear_thread fallback failed: {exc!r}")

@@ -481,7 +481,7 @@ class ProgressTracker:
                 disk_artifact = self._load_from_disk()
                 if disk_artifact:
                     self._artifact = disk_artifact
-                    await self.save_progress()
+                    await self._save_progress_unlocked()
                     logger.info(f"[Progress] Loaded artifact from disk: {len(self._artifact.tasks)} tasks")
                 else:
                     self._artifact = ProgressArtifact(
@@ -497,7 +497,7 @@ class ProgressTracker:
 
             self._artifact.total_sessions += 1
             self._artifact.updated_at = datetime.now(UTC).isoformat()
-            await self.save_progress()
+            await self._save_progress_unlocked()
 
             return self._artifact
 
@@ -518,6 +518,11 @@ class ProgressTracker:
 
     async def save_progress(self) -> None:
         """Persist current artifact to LongTermStore."""
+        async with self._lock:
+            await self._save_progress_unlocked()
+
+    async def _save_progress_unlocked(self) -> None:
+        """Persist artifact; caller must hold ``_lock`` or call ``save_progress()``."""
         if self._artifact is None:
             return
         expected = self._artifact.version or 0
@@ -626,7 +631,7 @@ class ProgressTracker:
                 notes=notes,
             )
             self.artifact.tasks.append(task)
-            await self.save_progress()
+            await self._save_progress_unlocked()
             logger.info(f"[Progress] Added task: [{task_id}] {description[:60]}")
             return task
 
@@ -675,9 +680,36 @@ class ProgressTracker:
             if notes is not None:
                 task.notes = notes
 
-            await self.save_progress()
+            await self._save_progress_unlocked()
             await self._emit_task_updated(task)
             return task
+
+    def ledger_revision(self) -> int:
+        """Monotonic artifact version for harness wire ordering."""
+        if self._artifact is None:
+            return 0
+        return self._artifact.version or 0
+
+    async def set_work_kind(self, kind: str) -> None:
+        """Update artifact work_kind under the tracker lock."""
+        if not kind.strip():
+            return
+        async with self._lock:
+            if self._artifact is not None:
+                self._artifact.work_kind = kind.strip()
+
+    async def aget_classifier_context(self) -> str:
+        """Build the progress context block for classifier prompts."""
+        async with self._lock:
+            if self._artifact is None:
+                return ""
+            return self._artifact.to_classifier_context()
+
+    def get_classifier_context(self) -> str:
+        """Sync classifier context (prefer :meth:`aget_classifier_context`)."""
+        if self._artifact is None:
+            return ""
+        return self._artifact.to_classifier_context()
 
     async def _emit_task_updated(self, task: Task) -> None:
         try:
@@ -689,6 +721,7 @@ class ProgressTracker:
                 notes=task.notes,
                 project=self._project_name,
                 event_queue=self._event_queue,
+                ledger_revision=self.ledger_revision(),
             )
         except Exception as exc:
             logger.debug(f"[Progress] harness.task.updated emit failed: {exc!r}")
@@ -699,7 +732,7 @@ class ProgressTracker:
             task = self.artifact.get_next_task(session_id)
             if task:
                 task.mark_in_progress(session_id)
-                await self.save_progress()
+                await self._save_progress_unlocked()
                 await self._emit_task_updated(task)
                 logger.info(f"[Progress] Session {session_id} claimed task: [{task.id}]")
             else:
@@ -776,12 +809,6 @@ class ProgressTracker:
         if self._current_session and self._current_session in self._session_states:
             return self._session_states[self._current_session]
         return None
-
-    def get_classifier_context(self) -> str:
-        """Build the progress context block for classifier prompts."""
-        if self._artifact is None:
-            return ""
-        return self._artifact.to_classifier_context()
 
     async def export_feature_list(self) -> str:
         """Export full feature list as Anthropic-format JSON string."""

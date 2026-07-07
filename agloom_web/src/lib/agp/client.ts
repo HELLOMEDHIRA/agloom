@@ -8,6 +8,9 @@ type Listener<T> = (value: T) => void
 
 const MAX_RECONNECT_MS = 30_000
 const RECONNECT_JITTER_MS = 500
+const MAX_OUTBOUND_QUEUE = 32
+
+type QueuedCommand = { cmd: AGPCommand; droppedNote?: string }
 
 export interface AGPClient {
   readonly status: ConnectionStatus
@@ -24,6 +27,7 @@ export interface AGPClient {
   configSet(data: CommandConfigSetCmd['data']): void
   memoryClear(thread?: string): void
   memoryPopLastTurn(thread?: string): void
+  resume(thread: string, fromSeq?: number): void
   planPreview(prompt: string): void
   harnessGit(
     op: 'checkpoint' | 'diff' | 'status' | 'checkpoints' | 'revert_hint',
@@ -37,6 +41,9 @@ export interface AGPClient {
 export const createAGPClient = (
   url = `ws://${window.location.hostname}:8765`,
   reconnectMs = 2000,
+  options?: {
+    getResumeState?: () => { thread: string | null; fromSeq: number }
+  },
 ): AGPClient => {
   let ws: WebSocket | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -44,6 +51,8 @@ export const createAGPClient = (
   const baseReconnectMs = reconnectMs
   let currentReconnectMs = reconnectMs
   let connectionStatus: ConnectionStatus = 'closed'
+  let hasConnectedOnce = false
+  const outboundQueue: QueuedCommand[] = []
 
   const eventListeners = new Set<Listener<AGPEvent>>()
   const statusListeners = new Set<Listener<ConnectionStatus>>()
@@ -58,7 +67,39 @@ export const createAGPClient = (
     statusListeners.forEach((l) => l(s))
   }
 
-  const open = (): void => {
+  const flushOutboundQueue = (): void => {
+    if (ws?.readyState !== WebSocket.OPEN) return
+    while (outboundQueue.length > 0) {
+      const item = outboundQueue.shift()!
+      if (item.droppedNote) emitDiagnostic(item.droppedNote)
+      ws.send(JSON.stringify(item.cmd))
+    }
+  }
+
+  const enqueueOrSend = (cmd: AGPCommand): void => {
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(cmd))
+      return
+    }
+    if (outboundQueue.length >= MAX_OUTBOUND_QUEUE) {
+      const dropped = outboundQueue.shift()
+      if (dropped) {
+        outboundQueue.push({
+          cmd,
+          droppedNote: `[agp] outbound queue full; dropped oldest ${dropped.cmd.type}`,
+        })
+        return
+      }
+    }
+    outboundQueue.push({ cmd })
+    if (connectionStatus === 'connecting') {
+      emitDiagnostic(`[agp] queued outbound ${cmd.type} while connecting`)
+    } else {
+      emitDiagnostic(`[agp] queued outbound ${cmd.type}: WebSocket not open (state=${ws?.readyState ?? 'none'})`)
+    }
+  }
+
+  const open = (resumeAfterReconnect?: { thread: string; fromSeq: number }): void => {
     setStatus('connecting')
     const socket = new WebSocket(url)
     ws = socket
@@ -67,6 +108,14 @@ export const createAGPClient = (
       currentReconnectMs = baseReconnectMs
       setStatus('open')
       emitDiagnostic(`[agp] connected to ${url}`)
+      if (resumeAfterReconnect && resumeAfterReconnect.fromSeq > 0) {
+        enqueueOrSend({
+          type: 'command.session.resume',
+          data: { thread: resumeAfterReconnect.thread, from_seq: resumeAfterReconnect.fromSeq },
+        })
+      }
+      flushOutboundQueue()
+      hasConnectedOnce = true
     }
 
     socket.onmessage = (ev: MessageEvent<string>) => {
@@ -89,7 +138,18 @@ export const createAGPClient = (
       if (shouldReconnect) {
         setStatus('connecting')
         const jitter = Math.floor(Math.random() * RECONNECT_JITTER_MS)
-        reconnectTimer = setTimeout(() => open(), currentReconnectMs + jitter)
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null
+          const resumeState =
+            hasConnectedOnce && options?.getResumeState
+              ? options.getResumeState()
+              : null
+          if (resumeState?.thread && resumeState.fromSeq > 0) {
+            open({ thread: resumeState.thread, fromSeq: resumeState.fromSeq })
+          } else {
+            open()
+          }
+        }, currentReconnectMs + jitter)
         currentReconnectMs = Math.min(currentReconnectMs * 2, MAX_RECONNECT_MS)
       } else {
         setStatus('closed')
@@ -114,17 +174,14 @@ export const createAGPClient = (
         clearTimeout(reconnectTimer)
         reconnectTimer = null
       }
+      outboundQueue.length = 0
       ws?.close()
       ws = null
       setStatus('closed')
     },
 
     send(cmd: AGPCommand): void {
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(cmd))
-        return
-      }
-      emitDiagnostic(`[agp] dropped outbound ${cmd.type}: WebSocket not open (state=${ws?.readyState ?? 'none'})`)
+      enqueueOrSend(cmd)
     },
 
     invoke(prompt: string, thread?: string): void {
@@ -168,6 +225,13 @@ export const createAGPClient = (
 
     memoryPopLastTurn(thread?: string): void {
       api.send({ type: 'command.memory.pop_last_turn', data: { thread } })
+    },
+
+    resume(thread: string, fromSeq?: number): void {
+      api.send({
+        type: 'command.session.resume',
+        data: { thread, from_seq: fromSeq ?? 0 },
+      })
     },
 
     planPreview(prompt: string): void {

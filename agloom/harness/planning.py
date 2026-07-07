@@ -130,12 +130,12 @@ def merge_harness_plan_from_subtasks(analysis: QueryAnalysis) -> QueryAnalysis:
     )
 
 
-def apply_work_kind_from_analysis(tracker: Any, analysis: QueryAnalysis) -> None:
+async def apply_work_kind_from_analysis(tracker: Any, analysis: QueryAnalysis) -> None:
     """Update artifact ``work_kind`` when the planner sends a non-empty label."""
     kind = (analysis.harness_work_kind or "").strip()
     if not kind:
         return
-    tracker.artifact.work_kind = kind
+    await tracker.set_work_kind(kind)
 
 
 def _priority_and_steps(item: HarnessPlanTask) -> tuple[Any, list[Any]]:
@@ -223,7 +223,7 @@ async def sync_harness_from_analysis(
     Persist planner harness output. Seeds empty artifacts; appends when ``allow_replan``.
     """
     analysis = merge_harness_plan_from_subtasks(analysis)
-    apply_work_kind_from_analysis(tracker, analysis)
+    await apply_work_kind_from_analysis(tracker, analysis)
 
     if tracker.artifact.tasks:
         if not allow_replan:

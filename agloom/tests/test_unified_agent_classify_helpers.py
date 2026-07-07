@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -85,7 +85,7 @@ async def test_build_harness_context_returns_empty_when_disabled() -> None:
 async def test_build_harness_context_reads_progress_tracker(monkeypatch: pytest.MonkeyPatch) -> None:
     tracker = MagicMock()
     tracker.artifact.tasks = []
-    tracker.get_classifier_context.return_value = "harness-body"
+    tracker.aget_classifier_context = AsyncMock(return_value="harness-body")
 
     def fake_build(metadata, progress_snippet, *, needs_plan: bool, needs_replan: bool = False) -> str:
         assert needs_plan is True

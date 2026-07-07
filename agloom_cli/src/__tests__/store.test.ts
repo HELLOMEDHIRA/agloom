@@ -7,14 +7,18 @@ import type { AGPEvent } from '../types/agp'
 
 // helpers
 
+let _envSeq = 0
+let _envId = 0
 const env = (overrides: Partial<Pick<AGPEvent, 'v' | 'session' | 'seq' | 'ts' | 'id'>> = {}): Pick<AGPEvent, 'v' | 'session' | 'seq' | 'ts' | 'id'> => {
+  const seq = overrides.seq ?? ++_envSeq
+  const id = overrides.id ?? `evt_test_${(++_envId).toString(36).padStart(28, '0')}`
   return {
-    v: '1',
+    v: '1' as const,
     session: 'test-session',
-    seq: 1,
+    seq,
     ts: new Date().toISOString(),
-    id: '00000000000000000000000000000001',
     ...overrides,
+    id,
   }
 }
 
@@ -29,6 +33,8 @@ const state = () => {
 // reset between tests
 
 beforeEach(() => {
+  _envSeq = 0
+  _envId = 0
   useSessionStore.getState().reset()
 })
 
@@ -365,9 +371,9 @@ describe('metric.tokens', () => {
     dispatch({ ...env({ seq: 1 }), type: 'metric.tokens', data: { input_tokens: 70_000, output_tokens: 100 } })
     dispatch({ ...env({ seq: 2 }), type: 'metric.tokens', data: { input_tokens: 68_000, output_tokens: 50 } })
     expect(state().turnInputTokens).toBe(70_000)
-    expect(state().turnOutputTokens).toBe(150)
+    expect(state().turnOutputTokens).toBe(100)
     dispatch({ ...env(), type: 'message.assistant', data: { content: 'ok', pattern: 'REACT' } })
-    expect(state().completedTurns[0]?.tokens).toBe('↑70.0k ↓150')
+    expect(state().completedTurns[0]?.tokens).toBe('↑70.0k ↓100')
   })
 })
 
@@ -622,5 +628,46 @@ describe('dispatch default / unknown AGP types', () => {
       data: { x: 1 },
     } as unknown as AGPEvent)
     expect(state().protocolNotes.some((n) => n.includes('Unknown / unhandled AGP event'))).toBe(true)
+  })
+})
+
+describe('replay dedup', () => {
+  it('session.resumed with replay resets transcript-derived state', () => {
+    dispatch({ ...env({ seq: 1 }), type: 'message.user', data: { content: 'hi' } })
+    dispatch({ ...env({ seq: 2 }), type: 'metric.cost', data: { cost: 0.01, model: 'm' } })
+    dispatch({
+      ...env({ seq: 3 }),
+      type: 'session.resumed',
+      data: { runtime_version: '0.1.0', protocol_version: '1', replayed_from_seq: 2 },
+    })
+    expect(state().completedTurns).toEqual([])
+    expect(state().totalCostUsd).toBe(0)
+    expect(state().replayBaselineSeq).toBe(2)
+  })
+
+  it('skips replayed metric.cost at or below baseline', () => {
+    dispatch({
+      ...env({ seq: 3 }),
+      type: 'session.resumed',
+      data: { runtime_version: '0.1.0', protocol_version: '1', replayed_from_seq: 5 },
+    })
+    dispatch({ ...env({ seq: 4, id: 'cost-replay' }), type: 'metric.cost', data: { cost: 0.5, model: 'm' } })
+    expect(state().totalCostUsd).toBe(0)
+    dispatch({ ...env({ seq: 6, id: 'cost-live' }), type: 'metric.cost', data: { cost: 0.2, model: 'm' } })
+    expect(state().totalCostUsd).toBeCloseTo(0.2)
+  })
+
+  it('ignores stale harness.synced when ledger_revision is older', () => {
+    dispatch({
+      ...env({ seq: 10 }),
+      type: 'harness.task.updated',
+      data: { task_id: 't1', status: 'in_progress', ledger_revision: 5 },
+    })
+    dispatch({
+      ...env({ seq: 11 }),
+      type: 'harness.synced',
+      data: { action: 'skip', task_count: 0, completion_ratio: 0, ledger_revision: 3, tasks: [] },
+    })
+    expect(state().harnessLedgerRevision).toBe(5)
   })
 })

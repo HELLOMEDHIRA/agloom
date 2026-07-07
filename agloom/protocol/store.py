@@ -110,6 +110,10 @@ class EventStore(ABC):
         """Return distinct session ids that have at least one stored event, sorted lexically."""
 
     @abstractmethod
+    async def max_seq(self, session_id: str) -> int:
+        """Return the highest stored ``seq`` for ``session_id``, or ``0`` when empty."""
+
+    @abstractmethod
     async def rename_session(self, old_session_id: str, new_session_id: str) -> None:
         """Move all stored events from *old_session_id* to *new_session_id* (replay key migration)."""
 
@@ -155,6 +159,14 @@ class MemoryEventStore(EventStore):
     async def list_session_ids(self) -> list[str]:
         async with self._lock:
             return sorted(self._store.keys())
+
+    async def max_seq(self, session_id: str) -> int:
+        _validate_session_id(session_id)
+        async with self._lock:
+            events = self._store.get(session_id, [])
+            if not events:
+                return 0
+            return max(int(e.get("seq", 0) or 0) for e in events)
 
     async def rename_session(self, old_session_id: str, new_session_id: str) -> None:
         _validate_session_id(old_session_id)
@@ -307,6 +319,17 @@ class SqliteEventStore(EventStore):
             conn.commit()
             self._pending_commits = 0
 
+    def _sync_max_seq(self, session_id: str) -> int:
+        with self._conn_lock:
+            conn = self._connect_unlocked()
+            row = conn.execute(
+                "SELECT MAX(seq) FROM agp_events WHERE session = ?",
+                (session_id,),
+            ).fetchone()
+            if not row or row[0] is None:
+                return 0
+            return int(row[0])
+
     def _sync_list_sessions(self) -> list[str]:
         with self._conn_lock:
             conn = self._connect_unlocked()
@@ -383,6 +406,11 @@ class SqliteEventStore(EventStore):
     async def list_session_ids(self) -> list[str]:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._sync_list_sessions)
+
+    async def max_seq(self, session_id: str) -> int:
+        _validate_session_id(session_id)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._sync_max_seq, session_id)
 
     def close(self) -> None:
         if self._conn is not None:

@@ -11,16 +11,30 @@ import { bannerEnvDisabled } from '../banner.js'
 export const useAGPStream = (bridge: AGPBridge): void => {
   // Ref-guard prevents double-subscription in React 18+ strict mode.
   const attachedRef = useRef(false)
+  const pendingReconnectResumeRef = useRef(false)
 
   useEffect(() => {
     if (attachedRef.current) return
     attachedRef.current = true
+
+    const maybeResumeAfterReconnect = (evt: AGPEvent): void => {
+      if (!pendingReconnectResumeRef.current) return
+      if (evt.type !== 'runtime.ready' && evt.type !== 'session.opened') return
+      pendingReconnectResumeRef.current = false
+      const st = useSessionStore.getState()
+      const thread = st.activeThreadId
+      const fromSeq = st.lastSeenSeq ?? 0
+      if (!thread || fromSeq <= 0) return
+      bridge.resume(thread, fromSeq)
+      st.appendProtocolNote(`Reconnect resume · thread=${thread} · from_seq=${fromSeq}`)
+    }
 
     const onEvent = (evt: AGPEvent) => {
       if (evt.type === 'runtime.ready' && evt.data.harness_enabled != null && !bannerEnvDisabled()) {
         const on = evt.data.harness_enabled
         process.stderr.write(`[agloom] harness ${on ? 'on' : 'off'}\n`)
       }
+      maybeResumeAfterReconnect(evt)
       useSessionStore.getState().dispatch(evt)
     }
     const onDiag = (line: string) => {
@@ -30,6 +44,9 @@ export const useAGPStream = (bridge: AGPBridge): void => {
       const code = info.code
       const sig = info.signal
       const st = useSessionStore.getState()
+      if (code !== 0 && code !== null) {
+        pendingReconnectResumeRef.current = true
+      }
       st.addDiagnostic(
         `[runtime] agloom-runtime exited (code=${code === null ? 'null' : String(code)}, signal=${sig ?? 'none'})`,
       )

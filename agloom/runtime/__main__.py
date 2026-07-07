@@ -474,6 +474,8 @@ async def _serve_stdio(args: argparse.Namespace) -> int:
 
     is_resume = store is not None and await store.count(session_id) > 0
     if is_resume:
+        if store is not None:
+            emitter.seed_seq(await store.max_seq(session_id))
         emitter.resume(resumed_from_thread=initial_thread)
         async for evt_dict in store.replay(session_id, from_seq=0):
             emitter.write_replay_dict(evt_dict)

@@ -6,6 +6,8 @@ import io
 import json
 import threading
 
+import pytest
+
 from agloom.protocol import SessionEmitter, event_adapter
 
 
@@ -410,6 +412,37 @@ def test_async_emitter_write_replay_dict_respects_subscription() -> None:
     joined = asyncio.run(_run())
     assert "pattern.classified" not in joined
     assert "thinking.step" in joined
+
+
+@pytest.mark.asyncio
+async def test_emitter_emits_store_append_dropped_when_cap_exceeded() -> None:
+    from agloom.protocol.emitter import SessionEmitter, _SharedStoreAppendInflight
+    from agloom.protocol.store import MemoryEventStore
+
+    inflight = _SharedStoreAppendInflight()
+    for _ in range(128):
+        assert inflight.try_acquire()
+
+    buf = io.StringIO()
+    store = MemoryEventStore()
+    em = SessionEmitter(
+        session="s",
+        thread="t",
+        writer=buf,
+        store=store,
+        _store_append_inflight=inflight,
+    )
+    em.open()
+    em.emit_thinking_step(step="overflow")
+    await em.drain_store_appends()
+
+    events = _read_events(buf)
+    dropped = [
+        e
+        for e in events
+        if e.type == "error.transient" and getattr(e.data, "stage", None) == "store.append.dropped"
+    ]
+    assert dropped
 
 
 def test_async_emitter_fork_shares_drain_queue() -> None:

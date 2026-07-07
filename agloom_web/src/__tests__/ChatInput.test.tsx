@@ -25,6 +25,7 @@ const mockClient = {
   configSet: jest.fn(),
   memoryClear: jest.fn(),
   memoryPopLastTurn: jest.fn(),
+  resume: jest.fn(),
   planPreview: jest.fn(),
   harnessGit: jest.fn(),
 } satisfies Partial<AGPClient>

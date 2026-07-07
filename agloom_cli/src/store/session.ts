@@ -127,6 +127,16 @@ export interface SessionStore {
   totalOutputTokens: number
   /** Last ``metric.tokens`` seq applied — ignore duplicate/out-of-order replays. */
   lastMetricTokensSeq: number
+  /** Last ``metric.cost`` seq applied — ignore duplicate/out-of-order replays. */
+  lastMetricCostSeq: number
+  /** Highest AGP ``seq`` seen on the wire (resume / dedup). */
+  lastSeenSeq: number
+  /** Replay floor from ``session.resumed.replayed_from_seq`` — skip stale events at or below. */
+  replayBaselineSeq: number
+  /** AGP event ids already applied (reconnect replay dedup). */
+  seenEventIds: string[]
+  /** Monotonic harness ledger revision from wire ``ledger_revision``. */
+  harnessLedgerRevision: number
   /** Token deltas attributed to the in-flight turn only (reset each `message.user`). */
   turnInputTokens: number
   turnOutputTokens: number
@@ -216,6 +226,11 @@ export const useSessionStore = create<SessionStore>((set) => ({
   totalInputTokens: 0,
   totalOutputTokens: 0,
   lastMetricTokensSeq: 0,
+  lastMetricCostSeq: 0,
+  lastSeenSeq: 0,
+  replayBaselineSeq: 0,
+  seenEventIds: [],
+  harnessLedgerRevision: 0,
   turnInputTokens: 0,
   turnOutputTokens: 0,
   metricsHistory: [],
@@ -280,6 +295,11 @@ export const useSessionStore = create<SessionStore>((set) => ({
       totalInputTokens: 0,
       totalOutputTokens: 0,
       lastMetricTokensSeq: 0,
+      lastMetricCostSeq: 0,
+      lastSeenSeq: 0,
+      replayBaselineSeq: 0,
+      seenEventIds: [],
+      harnessLedgerRevision: 0,
       turnInputTokens: 0,
       turnOutputTokens: 0,
       metricsHistory: [],

@@ -310,6 +310,7 @@ async def dispatch_command(
     if isinstance(cmd, CommandSessionResume):
         from_seq = max(0, cmd.data.from_seq or 0)
         if store is not None:
+            emitter.seed_seq(await store.max_seq(session_id))
             emitter.resume(resumed_from_thread=cmd.data.thread, replayed_from_seq=from_seq if from_seq > 0 else None)
             async for evt_dict in store.replay(session_id, from_seq=from_seq):
                 emitter.write_replay_dict(evt_dict)
@@ -644,8 +645,18 @@ async def dispatch_command(
             )
             return DispatchResult.CONTINUE
 
+        target_str = str(target)
+        existing_clear = thread_tasks.get(target_str)
+        if existing_clear is not None and not existing_clear.done():
+            emitter.emit_error(
+                severity="transient",
+                message=f"cannot clear session memory while invoke is running for thread {target_str!r}",
+                stage="memory.clear",
+            )
+            return DispatchResult.CONTINUE
+
         try:
-            await mem.aclear_thread(str(target))
+            await mem.aclear_thread(target_str)
         except Exception as exc:
             emitter.emit_error(severity="transient", message=str(exc), stage="memory.clear")
             return DispatchResult.CONTINUE
@@ -678,8 +689,18 @@ async def dispatch_command(
             )
             return DispatchResult.CONTINUE
 
+        target_str = str(target)
+        existing_pop = thread_tasks.get(target_str)
+        if existing_pop is not None and not existing_pop.done():
+            emitter.emit_error(
+                severity="transient",
+                message=f"cannot pop session turn while invoke is running for thread {target_str!r}",
+                stage="memory.pop_last_turn",
+            )
+            return DispatchResult.CONTINUE
+
         try:
-            remaining = await mem.apop_last_turn(str(target))
+            remaining = await mem.apop_last_turn(target_str)
         except Exception as exc:
             emitter.emit_error(severity="transient", message=str(exc), stage="memory.pop_last_turn")
             return DispatchResult.CONTINUE

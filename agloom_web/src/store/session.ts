@@ -4,6 +4,7 @@ import { create } from 'zustand'
 import type { AGPEvent, AGPKnownEvent } from '../lib/agp/types.js'
 import { isAgpKnownEvent } from '../lib/agp/agpEventGuards.js'
 import { harnessLedgerFromWire, harnessPlanToLedgerRows, patchHarnessLedgerTask } from '../lib/agp/harnessWire.js'
+import { replayResumeReset, shouldSkipReplayEvent, trackAgpEnvelope } from '../lib/agp/agpDedup.js'
 import {
   finalizeAssistantMessage,
   formatTurnTokenRollup,
@@ -88,6 +89,8 @@ export interface SessionStore {
   pendingAttachmentPaths: string[]
 
   sessionId: string | null
+  /** LangGraph thread from the latest ``session.opened`` / ``session.resumed`` envelope. */
+  activeThreadId: string | null
   runtimeVersion: string | null
   /** Client clock when `session.opened` / `session.resumed` arrived. */
   sessionOpenedAtMs: number | null
@@ -111,6 +114,12 @@ export interface SessionStore {
   totalOutputTokens: number
   /** Last ``metric.tokens`` seq applied — ignore duplicate/out-of-order replays. */
   lastMetricTokensSeq: number
+  /** Last ``metric.cost`` seq applied — ignore duplicate/out-of-order replays. */
+  lastMetricCostSeq: number
+  lastSeenSeq: number
+  replayBaselineSeq: number
+  seenEventIds: string[]
+  harnessLedgerRevision: number
   /** Token deltas attributed to the in-flight turn only (reset each `message.user`). */
   turnInputTokens: number
   turnOutputTokens: number
@@ -386,6 +395,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
   hitlQueue: [],
   pendingAttachmentPaths: [],
   sessionId: null,
+  activeThreadId: null,
   runtimeVersion: null,
   sessionOpenedAtMs: null,
   model: null,
@@ -397,6 +407,11 @@ export const useSessionStore = create<SessionStore>((set) => ({
   totalInputTokens: 0,
   totalOutputTokens: 0,
   lastMetricTokensSeq: 0,
+  lastMetricCostSeq: 0,
+  lastSeenSeq: 0,
+  replayBaselineSeq: 0,
+  seenEventIds: [],
+  harnessLedgerRevision: 0,
   turnInputTokens: 0,
   turnOutputTokens: 0,
   metricsHistory: [],
@@ -413,6 +428,9 @@ export const useSessionStore = create<SessionStore>((set) => ({
   sessionCatalogIds: [],
 
   dispatch: (evt) => set((s) => {
+    if (shouldSkipReplayEvent(s, evt)) return s
+    s = trackAgpEnvelope(s, evt)
+
     if (!isAgpKnownEvent(evt)) {
       const trace: TraceEvent[] = [
         ...s.executionTrace,
@@ -445,6 +463,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
           ...s,
           executionTrace: trace,
           sessionId: evt.session,
+          activeThreadId: evt.thread ?? s.activeThreadId,
           runtimeVersion: evt.data.runtime_version,
           sessionOpenedAtMs: Date.now(),
           status: 'idle',
@@ -454,11 +473,15 @@ export const useSessionStore = create<SessionStore>((set) => ({
           lastMetricTokensSeq: 0,
         }
 
-      case 'session.resumed':
+      case 'session.resumed': {
+        const replayFrom = evt.data.replayed_from_seq ?? 0
+        const replayReset = replayFrom > 0 ? replayResumeReset(replayFrom) : {}
         return {
           ...s,
+          ...replayReset,
           executionTrace: trace,
           sessionId: evt.session,
+          activeThreadId: evt.thread ?? evt.data.resumed_from_thread ?? s.activeThreadId,
           runtimeVersion: evt.data.runtime_version,
           sessionOpenedAtMs: Date.now(),
           status: 'idle',
@@ -466,11 +489,14 @@ export const useSessionStore = create<SessionStore>((set) => ({
           toolCallExpandedById: {},
           budgetUi: 'ok',
           budgetLast: null,
+          replayBaselineSeq: replayFrom > 0 ? replayFrom : s.replayBaselineSeq,
+          lastSeenSeq: replayFrom > 0 ? replayFrom : s.lastSeenSeq,
           protocolNotes: pushProtocolNotes(
             s.protocolNotes,
             `Session resumed${evt.data.replayed_from_seq != null ? ` · replay from seq=${evt.data.replayed_from_seq}` : ''}${evt.data.resumed_from_thread ? ` · ${evt.data.resumed_from_thread}` : ''}`,
           ),
         }
+      }
 
       case 'session.closed': {
         const isError = evt.data.reason === 'error'
@@ -742,22 +768,36 @@ export const useSessionStore = create<SessionStore>((set) => ({
       }
 
       case 'harness.synced': {
+        const rev = evt.data.ledger_revision ?? 0
+        if (rev > 0 && rev < (s.harnessLedgerRevision ?? 0)) {
+          return {
+            ...s,
+            executionTrace: trace,
+            protocolNotes: pushProtocolNotes(
+              s.protocolNotes,
+              `harness.synced · skipped stale revision ${rev} < ${s.harnessLedgerRevision}`,
+            ),
+          }
+        }
         const tasks = harnessLedgerFromWire(evt.data.tasks)
         const note = `harness.synced · ${evt.data.action} · ${evt.data.task_count ?? tasks.length} task(s) · ${Math.round((evt.data.completion_ratio ?? 0) * 100)}%`
         return {
           ...s,
           executionTrace: trace,
           harnessLedgerTasks: tasks.length ? tasks : s.harnessLedgerTasks,
+          harnessLedgerRevision: Math.max(s.harnessLedgerRevision ?? 0, rev),
           protocolNotes: pushProtocolNotes(s.protocolNotes, note),
         }
       }
 
       case 'harness.task.updated': {
+        const rev = evt.data.ledger_revision ?? evt.seq
         const note = `harness.task.updated · ${evt.data.task_id} · ${evt.data.status}${evt.data.notes ? ` · ${evt.data.notes}` : ''}`
         return {
           ...s,
           executionTrace: trace,
           harnessLedgerTasks: patchHarnessLedgerTask(s.harnessLedgerTasks ?? [], evt.data),
+          harnessLedgerRevision: Math.max(s.harnessLedgerRevision ?? 0, rev),
           protocolNotes: pushProtocolNotes(s.protocolNotes, note),
         }
       }
@@ -1099,26 +1139,39 @@ export const useSessionStore = create<SessionStore>((set) => ({
         const hist = [...s.metricsHistory, slice].slice(-80)
         const inTok = evt.data.input_tokens
         const outTok = evt.data.output_tokens
+        const m = evt.data.model
+        const sessionModel = m != null && m !== '' ? m : (s.model ?? null)
         return {
           ...s,
           executionTrace: trace,
           totalInputTokens: s.totalInputTokens + inTok,
           totalOutputTokens: s.totalOutputTokens + outTok,
           lastMetricTokensSeq: evt.seq,
-          turnInputTokens: s.activeTurn ? s.turnInputTokens + inTok : s.turnInputTokens,
-          turnOutputTokens: s.activeTurn ? s.turnOutputTokens + outTok : s.turnOutputTokens,
-          model: s.model ?? evt.data.model,
+          turnInputTokens: s.activeTurn
+            ? Math.max(s.turnInputTokens, inTok)
+            : s.turnInputTokens,
+          turnOutputTokens: s.activeTurn
+            ? Math.max(s.turnOutputTokens, outTok)
+            : s.turnOutputTokens,
+          model: sessionModel,
           metricsHistory: hist,
         }
       }
 
-      case 'metric.cost':
+      case 'metric.cost': {
+        if (evt.seq <= s.lastMetricCostSeq) {
+          return { ...s, executionTrace: trace }
+        }
+        const m = evt.data.model
+        const sessionModel = m != null && m !== '' ? m : (s.model ?? null)
         return {
           ...s,
           executionTrace: trace,
           totalCostUsd: s.totalCostUsd + evt.data.cost,
-          model: s.model ?? evt.data.model,
+          lastMetricCostSeq: evt.seq,
+          model: sessionModel,
         }
+      }
 
       case 'metric.budget.approaching':
         return {
@@ -1330,6 +1383,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
     executionTrace: [],
     artifacts: [],
     sessionId: null,
+    activeThreadId: null,
     runtimeVersion: null,
     model: null,
     protocolNotes: [],
@@ -1341,6 +1395,11 @@ export const useSessionStore = create<SessionStore>((set) => ({
     totalInputTokens: 0,
     totalOutputTokens: 0,
     lastMetricTokensSeq: 0,
+    lastMetricCostSeq: 0,
+    lastSeenSeq: 0,
+    replayBaselineSeq: 0,
+    seenEventIds: [],
+    harnessLedgerRevision: 0,
     turnInputTokens: 0,
     turnOutputTokens: 0,
     metricsHistory: [],

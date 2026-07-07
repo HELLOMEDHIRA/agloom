@@ -16,6 +16,7 @@ async def emit_harness_task_updated(
     status: str,
     notes: str = "",
     project: str | None = None,
+    ledger_revision: int = 0,
     event_queue: Any = None,
 ) -> None:
     """Notify AGP consumers that a harness ledger task changed."""
@@ -24,7 +25,16 @@ async def emit_harness_task_updated(
         "status": status,
         "notes": notes,
         "project": project,
+        "ledger_revision": ledger_revision,
     }
+    # Prefer the AgentEvent queue so translate() preserves FIFO order with harness.synced.
+    if event_queue is not None:
+        try:
+            await event_queue.put(AgentEvent(type="harness_task_updated", data=data))
+            return
+        except Exception as exc:
+            logger.debug(f"harness.task.updated queue path failed: {exc!r}")
+
     try:
         from ..runtime.invocation_context import get_invocation_emitter
 
@@ -39,9 +49,3 @@ async def emit_harness_task_updated(
             return
     except Exception as exc:
         logger.debug(f"harness.task.updated emitter path failed: {exc!r}")
-
-    if event_queue is not None:
-        try:
-            await event_queue.put(AgentEvent(type="harness_task_updated", data=data))
-        except Exception as exc:
-            logger.debug(f"harness.task.updated queue path failed: {exc!r}")

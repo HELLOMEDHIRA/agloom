@@ -9,14 +9,17 @@ import type { AGPEvent } from '../lib/agp/types'
 
 let _seq = 0
 const env = (overrides: Partial<Pick<AGPEvent, 'v' | 'session' | 'seq' | 'ts' | 'id'>> = {}): Pick<AGPEvent, 'v' | 'session' | 'seq' | 'ts' | 'id'> => {
-  const seq = ++_seq
-  return {
-    v: '1',
+  const seq = overrides.seq ?? ++_seq
+  const base = {
+    v: '1' as const,
     session: 'ws-session',
     seq,
     ts: new Date().toISOString(),
-    id: `evt-${seq.toString().padStart(8, '0')}`,
     ...overrides,
+  }
+  return {
+    ...base,
+    id: overrides.id ?? `evt-${String(base.seq).padStart(8, '0')}`,
   }
 }
 
@@ -450,5 +453,36 @@ describe('dispatch unknown AGP types', () => {
     } as unknown as AGPEvent)
     expect(state().protocolNotes.some((n) => n.includes('Unknown / unhandled AGP event'))).toBe(true)
     expect(state().executionTrace.some((t) => t.summary.includes('unknown: zz.custom.unhandled'))).toBe(true)
+  })
+})
+
+describe('replay dedup', () => {
+  it('session.resumed with replay resets transcript-derived state', () => {
+    dispatch({ ...env({ seq: 1 }), type: 'message.user', data: { content: 'hi' } })
+    dispatch({ ...env({ seq: 2 }), type: 'metric.cost', data: { cost: 0.01, model: 'm' } })
+    dispatch({
+      ...env({ seq: 3 }),
+      type: 'session.resumed',
+      data: { runtime_version: '0.1.0', protocol_version: '1', replayed_from_seq: 2 },
+    })
+    expect(state().completedTurns).toEqual([])
+    expect(state().totalCostUsd).toBe(0)
+    expect(state().replayBaselineSeq).toBe(2)
+  })
+
+  it('metric.tokens turn rollup uses Math.max during active turn', () => {
+    dispatch({ ...env({ seq: 1 }), type: 'message.user', data: { content: 'hi' } })
+    dispatch({
+      ...env({ seq: 2 }),
+      type: 'metric.tokens',
+      data: { phase: 'worker', input_tokens: 100, output_tokens: 50, model: 'm' },
+    })
+    dispatch({
+      ...env({ seq: 3 }),
+      type: 'metric.tokens',
+      data: { phase: 'worker', input_tokens: 40, output_tokens: 200, model: 'm' },
+    })
+    expect(state().turnInputTokens).toBe(100)
+    expect(state().turnOutputTokens).toBe(200)
   })
 })

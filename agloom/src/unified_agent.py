@@ -425,7 +425,7 @@ async def _build_harness_context_for_classify(
     if progress_tracker is None:
         return ""
     try:
-        progress_snippet = progress_tracker.get_classifier_context()
+        progress_snippet = await progress_tracker.aget_classifier_context()
         if is_frozen:
             return progress_snippet.strip()
         from ..harness.metadata import build_harness_classifier_context
@@ -512,6 +512,7 @@ async def _apply_harness_focus(
                 "work_kind": (artifact.work_kind or harness_work_kind_wire(analysis) or None),
                 "completion_ratio": artifact.completion_ratio,
                 "task_count": len(artifact.tasks),
+                "ledger_revision": progress_tracker.ledger_revision(),
                 "harness_plan": [t.model_dump() for t in harness_plan_tasks_wire(analysis)],
                 "tasks": [t.model_dump() for t in ledger_tasks_wire(progress_tracker)],
             }
@@ -1590,6 +1591,8 @@ async def _run_fresh_impl(
         namespace=effective_ltns,
         query=processed_query,
         last_n=_memory_injection_last_n(config),
+        llm=config.get("llm"),
+        summarizer_model=getattr(memory, "summarizer_model", None) or config.get("llm"),
     )
     # Emit memory.lt.recall when LT store was actually searched.
     if store is not None:
@@ -2492,6 +2495,8 @@ class UnifiedAgent:
                 namespace=effective_ltns,
                 query=processed_query,
                 last_n=_memory_injection_last_n(cfg),
+                llm=cfg.get("llm"),
+                summarizer_model=getattr(memory, "summarizer_model", None) or cfg.get("llm"),
             )
 
             harness_ctx = await _build_harness_context_for_classify(

@@ -5,6 +5,7 @@
 import React, { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { createAGPClient, AGPClientContext } from './lib/agp/client.js'
+import { useSessionStore } from './store/session.js'
 import { WorkspaceHome } from './routes/WorkspaceHome.js'
 import { SessionWorkspace } from './routes/SessionWorkspace.js'
 import { SettingsPage } from './routes/SettingsPage.js'
@@ -20,7 +21,12 @@ export const App = (): React.ReactElement => {
       RUNTIME_URL.startsWith('/')
         ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${RUNTIME_URL}`
         : RUNTIME_URL
-    return createAGPClient(url)
+    return createAGPClient(url, 2000, {
+      getResumeState: () => {
+        const s = useSessionStore.getState()
+        return { thread: s.activeThreadId, fromSeq: s.lastSeenSeq ?? 0 }
+      },
+    })
   })
 
   useEffect(() => {

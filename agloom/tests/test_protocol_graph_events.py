@@ -278,3 +278,21 @@ async def test_store_wired_into_emitter():
 
     count = await store.count("s_1")
     assert count >= 2  # at minimum: session.opened + graph.node.enter
+
+
+@pytest.mark.asyncio
+async def test_memory_store_max_seq() -> None:
+    store = MemoryEventStore()
+    for i in range(1, 6):
+        await store.append("s_1", {"seq": i, "type": "t"})
+    assert await store.max_seq("s_1") == 5
+    assert await store.max_seq("missing") == 0
+
+
+def test_emitter_seed_seq_continues_after_replay_floor() -> None:
+    buf = io.StringIO()
+    em = SessionEmitter(session="s_1", thread="t_1", writer=buf)
+    em.seed_seq(10)
+    em.open()
+    evt = em.emit_graph_node_enter(node="classify")
+    assert evt.seq > 10

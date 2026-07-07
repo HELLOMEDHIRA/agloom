@@ -222,6 +222,7 @@ export const createAGPBridge = (): AGPBridge => {
     if (proc) {
       return
     }
+    eventPreBuffer.length = 0
     clearReconnectTimer()
     lastStartArgs = [...extraArgs]
     lastStartOptions = { ...options }
@@ -310,6 +311,7 @@ export const createAGPBridge = (): AGPBridge => {
         )
         reconnectTimer = setTimeout(() => {
           reconnectTimer = null
+          eventPreBuffer.length = 0
           status = 'starting'
           start(lastStartArgs, lastStartOptions)
         }, delayMs)

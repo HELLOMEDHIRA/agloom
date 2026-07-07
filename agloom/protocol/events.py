@@ -144,6 +144,7 @@ class HarnessSyncedData(_DataBase):
     work_kind: str | None = None
     completion_ratio: float = 0.0
     task_count: int = 0
+    ledger_revision: int = 0
     harness_plan: list[HarnessPlanTaskWire] = Field(default_factory=list)
     tasks: list[HarnessLedgerTaskWire] = Field(default_factory=list)
 
@@ -160,6 +161,7 @@ class HarnessTaskUpdatedData(_DataBase):
     status: str
     notes: str = ""
     project: str | None = None
+    ledger_revision: int = 0
 
 
 class HarnessTaskUpdated(Envelope):
