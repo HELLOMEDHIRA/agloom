@@ -42,6 +42,7 @@ from ..src.hitl_contract import (
     normalize_react_tool_use_failed_decision,
 )
 from ..src.logging_utils import get_logger
+from ..src.reserved_tools import TOOL_LOAD_SKILL, TOOL_RECALL_TOOL_ARTIFACT
 from ..src.worker import resolve_event_queue
 from ..src.models import (
     DEFAULT_SYSTEM_PROMPT,
@@ -461,12 +462,12 @@ REACT_TOOL_DISCIPLINE = """
 - Default length: a few sentences or a tiny bullet list. Go longer only when the user asks for depth, design, or teaching.
 """
 
-MCP_TOOL_DISCIPLINE = """
+MCP_TOOL_DISCIPLINE = f"""
 
 === MCP / EXTERNAL TOOL LIMITS (strict) ===
 - When a tool schema exposes ``limit``, ``page_size``, ``max_results``, ``top_k``, ``per_page``, or similar pagination fields, you **must** pass a conservative value on the **first** call (start with ≤50–100 unless the user asked for more).
 - Prefer **narrow** queries (time range, service name, log level, IDs) before broad “get everything” calls.
-- If a tool returns ``[agloom:tool_digest …]`` or ``complete=false``, use ``recall_tool_artifact(ref_id, offset, limit)`` to page — **never** repeat the same unbounded tool call with identical arguments.
+- If a tool returns ``[agloom:tool_digest …]`` or ``complete=false``, use ``{TOOL_RECALL_TOOL_ARTIFACT}(ref_id, offset, limit)`` to page — **never** repeat the same unbounded tool call with identical arguments.
 - Large digests mean the full payload is off-thread; recall slices are the correct next step, not a duplicate MCP call.
 """
 
@@ -1056,7 +1057,7 @@ async def _handle_react_streaming(
                     raw_out = event.get("data", {}).get("output")
                     args_rem = _tool_arg_dicts.pop(run_id, {})
                     skill_name: str | None = None
-                    if tool_name == "load_skill":
+                    if tool_name == TOOL_LOAD_SKILL:
                         n = args_rem.get("name")
                         skill_name = n if isinstance(n, str) else None
                     if isinstance(raw_out, dict) and isinstance(raw_out.get("summary"), str):

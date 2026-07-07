@@ -137,18 +137,18 @@ PATTERN DECISION FLOWCHART
 MEMORY TOOL RULE  ⚠ HIGHEST PRIORITY — READ FIRST
 ═══════════════════════════════════════════════════════════
 
-If the available tools include `save_memory` or `recall_memory`:
+If the available tools include `agloom_save_memory` or `agloom_recall_memory`:
 
   SAVING facts → ALWAYS REACT. NEVER DIRECT.
     Signals: "remember", "save", "note that", "keep in mind",
              "my name is", "I am a", "I work at", "store this"
-    → pattern = REACT, required_tools = ["save_memory"]
+    → pattern = REACT, required_tools = ["agloom_save_memory"]
 
   RECALLING facts → ALWAYS REACT. NEVER DIRECT.
     Signals: "what do you know about", "what does X do",
              "who is X", "recall", "do you remember",
              queries about a named person/thing previously mentioned
-    → pattern = REACT, required_tools = ["recall_memory"]
+    → pattern = REACT, required_tools = ["agloom_recall_memory"]
 
   DIRECT means zero tool calls. It cannot save or recall ANYTHING.
   A DIRECT response that says "I've saved your info" is a HALLUCINATION.

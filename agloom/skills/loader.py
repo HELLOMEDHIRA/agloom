@@ -8,6 +8,7 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from ..src.logging_utils import get_logger
+from ..src.reserved_tools import TOOL_LOAD_SKILL
 
 logger = get_logger(__name__)
 
@@ -35,7 +36,7 @@ def make_load_skill_tool(registry: Any) -> StructuredTool:
         return content.to_system_prompt_block()
 
     return StructuredTool(
-        name="load_skill",
+        name=TOOL_LOAD_SKILL,
         description=description,
         args_schema=LoadSkillInput,
         coroutine=load_skill,

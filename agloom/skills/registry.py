@@ -355,7 +355,7 @@ class SkillRegistry:
         if not manifests:
             return ""
         lines = "\n".join(m.classifier_line() for m in manifests)
-        return "Available skills (call load_skill tool to get full instructions):\n" + lines
+        return "Available skills (call agloom_load_skill tool to get full instructions):\n" + lines
 
     async def _lts_save(
         self,

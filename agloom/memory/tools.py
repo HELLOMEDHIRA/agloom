@@ -1,4 +1,4 @@
-"""Long-term memory tools ``save_memory`` and ``recall_memory``.
+"""Long-term memory tools ``agloom_save_memory`` and ``agloom_recall_memory``.
 
 Namespace comes from ``RunnableConfig["configurable"]["memory_namespace"]``, set by
 ``UnifiedAgent.resolve_ids`` / compatible runners. If it is missing, an ephemeral
@@ -14,6 +14,7 @@ from langchain_core.tools import tool
 from langchain_core.tools.base import InjectedToolArg
 
 from ..src.logging_utils import get_logger
+from ..src.reserved_tools import TOOL_RECALL_MEMORY, TOOL_SAVE_MEMORY
 
 if TYPE_CHECKING:
     from .store import LongTermStore
@@ -46,15 +47,15 @@ def _resolve_namespace(config: RunnableConfig | None) -> tuple[tuple[str, ...], 
 
 
 def create_memory_tools(store: LongTermStore) -> list:
-    """Return ``save_memory`` and ``recall_memory`` bound to *store*.
+    """Return ``agloom_save_memory`` and ``agloom_recall_memory`` bound to *store*.
 
     Tools are sync functions; LangChain runs them in a worker thread, so LangGraph
     ``AsyncSqliteStore`` sync ``put``/``search`` (which marshal back to the store loop) stay valid.
     Pure-async callers should use ``LongTermStore.asave`` / ``asearch`` instead of these tools.
     """
 
-    @tool
-    def save_memory(key: str, content: str, config: Annotated[RunnableConfig, InjectedToolArg]) -> str:
+    @tool(TOOL_SAVE_MEMORY)
+    def agloom_save_memory(key: str, content: str, config: Annotated[RunnableConfig, InjectedToolArg]) -> str:
         """Store one fact under ``key`` in long-term memory (overwrites an existing ``key``).
 
         Use stable keys (e.g. ``user_name``, ``project_goal``) and one or two sentences in
@@ -71,8 +72,8 @@ def create_memory_tools(store: LongTermStore) -> list:
             )
         return f"OK: Saved [{key}]: {content}"
 
-    @tool
-    def recall_memory(query: str, config: Annotated[RunnableConfig, InjectedToolArg]) -> str:
+    @tool(TOOL_RECALL_MEMORY)
+    def agloom_recall_memory(query: str, config: Annotated[RunnableConfig, InjectedToolArg]) -> str:
         """Search long-term memory for ``query``; returns up to five matches or a no-results message.
 
         Do not invent facts when nothing is returned.
@@ -99,4 +100,4 @@ def create_memory_tools(store: LongTermStore) -> list:
             return f"⚠ (non-persistent memory namespace) {response}"
         return response
 
-    return [save_memory, recall_memory]
+    return [agloom_save_memory, agloom_recall_memory]

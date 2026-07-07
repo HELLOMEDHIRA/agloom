@@ -70,37 +70,39 @@ async def main():
 
 ## Reserved Tool Names
 
-agloom uses internal tools for memory and skills. The following names are **reserved** and cannot be used for your tools:
+Agloom-owned tools use the `agloom_` prefix (`agloom_save_memory`, `agloom_recall_memory`, `agloom_load_skill`, `agloom_recall_tool_artifact`). **Any tool name starting with `agloom_` is reserved** and cannot be used for your own tools or MCP wrappers.
 
 | Reserved Name | Used For |
 | --- | --- |
-| `save_memory` | Saving to long-term memory |
-| `recall_memory` | Retrieving from long-term memory |
-| `load_skill` | Loading a learned skill |
+| `agloom_save_memory` | Saving to long-term memory |
+| `agloom_recall_memory` | Retrieving from long-term memory |
+| `agloom_load_skill` | Loading a learned skill |
+| `agloom_recall_tool_artifact` | Paging stored tool output from the scratchpad |
 
 If you try to use a reserved name, `create_agent` raises a `ValueError` immediately:
 
 ```python
 @tool
-def save_memory(data: str) -> str:
+def agloom_save_memory(data: str) -> str:
     """My custom save."""
     return data
 
 # This raises (when awaited in async code):
-await create_agent(model=llm, tools=[save_memory])
-# ValueError: Tool name(s) save_memory are reserved by agloom
+await create_agent(model=llm, tools=[agloom_save_memory])
+# ValueError: Tool name(s) agloom_save_memory are reserved by agloom
 # for internal use. Please rename your tool(s) to avoid conflicts.
-# Reserved names: ['load_skill', 'recall_memory', 'save_memory']
 ```
 
-**Fix:** Rename your tool to something else:
+**Fix:** Rename your tool to something outside the `agloom_` namespace:
 
 ```python
 @tool
-def store_data(data: str) -> str:  # renamed from save_memory
+def store_data(data: str) -> str:  # not agloom_*
     """Save data to storage."""
     return data
 ```
+
+MCP servers may still expose plain names like `save_memory`; Agloom does not claim those unless they use the `agloom_` prefix.
 
 ## Disabling Memory Tools
 

@@ -19,6 +19,7 @@ from langgraph.errors import GraphRecursionError
 
 from .llm_streaming import stream_or_invoke_llm
 from .logging_utils import get_logger
+from .reserved_tools import MEMORY_TOOL_NAMES, TOOL_LOAD_SKILL
 from .wire_stream_content import emit_llm_chunk_to_event_queue
 from .models import (
     AgentEvent,
@@ -44,8 +45,6 @@ TOOL USAGE RULES
 FINAL REPLY
 - If tools already executed the task, reply briefly: outcomes and paths only — no step-by-step rehash of how you used tools.
 """.strip()
-
-_MEMORY_TOOLS = {"save_memory", "recall_memory"}
 
 
 def _step_trunc_len(invoke_config: dict | None) -> int:
@@ -189,7 +188,7 @@ def _build_graph_config(
     base = dict(invoke_config or {})
 
     tool_names = {t.name for t in config.tools}
-    has_memory = bool(tool_names & _MEMORY_TOOLS)
+    has_memory = bool(tool_names & MEMORY_TOOL_NAMES)
 
     if not has_memory and "configurable" in base:
         cleaned = {k: v for k, v in base["configurable"].items() if k != "memory_namespace"}
@@ -265,7 +264,7 @@ async def _react_graph_astream_to_result(
             raw_out = event.get("data", {}).get("output")
             args_rem = _tool_arg_dicts.pop(run_id, {})
             skill_name: str | None = None
-            if tool_name == "load_skill":
+            if tool_name == TOOL_LOAD_SKILL:
                 n = args_rem.get("name")
                 skill_name = n if isinstance(n, str) else None
             if isinstance(raw_out, dict) and isinstance(raw_out.get("summary"), str):

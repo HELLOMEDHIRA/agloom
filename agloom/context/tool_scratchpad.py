@@ -14,10 +14,12 @@ from langchain_core.tools import BaseTool, StructuredTool
 
 from ..src.logging_utils import get_logger
 
+from ..src.reserved_tools import TOOL_RECALL_TOOL_ARTIFACT
+
 logger = get_logger(__name__)
 
 _DIGEST_PREFIX = "[agloom:tool_digest"
-_RECALL_TOOL_NAME = "recall_tool_artifact"
+_RECALL_TOOL_NAME = TOOL_RECALL_TOOL_ARTIFACT
 
 # Maximum chars any ToolMessage may occupy on the wire after digest/stub.
 MAX_TOOL_WIRE_CHARS = 12_000
@@ -155,7 +157,7 @@ class ToolScratchpad:
             return f"[compacted missing ref={ref_id}]"
         return (
             f"[compacted tool={art.tool_name} ref={ref_id} chars={len(art.content)} "
-            f'— full text via recall_tool_artifact(ref_id="{ref_id}")]'
+            f'— full text via {TOOL_RECALL_TOOL_ARTIFACT}(ref_id="{ref_id}")]'
         )
 
 
@@ -229,7 +231,7 @@ def is_monolithic_payload(
 def _digest_header(*, ref_id: str, tool_name: str, stats: str) -> str:
     return (
         f"{_DIGEST_PREFIX} ref={ref_id} tool={tool_name} {stats}]\n"
-        f'Full result stored off-thread. Use recall_tool_artifact(ref_id="{ref_id}", '
+        f'Full result stored off-thread. Use {TOOL_RECALL_TOOL_ARTIFACT}(ref_id="{ref_id}", '
         f"offset=0, limit=12000) for complete text (supports offset/limit slices)."
     )
 

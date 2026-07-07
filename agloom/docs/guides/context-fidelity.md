@@ -9,7 +9,7 @@ Agloom never tail-chops conversation or memory context. When assembled text exce
 | **Session memory** | Oldest turns roll into episodic summary turns when stored tokens exceed ~80% of the model window (or `summarize_max_tokens_budget`). |
 | **Prompt injection** | `build_memory_context()` summarizes over-budget text via the session summarizer. |
 | **REACT tool loop** | Large tool outputs spill to scratchpad digests; older tool messages compact to stubs under budget pressure. Pre-flight gate fails with `failure_class=context` before HTTP when still over budget. |
-| **Scratchpad** | Full payloads stay in-process and optionally spill to LTS (`context/scratchpad/{agent}/{ref}`). Active for **any agent that can run tools** (explicit tools, MCP-only, memory tools, harness) — not only when `tools=` is passed at construction. Use `recall_tool_artifact` to page. |
+| **Scratchpad** | Full payloads stay in-process and optionally spill to LTS (`context/scratchpad/{agent}/{ref}`). Active for **any agent that can run tools** (explicit tools, MCP-only, memory tools, harness) — not only when `tools=` is passed at construction. Use `agloom_recall_tool_artifact` to page. |
 
 ## What you configure
 
@@ -27,7 +27,7 @@ Agloom never tail-chops conversation or memory context. When assembled text exce
 | Bounding oversized tool **results** on the wire | **Agloom** (always — digest, wire ceiling, pre-flight gate) |
 | `RemoteProtocolError` from proxy/gateway | Often symptom of oversized request body; Agloom prefers clear `Context budget exceeded` errors |
 
-When a tool returns `[agloom:tool_digest …]`, use **`recall_tool_artifact(ref_id, offset, limit)`** to page — do not repeat the same unbounded tool call.
+When a tool returns `[agloom:tool_digest …]`, use **`agloom_recall_tool_artifact(ref_id, offset, limit)`** to page — do not repeat the same unbounded tool call.
 
 ## Removed knobs
 

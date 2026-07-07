@@ -15,7 +15,7 @@ These are `ValueError` exceptions raised immediately when `create_agent` is call
 | `unknown pattern in interrupt_before` | `interrupt_before=["INVALID"]` | Use valid pattern names: DIRECT, REACT, SUPERVISOR, etc. |
 | `user_callback must be callable` | `user_callback=42` | Pass an async function |
 | Frozen agent is not locked yet | Internal error before first call | Run one `ainvoke` / `astream` first to classify, or call `reset_frozen()` |
-| `Tool name(s) X are reserved by agloom` | Tool name conflicts with internal names | Rename your tool. Reserved: `save_memory`, `recall_memory`, `load_skill` |
+| `Tool name(s) X are reserved by agloom` | Tool name uses `agloom_` prefix or matches internal names | Rename your tool outside `agloom_*`. Internal tools: `agloom_save_memory`, `agloom_recall_memory`, `agloom_load_skill`, `agloom_recall_tool_artifact` |
 
 ## Runtime Warnings (logged, non-fatal)
 
@@ -102,7 +102,7 @@ See [Invoke input](../concepts/create-agent.md#invoke-input-langchain-shape) and
 | `GraphRecursionError` / REACT step limit | LangGraph `recursion_limit` reached (`react_recursion_limit`, default 25) | Returns **`success=False`** with a stable error — not the last AI message. Raise `create_agent(react_recursion_limit=…)` or simplify the task. See [Reliability](reliability.md) |
 | `No user query found in messages` (strict chat templates) | Jinja/template rejection: bad message shape or forced `tool_choice` off the opening turn | Upgrade agloom (LLM wrapper + middleware flatten user blocks; no `tool_choice` override for strict templates). See [LLM resolution — strict chat templates](../guides/llm-resolution.md#strict-chat-templates-and-tool-calling) |
 | `RemoteProtocolError` / server disconnected | HTTP stream dropped (LiteLLM, vLLM, MCP HTTP) — often proxy idle timeout or **oversized request body**, not a literal server shutdown | agloom retries transient transport errors up to 3× on ainvoke; stream may compact-then-retry once. Prefer fixing context size — see `Context budget exceeded` below. |
-| `Context budget exceeded after compaction` (`failure_class=context`) | REACT history still over input budget after compaction | Lower tool payload sizes, use MCP `limit` when available, or raise `context_window_tokens`. Full payloads remain in scratchpad — use `recall_tool_artifact`. |
+| `Context budget exceeded after compaction` (`failure_class=context`) | REACT history still over input budget after compaction | Lower tool payload sizes, use MCP `limit` when available, or raise `context_window_tokens`. Full payloads remain in scratchpad — use `agloom_recall_tool_artifact`. |
 | `RateLimitError` | LLM provider rate limit hit | Set `rate_limit` to throttle calls |
 | `CircuitBreakerOpen` | Too many consecutive LLM failures | Wait for cooldown or check provider status |
 

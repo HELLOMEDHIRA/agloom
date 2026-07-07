@@ -9,9 +9,9 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, field_validator
 
 from ..src.logging_utils import get_logger
+from ..src.reserved_tools import TOOL_LOAD_SKILL
 
 logger = get_logger(__name__)
-
 
 SEED_SYSTEM_PROMPT = """
 You are an Agent Skill Architect.
@@ -73,7 +73,7 @@ class SkillGenerator:
         tool_descriptions = "\n".join(
             f"  - {t.name}: {t.description}"
             for t in tools
-            if t.name != "load_skill"  # Meta-tool; not a domain capability to pattern-match.
+            if t.name != TOOL_LOAD_SKILL  # Meta-tool; not a domain capability to pattern-match.
         )
 
         prompt = f"""
@@ -119,7 +119,7 @@ Each skill should represent a common task pattern this agent will face.
         agent_name: str = "Agent",
     ) -> GeneratedSkill | None:
         """Generate a skill template for an unmatched query (background, non-blocking)."""
-        tool_names = [t.name for t in tools if t.name != "load_skill"]
+        tool_names = [t.name for t in tools if t.name != TOOL_LOAD_SKILL]
 
         prompt = f"""
 A query arrived that matches no existing skill:

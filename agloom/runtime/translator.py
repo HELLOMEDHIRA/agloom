@@ -12,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 from ..src.logging_utils import get_logger
+from ..src.reserved_tools import TOOL_LOAD_SKILL
 from ..src.models import AgentEvent
 from ..protocol import SessionEmitter
 from ..protocol.emitter import _lit_token_role
@@ -333,7 +334,7 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> str | None:
             args_obj = data.get("args")
             if isinstance(args_obj, dict):
                 skill_name = _str(args_obj.get("name"))
-        if tool == "load_skill" and skill_name:
+        if tool == TOOL_LOAD_SKILL and skill_name:
             emitter.emit_skill_loaded(skill_name=skill_name, source="tool", body_chars=len(out) if out else 0)
         emitter.emit_message_tool(tool_name=tool, phase="end", detail="completed", call_id=tcid)
         return

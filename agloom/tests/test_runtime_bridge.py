@@ -194,7 +194,7 @@ def test_translate_tool_result_load_skill_emits_skill_loaded() -> None:
         AgentEvent(
             type="tool_result",
             data={
-                "name": "load_skill",
+                "name": "agloom_load_skill",
                 "id": "tc_1",
                 "skill_name": "my_skill",
                 "output": "body text here",

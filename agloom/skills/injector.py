@@ -64,10 +64,10 @@ class SkillInjector:
         names = [m.name for m in manifests if getattr(m, "name", None)]
         lines = "\n".join(m.classifier_line() for m in manifests)
         context = (
-            "=== RELEVANT SKILLS (call load_skill tool to get full instructions) ===\n"
+            "=== RELEVANT SKILLS (call agloom_load_skill tool to get full instructions) ===\n"
             + lines
             + "\n\nIMPORTANT: If a skill above is relevant to this query, set matched_skill "
-            "to the exact skill name. Workers should call load_skill(name) to get full instructions.\n"
+            "to the exact skill name. Workers should call agloom_load_skill(name) to get full instructions.\n"
             "==================================================================="
         )
         return SkillInjectContext(context=context, skill_names=names)

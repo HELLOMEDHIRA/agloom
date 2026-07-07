@@ -6,6 +6,8 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, ToolMessage
 
+from ..src.reserved_tools import TOOL_RECALL_TOOL_ARTIFACT
+
 from .tokens import estimate_messages_tokens
 from .tool_scratchpad import (
     MAX_TOOL_WIRE_CHARS,
@@ -145,7 +147,7 @@ def append_context_compaction_recap(
     recap = HumanMessage(
         content=(
             "Context window was exceeded. Older tool outputs were moved to the scratchpad "
-            f"(refs: {ref_hint}). Use recall_tool_artifact(ref_id=...) for full payloads. "
+            f"(refs: {ref_hint}). Use {TOOL_RECALL_TOOL_ARTIFACT}(ref_id=...) for full payloads. "
             "Continue the investigation using previews and targeted recalls."
         )
     )

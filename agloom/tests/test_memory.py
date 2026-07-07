@@ -179,8 +179,8 @@ def test_create_memory_tools_count() -> None:
     lts = LongTermStore(store=InMemoryStore())
     tools = create_memory_tools(lts)
     assert len(tools) == 2
-    assert tools[0].name == "save_memory"
-    assert tools[1].name == "recall_memory"
+    assert tools[0].name == "agloom_save_memory"
+    assert tools[1].name == "agloom_recall_memory"
 
 
 def test_save_memory_ephemeral_namespace_message() -> None:

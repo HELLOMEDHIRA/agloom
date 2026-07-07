@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from .logging_utils import get_logger
 from .exception_utils import unwrap_exception as _unwrap_exception
+from .reserved_tools import check_reserved_tool_names, is_agloom_reserved_tool_name
 
 logger = get_logger(__name__)
 
@@ -463,19 +464,33 @@ async def connect_mcp_servers(
 
     existing_names = {t.name for t in agent.get("tools", [])}
     new_tools: list[BaseTool] = []
+    wired_tools_by_server: dict[str, list[BaseTool]] = {}
     mcp_prompts: dict[str, list[str]] = {}
     mcp_uris: dict[str, list[str]] = {}
 
     for cap in caps:
+        wired_server_tools: list[BaseTool] = []
         for t in cap.all_tools():
-            if t.name not in existing_names:
-                new_tools.append(_with_agloom_limit_hint(t))
-                existing_names.add(t.name)
+            wired = _wire_mcp_tool(
+                cap.server_name,
+                t,
+                existing_names,
+                agent_name=agent_name,
+            )
+            if wired is None:
+                continue
+            new_tools.append(wired)
+            wired_server_tools.append(wired)
+            existing_names.add(wired.name)
+        wired_tools_by_server[cap.server_name] = wired_server_tools
 
         if cap.prompt_names:
             mcp_prompts[cap.server_name] = cap.prompt_names
         if cap.resource_uris:
             mcp_uris[cap.server_name] = cap.resource_uris
+
+    if new_tools:
+        check_reserved_tool_names(new_tools)
 
     agent["tools"] = agent.get("tools", []) + new_tools
     agent["mcp_prompts"] = mcp_prompts
@@ -489,7 +504,7 @@ async def connect_mcp_servers(
 
     server_rows: list[dict[str, Any]] = []
     for cap in caps:
-        tools = cap.all_tools()
+        tools = wired_tools_by_server.get(cap.server_name, [])
         catalog = _tool_catalog_entries(tools)
         names = [e["name"] for e in catalog]
         server_rows.append(
@@ -547,6 +562,58 @@ def _with_agloom_limit_hint(tool: BaseTool) -> BaseTool:
     except Exception:
         pass
     return tool
+
+
+def _mcp_prefixed_tool_name(server_name: str, tool_name: str) -> str:
+    safe_server = "".join(c if c.isalnum() or c in "-_" else "_" for c in server_name).strip("_") or "mcp"
+    return f"{safe_server}__{tool_name}"
+
+
+def _copy_tool_fields(tool: BaseTool, **updates: Any) -> BaseTool:
+    model_copy = getattr(tool, "model_copy", None)
+    if callable(model_copy):
+        try:
+            return cast(BaseTool, model_copy(update=updates))
+        except Exception:
+            pass
+    for key, value in updates.items():
+        try:
+            setattr(tool, key, value)
+        except Exception:
+            pass
+    return tool
+
+
+def _wire_mcp_tool(
+    server_name: str,
+    tool: BaseTool,
+    existing_names: set[str],
+    *,
+    agent_name: str,
+) -> BaseTool | None:
+    """Return MCP tool ready to merge, or None when a duplicate should be skipped."""
+    original_name = tool.name
+    if original_name in existing_names:
+        return None
+
+    wire_name = original_name
+    if is_agloom_reserved_tool_name(original_name):
+        wire_name = _mcp_prefixed_tool_name(server_name, original_name)
+        if wire_name in existing_names:
+            logger.warning(
+                f"[{agent_name}] MCP tool {original_name!r} from {server_name!r} skipped: "
+                f"prefixed name {wire_name!r} already exists"
+            )
+            return None
+        logger.info(
+            f"[{agent_name}] MCP tool {original_name!r} from {server_name!r} "
+            f"renamed to {wire_name!r} (reserved by agloom)"
+        )
+
+    wired = _with_agloom_limit_hint(tool)
+    if wire_name != original_name:
+        wired = _copy_tool_fields(wired, name=wire_name)
+    return wired
 
 
 def mcp_configured_server_names(agent: dict[str, Any]) -> list[str]:

@@ -38,9 +38,9 @@ _SKIP_INVOKE = frozenset(
         "execute",
         "bash",
         "task",
-        "save_memory",
-        "recall_memory",
-        "load_skill",
+        "agloom_save_memory",
+        "agloom_recall_memory",
+        "agloom_load_skill",
         "ask_user",
     }
 )

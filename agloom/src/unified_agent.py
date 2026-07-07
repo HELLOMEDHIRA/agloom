@@ -38,6 +38,7 @@ from .delegation import (
 from .hitl_contract import HITLEvent, call_user_callback
 from .logging_utils import configure_package_logging, get_logger
 from .mcp_support import MCPConnectionError, MCPServerConfig, aclose_mcp_client
+from .reserved_tools import TOOL_LOAD_SKILL, check_reserved_tool_names as _check_reserved_tool_names
 from ..memory import (
     LongTermStore,
     SessionMemory,
@@ -680,15 +681,6 @@ def _llm_label(llm: Any) -> str | None:
     return cls.__name__ if cls is not None else None
 
 
-RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
-    {
-        "save_memory",
-        "recall_memory",
-        "load_skill",
-        "recall_tool_artifact",
-    }
-)
-
 _active_agent_names_by_store: weakref.WeakKeyDictionary[Any, dict[str, int]] = weakref.WeakKeyDictionary()
 _active_agent_names_no_store: dict[str, int] = {}
 _agent_names_lock = threading.Lock()
@@ -717,18 +709,6 @@ def _run_coroutine_in_new_loop(coro: Awaitable[Any]) -> Any:
         return await coro
 
     return asyncio.run(_wrap())
-
-
-def _check_reserved_tool_names(tools: list[BaseTool]) -> None:
-    """Raise ValueError if any user tool collides with agloom's internal tool names."""
-    collisions = {t.name for t in tools} & RESERVED_TOOL_NAMES
-    if collisions:
-        names = ", ".join(sorted(collisions))
-        raise ValueError(
-            f"Tool name(s) {names} are reserved by agloom for internal use. "
-            f"Please rename your tool(s) to avoid conflicts. "
-            f"Reserved names: {sorted(RESERVED_TOOL_NAMES)}"
-        )
 
 
 def _register_agent_name(agent_name: str, store: Any) -> None:
@@ -1292,7 +1272,7 @@ async def _ensure_skills_bootstrapped(
         await registry.bootstrap()
 
         manifests = await registry.list_manifests()
-        tools = [t for t in config.get("tools", []) if t.name != "load_skill"]
+        tools = [t for t in config.get("tools", []) if t.name != TOOL_LOAD_SKILL]
         if not manifests and tools and generator:
             await _emit_preparation_thinking(
                 event_queue, name="skills_bootstrap", detail="Generating seed skills (first session)…"
@@ -2051,7 +2031,7 @@ async def _run_fresh_impl(
         and analysis.pattern != PatternType.DIRECT
         and not is_frozen
     ):
-        tools_for_gen = [t for t in config.get("tools", []) if t.name != "load_skill"]
+        tools_for_gen = [t for t in config.get("tools", []) if t.name != TOOL_LOAD_SKILL]
         registry_for_gen = config.get("skill_registry")
 
         async def _bg_gen() -> None:
@@ -3440,6 +3420,8 @@ async def create_agent(
         if isinstance(resolved_prompt, str) and builtins_still_present:
             resolved_prompt = resolved_prompt.rstrip() + CLI_TOOLS_SYSTEM_APPENDIX
 
+    _check_reserved_tool_names(resolved_tools)
+
     resolved_store: LongTermStore | None = None
     if store is not None:
         resolved_store = store if isinstance(store, LongTermStore) else LongTermStore(store=store)
@@ -3573,7 +3555,6 @@ async def create_agent(
             agent_key=agent_name,
             existing_pad=tool_scratchpad_pad,
         )
-    _check_reserved_tool_names(resolved_tools[:-1] if tool_scratchpad_pad else resolved_tools)
 
     config: dict = {
         "name": agent_name,
