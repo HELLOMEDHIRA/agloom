@@ -145,7 +145,8 @@ class MemoryEventStore(EventStore):
                 await asyncio.sleep(0)  # cooperate with the event loop
 
     async def count(self, session_id: str) -> int:
-        return len(self._store.get(session_id, []))
+        async with self._lock:
+            return len(self._store.get(session_id, []))
 
     async def clear(self, session_id: str) -> None:
         async with self._lock:

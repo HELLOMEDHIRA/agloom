@@ -17,6 +17,7 @@ Complete reference for **`create_agent`**. Only **`model`** is required; everyth
 | `system_prompt` | `str` or `Callable` | auto-generated | Static string or dynamic function `(state) -> str`. See [Dynamic System Prompts](../guides/production.md#dynamic-system-prompts) |
 | `name` | `str` | auto-generated | Agent name used in logging, memory namespaces, and diagnostics |
 | `debug` | `bool` | `False` | Enable DEBUG-level structured logging. See [Logging](logging.md) |
+| `profile` | `str` | `"interactive"` | Workload preset (`interactive`, `tool_agent`, `harness_long`, `platform_embedded`, `batch_frozen`). Execution tradeoffs only — see [Workload profiles](../architecture/workload-profiles.md). Explicit kwargs override profile defaults |
 
 ### Model Validation
 
@@ -49,10 +50,8 @@ await create_agent(model=ChatGroq(model="llama-3.3-70b-versatile"))
 | `query_cache` | `dict`, `False`, or `None` | `None` → in-memory default | `None`: enable `default_query_cache()`. `False`: disable caching. Or pass a dict from `create_cache()`. See [Query Cache](../features/memory.md#query-cache) |
 | `enable_memory_tools` | `bool` | `True` | Expose `save_memory`/`recall_memory` tools to the agent (requires `store=`) |
 | `session_max_turns` | `int` | `50` | Max turns to keep in session memory. Only applies to auto-created `SessionMemory` |
-| `auto_summarize` | `bool` | `True` | Auto-summarize conversation history when token count exceeds threshold. See [Auto-Summarization](../features/memory.md#auto-summarization) |
-| `summarize_threshold` | `int` | `200_000` | Token count that triggers auto-summarization (min 10,000) when `summarize_max_tokens_budget` is unset |
-| `summarize_max_tokens_budget` | `int` or `None` | `None` | When set (or inferred from the chat model's `max_tokens`), rolling memory summarizes when stored tokens exceed ~80% of this budget; otherwise `summarize_threshold` applies |
-| `summarizer_model` | `BaseChatModel` or `str` | `None` | Separate LLM for summarization. `None` = use the agent's own model |
+| `summarize_max_tokens_budget` | `int` or `None` | `None` | When set (or inferred from the chat model window), rolling memory summarizes when stored tokens exceed ~80% of this budget |
+| `summarizer_model` | `BaseChatModel` or `str` | `None` | Separate LLM for summarization. `None` = use the agent's own model. Summarization is always on when a summarizer is available — see [Context fidelity](../guides/context-fidelity.md) |
 | `user_id` | `str` | `None` | Config-level default user ID. Must also be passed at call time to activate user-scoped LT namespace |
 
 ## Human-in-the-Loop

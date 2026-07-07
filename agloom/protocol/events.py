@@ -153,6 +153,20 @@ class HarnessSynced(Envelope):
     data: HarnessSyncedData
 
 
+class HarnessTaskUpdatedData(_DataBase):
+    """Single harness ledger task mutation (claim, status, notes)."""
+
+    task_id: str
+    status: str
+    notes: str = ""
+    project: str | None = None
+
+
+class HarnessTaskUpdated(Envelope):
+    type: Literal["harness.task.updated"] = "harness.task.updated"
+    data: HarnessTaskUpdatedData
+
+
 # ── thinking.step ─────────────────────────────────────────────────────────────
 
 
@@ -593,6 +607,23 @@ class MemoryLtStoreData(_DataBase):
 class MemoryLtStore(Envelope):
     type: Literal["memory.lt.store"] = "memory.lt.store"
     data: MemoryLtStoreData
+
+
+class ContextSummarizedData(_DataBase):
+    """Context Plane compressed memory to fit the inferred input budget."""
+
+    scope: Literal["session", "harness", "job", "injection"] = "session"
+    turns_before: int | None = None
+    turns_after: int | None = None
+    tokens_before: int | None = None
+    tokens_after: int | None = None
+    artifact_refs: list[str] = Field(default_factory=list)
+    content_hash: str | None = None
+
+
+class ContextSummarized(Envelope):
+    type: Literal["context.summarized"] = "context.summarized"
+    data: ContextSummarizedData
 
 
 # ── checkpoint.* ──────────────────────────────────────────────────────────────
@@ -1154,6 +1185,7 @@ Event = Annotated[
     | PatternClassified
     | PlanPreview
     | HarnessSynced
+    | HarnessTaskUpdated
     | ThinkingStep
     | ProgressStep
     | TokenDelta
@@ -1183,6 +1215,7 @@ Event = Annotated[
     | MemorySessionTurnPopped
     | MemoryLtRecall
     | MemoryLtStore
+    | ContextSummarized
     | CheckpointSaved
     | CheckpointRestored
     | FeedbackScored
@@ -1259,6 +1292,8 @@ __all__ = [
     "MemoryLtRecall",
     "MemoryLtRecallData",
     "MemoryLtStore",
+    "ContextSummarized",
+    "ContextSummarizedData",
     "MemoryLtStoreData",
     "MemorySessionWrite",
     "MemorySessionWriteData",
@@ -1311,6 +1346,9 @@ __all__ = [
     "HarnessPlanTaskWire",
     "HarnessSyncAction",
     "HarnessSynced",
+    "HarnessSyncedData",
+    "HarnessTaskUpdated",
+    "HarnessTaskUpdatedData",
     "HarnessSyncedData",
     "PatternClassified",
     "PatternClassifiedData",

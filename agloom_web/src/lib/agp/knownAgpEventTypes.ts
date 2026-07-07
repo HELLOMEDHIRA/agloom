@@ -1,4 +1,4 @@
-/** Wire ``type`` strings handled by the web session reducer (keep in sync with CLI). */
+/** Wire ``type`` strings handled by the CLI reducer (shared with parse + dispatch). */
 
 export const KNOWN_AGP_EVENT_TYPES = new Set<string>([
   'session.opened',
@@ -28,6 +28,8 @@ export const KNOWN_AGP_EVENT_TYPES = new Set<string>([
   'pattern.classified',
   'plan.preview',
   'harness.synced',
+  'harness.task.updated',
+  'context.summarized',
   'thinking.step',
   'progress.step',
   'token.delta',

@@ -67,13 +67,16 @@ def compact_messages_for_budget(
         ref = _ensure_stored(scratchpad, msg)
         out[idx] = _replace_tool_content(msg, scratchpad.compact_stub(ref))
 
-    if estimate_messages_tokens(out) > target_input_tokens and len(compactable) < len(tool_indices):
-        for idx in tool_indices[-keep_recent_tool_rounds:]:
+    digest_min = max(500, target_input_tokens // 32)
+    if estimate_messages_tokens(out) > target_input_tokens:
+        for idx in tool_indices:
             msg = out[idx]
             if not isinstance(msg, ToolMessage):
                 continue
             text = _tool_message_text(msg)
-            if len(text) > 4000 and not text.startswith("[compacted "):
+            if text.startswith("[compacted ") or text.startswith("[agloom:tool_digest"):
+                continue
+            if len(text) >= digest_min:
                 ref = _ensure_stored(scratchpad, msg)
                 from .tool_scratchpad import build_tool_digest
 

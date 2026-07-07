@@ -51,7 +51,7 @@ type CliOpts = {
   memoryPath?: string
   skillsDir?: string
   summarizerModel?: string
-  noAutoSummarize: boolean
+  profile?: string
   sessionMaxTurns: number
   /** From `--max-turns` (alias). */
   maxTurns?: number
@@ -291,7 +291,7 @@ mainProgram
   .option('--memory-path <path>', 'sqlite path for session memory')
   .option('--skills-dir <path>', 'skills disk mirror directory')
   .option('--summarizer-model <id>', 'summarizer model id')
-  .option('--no-auto-summarize', 'disable auto summarization', false)
+  .option('--profile <name>', 'workload profile (interactive, harness_long, platform_embedded, …)')
   .option('--session-max-turns <n>', 'SessionMemory max turns', (v) => parseInt(v, 10), 50)
   .option('--prompt <text>', 'direct prompt (alternative to positional)')
   .option('-q, --quiet', 'direct: stdout only (assistant text)', false)
@@ -329,7 +329,7 @@ if (shouldPrintCombinedVersion(argvMain)) {
 
 const EXPLICIT_SUBCOMMANDS = new Set(['init', 'sessions', 'clean', 'eval'])
 
-const useExplicitSubcommandArgv = (argv: string[]): boolean => {
+const shouldUseExplicitSubcommandArgv = (argv: string[]): boolean => {
   const s2 = argv[2]
   if (s2 && !s2.startsWith('-') && EXPLICIT_SUBCOMMANDS.has(s2)) {
     return true
@@ -352,7 +352,7 @@ const useExplicitSubcommandArgv = (argv: string[]): boolean => {
   return false
 }
 
-const useSubcommandParser = useExplicitSubcommandArgv(argvMain)
+const useSubcommandParser = shouldUseExplicitSubcommandArgv(argvMain)
 const program = useSubcommandParser ? subProgram : mainProgram
 
 /** Commander default is `process.exit`; override so we can handle help and print concise parse errors. */
@@ -449,7 +449,7 @@ const runtimeArgsForOpts = (o: CliOpts, resolvedThread: string): string[] =>
     memoryPath: o.memoryPath,
     skillsDir: o.skillsDir,
     summarizerModel: o.summarizerModel,
-    noAutoSummarize: o.noAutoSummarize,
+    profile: o.profile,
     sessionMaxTurns: o.sessionMaxTurns,
     maxTurns: o.maxTurns,
     budgetTokens: o.budgetTokens,

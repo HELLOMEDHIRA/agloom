@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 import type { AGPEvent, AGPKnownEvent } from '../lib/agp/types.js'
 import { isAgpKnownEvent } from '../lib/agp/agpEventGuards.js'
-import { harnessLedgerFromWire, harnessPlanToLedgerRows } from '../lib/agp/harnessWire.js'
+import { harnessLedgerFromWire, harnessPlanToLedgerRows, patchHarnessLedgerTask } from '../lib/agp/harnessWire.js'
 import {
   finalizeAssistantMessage,
   formatTurnTokenRollup,
@@ -139,6 +139,8 @@ export interface SessionStore {
   clearError: () => void
   /** Cleared by ChatPane after paths are prepended to an invocation. */
   clearPendingAttachments: () => void
+  /** Slash/UI helpers — append one line to protocol notes. */
+  appendProtocolNote: (line: string) => void
   toggleActiveTurnToolExpandBulk: () => void
   toggleToolCallExpand: (toolCallId: string) => void
   setBudgetUiOk: () => void
@@ -255,6 +257,10 @@ const summarise = (evt: AGPKnownEvent): string => {
       return `progress: ${evt.data.label ?? evt.data.phase ?? 'step'}`
     case 'harness.synced':
       return `harness.synced · ${evt.data.action} · ${evt.data.task_count ?? 0} tasks`
+    case 'harness.task.updated':
+      return `harness.task.updated · ${evt.data.task_id} · ${evt.data.status}`
+    case 'context.summarized':
+      return `context.summarized · ${evt.data.scope}`
     case 'token.delta':
       return `token: "${evt.data.text}"`
     case 'message.user':
@@ -743,6 +749,33 @@ export const useSessionStore = create<SessionStore>((set) => ({
           executionTrace: trace,
           harnessLedgerTasks: tasks.length ? tasks : s.harnessLedgerTasks,
           protocolNotes: pushProtocolNotes(s.protocolNotes, note),
+        }
+      }
+
+      case 'harness.task.updated': {
+        const note = `harness.task.updated · ${evt.data.task_id} · ${evt.data.status}${evt.data.notes ? ` · ${evt.data.notes}` : ''}`
+        return {
+          ...s,
+          executionTrace: trace,
+          harnessLedgerTasks: patchHarnessLedgerTask(s.harnessLedgerTasks ?? [], evt.data),
+          protocolNotes: pushProtocolNotes(s.protocolNotes, note),
+        }
+      }
+
+      case 'context.summarized': {
+        const parts = [
+          evt.data.scope,
+          evt.data.turns_before != null && evt.data.turns_after != null
+            ? `turns ${evt.data.turns_before}→${evt.data.turns_after}`
+            : null,
+          evt.data.tokens_before != null && evt.data.tokens_after != null
+            ? `tokens ${evt.data.tokens_before}→${evt.data.tokens_after}`
+            : null,
+        ].filter(Boolean)
+        return {
+          ...s,
+          executionTrace: trace,
+          protocolNotes: pushProtocolNotes(s.protocolNotes, `context.summarized · ${parts.join(' · ')}`),
         }
       }
 
@@ -1281,6 +1314,12 @@ export const useSessionStore = create<SessionStore>((set) => ({
   addArtifact: (a) => set((prev) => ({ ...prev, artifacts: [...prev.artifacts, a] })),
   clearError: () => set((s) => ({ ...s, errorMessage: null, status: 'idle' })),
   clearPendingAttachments: () => set((s) => ({ ...s, pendingAttachmentPaths: [] })),
+
+  appendProtocolNote: (line: string) =>
+    set((s) => ({
+      ...s,
+      protocolNotes: pushProtocolNotes(s.protocolNotes, line),
+    })),
 
   reset: () => set((s) => ({
     ...s,

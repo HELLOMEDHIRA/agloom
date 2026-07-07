@@ -60,7 +60,7 @@ const planGitignoreClean = (root: string): { removed: boolean; lines: number; re
     prevBlank = blank
   }
 
-  const result = cleaned.join('\n').trimEnd() + '\n'
+  const result = `${cleaned.join('\n').trimEnd()}\n`
   if (result !== original) {
     return {
       removed: true,

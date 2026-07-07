@@ -29,10 +29,66 @@ class ToolArtifact:
 
 
 class ToolScratchpad:
-    """In-process store for full tool payloads (per agent instance)."""
+    """Store for full tool payloads; optional LTS spill for durability."""
 
-    def __init__(self) -> None:
+    _MAX_ARTIFACTS = 500
+    _LTS_NS = ("context", "scratchpad")
+
+    def __init__(self, *, store: Any = None, agent_key: str = "default") -> None:
         self._artifacts: dict[str, ToolArtifact] = {}
+        self._store = store
+        self._agent_key = agent_key
+
+    def _lts_ns(self, ref_id: str) -> tuple:
+        return self._LTS_NS + (self._agent_key, ref_id)
+
+    def _spill_to_store(self, art: ToolArtifact) -> None:
+        store = self._store
+        if store is None:
+            return
+        put = getattr(store, "put", None)
+        if not callable(put):
+            return
+        try:
+            put(
+                self._lts_ns(art.ref_id),
+                "payload",
+                {
+                    "ref_id": art.ref_id,
+                    "tool_name": art.tool_name,
+                    "content": art.content,
+                    "created_at": art.created_at,
+                    "tool_call_id": art.tool_call_id,
+                },
+            )
+        except Exception as exc:
+            logger.debug(f"[tool_scratchpad] LTS spill failed ref={art.ref_id}: {exc!r}")
+
+    def _load_from_store(self, ref_id: str) -> ToolArtifact | None:
+        store = self._store
+        if store is None:
+            return None
+        get = getattr(store, "get", None)
+        if not callable(get):
+            return None
+        try:
+            item = get(self._lts_ns(ref_id), "payload")
+            if not item:
+                return None
+            val = item.value if hasattr(item, "value") else item
+            if not isinstance(val, dict):
+                return None
+            art = ToolArtifact(
+                ref_id=val.get("ref_id", ref_id),
+                tool_name=val.get("tool_name", "tool"),
+                content=str(val.get("content", "")),
+                created_at=float(val.get("created_at", time.time())),
+                tool_call_id=val.get("tool_call_id"),
+            )
+            self._artifacts[ref_id] = art
+            return art
+        except Exception:
+            return None
 
     def store(
         self,
@@ -49,10 +105,18 @@ class ToolScratchpad:
             tool_call_id=tool_call_id,
         )
         self._artifacts[ref_id] = art
+        self._spill_to_store(art)
+        if len(self._artifacts) > self._MAX_ARTIFACTS:
+            oldest = min(self._artifacts.values(), key=lambda a: a.created_at)
+            self._artifacts.pop(oldest.ref_id, None)
         return art
 
     def get(self, ref_id: str) -> ToolArtifact | None:
-        return self._artifacts.get(ref_id.strip())
+        rid = ref_id.strip()
+        art = self._artifacts.get(rid)
+        if art is not None:
+            return art
+        return self._load_from_store(rid)
 
     def recall_slice(self, ref_id: str, *, offset: int = 0, limit: int = 12_000) -> str:
         art = self.get(ref_id)

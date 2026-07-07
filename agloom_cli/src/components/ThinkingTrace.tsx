@@ -11,10 +11,10 @@ interface Props {
 }
 
 export const ThinkingTrace = ({ steps }: Props): React.ReactElement | null => {
-  if (steps.length === 0) return null
-
   const mainColumnWidth = useSessionStore((s) => s.mainColumnWidth)
   const detailCols = Math.max(40, mainColumnWidth - 4)
+
+  if (steps.length === 0) return null
 
   return (
     <Box flexDirection="column" marginLeft={2} marginTop={0} marginBottom={0}>

@@ -12,7 +12,7 @@ import type {
 } from './session.js'
 import type { AGPEvent } from '../types/agp.js'
 import { isAgpKnownEvent } from '../types/agpEventGuards.js'
-import { harnessLedgerFromWire, harnessPlanToLedgerRows } from './harnessWire.js'
+import { harnessLedgerFromWire, harnessPlanToLedgerRows, patchHarnessLedgerTask } from './harnessWire.js'
 import {
   finalizeAssistantMessage,
   formatTurnTokenRollup,
@@ -522,6 +522,31 @@ export const dispatchAgpEvent = (s: SessionStore, evt: AGPEvent): SessionStore =
         ...s,
         harnessLedgerTasks: tasks.length ? tasks : s.harnessLedgerTasks,
         protocolNotes: pushProtocolNotes(s.protocolNotes, note),
+      }
+    }
+
+    case 'harness.task.updated': {
+      const note = `harness.task.updated · ${evt.data.task_id} · ${evt.data.status}${evt.data.notes ? ` · ${evt.data.notes}` : ''}`
+      return {
+        ...s,
+        harnessLedgerTasks: patchHarnessLedgerTask(s.harnessLedgerTasks ?? [], evt.data),
+        protocolNotes: pushProtocolNotes(s.protocolNotes, note),
+      }
+    }
+
+    case 'context.summarized': {
+      const parts = [
+        evt.data.scope,
+        evt.data.turns_before != null && evt.data.turns_after != null
+          ? `turns ${evt.data.turns_before}→${evt.data.turns_after}`
+          : null,
+        evt.data.tokens_before != null && evt.data.tokens_after != null
+          ? `tokens ${evt.data.tokens_before}→${evt.data.tokens_after}`
+          : null,
+      ].filter(Boolean)
+      return {
+        ...s,
+        protocolNotes: pushProtocolNotes(s.protocolNotes, `context.summarized · ${parts.join(' · ')}`),
       }
     }
 

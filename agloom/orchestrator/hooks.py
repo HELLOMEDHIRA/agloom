@@ -97,8 +97,10 @@ async def maybe_recover_react_failure(
     analysis: QueryAnalysis,
     result: ExecutionResult,
 ) -> ExecutionResult:
-    """Spawn REFLECTION when REACT exits unsuccessfully."""
+    """Spawn REFLECTION when REACT exits unsuccessfully (disabled when ``strict_execution``)."""
     if result.success or agent.get("_frozen_replay") or not pattern_spawns_enabled(agent, config):
+        return result
+    if agent.get("strict_execution") or (config or {}).get("strict_execution"):
         return result
     spawn_api = get_spawn_api(config)
     assert spawn_api is not None

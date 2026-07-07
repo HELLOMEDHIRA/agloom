@@ -25,7 +25,7 @@ _arguments -S -s \
   '--memory-path[SQLite path for memory]:file:_files' \
   '--skills-dir[Skills directory]:directory:_directories' \
   '--summarizer-model[Summarizer model id]:model:' \
-  '--no-auto-summarize[Disable auto summarization]' \
+  '--profile[Workload profile (interactive, harness_long, …)]' \
   '--session-max-turns[Session memory max turns]:turns:' \
   '--max-turns[Alias for session-max-turns]:turns:' \
   '--prompt[Direct prompt text]:prompt:' \

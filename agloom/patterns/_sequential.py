@@ -7,7 +7,9 @@ from ..src.logging_utils import get_logger
 from ..src.models import PatternType, QueryAnalysis, ResolvedWorkerConfig, SignalType, WorkerResult
 from ._worker_signals import halted_worker_result, worker_execution_failed
 from ..src.worker import extend_invoke_config_with_event_queue
+from ._failure import exec_failure_kwargs
 from ._upstream_context import format_upstream_block, format_upstream_blocks
+from ._worker_wire import emit_worker_end, emit_worker_start
 from .worker_gates import drain_for_halt, get_signal_queue
 
 logger = get_logger(__name__)
@@ -189,6 +191,15 @@ async def run_sequential_workers(
             f"step {idx + 1}/{len(sorted_configs)} "
             f"worker='{config.worker_id}' depends_on={config.depends_on}"
         )
+        ml = int(agent.get("max_step_output_length", 0) or 0)
+        steps_ref: list = (invoke_config or {}).get("_steps") or []
+        await emit_worker_start(
+            agent,
+            worker_id=config.worker_id,
+            task=config.task,
+            steps=steps_ref,
+            max_length=ml,
+        )
         from ..orchestrator.hooks import run_worker_or_dispatch
 
         step_analysis = (invoke_config or {}).get("_query_analysis")
@@ -198,6 +209,17 @@ async def run_sequential_workers(
             )
         result = await run_worker_or_dispatch(
             agent, config, llm, invoke_config, step_analysis
+        )
+        await emit_worker_end(
+            agent,
+            worker_id=result.worker_id,
+            task=result.task,
+            output=result.output,
+            duration_ms=result.elapsed_ms,
+            signal=result.signal.value,
+            steps=steps_ref,
+            max_length=ml,
+            worker_steps=getattr(result, "steps", []),
         )
         results_map[config.worker_id] = result
         ordered_results.append(result)

@@ -100,8 +100,6 @@ class ContextBudgetMiddleware(AgentMiddleware):
 
 
 def tool_context_settings_from_mapping(cfg: dict[str, Any]) -> dict[str, Any] | None:
-    if cfg.get("tool_scratchpad") is False:
-        return None
     pad = cfg.get("_tool_scratchpad")
     if not isinstance(pad, ToolScratchpad):
         return None

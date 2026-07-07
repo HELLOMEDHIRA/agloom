@@ -78,15 +78,12 @@ export const stripAgloomToolResultEnvelope = (s: string): string => {
 export const finalizeAssistantMessage = (wireContent: string, streamed: string): string => {
   const wire = stripAgloomToolResultEnvelope(wireContent)
   const stream = stripAgloomToolResultEnvelope(streamed)
-  let body = ''
   if (wire && stream) {
-    if (wire.includes(stream)) body = wire
-    else if (stream.includes(wire)) body = stream
-    else body = wire.length >= stream.length ? wire : stream
-  } else {
-    body = wire || stream
+    if (wire.includes(stream)) return wire
+    if (stream.includes(wire)) return stream
+    return wire.length >= stream.length ? wire : stream
   }
-  return body
+  return wire || stream
 }
 
 /** Format per-turn token rollup for transcript footer (context high-water + output sum). */

@@ -16,7 +16,7 @@ def _args(**kw: object) -> Namespace:
     base = argparse.Namespace(
         memory_type="in-memory",
         session_max_turns=10,
-        auto_summarize=False,
+        summarizer_model=None,
     )
     for k, v in kw.items():
         setattr(base, k, v)
@@ -36,8 +36,8 @@ async def test_open_isolated_session_memory_uses_distinct_stores_per_session() -
 async def test_isolated_sessions_do_not_share_turn_data() -> None:
     store_a = InMemoryStore()
     store_b = InMemoryStore()
-    sm_a = SessionMemory(store=store_a, max_turns=5, auto_summarize=False, agp_session_key="alpha")
-    sm_b = SessionMemory(store=store_b, max_turns=5, auto_summarize=False, agp_session_key="beta")
+    sm_a = SessionMemory(store=store_a, max_turns=5, summarizer_model=None, agp_session_key="alpha")
+    sm_b = SessionMemory(store=store_b, max_turns=5, summarizer_model=None, agp_session_key="beta")
     thread = "t1"
 
     await sm_a.aadd_turn(thread, "q1", "a1")
@@ -50,8 +50,8 @@ async def test_isolated_sessions_do_not_share_turn_data() -> None:
 
     # Same physical store but different agp_session_key must not collide.
     shared = InMemoryStore()
-    sm_x = SessionMemory(store=shared, max_turns=5, auto_summarize=False, agp_session_key="x")
-    sm_y = SessionMemory(store=shared, max_turns=5, auto_summarize=False, agp_session_key="y")
+    sm_x = SessionMemory(store=shared, max_turns=5, summarizer_model=None, agp_session_key="x")
+    sm_y = SessionMemory(store=shared, max_turns=5, summarizer_model=None, agp_session_key="y")
     await sm_x.aadd_turn(thread, "only-x", "ax")
     await sm_y.aadd_turn(thread, "only-y", "ay")
     assert "only-x" in await sm_x.aformat_context(thread, last_n=10)

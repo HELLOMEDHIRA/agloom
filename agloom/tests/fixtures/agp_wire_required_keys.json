@@ -7,6 +7,8 @@
   "progress.step": ["phase"],
   "runtime.ready": ["agent_name", "harness_enabled"],
   "harness.synced": ["action", "task_count", "tasks"],
+  "harness.task.updated": ["task_id", "status"],
+  "context.summarized": ["scope"],
   "error.fatal": ["message", "severity"],
   "tool.call.start": ["tool", "tool_call_id"],
   "tool.call.result": ["tool", "tool_call_id"],

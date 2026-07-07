@@ -46,8 +46,8 @@ Validated fields (unknown keys are preserved via passthrough for forward compati
 | `memory` | string | Session memory backend hint (`sqlite`, `in-memory`, `none`, …) |
 | `memory_path` | string | SQLite session memory path |
 | `skills_dir` | string | Skills **disk mirror** directory (defaults to `.agloom/skills` under cwd when omitted; see [Flags](flags.md)) |
-| `summarizer_model` | string | Summarizer model id |
-| `auto_summarize` | boolean | Toggle auto summarization |
+| `summarizer_model` | string | Optional cheaper model for Context Plane summarization (always on when set) |
+| `profile` | string | Workload profile: `interactive` (default), `tool_agent`, `harness_long`, `platform_embedded`, `batch_frozen` — see [Workload profiles](../architecture/workload-profiles.md) |
 | `session_max_turns` | integer | Session window (default **50**; maps from `memory.max_turns`) |
 | `mcp` | array | Strings `name:path` or `{ name, config }` objects |
 
@@ -85,7 +85,6 @@ Rich layouts may nest tuning fields:
 memory:
   enabled: true
   max_turns: 50
-  auto_summarize: true
   path: .agloom/session_memory.sqlite
 skills:
   enabled: true
@@ -107,13 +106,13 @@ temperature: 0
 ```yaml
 model: openai:gpt-4o
 provider: openai
+profile: interactive
 temperature: 0.2
 store: sqlite
 store_path: .agloom/agp_events.db
 memory: sqlite
 memory_path: .agloom/session_memory.sqlite
 session_max_turns: 30
-auto_summarize: true
 summarizer_model: openai:gpt-4o-mini
 mcp:
   - fs: ./mcp/filesystem.yaml

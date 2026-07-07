@@ -213,8 +213,7 @@ export const runDirect = async(options: {
               '[agloom] no `--model` was sent (e.g. yaml `model: auto` with no override). Set a provider API key, `AGLOOM_MODEL`, or run `agloom -m provider:model-id`.\n'
           }
           process.stderr.write(
-            '[agloom] no assistant output was produced. Check stderr for `[agloom-runtime]` lines, provider API keys, and model id; use `--json` to dump every AGP event.\n' +
-              extra,
+            `[agloom] no assistant output was produced. Check stderr for \`[agloom-runtime]\` lines, provider API keys, and model id; use \`--json\` to dump every AGP event.\n${extra}`,
           )
         }
       }

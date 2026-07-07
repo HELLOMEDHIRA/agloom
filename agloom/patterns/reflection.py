@@ -18,6 +18,7 @@ from ..src.models import (
     normalize_reflection_analysis,
 )
 from ..src.worker import extend_invoke_config_with_event_queue
+from ._failure import exec_failure_kwargs
 from ._resolve import resolve_worker_configs
 from ._steps_accounting import steps_taken_from_audit
 from .hitl import run_workers_with_hitl
@@ -92,6 +93,7 @@ async def handle_reflection(
             analysis=analysis,
             steps=steps,
             messages=raw_messages,
+            **exec_failure_kwargs(kind="planning"),
         )
 
     goal = analysis.subtasks[0].task
@@ -178,6 +180,7 @@ async def handle_reflection(
                 steps=steps,
                 token_usage=usage,
                 messages=raw_messages,
+                **exec_failure_kwargs(kind="worker"),
             )
         gen_result = gen_out[0]
         worker_results.append(gen_result)
@@ -311,6 +314,7 @@ async def handle_reflection(
         steps=steps,
         token_usage=usage,
         messages=raw_messages,
+        **exec_failure_kwargs(kind="worker"),
     )
 
 

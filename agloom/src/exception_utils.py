@@ -66,9 +66,53 @@ def format_exception_message(exc: BaseException, *, include_type: bool = True) -
     http_detail = _http_error_detail(root)
     if http_detail and http_detail not in msg:
         msg = f"{msg} ({http_detail})"
+    if exception_indicates_transient_transport_error(exc):
+        hint = (
+            "Transient HTTP transport failure — often a proxy idle timeout, connection pool "
+            "reset, or client-side cancellation mid-stream; retry or raise llm_timeout."
+        )
+        if hint not in msg:
+            msg = f"{msg} [{hint}]"
     if not include_type:
         return msg
     type_name = type(root).__name__
     if msg.startswith(f"{type_name}:") or msg.startswith(f"{type_name}("):
         return msg
     return f"{type_name}: {msg}"
+
+
+_TRANSIENT_TRANSPORT_TYPES = frozenset(
+    {
+        "RemoteProtocolError",
+        "ConnectError",
+        "ConnectTimeout",
+        "ReadTimeout",
+        "WriteTimeout",
+        "PoolTimeout",
+        "NetworkError",
+        "ProtocolError",
+        "ConnectionError",
+        "ConnectionResetError",
+        "BrokenPipeError",
+    }
+)
+
+_TRANSIENT_TRANSPORT_MARKERS = (
+    "server disconnected without sending a response",
+    "connection reset",
+    "connection aborted",
+    "broken pipe",
+    "unexpected eof",
+    "peer closed connection",
+    "incomplete chunked read",
+    "connection closed",
+)
+
+
+def exception_indicates_transient_transport_error(exc: BaseException) -> bool:
+    """True for flaky HTTP/TCP disconnects that are safe to retry (LLM or MCP)."""
+    root = unwrap_exception(exc)
+    if type(root).__name__ in _TRANSIENT_TRANSPORT_TYPES:
+        return True
+    low = str(root).lower()
+    return any(marker in low for marker in _TRANSIENT_TRANSPORT_MARKERS)

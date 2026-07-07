@@ -31,7 +31,7 @@ export interface CoreCliOpts {
   memory?: string
   memoryPath?: string
   summarizerModel?: string
-  noAutoSummarize: boolean
+  profile?: string
   sessionMaxTurns: number
   maxTurns?: number
   budgetTokens?: number

@@ -51,8 +51,8 @@ TUI **`multiline`** is not a CLI flag — set it in **`agloom.yaml`** (see [Conf
 | `--memory <type>` | `in-memory`, `none`, `sqlite`, … |
 | `--memory-path <path>` | SQLite path for session memory. |
 | `--skills-dir <path>` | Skills **disk mirror** directory. When omitted, `agloom-runtime` defaults to **`.agloom/skills`** under the process working directory so learned skills appear as files. |
-| `--summarizer-model <id>` | Model id for summarization. |
-| `--no-auto-summarize` | Disable auto summarization. |
+| `--summarizer-model <id>` | Optional cheaper model for Context Plane summarization (always on when set). |
+| `--profile <name>` | Workload profile (`interactive`, `harness_long`, `platform_embedded`, `batch_frozen`, `tool_agent`). |
 | `--session-max-turns <n>` | Rolling window size (`--max-turns` alias). |
 
 There is **no** `--no-memory` or `--no-skills` flag on the npm CLI or `agloom-runtime serve`; YAML `memory.enabled: false` / `skills.enabled: false` is ignored for disabling those systems (see [Config](config.md)).
@@ -68,6 +68,7 @@ The npm CLI does **not** wrap every runtime execution flag. Configure via **`.ag
 | `execution.react_graph_timeout` | `--react-graph-timeout` | `react_graph_timeout` |
 | `execution.react_recursion_limit` | `--react-recursion-limit` | `react_recursion_limit` |
 | `harness.project_name` / `goal` | `--harness-project-name`, `--harness-goal` | `harness_metadata` |
+| `profile` | `--profile` | `profile` (workload preset) |
 | `harness.enabled: false` | `--no-harness` | `harness=False` |
 | `safety.require_approval: false` | `--no-require-tool-approval` | `require_tool_approval_for_cli_tools=False` |
 

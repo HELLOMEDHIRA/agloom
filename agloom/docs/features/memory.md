@@ -75,7 +75,7 @@ async def example(agent):
 
 - Each `ainvoke` call stores the query and response as a turn under `("session", thread_id)`
 - The last `session_max_turns` turns are injected into the system prompt on the next call
-- When history grows past limits, older turns are compressed or dropped (see [Auto-Summarization](#auto-summarization) below — not a simple FIFO trim while `auto_summarize=True`)
+- When history grows past limits, older turns are summarized automatically via the Context Plane (see [Context fidelity](../guides/context-fidelity.md))
 - Threads are isolated — different `thread_id` values get different histories
 
 !!! warning "Do not mix sync and async session writers"
@@ -132,17 +132,17 @@ Long-term memory namespace is resolved in this order:
 | 3 (default) | Neither passed | `(agent_name, thread_id)` | Thread-scoped (default) |
 
 !!! warning "`user_id` must be passed at call time"
-    Setting `user_id` on `create_agent()` sets a **config default** but does **not** activate user-scoped namespacing. You must pass `user_id=` on each `ainvoke()` / `astream()` / `astream_events()` / `abatch()` call for it to take effect:
+    Setting `user_id` on `create_agent()` sets a **config default** but does **not** activate user-scoped namespacing. You must pass `user_id=` on each `ainvoke()` / `astream()` / `astream_events()` / `abatch()` call for it to take effect.
 
-    ```python
-    async def example():
-        # This does NOT scope LT memory to "alice" at call time:
-        agent = await create_agent(model=llm, store=store, user_id="alice")
-        await agent.ainvoke("Hello")  # namespace = (agent_name, random_uuid)
+```python
+async def example():
+    # This does NOT scope LT memory to "alice" at call time:
+    agent = await create_agent(model=llm, store=store, user_id="alice")
+    await agent.ainvoke("Hello")  # namespace = (agent_name, random_uuid)
 
-        # This DOES scope LT memory to "alice":
-        await agent.ainvoke("Hello", user_id="alice")  # namespace = (agent_name, "alice")
-    ```
+    # This DOES scope LT memory to "alice":
+    await agent.ainvoke("Hello", user_id="alice")  # namespace = (agent_name, "alice")
+```
 
 ### Configuration
 
@@ -153,15 +153,14 @@ Long-term memory namespace is resolved in this order:
 
 ## Auto-Summarization
 
-When conversations grow long, raw turns can consume significant context window budget. agloom automatically summarizes older turns into a compressed summary, preserving key information while freeing up tokens for the current conversation.
+When conversations grow long, raw turns can consume significant context window budget. agloom **always** summarizes older turns when stored tokens exceed ~80% of the model window (or `summarize_max_tokens_budget`). There is no toggle to disable this — see [Context fidelity](../guides/context-fidelity.md).
 
 ### How auto-summarization works
 
 1. After each turn is recorded, agloom counts the total tokens across all stored turns (using `tiktoken`)
-2. If the total exceeds `summarize_threshold` (default: 200,000 tokens), summarization triggers
-3. The oldest 70% of turns are compressed into a single summary turn via an LLM call
-4. The most recent 30% of turns are kept intact
-5. The summary replaces the oldest turns in storage
+2. When the total exceeds the effective budget, the Context Plane compresses the oldest ~70% of turns into one episodic summary turn
+3. The most recent turns are kept intact
+4. Summary turns are preserved across `max_turns` trimming
 
 ```mermaid
 flowchart LR
@@ -176,25 +175,12 @@ flowchart LR
 
 ### Default behavior
 
-Auto-summarization is **enabled by default**. No configuration needed:
+Auto-summarization is **always on** when a summarizer model is available (defaults to the agent model):
 
 ```python
 async def main():
     agent = await create_agent(model=llm, name="chat-agent")
-    # Auto-summarization will trigger when conversation history exceeds 200k tokens
-```
-
-### Disabling auto-summarization
-
-For latency-sensitive or cost-sensitive scenarios, disable it:
-
-```python
-async def main():
-    agent = await create_agent(
-        model=llm,
-        name="fast-agent",
-        auto_summarize=False,  # oldest turns are dropped instead of summarized
-    )
+    # Summarization triggers automatically from the model context window
 ```
 
 ### Using a cheaper model for summarization
@@ -210,7 +196,7 @@ async def main():
     )
 ```
 
-### Custom threshold
+### Custom budget
 
 Adjust when summarization triggers:
 
@@ -218,7 +204,7 @@ Adjust when summarization triggers:
 async def main():
     agent = await create_agent(
         model=llm,
-        summarize_threshold=100_000,  # trigger earlier (default: 200,000)
+        summarize_max_tokens_budget=100_000,  # trigger at ~80k stored tokens
         name="agent",
     )
 ```
@@ -238,8 +224,8 @@ Assistant: The SUPERVISOR pattern is ideal for...
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `auto_summarize` | `True` | Enable automatic conversation summarization |
-| `summarize_threshold` | `200_000` | Token count that triggers summarization (min 10,000) |
+| `summarize_max_tokens_budget` | inferred from model window | Stored-token ceiling; summarize at ~80% |
+| `summarizer_model` | agent model | Separate LLM for summarization (optional) |
 | `summarizer_model` | `None` | Separate LLM for summarization. `None` = use agent's own model |
 
 ## Long-Term Store
@@ -303,7 +289,6 @@ async def main():
 !!! warning "Duplicate agent names"
     If two agents with the **same name** share the **same store**, agloom logs a warning:
     `[agloom] Multiple agents named 'X' share the same LongTermStore. They will read/write the same skill and feedback namespaces.`
-
     This is by design (for advanced sharing), but if unintentional, use different names.
 
 ## Disabling Memory Tools

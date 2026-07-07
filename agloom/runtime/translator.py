@@ -51,6 +51,8 @@ _TRANSLATED_AGENT_EVENT_TYPES: frozenset[str] = frozenset(
         "skill_context",
         "progress",
         "harness.synced",
+        "harness_task_updated",
+        "context_summarized",
         "skill_learned",
         "memory_lt_recall",
         "memory_session_write",
@@ -407,6 +409,33 @@ def translate(event: AgentEvent, emitter: SessionEmitter) -> str | None:
             query_preview=_str(data.get("query_preview")),
             hits=_int(data.get("hits")) or 0,
             injected_chars=_int(data.get("injected_chars")) or 0,
+        )
+        return
+
+    if et in ("harness.task.updated", "harness_task_updated"):
+        emitter.emit_harness_task_updated(
+            task_id=_str(data.get("task_id")) or "",
+            status=_str(data.get("status")) or "",
+            notes=_str(data.get("notes")) or "",
+            project=_str(data.get("project")),
+        )
+        return
+
+    if et in ("context.summarized", "context_summarized"):
+        refs = data.get("artifact_refs")
+        if not isinstance(refs, list):
+            refs = []
+        scope = _str(data.get("scope")) or "session"
+        if scope not in ("session", "harness", "job", "injection"):
+            scope = "session"
+        emitter.emit_context_summarized(
+            scope=scope,  # type: ignore[arg-type]
+            turns_before=_int(data.get("turns_before")),
+            turns_after=_int(data.get("turns_after")),
+            tokens_before=_int(data.get("tokens_before")),
+            tokens_after=_int(data.get("tokens_after")),
+            artifact_refs=[str(r) for r in refs if r],
+            content_hash=_str(data.get("content_hash")),
         )
         return
 

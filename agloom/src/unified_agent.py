@@ -943,13 +943,14 @@ async def _apply_response_format(
 
 
 def _memory_injection_last_n(config: dict) -> int:
-    """How many recent turns to inject into prompts (bounded for safety; honors ``session_max_turns``)."""
-    try:
-        n = int(config.get("session_max_turns", 50))
-    except (TypeError, ValueError):
-        n = 50
-    # Avoid pathological context sizes; rolling SessionMemory may still store more per YAML.
-    return max(1, min(n, 500))
+    """Recent turns for prompt injection (separate from session storage cap)."""
+    explicit = config.get("memory_injection_turns")
+    if explicit is not None:
+        try:
+            return max(1, min(int(explicit), 20))
+        except (TypeError, ValueError):
+            pass
+    return 5
 
 
 def _max_tokens_budget_from_chat_model(llm: Any) -> int | None:
@@ -1185,30 +1186,41 @@ async def _save_checkpoint(
 
 
 async def _ensure_mcp_connected(config: dict) -> None:
-    """Connect to MCP servers once per agent lifecycle; emit diagnostics (AGP + logs).
+    """Connect (or reconnect) MCP servers once per agent lifecycle.
 
-    Raises :class:`~agloom.mcp_support.MCPConnectionError` if any configured server fails
-    (caller should surface as fatal to the user).
+    Raises :class:`~agloom.mcp_support.MCPConnectionError` if any configured server fails.
     """
     if not config.get("_mcp_servers"):
         return
-    if config.get("_mcp_session_attempted"):
+
+    tm = config.get("_transport_manager")
+    client = config.get("_mcp_client")
+    if client is not None and config.get("_mcp_session_attempted"):
         return
+    if config.get("_mcp_session_attempted") and client is None:
+        config["_mcp_session_attempted"] = False
+
     async with config["_mcp_lock"]:
-        if config.get("_mcp_session_attempted"):
+        client = config.get("_mcp_client")
+        if client is not None and config.get("_mcp_session_attempted"):
             return
+        if config.get("_mcp_session_attempted") and client is None:
+            config["_mcp_session_attempted"] = False
         from .mcp_support import connect_mcp_servers
 
         client, server_rows = await connect_mcp_servers(
             servers=config["_mcp_servers"],
             agent=config,
             agent_name=config.get("name", "Agent"),
+            transport_manager=tm,
         )
         config["_mcp_session_attempted"] = True
         config["_mcp_client"] = client
         config["_mcp_server_rows"] = list(server_rows)
         if client is not None:
             config["_mcp_connected"] = True
+            if tm is not None:
+                tm.mark_mcp_connected()
 
         names = [getattr(s, "name", str(s)) for s in config.get("_mcp_servers", [])]
         eq = config.get("_event_queue")
@@ -2602,6 +2614,9 @@ class UnifiedAgent:
                         "clarification_queues": invoke_config["configurable"]["clarification_queues"],
                         "_event_queue": event_queue,
                     }
+                    _pt = run_config.get("_progress_tracker")
+                    if _pt is not None:
+                        setattr(_pt, "_event_queue", event_queue)
 
                     result = await run_fresh(
                         config=run_config,
@@ -3176,8 +3191,6 @@ async def create_agent(
     mcp_servers: list[MCPServerConfig] | None = None,
     max_step_output_length: int = 0,
     fallback_pattern: PatternType | None = None,
-    auto_summarize: bool = True,
-    summarize_threshold: int = 200_000,
     summarize_max_tokens_budget: int | None = None,
     summarizer_model: Any = None,
     feedback_handler: Any | None = None,
@@ -3192,10 +3205,7 @@ async def create_agent(
     react_force_tool_choice_on_user_turn: bool = True,
     react_tool_use_failed_auto_retries_hitl: int = 2,
     react_tool_use_failed_user_rounds: int = 3,
-    tool_scratchpad: bool = True,
-    tool_digest_min_chars: int = 4000,
     context_window_tokens: int | None = None,
-    context_compact_ratio: float = 0.82,
     max_pattern_depth: int = 0,
     max_orchestration_llm_calls: int = 100,
     max_orchestration_tokens: int = 0,
@@ -3207,6 +3217,8 @@ async def create_agent(
     enable_dynamic_dag_nodes: bool = True,
     enable_supervisor_worker_dispatch: bool = True,
     orchestration_evaluation_llm: Any = None,
+    profile: str | None = None,
+    strict_execution: bool | None = None,
 ) -> UnifiedAgent:
     """Construct a configured ``UnifiedAgent`` (async).
 
@@ -3236,6 +3248,33 @@ async def create_agent(
     extend ``tools`` (memory load_skill, harness tools).
     """
     configure_package_logging(debug)
+
+    from agloom.profiles import resolve_profile_kwargs
+
+    profile_kw = resolve_profile_kwargs(profile)
+    if strict_execution is not None:
+        profile_kw["strict_execution"] = strict_execution
+    _strict_execution = bool(profile_kw.get("strict_execution", False))
+    _workload_profile = str(profile_kw.get("workload_profile", "interactive"))
+
+    if profile_kw.get("frozen") is True:
+        frozen = True
+    if profile_kw.get("harness") is True:
+        harness = True
+    if "enable_auto_escalation" in profile_kw:
+        enable_auto_escalation = bool(profile_kw["enable_auto_escalation"])
+    if "max_pattern_depth" in profile_kw:
+        max_pattern_depth = int(profile_kw["max_pattern_depth"])
+    if "react_recursion_limit" in profile_kw:
+        react_recursion_limit = int(profile_kw["react_recursion_limit"])
+    if "session_max_turns" in profile_kw:
+        session_max_turns = int(profile_kw["session_max_turns"])
+    if "llm_timeout" in profile_kw:
+        llm_timeout = float(profile_kw["llm_timeout"])
+    if "react_graph_timeout" in profile_kw:
+        react_graph_timeout = float(profile_kw["react_graph_timeout"])
+    if "enable_pattern_spawns" in profile_kw:
+        enable_pattern_spawns = bool(profile_kw["enable_pattern_spawns"])
 
     resolved_turn_planner_timeout = (
         turn_planner_timeout if turn_planner_timeout is not None else classifier_timeout
@@ -3318,10 +3357,7 @@ async def create_agent(
         react_force_tool_choice_on_user_turn=react_force_tool_choice_on_user_turn,
         react_tool_use_failed_auto_retries_hitl=react_tool_use_failed_auto_retries_hitl,
         react_tool_use_failed_user_rounds=react_tool_use_failed_user_rounds,
-        tool_scratchpad=tool_scratchpad,
-        tool_digest_min_chars=tool_digest_min_chars,
         context_window_tokens=context_window_tokens,
-        context_compact_ratio=context_compact_ratio,
         max_pattern_depth=max_pattern_depth,
         max_orchestration_llm_calls=max_orchestration_llm_calls,
         max_orchestration_tokens=max_orchestration_tokens,
@@ -3333,8 +3369,6 @@ async def create_agent(
         enable_dynamic_dag_nodes=enable_dynamic_dag_nodes,
         enable_supervisor_worker_dispatch=enable_supervisor_worker_dispatch,
         orchestration_evaluation_llm=orchestration_evaluation_llm,
-        auto_summarize=auto_summarize,
-        summarize_threshold=summarize_threshold,
         summarize_max_tokens_budget=summarize_max_tokens_budget,
         summarizer_model=summarizer_model,
     )
@@ -3352,16 +3386,17 @@ async def create_agent(
     resolved_prompt = resolve_system_prompt(system_prompt, cli_tools=cli_tools_kw is not None)
     agent_name = (name or "UnifiedAgent").strip()
     resolved_tools = normalize_tools(tools or [])
+    from agloom.context.plane import compute_context_budget
     from agloom.context.tool_scratchpad import ToolScratchpad, make_recall_tool_artifact
     from agloom.context.window import infer_context_window_tokens, reserved_output_tokens
+    from agloom.transport.manager import TransportManager, TransportPolicy
 
     ctx_window = context_window_tokens or infer_context_window_tokens(resolved_llm, model)
     ctx_reserved = reserved_output_tokens(resolved_llm, context_window=ctx_window)
+    _ctx_budget = compute_context_budget(resolved_llm, model_spec=model, context_window_tokens=ctx_window)
+    tool_digest_min_chars = _ctx_budget.digest_min_chars
+    context_compact_ratio = 0.82
     tool_scratchpad_pad: ToolScratchpad | None = None
-    if tool_scratchpad and resolved_tools:
-        tool_scratchpad_pad = ToolScratchpad()
-        resolved_tools = [*resolved_tools, make_recall_tool_artifact(tool_scratchpad_pad)]
-    _check_reserved_tool_names(resolved_tools[:-1] if tool_scratchpad_pad else resolved_tools)
     _task_agent_cell: list[Any | None] | None = None
     if cli_tools_kw is not None and bool(cli_tools_kw.get("task_tool", True)):
         _task_agent_cell = [None]
@@ -3386,6 +3421,12 @@ async def create_agent(
     if store is not None:
         resolved_store = store if isinstance(store, LongTermStore) else LongTermStore(store=store)
 
+    if resolved_tools:
+        scratch_store = resolved_store
+        tool_scratchpad_pad = ToolScratchpad(store=scratch_store, agent_key=agent_name)
+        resolved_tools = [*resolved_tools, make_recall_tool_artifact(tool_scratchpad_pad)]
+    _check_reserved_tool_names(resolved_tools[:-1] if tool_scratchpad_pad else resolved_tools)
+
     _register_agent_name(agent_name, resolved_store)
 
     if resolved_store is not None and enable_memory_tools:
@@ -3408,26 +3449,21 @@ async def create_agent(
             resolved_memory = SessionMemory(
                 store=LGStore(),
                 max_turns=session_max_turns,
-                auto_summarize=auto_summarize,
-                summarize_threshold=summarize_threshold,
                 summarize_max_tokens_budget=memory_budget,
-                summarizer_model=resolved_summarizer if auto_summarize else None,
+                summarizer_model=resolved_summarizer,
             )
         except ImportError:
             resolved_memory = SessionMemory(
                 max_turns=session_max_turns,
-                auto_summarize=auto_summarize,
-                summarize_threshold=summarize_threshold,
                 summarize_max_tokens_budget=memory_budget,
-                summarizer_model=resolved_summarizer if auto_summarize else None,
+                summarizer_model=resolved_summarizer,
             )
         logger.debug(
             f"{agent_name}: SessionMemory auto-created with ephemeral InMemoryStore. "
-            f"auto_summarize={auto_summarize} threshold={summarize_threshold} "
             f"summarize_max_tokens_budget={memory_budget!r} "
             f"For persistence: memory=SessionMemory(store=AsyncSqliteStore(...))"
         )
-    elif auto_summarize and resolved_memory.summarizer_model is None:
+    elif resolved_memory.summarizer_model is None:
         resolved_memory.summarizer_model = resolved_summarizer
     if (
         memory_budget is not None
@@ -3597,6 +3633,16 @@ async def create_agent(
         "enable_dynamic_dag_nodes": enable_dynamic_dag_nodes,
         "enable_supervisor_worker_dispatch": enable_supervisor_worker_dispatch,
         "orchestration_evaluation_llm": orchestration_evaluation_llm,
+        "memory_injection_turns": 5,
+        "strict_execution": _strict_execution,
+        "workload_profile": _workload_profile,
+        "_transport_manager": TransportManager(
+            TransportPolicy(
+                llm_timeout=llm_timeout,
+                react_graph_timeout=react_graph_timeout,
+                rate_limit=rate_limit,
+            )
+        ),
     }
 
     if delegates:

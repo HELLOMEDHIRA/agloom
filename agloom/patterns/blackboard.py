@@ -22,8 +22,10 @@ from ..src.models import (
     _make_step,
     _merge_token_usage,
 )
+from ._worker_wire import emit_worker_end, emit_worker_start
 from ..src.worker import extend_invoke_config_with_event_queue
 from ._blackboard_state import BlackboardState
+from ._failure import exec_failure_kwargs
 from ._resolve import resolve_worker_configs
 from ._steps_accounting import steps_taken_from_audit
 from ._synthesis_contract import ALL_PATTERN_WORKERS_FAILED_ERROR, pattern_synthesis_success
@@ -88,6 +90,7 @@ async def handle_blackboard(
             analysis=analysis,
             steps=steps,
             messages=raw_messages,
+            **exec_failure_kwargs(kind="planning"),
         )
 
     ks_configs = resolve_worker_configs(agent, analysis.subtasks)
@@ -149,6 +152,13 @@ async def handle_blackboard(
             )
 
             logger.event(f"[Blackboard] Running KS '{ks_cfg.worker_id}' (round {round_num})")
+            await emit_worker_start(
+                agent,
+                worker_id=ks_cfg.worker_id,
+                task=enriched_cfg.task,
+                steps=steps,
+                max_length=ml,
+            )
             merged = extend_invoke_config_with_event_queue(config, agent.get("_event_queue"), agent=agent)
             clar_qs = (config.get("configurable", {}).get("clarification_queues") if config else {}) or {}
             worker_task = asyncio.create_task(
@@ -173,16 +183,16 @@ async def handle_blackboard(
                 result = cast(WorkerResult, run_out)
             worker_results.append(result)
             raw_messages.extend(getattr(result, "messages", []))
-            steps.append(
-                _make_step(
-                    StepType.WORKER_END,
-                    result.worker_id,
-                    input=result.task,
-                    output=result.output,
-                    duration_ms=result.elapsed_ms,
-                    signal=result.signal.value,
-                    max_length=ml,
-                )
+            await emit_worker_end(
+                agent,
+                worker_id=result.worker_id,
+                task=result.task,
+                output=result.output,
+                duration_ms=result.elapsed_ms,
+                signal=result.signal.value,
+                steps=steps,
+                max_length=ml,
+                worker_steps=getattr(result, "steps", []),
             )
             if result.token_usage:
                 usage = _merge_token_usage(usage, result.token_usage)
@@ -257,6 +267,7 @@ async def handle_blackboard(
             steps=steps,
             token_usage=usage,
             messages=raw_messages,
+            **exec_failure_kwargs(ALL_PATTERN_WORKERS_FAILED_ERROR, kind="worker"),
         )
 
     synthesis_prompt = BLACKBOARD_SYNTHESIS_PROMPT.replace(

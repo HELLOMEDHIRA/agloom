@@ -166,7 +166,6 @@ tools:
 
 memory:
   max_turns: 50
-  auto_summarize: true
 
 skills:
   max_skills: 30

@@ -85,6 +85,13 @@ async def run_invocation(
     emitter.emit_prompt_requested(kind="user_turn", preview=_preview)
     emitter.emit_agent_busy(thread=thread)
 
+    try:
+        import structlog.contextvars
+
+        structlog.contextvars.bind_contextvars(thread=thread, session=getattr(emitter, "session_id", None))
+    except Exception:
+        pass
+
     from ..patterns.hitl_tool_coalesce import reset_hitl_turn_coalescer
 
     reset_hitl_turn_coalescer(agent)

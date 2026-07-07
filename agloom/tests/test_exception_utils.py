@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 from langgraph.errors import GraphRecursionError
 
-from agloom.src.exception_utils import format_exception_message, unwrap_exception
+from agloom.src.exception_utils import (
+    exception_indicates_transient_transport_error,
+    format_exception_message,
+    unwrap_exception,
+)
 from agloom.src.models import PatternType, QueryAnalysis
 from agloom.patterns.react import _run_react_ainvoke_with_retries
 
@@ -90,3 +94,59 @@ def test_format_exception_message_includes_http_response_body() -> None:
     msg = format_exception_message(exc)
     assert "No user query found" in msg
     assert "status=400" in msg
+
+
+def test_exception_indicates_transient_transport_remote_protocol() -> None:
+    class RemoteProtocolError(Exception):
+        pass
+
+    err = RemoteProtocolError("Server disconnected without sending a response.")
+    assert exception_indicates_transient_transport_error(err)
+
+
+def test_format_exception_message_transport_hint() -> None:
+    err = RuntimeError("Server disconnected without sending a response.")
+    msg = format_exception_message(err)
+    assert "Transient HTTP transport failure" in msg
+
+
+@pytest.mark.asyncio
+async def test_react_retries_transient_transport_then_succeeds() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from langchain_core.messages import AIMessage
+
+    transport_err = RuntimeError("RemoteProtocolError: Server disconnected without sending a response.")
+    ok_response = {"messages": [AIMessage(content="done")]}
+
+    mock_agent = MagicMock()
+    mock_agent.ainvoke = AsyncMock(side_effect=[transport_err, transport_err, ok_response])
+
+    agent = {
+        "llm": MagicMock(),
+        "tools": [],
+        "system_prompt": "sys",
+        "name": "Test",
+        "llm_timeout": 120.0,
+    }
+    analysis = QueryAnalysis(
+        pattern=PatternType.REACT,
+        complexity=1,
+        reasoning="test",
+        subtasks=[],
+    )
+
+    with patch(
+        "agloom.orchestrator.hooks.maybe_recover_react_failure",
+        AsyncMock(side_effect=lambda _a, _c, _q, _an, result: result),
+    ):
+        result = await _run_react_ainvoke_with_retries(
+            agent,
+            "investigate",
+            analysis,
+            config={"_steps": []},
+            react_agent=mock_agent,
+        )
+
+    assert result.success
+    assert mock_agent.ainvoke.await_count == 3

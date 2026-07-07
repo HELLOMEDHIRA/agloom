@@ -39,6 +39,9 @@ class LongTermStore:
         if key is not None:
             val = {"memory": value or "", **(metadata or {})}
             self.store.put(namespace, key, val)
+            from ..observability.memory_events import emit_memory_lt_store_sync
+
+            emit_memory_lt_store_sync(namespace=namespace, key=key, content=value or "")
             return key
         k = str(uuid.uuid4())
         self.store.put(namespace, k, {"memory": memory, "topic": topic, "source": "agent"})
@@ -57,9 +60,21 @@ class LongTermStore:
         if key is not None:
             val = {"memory": value or "", **(metadata or {})}
             await self.store.aput(namespace, key, val)
+            try:
+                from ..observability.memory_events import emit_memory_lt_store
+
+                await emit_memory_lt_store(namespace=namespace, key=key, content=value or "")
+            except Exception as exc:
+                logger.debug(f"LongTermStore memory.lt.store emit failed: {exc!r}")
             return key
         k = str(uuid.uuid4())
         await self.store.aput(namespace, k, {"memory": memory, "topic": topic, "source": "agent"})
+        try:
+            from ..observability.memory_events import emit_memory_lt_store
+
+            await emit_memory_lt_store(namespace=namespace, key=k, content=memory)
+        except Exception as exc:
+            logger.debug(f"LongTermStore memory.lt.store emit failed: {exc!r}")
         return k
 
     def format_context(

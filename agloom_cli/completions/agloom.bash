@@ -18,7 +18,7 @@ _agloom() {
     -T --temperature --max-tokens
     --mcp --system-prompt --system-prompt-file
     --memory --memory-path
-    --skills-dir --summarizer-model --no-auto-summarize
+    --skills-dir --summarizer-model --profile
     --session-max-turns --max-turns
     --prompt --quiet --json --no-stream --no-color --no-banner
     --auto-approve --auto-reject --hitl-tty

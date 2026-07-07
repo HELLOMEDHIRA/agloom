@@ -29,6 +29,11 @@ describe('buildRuntimeArgs', () => {
     )
   })
 
+  it('forwards --profile from YAML merge', () => {
+    const args = buildRuntimeArgs({ ...base, profile: 'harness_long' })
+    expect(args).toEqual(expect.arrayContaining(['--profile', 'harness_long']))
+  })
+
   it('forwards execution and harness create_agent flags from YAML merge', () => {
     const args = buildRuntimeArgs({
       ...base,

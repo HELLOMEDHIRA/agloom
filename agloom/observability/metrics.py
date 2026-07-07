@@ -168,23 +168,25 @@ class MetricsAggregator:
                     current_turn["output_tokens"] += d.get("output_tokens", 0)
 
             # ── Tool calls ───────────────────────────────────────────────────
-            elif ev.event_type == "tool.call":
-                tid = d.get("tool_call_id", "")
-                tools[tid] = {"tool": d.get("tool", ""), "start_ts": ev.ts}
+            elif ev.event_type in ("tool.call", "tool.call.start"):
+                tid = d.get("tool_call_id") or d.get("id") or ""
+                if tid:
+                    tools[tid] = {"tool": d.get("tool", ""), "start_ts": ev.ts}
                 if current_turn:
                     current_turn["tool_calls"] += 1
 
-            elif ev.event_type == "tool.result":
-                tid = d.get("tool_call_id", "")
+            elif ev.event_type in ("tool.result", "tool.call.result", "tool.call.error"):
+                tid = d.get("tool_call_id") or d.get("id") or ""
                 tool_name = d.get("tool", "")
                 dur = d.get("duration_ms") or 0.0
-                err = bool(d.get("error"))
+                err = bool(d.get("error")) or ev.event_type == "tool.call.error"
                 if tool_name not in tool_stats:
                     tool_stats[tool_name] = {"count": 0, "total_ms": 0.0, "errors": 0}
                 tool_stats[tool_name]["count"]    += 1
                 tool_stats[tool_name]["total_ms"] += dur
                 tool_stats[tool_name]["errors"]   += int(err)
-                tools.pop(tid, None)
+                if tid:
+                    tools.pop(tid, None)
 
             # ── Workers ──────────────────────────────────────────────────────
             elif ev.event_type == "worker.spawned":
@@ -306,9 +308,9 @@ def _timeline_label(event_type: str, data: dict) -> str | None:
             return f"session end ({data.get('reason', '?')})"
         case "pattern.classified":
             return f"pattern: {data.get('pattern', '?')}"
-        case "tool.call":
+        case "tool.call" | "tool.call.start":
             return f"tool: {data.get('tool', '?')}()"
-        case "tool.result":
+        case "tool.result" | "tool.call.result" | "tool.call.error":
             return f"tool done: {data.get('tool', '?')}"
         case "worker.spawned":
             return f"worker: {data.get('name', '?')}"

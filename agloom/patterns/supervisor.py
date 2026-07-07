@@ -21,6 +21,7 @@ from ..src.models import (
     _trunc,
 )
 from ..src.llm_streaming import astream_llm_to_event_queue
+from ._failure import exec_failure_kwargs
 from ._resolve import resolve_worker_configs
 from ._steps_accounting import steps_taken_from_audit
 from ._synthesis_contract import ALL_PATTERN_WORKERS_FAILED_ERROR, pattern_synthesis_success
@@ -87,6 +88,7 @@ async def handle_supervisor(
             analysis=analysis,
             steps=steps,
             messages=raw_messages,
+            **exec_failure_kwargs(kind="planning"),
         )
     logger.event(f"[Supervisor] {len(plans)} worker plans: {[p.worker_id for p in plans]}")
 
@@ -235,6 +237,15 @@ async def handle_supervisor(
         err = synthesis_error
     logger.event(f"[Supervisor] Done: {len(worker_results)} workers, {len(output)} chars.")
 
+    failure_kw: dict = {}
+    if not success:
+        if not any_success:
+            failure_kw = exec_failure_kwargs(ALL_PATTERN_WORKERS_FAILED_ERROR, kind="worker")
+        elif synthesis_error == "SynthesisTimeout":
+            failure_kw = exec_failure_kwargs(synthesis_error, kind="timeout")
+        elif synthesis_error:
+            failure_kw = exec_failure_kwargs(synthesis_error)
+
     return ExecutionResult(
         pattern_used=PatternType.SUPERVISOR,
         query=query,
@@ -252,6 +263,7 @@ async def handle_supervisor(
         steps=steps,
         token_usage=usage,
         messages=raw_messages,
+        **failure_kw,
     )
 
 

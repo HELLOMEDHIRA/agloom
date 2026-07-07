@@ -23,6 +23,15 @@ _HARNESS_NS = ("harness", "progress")
 _PROGRESS_FILE = "agloom-progress.json"
 
 
+class HarnessVersionConflictError(Exception):
+    """Raised when another writer advanced the progress artifact version first."""
+
+    def __init__(self, *, expected: int, actual: int) -> None:
+        super().__init__(f"progress artifact version conflict: expected<={expected}, store={actual}")
+        self.expected = expected
+        self.actual = actual
+
+
 #  Enums & Models
 
 
@@ -208,7 +217,11 @@ class ProgressArtifact(BaseModel):
         Return the highest-priority pending task not owned by this session.
         Priority order: CRITICAL > HIGH > MEDIUM > LOW.
         Also returns in-progress tasks owned by this session (resume case).
+        Reclaims orphan in_progress tasks from other sessions.
         """
+        for t in self.in_progress_tasks:
+            if t.assigned_session and t.assigned_session != session_id:
+                t.assigned_session = session_id
         candidates = self.pending_tasks + [t for t in self.in_progress_tasks if t.assigned_session == session_id]
         if not candidates:
             return None
@@ -251,10 +264,11 @@ class ProgressArtifact(BaseModel):
 
         if pending:
             lines.append(f"\n{len(pending)} task(s) PENDING:")
-            for t in pending[:10]:
+            show = pending if len(pending) <= 25 else pending[:20] + pending[-5:]
+            for t in show:
                 lines.append(f"  [{t.id}] [{t.priority.value}] {t.description}")
-            if len(pending) > 10:
-                lines.append(f"  ... and {len(pending) - 10} more")
+            if len(pending) > 25:
+                lines.append(f"  ... and {len(pending) - 25} more (see harness ledger)")
 
         return "\n".join(lines)
 
@@ -390,10 +404,13 @@ class ProgressTracker:
         store: Any,
         agent_name: str,
         project_name: str = "project",
+        *,
+        event_queue: Any = None,
     ) -> None:
         self._store = store
         self._agent_name = agent_name
         self._project_name = project_name
+        self._event_queue = event_queue
         self._artifact: ProgressArtifact | None = None
         self._lock = asyncio.Lock()
         self._session_states: dict[str, BootstrapState] = {}
@@ -503,7 +520,25 @@ class ProgressTracker:
         """Persist current artifact to LongTermStore."""
         if self._artifact is None:
             return
+        expected = self._artifact.version or 0
+        existing = await self._lts_get(_HARNESS_NS, "artifact")
+        if existing:
+            try:
+                meta = getattr(existing, "value", {}) or {}
+                data = meta.get("artifact_json") or meta.get("memory") or meta.get("value", "{}")
+                if isinstance(data, str):
+                    stored = ProgressArtifact.model_validate_json(data)
+                    if (stored.version or 0) > expected:
+                        raise HarnessVersionConflictError(
+                            expected=expected,
+                            actual=stored.version or 0,
+                        )
+            except HarnessVersionConflictError:
+                raise
+            except Exception as exc:
+                logger.debug(f"[Progress] version check skipped: {exc!r}")
         self._artifact.updated_at = datetime.now(UTC).isoformat()
+        self._artifact.version = expected + 1
         meta = {
             "project": self._project_name,
             "agent": self._agent_name,
@@ -641,7 +676,22 @@ class ProgressTracker:
                 task.notes = notes
 
             await self.save_progress()
+            await self._emit_task_updated(task)
             return task
+
+    async def _emit_task_updated(self, task: Task) -> None:
+        try:
+            from ..observability.harness_events import emit_harness_task_updated
+
+            await emit_harness_task_updated(
+                task_id=task.id,
+                status=task.status.value if hasattr(task.status, "value") else str(task.status),
+                notes=task.notes,
+                project=self._project_name,
+                event_queue=self._event_queue,
+            )
+        except Exception as exc:
+            logger.debug(f"[Progress] harness.task.updated emit failed: {exc!r}")
 
     async def claim_next_task(self, session_id: str) -> Task | None:
         """Atomically claim the highest-priority pending task for this session."""
@@ -650,6 +700,7 @@ class ProgressTracker:
             if task:
                 task.mark_in_progress(session_id)
                 await self.save_progress()
+                await self._emit_task_updated(task)
                 logger.info(f"[Progress] Session {session_id} claimed task: [{task.id}]")
             else:
                 logger.info(f"[Progress] No pending tasks for session {session_id}")

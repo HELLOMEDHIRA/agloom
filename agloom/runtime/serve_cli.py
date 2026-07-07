@@ -709,7 +709,6 @@ def session_started_snapshot_from_args(args: Namespace) -> dict[str, Any]:
         "provider_primary_credential_present": any_primary_cred,
         "provider_credential_env": cred_status,
         "session_max_turns": sm_turns,
-        "auto_summarize": bool(getattr(args, "auto_summarize", True)),
         "summarizer_model": getattr(args, "summarizer_model", None),
         "memory_type": getattr(args, "memory_type", None),
         "memory_path": getattr(args, "memory_path", None),
@@ -800,14 +799,15 @@ def build_create_agent_kwargs(args: Namespace) -> dict[str, Any]:
         "session_max_turns": sm_turns,
         **mk,
     }
+    profile = getattr(args, "profile", None)
+    if profile:
+        kwargs["profile"] = str(profile).strip()
     if mc:
         kwargs["mcp_servers"] = mc
     if sm is not None:
         kwargs["summarizer_model"] = sm
     if sp is not None:
         kwargs["system_prompt"] = sp
-    if getattr(args, "auto_summarize", True) is False:
-        kwargs["auto_summarize"] = False
 
     kwargs["skills_disk_mirror"] = skills
 
@@ -899,6 +899,14 @@ def merge_agloom_yaml_into_namespace(args: Namespace, *, cwd: Path | None = None
                 _set_namespace_default(args, "harness_project_name", str(harness["project_name"]).strip())
             if harness.get("goal"):
                 _set_namespace_default(args, "harness_goal", str(harness["goal"]).strip())
+            if harness.get("init_git") is True:
+                _set_namespace_default(args, "harness_init_git", True)
+            if harness.get("allow_replan") is False:
+                _set_namespace_default(args, "harness_allow_replan", False)
+
+        profile = doc.get("profile")
+        if profile:
+            _set_namespace_default(args, "profile", str(profile).strip())
 
         skills = doc.get("skills")
         if isinstance(skills, dict) and skills.get("max_skills") is not None:

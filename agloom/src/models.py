@@ -639,6 +639,8 @@ class ExecutionResult(BaseModel):
     )
     worker_results: list[Any] = Field(default_factory=list)
     error: str | None = None
+    failure_class: str | None = None
+    retryable: bool = False
     thread_id: str | None = None
     run_id: str = ""
     interrupts: list[Any] = Field(default_factory=list)
@@ -1105,15 +1107,11 @@ class AgentConfig(BaseModel):
     max_reflection_iterations: int = Field(default=3, ge=1)
     reflection_threshold: int = Field(default=7, ge=0, le=10)
 
-    auto_summarize: bool = Field(default=True, description="Enable auto-summarization of conversation history")
-    summarize_threshold: int = Field(
-        default=200_000, ge=10_000, description="Token count threshold that triggers auto-summarization"
-    )
     summarize_max_tokens_budget: int | None = Field(
         default=None,
         description=(
             "When set (or inferred from the model context window), rolling memory summarizes "
-            "when estimated stored tokens exceed ~80% of this budget; otherwise summarize_threshold applies."
+            "when estimated stored tokens exceed ~80% of this budget."
         ),
     )
     summarizer_model: Any = None
@@ -1149,28 +1147,10 @@ class AgentConfig(BaseModel):
         ),
     )
 
-    tool_scratchpad: bool = Field(
-        default=True,
-        description=(
-            "When True and tools are present, large tool outputs are stored off-thread with "
-            "digests in the model transcript; use recall_tool_artifact for full payloads."
-        ),
-    )
-    tool_digest_min_chars: int = Field(
-        default=4000,
-        ge=500,
-        description="Minimum tool result size (chars) before storing full output in scratchpad.",
-    )
     context_window_tokens: int | None = Field(
         default=None,
         ge=4096,
         description="Model context window for REACT budgeting; inferred from model when unset.",
-    )
-    context_compact_ratio: float = Field(
-        default=0.82,
-        ge=0.5,
-        le=0.95,
-        description="Fraction of context window usable for input before compaction runs.",
     )
 
     max_pattern_depth: int = Field(

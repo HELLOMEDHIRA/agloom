@@ -41,7 +41,7 @@ function resolvePromptPath(): string {
 }
 
 /** Resolved at runtime from the shipped ``prompts/`` directory next to the CLI package. */
-export const CLI_WORKSPACE_SYSTEM_PROMPT = readFileSync(resolvePromptPath(), 'utf8').trimEnd() + '\n'
+export const CLI_WORKSPACE_SYSTEM_PROMPT = `${readFileSync(resolvePromptPath(), 'utf8').trimEnd()}\n`
 
 const LEGACY_MARKERS = [
   'built with agloom',

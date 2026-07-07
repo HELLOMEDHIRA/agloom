@@ -18,7 +18,7 @@ export const DEFAULT_AGLOOM_YAML = `# Agloom — https://github.com/HELLOMEDHIRA
 #   • ai.system_prompt          — default persona (or top-level system_prompt: | …)
 #   • mcp.servers               — agsuperbrain → .agloom/mcp/agsuperbrain.yaml (stdio MCP; agsuperbrain CLI on PATH)
 #   • .agloom/rules/            — drop *.md / *.mdc rule files; optional rules.dir if you relocate
-#   • memory.* / skills.*       — tied to the store when present; tune limits below (no enable/disable toggles)
+#   • profile                     — workload preset (interactive default); see agloom/docs/architecture/workload-profiles.md
 #   • harness                   — on by default when agloom-runtime has a LangGraph store (sqlite); omit --no-harness on CLI
 
 ai:
@@ -39,7 +39,6 @@ tools:
 
 memory:
   max_turns: 50
-  auto_summarize: true
 
 skills:
   max_skills: 30

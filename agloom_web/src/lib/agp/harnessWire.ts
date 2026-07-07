@@ -29,3 +29,16 @@ export const harnessLedgerFromWire = (tasks: HarnessLedgerTaskWire[] | undefined
     priority: t.priority,
     verification_step_count: t.verification_step_count,
   }))
+
+/** Patch one ledger row after ``harness.task.updated`` (status / notes). */
+export const patchHarnessLedgerTask = (
+  tasks: HarnessLedgerRow[],
+  update: { task_id: string; status: string; notes?: string },
+): HarnessLedgerRow[] => {
+  const idx = tasks.findIndex((t) => t.task_id === update.task_id)
+  if (idx < 0) return tasks
+  const next = [...tasks]
+  const row = next[idx]!
+  next[idx] = { ...row, status: update.status }
+  return next
+}

@@ -1151,13 +1151,6 @@ def _add_serve_agent_flags(serve: argparse.ArgumentParser) -> None:
         help="Model id for conversation summarization (defaults to main model).",
     )
     serve.add_argument(
-        "--no-auto-summarize",
-        dest="auto_summarize",
-        action="store_false",
-        default=True,
-        help="Disable automatic thread summarization.",
-    )
-    serve.add_argument(
         "--session-max-turns",
         dest="session_max_turns",
         type=int,
@@ -1220,6 +1213,13 @@ def _add_serve_agent_flags(serve: argparse.ArgumentParser) -> None:
         action="store_false",
         default=None,
         help="Disable load_memory / save_memory tools (create_agent enable_memory_tools=False).",
+    )
+    serve.add_argument(
+        "--profile",
+        dest="profile",
+        default=None,
+        metavar="NAME",
+        help="Workload profile (interactive, harness_long, platform_embedded, batch_frozen, tool_agent). YAML: profile.",
     )
     serve.add_argument(
         "--harness-project-name",

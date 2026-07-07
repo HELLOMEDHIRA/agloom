@@ -60,6 +60,8 @@ Long-running harness events are first-class in AGP v1. Build task-board UIs from
 | `pattern.classified.harness_plan` | After turn planner on seed/replan turns | Preview planned tasks |
 | `pattern.classified.harness_work_kind` | Same | Short work label (`investigation`, …) |
 | `harness.synced` | After ledger sync | Render full task board (`tasks`, `completion_ratio`) |
+| `harness.task.updated` | Single task claim / status / notes change | Patch one row on the task board |
+| `context.summarized` | Context Plane compressed memory | Observability line (turn/token deltas, scope) |
 | `progress.step` (`phase: harness_init`) | Harness bootstrap | Infra line in chat trace (not chain-of-thought) |
 | `command.harness.git` | Client → runtime | Git status, checkpoint, diff, revert hint |
 
@@ -282,6 +284,20 @@ Emitted after the runtime syncs the turn planner output to the progress artifact
 ```
 
 `action` is `seed` (empty ledger), `append` (`allow_replan`), or `skip` (no new tasks this turn). **`tasks`** is always the current ledger snapshot.
+
+### `harness.task.updated`
+
+Emitted when a single harness ledger task changes (claim, status, notes). Clients with an existing board from `harness.synced` should patch the matching `task_id` row instead of waiting for a full resync.
+
+```jsonc
+{ "type": "harness.task.updated",
+  "data": {
+    "task_id": "ctx-001",
+    "status": "in_progress",
+    "notes": "Collecting alert timeline",
+    "project": "rca-platform"
+  } }
+```
 
 ### `plan.preview`
 
@@ -626,6 +642,25 @@ Emitted when the `save_memory` tool writes a fact to long-term storage.
 { "type": "memory.lt.store",
   "data": { "namespace": "user/default", "key": "project_goal", "content_preview": "Build a..." } }
 ```
+
+### `context.summarized`
+
+Emitted when the Context Plane compresses rolling memory to fit the inferred input budget (session turns, harness artifact, job context, or injection block). Integrators use this for observability — there is no client toggle to disable summarization.
+
+```jsonc
+{ "type": "context.summarized",
+  "data": {
+    "scope": "session",
+    "turns_before": 12,
+    "turns_after": 4,
+    "tokens_before": 18400,
+    "tokens_after": 4200,
+    "artifact_refs": [],
+    "content_hash": "a1b2c3…"
+  } }
+```
+
+`scope` is `session` | `harness` | `job` | `injection`.
 
 ### `checkpoint.saved`
 

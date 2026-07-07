@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from ..context.plane import ContextBudget, compute_context_budget, ensure_memory_context_within_budget
 from ..src.logging_utils import get_logger
 
 if TYPE_CHECKING:
@@ -11,8 +12,6 @@ if TYPE_CHECKING:
     from .store import LongTermStore
 
 logger = get_logger(__name__)
-
-DEFAULT_MAX_CHARS = 4000  # Adjust per model: GPT-4o → 8000, Llama-70B → 4000
 
 
 async def build_memory_context(
@@ -23,9 +22,12 @@ async def build_memory_context(
     query: str = "",
     last_n: int = 3,
     store_limit: int = 3,
-    max_chars: int = DEFAULT_MAX_CHARS,
+    *,
+    llm: Any = None,
+    context_window_tokens: int | None = None,
+    summarizer_model: Any | None = None,
 ) -> str:
-    """Concatenate session recap and LT search hits; trim to ``max_chars`` (tail preserved)."""
+    """Concatenate session recap and LT search hits; summarize when over budget (never chop)."""
     parts: list[str] = []
 
     if session is not None and thread_id:
@@ -34,7 +36,6 @@ async def build_memory_context(
             if session_ctx:
                 parts.append(session_ctx)
         except Exception as exc:
-            # Never crash run_fresh for a memory read failure
             logger.warning(f"MemoryInjection: session read failed ({exc!r}) — skipping.")
 
     if store is not None and namespace and query:
@@ -49,14 +50,13 @@ async def build_memory_context(
         return ""
 
     context = "\n\n".join(parts)
-
-    if len(context) > max_chars:
-        original_len = len(context)
-        context = context[-max_chars:]  # keep the most recent content
-        logger.warning(
-            f"MemoryInjection: context trimmed to {max_chars} chars "
-            f"(was {original_len}, dropped {original_len - max_chars} chars). "
-            f"Increase max_chars or reduce last_n/store_limit."
+    if llm is not None:
+        budget = compute_context_budget(llm, context_window_tokens=context_window_tokens)
+        summarizer = summarizer_model or getattr(session, "summarizer_model", None)
+        context = await ensure_memory_context_within_budget(
+            context,
+            budget=budget,
+            summarizer_model=summarizer,
         )
 
     logger.debug(f"MemoryInjection: thread={thread_id!r} context={len(context)} chars injected")
@@ -71,7 +71,6 @@ def build_memory_context_sync(
     query: str = "",
     last_n: int = 3,
     store_limit: int = 3,
-    max_chars: int = DEFAULT_MAX_CHARS,
 ) -> str:
     """Sync version — InMemoryStore only. For tests and CLI tools that cannot await."""
     parts: list[str] = []
@@ -95,7 +94,4 @@ def build_memory_context_sync(
     if not parts:
         return ""
 
-    context = "\n\n".join(parts)
-    if len(context) > max_chars:
-        context = context[-max_chars:]
-    return context
+    return "\n\n".join(parts)

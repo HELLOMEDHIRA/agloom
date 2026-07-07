@@ -8,10 +8,12 @@ from pathlib import Path
 import pytest
 
 from agloom.protocol.events import (
+    ContextSummarizedData,
     ErrorData,
     HITLDecisionData,
     HITLRequestData,
     HarnessSyncedData,
+    HarnessTaskUpdatedData,
     MetricTokensData,
     OrchestrationStepData,
     PatternClassifiedData,
@@ -40,6 +42,8 @@ _PYTHON_MODELS_BY_EVENT: dict[str, type] = {
     "progress.step": ProgressStepData,
     "runtime.ready": RuntimeReadyData,
     "harness.synced": HarnessSyncedData,
+    "harness.task.updated": HarnessTaskUpdatedData,
+    "context.summarized": ContextSummarizedData,
     "error.fatal": ErrorData,
     "tool.call.start": ToolCallStartData,
     "tool.call.result": ToolCallResultData,

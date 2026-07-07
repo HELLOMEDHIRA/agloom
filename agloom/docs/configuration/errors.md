@@ -101,6 +101,7 @@ See [Invoke input](../concepts/create-agent.md#invoke-input-langchain-shape) and
 | `unhandled errors in a TaskGroup` | Wrapper around a real failure (MCP tool, provider, network) | Upgrade agloom: REACT/MCP unwrap the root cause in ``error`` / ``output``. Fix the underlying ``PermissionError``, ``ConnectionError``, etc. |
 | `GraphRecursionError` / REACT step limit | LangGraph `recursion_limit` reached (`react_recursion_limit`, default 25) | Returns **`success=False`** with a stable error — not the last AI message. Raise `create_agent(react_recursion_limit=…)` or simplify the task. See [Reliability](reliability.md) |
 | `No user query found in messages` (strict chat templates) | Jinja/template rejection: bad message shape or forced `tool_choice` off the opening turn | Upgrade agloom (LLM wrapper + middleware flatten user blocks; no `tool_choice` override for strict templates). See [LLM resolution — strict chat templates](../guides/llm-resolution.md#strict-chat-templates-and-tool-calling) |
+| `RemoteProtocolError` / server disconnected | HTTP stream dropped (LiteLLM, vLLM, MCP HTTP) — often proxy idle timeout or connection pool reset, not a literal server shutdown | agloom retries transient transport errors up to 3×; raise `llm_timeout` / `react_graph_timeout` for long MCP+LLM loops. Check LiteLLM/vLLM proxy logs and MCP server health. |
 | `RateLimitError` | LLM provider rate limit hit | Set `rate_limit` to throttle calls |
 | `CircuitBreakerOpen` | Too many consecutive LLM failures | Wait for cooldown or check provider status |
 

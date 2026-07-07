@@ -16,12 +16,7 @@ _NAMESPACE_PREFIX = ("session",)
 
 _SUMMARY_MARKER = "[SUMMARY]"
 
-_SUMMARIZE_PROMPT = (
-    "Summarize the following conversation history into a concise summary.\n"
-    "Preserve: key decisions, user preferences, specific values/names/IDs mentioned, and any pending tasks.\n"
-    "Omit: greetings, filler, redundant re-statements.\n\n"
-    "Conversation:\n{turns_text}\n\nSummary:"
-)
+from ..context.summarize import summarize_oldest_turns, summarize_oldest_turns_sync
 
 _CHARS_PER_TOKEN = 4
 _tiktoken_encoder: Any | None = None
@@ -72,6 +67,17 @@ def _total_tokens(turns: list[dict]) -> int:
     return _count_tokens(_turns_to_text(turns))
 
 
+def _trim_turns_preserving_summaries(turns: list[dict], max_turns: int) -> list[dict]:
+    """Drop oldest non-summary turns first; never discard summary turns."""
+    if len(turns) <= max_turns:
+        return turns
+    summaries = [t for t in turns if t.get("q") == _SUMMARY_MARKER or t.get("p") == "summary"]
+    non_summary = [t for t in turns if t not in summaries]
+    keep_non = max(0, max_turns - len(summaries))
+    trimmed = non_summary[-keep_non:] if keep_non else []
+    return summaries + trimmed
+
+
 class SessionMemory:
     """
     Short-term memory scoped to a thread_id.
@@ -80,25 +86,22 @@ class SessionMemory:
     Each turn stores full ``q`` / ``a`` text as provided. Prompt injection via
     :func:`~agloom.memory.build_memory_context` may still cap rendered size with ``max_chars``.
 
-    Auto-summarization (enabled by default):
-      When accumulated tokens exceed a threshold, the oldest 70% of turns are compressed
-      into a single summary turn via an LLM call. The threshold is either
-      ``max(1, int(0.8 * summarize_max_tokens_budget))`` when *summarize_max_tokens_budget*
-      is set (session / model output cap), or ``summarize_threshold`` otherwise (default
-      200_000 estimated tokens).
+    Auto-summarization (always on when summarizer_model is set):
+      When accumulated tokens exceed ~80% of summarize_max_tokens_budget (inferred from
+      model window when unset), oldest turns are compressed via the Context Plane episodic
+      summarizer. Summary turns are preserved across max_turns trimming.
     """
 
     def __init__(
         self,
         store: Any = None,
         max_turns: int = 50,
-        auto_summarize: bool = True,
-        summarize_threshold: int = 200_000,
         summarizer_model: Any = None,
         *,
         summarize_max_tokens_budget: int | None = None,
         on_turns_async: Callable[[str, list[dict[str, Any]]], Awaitable[None]] | None = None,
         agp_session_key: str | None = None,
+        on_episodic_summary: Callable[[str, Any], Awaitable[None] | None] | None = None,
     ) -> None:
         if store is None:
             from langgraph.store.memory import InMemoryStore
@@ -110,11 +113,10 @@ class SessionMemory:
             )
         self.store = store
         self.max_turns = max_turns
-        self.auto_summarize = auto_summarize
-        self.summarize_threshold = summarize_threshold
         self.summarizer_model = summarizer_model
         self.summarize_max_tokens_budget = summarize_max_tokens_budget
         self.on_turns_async = on_turns_async
+        self.on_episodic_summary = on_episodic_summary
         self.agp_session_key = (agp_session_key or "").strip() or None
         self._turn_lock = asyncio.Lock()
         self._sync_turn_lock = threading.Lock()
@@ -134,90 +136,77 @@ class SessionMemory:
         return _NAMESPACE_PREFIX + (thread_id,)
 
     def _effective_summarize_token_threshold(self) -> int:
-        """Estimated-token ceiling before compressing oldest turns (see class docstring)."""
+        """Estimated-token ceiling before compressing oldest turns."""
         if self.summarize_max_tokens_budget is not None:
             b = self.summarize_max_tokens_budget
             if b > 0:
                 return max(1, int(b * 0.8))
-        return self.summarize_threshold
+        return 200_000
+
+    async def _persist_episodic_summary(self, thread_id: str, episodic: Any) -> None:
+        cb = self.on_episodic_summary
+        if cb is None:
+            return
+        try:
+            result = cb(thread_id, episodic)
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as exc:
+            logger.debug(f"SessionMemory on_episodic_summary failed (non-fatal): {exc!r}")
 
     def _maybe_summarize_sync(self, turns: list[dict]) -> list[dict]:
         """Sync summarize for ``add_turn`` (uses ``invoke`` when a model is configured)."""
-        if not self.auto_summarize or self.summarizer_model is None:
-            return turns
-        if len(turns) < 4:
+        if self.summarizer_model is None or len(turns) < 4:
             return turns
 
         total = _total_tokens(turns)
+        if total <= self._effective_summarize_token_threshold():
+            return turns
+
+        compressed, _ = summarize_oldest_turns_sync(
+            turns,
+            summarizer_model=self.summarizer_model,
+        )
+        return compressed
+
+    async def _maybe_summarize(self, turns: list[dict]) -> tuple[list[dict], Any | None]:
+        """Summarize oldest turns if estimated tokens exceed the effective threshold."""
+        if self.summarizer_model is None or len(turns) < 4:
+            return turns, None
+
         threshold = self._effective_summarize_token_threshold()
-        if total <= threshold:
-            return turns
-
-        split_idx = max(1, int(len(turns) * 0.7))
-        oldest = turns[:split_idx]
-        recent = turns[split_idx:]
-        prompt = _SUMMARIZE_PROMPT.format(turns_text=_turns_to_text(oldest))
-
-        try:
-            from langchain_core.messages import HumanMessage
-
-            invoke = getattr(self.summarizer_model, "invoke", None)
-            if not callable(invoke):
-                return turns
-            resp = invoke([HumanMessage(content=prompt)])
-            content = getattr(resp, "content", resp)
-            summary = content if isinstance(content, str) else str(content)
-            return [{"q": _SUMMARY_MARKER, "a": summary.strip(), "p": "summary"}] + recent
-        except Exception as exc:
-            logger.warning(f"[SessionMemory] sync auto-summarize failed ({exc!r}) — keeping original turns.")
-            return turns
-
-    async def _maybe_summarize(self, turns: list[dict]) -> list[dict]:
-        """Summarize oldest turns if estimated tokens exceed the effective threshold.
-
-        Returns the (possibly compressed) turn list. Never raises —
-        falls back to the original list on any error.
-        """
-        if not self.auto_summarize or self.summarizer_model is None:
-            return turns
-        if len(turns) < 4:
-            return turns
-
-        total = _total_tokens(turns)
-        threshold = self._effective_summarize_token_threshold()
-        if total <= threshold:
-            return turns
-
-        split_idx = max(1, int(len(turns) * 0.7))
-        oldest = turns[:split_idx]
-        recent = turns[split_idx:]
-
-        oldest_text = _turns_to_text(oldest)
-        prompt = _SUMMARIZE_PROMPT.format(turns_text=oldest_text)
-
-        try:
-            t0 = time.perf_counter()
-            from langchain_core.messages import HumanMessage
-
-            resp = await self.summarizer_model.ainvoke([HumanMessage(content=prompt)])
-            summary = resp.content if isinstance(resp.content, str) else str(resp.content)
-            dur_ms = round((time.perf_counter() - t0) * 1000, 1)
-
-            summary_turn = {"q": _SUMMARY_MARKER, "a": summary.strip(), "p": "summary"}
-            compressed = [summary_turn] + recent
-
-            old_tokens = _total_tokens(oldest)
-            new_tokens = _count_tokens(summary)
-            logger.info(
-                f"[SessionMemory] Auto-summarized {len(oldest)} turns "
-                f"({old_tokens} tokens -> {new_tokens} tokens) in {dur_ms}ms. "
-                f"Kept {len(recent)} recent turns."
+        compressed = turns
+        episodic: Any | None = None
+        turns_before = len(turns)
+        for _ in range(3):
+            if _total_tokens(compressed) <= threshold or len(compressed) < 4:
+                break
+            next_turns, episodic = await summarize_oldest_turns(
+                compressed,
+                summarizer_model=self.summarizer_model,
             )
-            return compressed
+            if episodic is None or len(next_turns) >= len(compressed):
+                break
+            compressed = next_turns
 
-        except Exception as exc:
-            logger.warning(f"[SessionMemory] Auto-summarize failed ({exc!r}) — keeping original turns.")
-            return turns
+        if episodic is not None:
+            logger.info(
+                f"[SessionMemory] Auto-summarized to episodic summary "
+                f"(hash={episodic.content_hash})"
+            )
+            try:
+                from ..observability.context_events import emit_context_summarized
+
+                await emit_context_summarized(
+                    scope="session",
+                    turns_before=turns_before,
+                    turns_after=len(compressed),
+                    artifact_refs=list(episodic.artifact_refs),
+                    content_hash=episodic.content_hash,
+                )
+            except Exception as exc:
+                logger.debug(f"SessionMemory context.summarized emit failed: {exc!r}")
+        return compressed, episodic
 
     def add_turn(
         self,
@@ -241,8 +230,8 @@ class SessionMemory:
                 item = self.store.get(ns, key)
                 turns: list[dict] = item.value.get("turns", []) if item else []
             except Exception as exc:
-                logger.debug(f"SessionMemory.add_turn read failed: {exc!r}")
-                turns = []
+                logger.warning(f"SessionMemory.add_turn read failed: {exc!r}")
+                return
 
             turns.append(
                 {
@@ -254,7 +243,7 @@ class SessionMemory:
             )
             turns = self._maybe_summarize_sync(turns)
             if len(turns) > self.max_turns:
-                turns = turns[-self.max_turns :]
+                turns = _trim_turns_preserving_summaries(turns, self.max_turns)
             self.store.put(ns, key, {"turns": turns})
 
     async def aadd_turn(
@@ -274,8 +263,8 @@ class SessionMemory:
                 item = await self.store.aget(ns, key)
                 turns: list[dict] = item.value.get("turns", []) if item else []
             except Exception as exc:
-                logger.debug(f"SessionMemory.aadd_turn read failed: {exc!r}")
-                turns = []
+                logger.warning(f"SessionMemory.aadd_turn read failed: {exc!r}")
+                return
 
             turns.append(
                 {
@@ -286,12 +275,27 @@ class SessionMemory:
                 }
             )
 
-            turns = await self._maybe_summarize(turns)
+            turns, episodic = await self._maybe_summarize(turns)
+            if episodic is not None:
+                await self._persist_episodic_summary(thread_id, episodic)
 
             if len(turns) > self.max_turns:
-                turns = turns[-self.max_turns :]
+                turns = _trim_turns_preserving_summaries(turns, self.max_turns)
             await self.store.aput(ns, key, {"turns": turns})
             await self._notify_turns_hook(thread_id, turns)
+            try:
+                from ..observability.memory_events import emit_memory_session_write
+
+                await emit_memory_session_write(
+                    thread_id=thread_id,
+                    query=query,
+                    output=output,
+                    turn_count=len(turns),
+                    run_id=(metadata or {}).get("run_id"),
+                    event_queue=None,
+                )
+            except Exception as exc:
+                logger.debug(f"SessionMemory memory.session.write emit failed: {exc!r}")
 
     async def apop_last_turn(self, thread_id: str) -> int | None:
         """Remove the last persisted turn for *thread_id*.

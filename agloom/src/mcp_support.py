@@ -109,18 +109,27 @@ class MCPServerConfig(BaseModel):
             d = {"url": self.url, "transport": transport}
             if self.headers:
                 d["headers"] = self.headers
+        if self.timeout is not None:
+            d["timeout"] = self.timeout
         return d
 
 
 def _build_server_dict(
     servers: list[MCPServerConfig],
     transport_overrides: dict[str, str] | None = None,
+    transport_manager: Any = None,
 ) -> dict[str, dict[str, Any]]:
     overrides = transport_overrides or {}
-    return {
-        cfg.name: cfg.to_client_dict(transport_override=overrides.get(cfg.name))
-        for cfg in servers
-    }
+    out: dict[str, dict[str, Any]] = {}
+    for cfg in servers:
+        if transport_manager is not None:
+            d = transport_manager.mcp_client_dict(cfg)
+            if overrides.get(cfg.name):
+                d["transport"] = _adapter_transport(overrides[cfg.name])
+        else:
+            d = cfg.to_client_dict(transport_override=overrides.get(cfg.name))
+        out[cfg.name] = d
+    return out
 
 
 @dataclass
@@ -199,6 +208,8 @@ async def _populate_server_capabilities(
 
 async def load_mcp_capabilities(
     servers: list[MCPServerConfig],
+    *,
+    transport_manager: Any = None,
 ) -> tuple[list[MCPCapabilities], Any, dict[str, Any]]:
     """
     Connect to all MCP servers. Load tools + resources + prompts.
@@ -229,7 +240,7 @@ async def load_mcp_capabilities(
         if client is not None:
             await aclose_mcp_client(client)
 
-        server_dict = _build_server_dict(servers, transport_overrides)
+        server_dict = _build_server_dict(servers, transport_overrides, transport_manager)
         client = MultiServerMCPClient(cast(Any, server_dict))
         client_holder = {"client": client, "_client_ref": weakref.ref(client)}
         logger.info(f"MCP: client ready for {list(server_dict)} (attempt {attempt + 1})")
@@ -291,7 +302,7 @@ def _make_resource_tool(
     if len(uris) > 5:
         uris_preview += f" ... (+{len(uris) - 5} more)"
 
-    from langchain_core.tools import StructuredTool
+    from langchain_core.tools import StructuredTool, ToolException
 
     class ResourceInput(BaseModel):
         uri: str = Field(description=f"URI of the resource to read. Available: {uris_preview}")
@@ -300,11 +311,11 @@ def _make_resource_tool(
         ref = client_holder.get("_client_ref")
         client = ref() if ref is not None else client_holder.get("client")
         if client is None:
-            return f"MCP client for {server_name!r} is closed; reconnect the agent session."
+            raise ToolException(f"MCP client for {server_name!r} is closed; reconnect the agent session.")
         try:
             blobs = await client.get_resources(server_name, uris=[uri])
             if not blobs:
-                return f"No content found for URI: {uri}"
+                raise ToolException(f"No content found for URI: {uri}")
             parts = []
             for blob in blobs:
                 if hasattr(blob, "as_string"):
@@ -312,8 +323,10 @@ def _make_resource_tool(
                 else:
                     parts.append(str(blob))
             return "\n".join(parts)
+        except ToolException:
+            raise
         except Exception as e:
-            return f"read_resource error for {uri!r}: {e}"
+            raise ToolException(f"read_resource error for {uri!r}: {e}") from e
 
     return StructuredTool(
         name=f"read_resource_{server_name}",
@@ -342,7 +355,7 @@ def _make_prompt_tool(
 
     import json
 
-    from langchain_core.tools import StructuredTool
+    from langchain_core.tools import StructuredTool, ToolException
     from pydantic import BaseModel
 
     class PromptInput(BaseModel):
@@ -353,7 +366,7 @@ def _make_prompt_tool(
         ref = client_holder.get("_client_ref")
         client = ref() if ref is not None else client_holder.get("client")
         if client is None:
-            return f"MCP client for {server_name!r} is closed; reconnect the agent session."
+            raise ToolException(f"MCP client for {server_name!r} is closed; reconnect the agent session.")
         try:
             args = json.loads(arguments) if arguments.strip() else {}
             messages = await client.get_prompt(server_name, name, arguments=args)
@@ -363,8 +376,10 @@ def _make_prompt_tool(
                 content = getattr(msg, "content", str(msg))
                 parts.append(f"[{role}]\n{content}")
             return "\n\n".join(parts) if parts else f"No content for prompt {name!r}"
+        except ToolException:
+            raise
         except Exception as e:
-            return f"get_prompt error for {name!r}: {e}"
+            raise ToolException(f"get_prompt error for {name!r}: {e}") from e
 
     return StructuredTool(
         name=f"get_prompt_{server_name}",
@@ -380,6 +395,8 @@ async def connect_mcp_servers(
     servers: list[MCPServerConfig],
     agent: dict,
     agent_name: str = "Agent",
+    *,
+    transport_manager: Any = None,
 ) -> tuple[Any, list[dict[str, Any]]]:
     """
     Connect to all MCP servers and inject capabilities into agent config.
@@ -402,7 +419,10 @@ async def connect_mcp_servers(
         return None, []
 
     try:
-        caps, client, client_holder = await load_mcp_capabilities(servers)
+        caps, client, client_holder = await load_mcp_capabilities(
+            servers,
+            transport_manager=transport_manager,
+        )
     except ImportError as e:
         raise MCPConnectionError(str(e)) from e
     except Exception as e:

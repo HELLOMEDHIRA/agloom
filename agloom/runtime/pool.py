@@ -23,6 +23,8 @@ from datetime import UTC, datetime
 
 from ..protocol import AsyncSessionEmitter
 from .registry import InMemoryRegistry, WorkerRegistry
+
+_REGISTRY_WITH_RESERVE = (InMemoryRegistry,)
 from .workers import BaseWorker
 from .workers.types import TaskStatus, WorkerHealth, WorkerTask
 
@@ -161,6 +163,7 @@ class WorkerPool:
                     pass
                 return
 
+            wid = worker.worker_id
             try:
                 if task.timeout_ms:
                     await asyncio.wait_for(
@@ -192,6 +195,9 @@ class WorkerPool:
                 logger.exception(
                     "WorkerPool: task %s failed on attempt %d: %s", task.task_id, attempt, exc
                 )
+            finally:
+                if isinstance(self._registry, _REGISTRY_WITH_RESERVE):
+                    await self._registry.release(wid)
 
             # Retry?
             if attempt > policy.max_retries or error_code not in policy.retryable_codes:
@@ -224,7 +230,10 @@ class WorkerPool:
         waited = 0.0
         poll = 0.1
         while waited < max_wait_s:
-            worker = self._registry.find_available(required_capabilities)
+            if isinstance(self._registry, _REGISTRY_WITH_RESERVE):
+                worker = await self._registry.find_and_reserve(required_capabilities)
+            else:
+                worker = self._registry.find_available(required_capabilities)
             if worker is not None:
                 return worker
             await asyncio.sleep(poll)

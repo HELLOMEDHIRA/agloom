@@ -93,9 +93,30 @@ class InMemoryRegistry(WorkerRegistry):
     def get(self, worker_id: str) -> BaseWorker | None:
         return self._workers.get(worker_id)
 
+    def __init__(self) -> None:
+        self._workers: dict[str, BaseWorker] = {}
+        self._lock = asyncio.Lock()
+        self._reserved: set[str] = set()
+
+    async def find_and_reserve(self, required_capabilities: list[str]) -> BaseWorker | None:
+        async with self._lock:
+            for worker in self._workers.values():
+                if worker.worker_id in self._reserved:
+                    continue
+                if worker.is_available and worker.has_capabilities(required_capabilities):
+                    self._reserved.add(worker.worker_id)
+                    return worker
+        return None
+
+    async def release(self, worker_id: str) -> None:
+        async with self._lock:
+            self._reserved.discard(worker_id)
+
     def find_available(self, required_capabilities: list[str]) -> BaseWorker | None:
         """Linear scan over registered workers (typical node counts are small)."""
         for worker in self._workers.values():
+            if worker.worker_id in self._reserved:
+                continue
             if worker.is_available and worker.has_capabilities(required_capabilities):
                 return worker
         return None

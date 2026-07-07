@@ -15,7 +15,7 @@ def _args(**kw: object) -> Namespace:
     base = argparse.Namespace(
         memory_type="in-memory",
         session_max_turns=10,
-        auto_summarize=False,
+        summarizer_model=None,
     )
     for k, v in kw.items():
         setattr(base, k, v)

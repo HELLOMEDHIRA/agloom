@@ -59,7 +59,7 @@ async def test_session_memory_apop_last_turn() -> None:
 @pytest.mark.asyncio
 async def test_session_memory_on_turns_async() -> None:
     hooks: list[tuple[str, list]] = []
-    sm = SessionMemory(store=InMemoryStore(), max_turns=10, auto_summarize=False)
+    sm = SessionMemory(store=InMemoryStore(), max_turns=10, summarizer_model=None)
 
     async def cb(tid: str, turns: list) -> None:
         hooks.append((tid, [dict(x) for x in turns]))
@@ -86,8 +86,6 @@ async def test_session_memory_summarize_at_max_tokens_budget() -> None:
     sm = SessionMemory(
         store=InMemoryStore(),
         max_turns=50,
-        auto_summarize=True,
-        summarize_threshold=10**9,
         summarize_max_tokens_budget=500,
         summarizer_model=FakeSumm(),
     )
@@ -169,11 +167,12 @@ async def test_build_memory_context_with_session() -> None:
 
 
 @pytest.mark.asyncio
-async def test_build_memory_context_truncation() -> None:
+async def test_build_memory_context_no_tail_chop() -> None:
     sm = SessionMemory(store=InMemoryStore())
     await sm.aadd_turn("t1", "x" * 5000, "y" * 5000)
-    ctx = await build_memory_context(session=sm, thread_id="t1", max_chars=100)
-    assert len(ctx) <= 100
+    ctx = await build_memory_context(session=sm, thread_id="t1")
+    assert len(ctx) > 100
+    assert "x" * 100 in ctx
 
 
 def test_create_memory_tools_count() -> None:

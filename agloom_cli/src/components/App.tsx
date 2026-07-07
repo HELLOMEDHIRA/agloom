@@ -88,11 +88,19 @@ export const App = ({
     return loadHistory(histPath)
   }, [histPath, histRefresh])
   /** `null` = composing new input; otherwise index into `histLines`. */
-  const [histIdx, setHistIdx] = useState<number | null>(null)
-
-  useEffect(() => {
-    setHistIdx(null)
-  }, [histRefresh, histLines.length])
+  const histVersion = `${histRefresh}:${histLines.length}`
+  const [histNav, setHistNav] = useState<{ version: string; idx: number | null }>({
+    version: histVersion,
+    idx: null,
+  })
+  const histIdx = histNav.version === histVersion ? histNav.idx : null
+  const setHistIdx = (idx: number | null | ((prev: number | null) => number | null)): void => {
+    setHistNav((s) => {
+      const base = s.version === histVersion ? s.idx : null
+      const next = typeof idx === 'function' ? idx(base) : idx
+      return { version: histVersion, idx: next }
+    })
+  }
 
   const fuzzySuggestions = useMemo(
     () => (!input.startsWith('/') ? suggestFromHistory(input, histLines, 4) : []),
@@ -115,10 +123,8 @@ export const App = ({
   const SPLIT_MIN_TERM_WIDTH = 92
   const showMetricsSidebar = metricsSidebarOpen && termWidth >= SPLIT_MIN_TERM_WIDTH
   const mainColumnWidth = showMetricsSidebar ? termWidth - SIDEBAR_WIDTH - 1 : termWidth
+  const activeScrollPane = showMetricsSidebar ? scrollPane : 'chat'
 
-  useEffect(() => {
-    if (!showMetricsSidebar) setScrollPane('chat')
-  }, [showMetricsSidebar])
   const setMainColumnWidth = useSessionStore((s) => s.setMainColumnWidth)
 
   useEffect(() => {
@@ -146,8 +152,8 @@ export const App = ({
     1
   const chatScrollLines = Math.max(4, middleRowHeight - middleOverhead)
 
-  const chatScrollActive = !showMetricsSidebar || scrollPane === 'chat'
-  const metricsScrollActive = showMetricsSidebar && scrollPane === 'metrics'
+  const chatScrollActive = !showMetricsSidebar || activeScrollPane === 'chat'
+  const metricsScrollActive = showMetricsSidebar && activeScrollPane === 'metrics'
   const chatFocusHint = showMetricsSidebar
     ? chatScrollActive
       ? '◀ scroll (Tab → metrics)'
@@ -691,7 +697,7 @@ export const App = ({
         <Box flexDirection="column" width={mainColumnWidth} flexShrink={0}>
           <StatusBar thread={thread} layoutWidth={mainColumnWidth} />
           {status === 'hitl' && hitlQueue[0] !== undefined ? (
-            <HITLPrompt request={hitlQueue[0]} bridge={bridge} />
+            <HITLPrompt key={hitlQueue[0].requestId} request={hitlQueue[0]} bridge={bridge} />
           ) : status !== 'hitl' ? (
             <InputBar
               value={input}

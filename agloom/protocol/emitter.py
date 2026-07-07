@@ -57,6 +57,8 @@ from .events import (
     MemoryLtRecallData,
     MemoryLtStore,
     MemoryLtStoreData,
+    ContextSummarized,
+    ContextSummarizedData,
     MemorySessionCleared,
     MemorySessionClearedData,
     MemorySessionTurnPopped,
@@ -84,6 +86,8 @@ from .events import (
     PlanPreviewData,
     HarnessSynced,
     HarnessSyncedData,
+    HarnessTaskUpdated,
+    HarnessTaskUpdatedData,
     HarnessPlanTaskWire,
     HarnessLedgerTaskWire,
     PromptCancelled,
@@ -358,6 +362,8 @@ class SessionEmitter:
         self._closed = False
         self._last_open: SessionOpened | None = None
         self._last_resume: SessionResumed | None = None
+        self._trace_id: str | None = None
+        self._last_event_id: str | None = None
         self.budget_tracker: Any | None = None
 
     @classmethod
@@ -392,6 +398,8 @@ class SessionEmitter:
         inst._opened = False
         inst._closed = False
         inst._invocation_only = False
+        inst._trace_id = None
+        inst._last_event_id = None
         return inst
 
     _callback_only = for_callback_only  # backward-compatible alias
@@ -407,10 +415,14 @@ class SessionEmitter:
         if self._opened and self._last_open is not None:
             return self._last_open
         self._opened = True
+        from uuid import uuid4
+
+        self._trace_id = f"tr_{uuid4().hex[:16]}"
         evt = SessionOpened(
             session=self._session,
             thread=self._thread,
             seq=self._next_seq(),
+            trace=self._trace_id,
             data=SessionOpenedData(
                 runtime_version=PROTOCOL_MODULE_VERSION,
                 protocol_version="1",
@@ -468,6 +480,10 @@ class SessionEmitter:
         if self._opened and self._last_resume is not None:
             return self._last_resume
         self._opened = True
+        from uuid import uuid4
+
+        if self._trace_id is None:
+            self._trace_id = f"tr_{uuid4().hex[:16]}"
         evt = SessionResumed(
             session=self._session,
             thread=self._thread,
@@ -568,6 +584,31 @@ class SessionEmitter:
                 task_count=task_count,
                 harness_plan=list(harness_plan or []),
                 tasks=list(tasks or []),
+            ),
+        )
+        self._write(evt)
+        return evt
+
+    def emit_harness_task_updated(
+        self,
+        *,
+        task_id: str,
+        status: str,
+        notes: str = "",
+        project: str | None = None,
+        parent: str | None = None,
+    ) -> HarnessTaskUpdated:
+        """Emit when a harness ledger task is claimed or updated."""
+        evt = HarnessTaskUpdated(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=HarnessTaskUpdatedData(
+                task_id=task_id,
+                status=status,
+                notes=notes,
+                project=project,
             ),
         )
         self._write(evt)
@@ -1337,6 +1378,37 @@ class SessionEmitter:
         self._write(evt)
         return evt
 
+    def emit_context_summarized(
+        self,
+        *,
+        scope: Literal["session", "harness", "job", "injection"] = "session",
+        turns_before: int | None = None,
+        turns_after: int | None = None,
+        tokens_before: int | None = None,
+        tokens_after: int | None = None,
+        artifact_refs: list[str] | None = None,
+        content_hash: str | None = None,
+        parent: str | None = None,
+    ) -> ContextSummarized:
+        """Emit when Context Plane compresses memory to fit the inferred budget."""
+        evt = ContextSummarized(
+            session=self._session,
+            thread=self._thread,
+            seq=self._next_seq(),
+            parent=parent,
+            data=ContextSummarizedData(
+                scope=scope,
+                turns_before=turns_before,
+                turns_after=turns_after,
+                tokens_before=tokens_before,
+                tokens_after=tokens_after,
+                artifact_refs=artifact_refs or [],
+                content_hash=content_hash,
+            ),
+        )
+        self._write(evt)
+        return evt
+
     def emit_metric_tokens(
         self,
         *,
@@ -1920,7 +1992,18 @@ class SessionEmitter:
         """Wait for in-flight EventStore append tasks (tests / shutdown)."""
         await self._store_append_inflight.drain(timeout=timeout)
 
+    def _with_trace(self, evt: Envelope) -> Envelope:
+        updates: dict[str, Any] = {}
+        if self._trace_id and getattr(evt, "trace", None) is None:
+            updates["trace"] = self._trace_id
+        if getattr(evt, "parent", None) is None and self._last_event_id:
+            updates["parent"] = self._last_event_id
+        if updates:
+            return evt.model_copy(update=updates)
+        return evt
+
     def _write(self, evt: Envelope) -> None:
+        evt = self._with_trace(evt)
         typ = str(getattr(evt, "type", ""))
         wire_ok = self._subscription_allows_wire(typ)
         wire_dict = _sanitize_non_finite_json(
@@ -1939,6 +2022,7 @@ class SessionEmitter:
                 logger_emitter.debug("SessionEmitter on_emit callback failed (ignored)", exc_info=True)
         if self._store is not None:
             self._schedule_store_append(evt)
+        self._last_event_id = evt.id
 
 
 def event_to_dict(evt: Envelope) -> dict[str, Any]:
@@ -2038,6 +2122,7 @@ class AsyncSessionEmitter(SessionEmitter):
     # ── override _write to enqueue instead of block ─────────────────────────
 
     def _write(self, evt: Envelope) -> None:
+        evt = self._with_trace(evt)
         typ = str(getattr(evt, "type", ""))
         wire_ok = self._subscription_allows_wire(typ)
         wire_dict = _sanitize_non_finite_json(
@@ -2053,6 +2138,7 @@ class AsyncSessionEmitter(SessionEmitter):
                 logger_emitter.debug("AsyncSessionEmitter on_emit callback failed (ignored)", exc_info=True)
         if self._store is not None:
             self._schedule_store_append(evt)
+        self._last_event_id = evt.id
 
     def write_replay_dict(self, evt_dict: dict[str, Any]) -> None:
         """Enqueue one replayed NDJSON line when the subscription filter allows (see parent)."""

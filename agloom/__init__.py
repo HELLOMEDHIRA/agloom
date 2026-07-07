@@ -39,6 +39,7 @@ Use ``async with agent:`` or ``await agent.aclose()`` to release MCP clients and
 from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
 from importlib.metadata import version as _version
 
+from .profiles import WorkloadProfile, normalize_profile_name, resolve_profile_kwargs
 from .src.delegation import (
     BackgroundDelegationManager,
     BackgroundTask,
@@ -131,6 +132,9 @@ __all__ = [
     "cache_get",
     "cache_set",
     "configure_package_logging",
+    "WorkloadProfile",
+    "normalize_profile_name",
+    "resolve_profile_kwargs",
 ]
 
 # Harness extra: these names join ``__all__`` when optional deps are installed.

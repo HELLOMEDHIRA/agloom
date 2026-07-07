@@ -98,12 +98,6 @@ export const flattenRichAgloomYaml = (raw: unknown): unknown =>{
     if (typeof maxTurns === 'number' && (o.session_max_turns === undefined || o.session_max_turns === null)) {
       o.session_max_turns = maxTurns
     }
-    if (
-      typeof m.auto_summarize === 'boolean' &&
-      (o.auto_summarize === undefined || o.auto_summarize === null)
-    ) {
-      o.auto_summarize = m.auto_summarize
-    }
     const sumModel = m.summarizer_model
     if (
       typeof sumModel === 'string' &&
@@ -218,7 +212,7 @@ const AgloomYamlSchema = z.preprocess(
       memory_path: z.string().optional(),
       skills_dir: z.string().optional(),
       summarizer_model: z.string().optional(),
-      auto_summarize: z.boolean().optional(),
+      profile: z.string().optional(),
       session_max_turns: z.number().int().optional(),
       no_cli_tools: z.boolean().optional(),
       require_tool_approval: z.boolean().optional(),
@@ -387,7 +381,7 @@ export type CliOptsLike = {
   memoryPath?: string
   skillsDir?: string
   summarizerModel?: string
-  noAutoSummarize: boolean
+  profile?: string
   sessionMaxTurns: number
   maxTurns?: number
   noCliTools?: boolean
@@ -495,7 +489,7 @@ export const applyAgloomConfigLayers = (
   if (fromDefault('memoryPath') && y.memory_path) next.memoryPath = resolve(yamlBaseDir, y.memory_path)
   if (fromDefault('skillsDir') && y.skills_dir) next.skillsDir = resolve(yamlBaseDir, y.skills_dir)
   if (fromDefault('summarizerModel') && y.summarizer_model) next.summarizerModel = y.summarizer_model
-  if (fromDefault('noAutoSummarize') && y.auto_summarize === false) next.noAutoSummarize = true
+  if (fromDefault('profile') && y.profile) next.profile = String(y.profile).trim()
   if (fromDefault('sessionMaxTurns') && y.session_max_turns !== undefined)
     next.sessionMaxTurns = y.session_max_turns
 

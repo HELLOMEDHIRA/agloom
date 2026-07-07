@@ -17,6 +17,7 @@ async def test_graph_classify_forwards_classifier_config(monkeypatch: pytest.Mon
         *,
         augmented_query: str,
         skill_context: str,
+        user_query: str = "",
     ) -> QueryAnalysis:
         captured["cfg"] = cfg
         captured["augmented_query"] = augmented_query
@@ -51,6 +52,7 @@ async def test_graph_classify_injects_skill_context(monkeypatch: pytest.MonkeyPa
         *,
         augmented_query: str,
         skill_context: str,
+        user_query: str = "",
     ) -> QueryAnalysis:
         captured["skill_context"] = skill_context
         return QueryAnalysis(pattern=PatternType.REACT, complexity=2, reasoning="ok", subtasks=[])
@@ -80,6 +82,7 @@ async def test_graph_classify_skill_injector_failure_proceeds(
         *,
         augmented_query: str,
         skill_context: str,
+        user_query: str = "",
     ) -> QueryAnalysis:
         captured["skill_context"] = skill_context
         return QueryAnalysis(pattern=PatternType.DIRECT, complexity=1, reasoning="ok", subtasks=[])

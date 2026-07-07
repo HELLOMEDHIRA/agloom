@@ -106,9 +106,8 @@ export const createAGPBridge = (): AGPBridge => {
   let forceKillTimer: ReturnType<typeof setTimeout> | null = null
   /** Sync child teardown when the Node process exits; single hook avoids duplicate teardown. */
   let syncKillOrphanChild: (() => void) | null = null
-  let signalForwarders: Array<{ signal: NodeJS.Signals; handler: () => void }> = []
+  const signalForwarders: Array<{ signal: NodeJS.Signals; handler: () => void }> = []
   /** Prevent double ``start()`` while a child is alive (e.g. React Strict Mode). */
-  let serveStarted = false
   let lastStartArgs: string[] = []
   let lastStartOptions: { transport?: 'stdio'; autoReconnect?: boolean; reconnectMaxAttempts?: number; reconnectDelayMs?: number } = {}
   let reconnectAttempts = 0
@@ -224,7 +223,6 @@ export const createAGPBridge = (): AGPBridge => {
       return
     }
     clearReconnectTimer()
-    serveStarted = true
     lastStartArgs = [...extraArgs]
     lastStartOptions = { ...options }
     const cmd = process.env['AGLOOM_RUNTIME'] ?? 'agloom-runtime'
@@ -287,7 +285,6 @@ export const createAGPBridge = (): AGPBridge => {
       clearForceKillTimer()
       detachProcessExitHooks()
       proc = null
-      serveStarted = false
       status = 'exited'
       const unexpected = code !== 0 && code !== null
       if (unexpected) {
@@ -331,7 +328,6 @@ export const createAGPBridge = (): AGPBridge => {
       clearForceKillTimer()
       detachProcessExitHooks()
       proc = null
-      serveStarted = false
       const guidance =
         err.code === 'ENOENT'
           ? new Error(

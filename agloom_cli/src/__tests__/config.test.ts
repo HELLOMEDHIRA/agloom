@@ -162,16 +162,16 @@ safety:
     unlinkSync(p)
   })
 
-  it('flattens memory.auto_summarize and memory.summarizer_model', () => {
+  it('flattens memory.summarizer_model and profile', () => {
     const p = writeYaml(`
+profile: harness_long
 memory:
   max_turns: 80
-  auto_summarize: false
   summarizer_model: groq:meta-llama/llama-3.3-70b-versatile
 `)
     const y = parseAgloomYamlFile(p)
     expect(y.session_max_turns).toBe(80)
-    expect(y.auto_summarize).toBe(false)
+    expect(y.profile).toBe('harness_long')
     expect(y.summarizer_model).toBe('groq:meta-llama/llama-3.3-70b-versatile')
     unlinkSync(p)
   })

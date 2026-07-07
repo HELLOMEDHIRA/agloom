@@ -8,6 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from ..src.llm_streaming import stream_or_invoke_llm
 from ..src.logging_utils import get_logger
 from ..src.models import (
+    AgentEvent,
     ExecutionResult,
     PatternType,
     QueryAnalysis,
@@ -18,8 +19,10 @@ from ..src.models import (
     _extract_token_usage,
     _make_step,
     _merge_token_usage,
+    _trunc,
 )
 from ._resolve import resolve_worker_configs
+from ._failure import exec_failure_kwargs
 from ._steps_accounting import steps_taken_from_audit
 from ._synthesis_contract import (
     ALL_PATTERN_WORKERS_FAILED_ERROR,
@@ -82,6 +85,7 @@ async def handle_swarm(
             analysis=analysis,
             steps=steps,
             messages=raw_messages,
+            **exec_failure_kwargs(kind="planning"),
         )
 
     plans = [
@@ -97,6 +101,17 @@ async def handle_swarm(
     ]
 
     configs = resolve_worker_configs(agent, plans)
+    event_queue = agent.get("_event_queue")
+    for wc in configs:
+        steps.append(_make_step(StepType.WORKER_START, wc.worker_id, input=wc.task, max_length=ml))
+        if event_queue is not None:
+            await event_queue.put(
+                AgentEvent(
+                    type="worker_start",
+                    data={"name": wc.worker_id, "input": _trunc(wc.task, ml)},
+                )
+            )
+
     for cfg in configs:
         logger.event(
             f"[Swarm] Agent '{cfg.worker_id}' resolved — "
@@ -124,6 +139,26 @@ async def handle_swarm(
                 )
 
     for wr in results:
+        for step in getattr(wr, "steps", []):
+            if step.type not in (StepType.TOOL_CALL, StepType.TOOL_RESULT):
+                continue
+            steps.append(step)
+            if event_queue is not None and not (
+                step.metadata.get("wire_emitted") or step.metadata.get("_wire_emitted")
+            ):
+                event_type = "tool_call" if step.type == StepType.TOOL_CALL else "tool_result"
+                await event_queue.put(
+                    AgentEvent(
+                        type=event_type,
+                        data={
+                            "worker_id": wr.worker_id,
+                            "name": step.name,
+                            "input": step.input,
+                            "output": step.output,
+                            **step.metadata,
+                        },
+                    )
+                )
         steps.append(
             _make_step(
                 StepType.WORKER_END,
@@ -135,6 +170,19 @@ async def handle_swarm(
                 max_length=ml,
             )
         )
+        if event_queue is not None:
+            await event_queue.put(
+                AgentEvent(
+                    type="worker_end",
+                    data={
+                        "name": wr.worker_id,
+                        "input": _trunc(wr.task, ml),
+                        "output": _trunc(wr.output, ml),
+                        "duration_ms": wr.elapsed_ms,
+                        "signal": wr.signal.value,
+                    },
+                )
+            )
         if wr.token_usage:
             usage = _merge_token_usage(usage, wr.token_usage)
 
@@ -201,6 +249,7 @@ async def handle_swarm(
             steps=steps,
             token_usage=usage,
             messages=raw_messages,
+            **exec_failure_kwargs(ALL_PATTERN_WORKERS_FAILED_ERROR, kind="worker"),
         )
 
     perspectives = _format_perspectives(succeeded)

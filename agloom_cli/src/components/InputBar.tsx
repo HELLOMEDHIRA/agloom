@@ -1,6 +1,6 @@
 /** Composer: multiline when `pendingLines`; paste/newlines handled in `App` via `onChange`. Uses `ink-text-input` (controlled); `@inkjs/ui` TextInput is uncontrolled. */
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useRef, useState } from 'react'
 import { Box, Text } from 'ink'
 import { Alert } from '@inkjs/ui'
 import TextInput from 'ink-text-input'
@@ -44,13 +44,21 @@ export const InputBar = ({
   const showHistorySuggestions =
     !isDisabled && suggestions !== undefined && suggestions.length > 0 && !value.startsWith('/')
 
-  const [selectedSuggestion, setSelectedSuggestion] = useState(0)
-  const pendingSuggestionRef = useRef<string | null>(null)
   const suggestionKey = suggestions?.join('\u0000') ?? ''
+  const [selection, setSelection] = useState({ key: suggestionKey, index: 0 })
+  const selectedSuggestion =
+    suggestions && suggestions.length > 0
+      ? (selection.key === suggestionKey ? selection.index : 0) % suggestions.length
+      : 0
+  const pendingSuggestionRef = useRef<string | null>(null)
 
-  useEffect(() => {
-    setSelectedSuggestion(0)
-  }, [suggestionKey])
+  const setSelectedSuggestion = (updater: number | ((i: number) => number)): void => {
+    setSelection((s) => {
+      const base = s.key === suggestionKey ? s.index : 0
+      const next = typeof updater === 'function' ? updater(base) : updater
+      return { key: suggestionKey, index: next }
+    })
+  }
 
   const applySuggestion = (text: string): void => {
     pendingSuggestionRef.current = text

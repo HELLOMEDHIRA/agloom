@@ -21,6 +21,7 @@ from ..src.models import (
 from ..src.wire_tokens import llm_label_from_run_config
 from ._resolve import resolve_worker_configs
 from ._sequential import run_sequential_workers
+from ._failure import exec_failure_kwargs
 from ._steps_accounting import steps_taken_from_audit
 from ._synthesis_contract import ALL_PATTERN_WORKERS_FAILED_ERROR, pattern_synthesis_success
 
@@ -74,6 +75,7 @@ async def handle_planner_executor(
             analysis=analysis,
             steps=steps,
             messages=raw_messages,
+            **exec_failure_kwargs(kind="planning"),
         )
 
     plans = [

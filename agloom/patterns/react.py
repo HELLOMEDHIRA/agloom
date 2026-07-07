@@ -55,6 +55,7 @@ from ..src.models import (
     _make_step,
     _trunc,
 )
+from ._failure import exec_failure_kwargs
 from .hitl_tool_coalesce import build_default_hitl_coalescer
 from ._steps_accounting import steps_taken_from_audit
 from .middleware import HumanApprovalMiddleware, UserAbort, build_langchain_agent_middleware
@@ -77,7 +78,7 @@ from .react_tool_recovery import (
 from .react_tool_recovery import (
     last_ai_message_is_stray_tool_json as _last_ai_message_is_stray_tool_json,
 )
-from ..src.exception_utils import format_exception_message
+from ..src.exception_utils import exception_indicates_transient_transport_error, format_exception_message
 
 logger = get_logger(__name__)
 
@@ -92,6 +93,8 @@ async def _react_failure(
     steps_taken: int,
     steps: list,
     messages: list | None = None,
+    kind: str = "execution",
+    error: str | None = None,
 ) -> ExecutionResult:
     from ..orchestrator.hooks import maybe_recover_react_failure
 
@@ -104,6 +107,7 @@ async def _react_failure(
         analysis=analysis,
         steps=steps,
         messages=messages or [],
+        **exec_failure_kwargs(error or output, kind=kind),
     )
     return await maybe_recover_react_failure(agent, config, query, analysis, failed)
 
@@ -160,6 +164,7 @@ def _tool_input_as_dict(tool_input: Any) -> dict[str, Any]:
 REACT_RECURSION_LIMIT = 25  # default; override via create_agent(react_recursion_limit=…)
 
 _MAX_TOOL_RETRIES = 5
+_MAX_TRANSPORT_RETRIES = 3
 # Hard ceiling on total ``ainvoke`` attempts (including user-authorized extensions).
 REACT_ABSOLUTE_MAX_AINVOKE_ATTEMPTS = 24
 _RETRY_DELAY = 0.5
@@ -177,51 +182,19 @@ _AINVOKE_TIMEOUT = 120
 _STRAY_TOOL_JSON_RETRIES = 3
 
 
-def _react_llm_timeout(agent: dict) -> float:
-    """Per model-call wall clock (honors ``create_agent(llm_timeout=...)``)."""
-    try:
-        return max(float(agent.get("llm_timeout", _AINVOKE_TIMEOUT)), 1.0)
-    except (TypeError, ValueError):
-        return float(_AINVOKE_TIMEOUT)
+async def _acquire_transport_llm(agent: dict) -> None:
+    tm = agent.get("_transport_manager")
+    if tm is not None:
+        await tm.acquire_llm_slot()
 
 
-def _react_graph_wall_timeout(agent: dict) -> float:
-    """Wall clock for a full streamed ReAct graph (many model + tool rounds)."""
-    explicit = agent.get("react_graph_timeout")
-    if explicit is not None:
-        try:
-            return max(float(explicit), 1.0)
-        except (TypeError, ValueError):
-            pass
-    base = _react_llm_timeout(agent)
-    return max(base * 4.0, 300.0)
-
-
-def _react_timeout_failure_message(agent: dict, *, wall_seconds: float, path: str) -> str:
-    llm_t = int(_react_llm_timeout(agent))
-    graph_t = int(_react_graph_wall_timeout(agent))
-    return (
-        f"REACT timed out after {int(wall_seconds)}s ({path}). "
-        f"Self-hosted inference with MCP tools often needs "
-        f"create_agent(llm_timeout>={max(llm_t, 300)}, react_graph_timeout>={max(graph_t, 600)})."
-    )
-
-
-def _react_recursion_limit(agent: dict) -> int:
-    """LangGraph ``recursion_limit`` for REACT graphs (tool-call steps)."""
-    raw = agent.get("react_recursion_limit", REACT_RECURSION_LIMIT)
-    try:
-        limit = int(raw)
-    except (TypeError, ValueError):
-        limit = REACT_RECURSION_LIMIT
-    return max(1, min(limit, 500))
-
-
-def _react_recursion_limit_failure_message(*, limit: int, path: str) -> str:
-    return (
-        f"REACT step limit reached after {limit} graph steps ({path}). "
-        "Investigation incomplete — simplify the task or raise create_agent(react_recursion_limit=…)."
-    )
+from .react_timeouts import (
+    react_graph_wall_timeout as _react_graph_wall_timeout,
+    react_llm_timeout as _react_llm_timeout,
+    react_recursion_limit as _react_recursion_limit,
+    react_recursion_limit_failure_message as _react_recursion_limit_failure_message,
+    react_timeout_failure_message as _react_timeout_failure_message,
+)
 
 
 async def _react_emit_stream_error(
@@ -309,6 +282,8 @@ async def _react_return_timeout_failure(
         steps_taken=steps_taken,
         steps=steps,
         messages=messages or [],
+        kind="timeout",
+        error="TimeoutError",
     )
 
 
@@ -667,6 +642,7 @@ async def _run_react_ainvoke_with_retries(
     except (TypeError, ValueError):
         user_recovery_budget = DEFAULT_REACT_TOOL_USE_FAILED_USER_ROUNDS
 
+    transport_retries = 0
     while attempt < max_attempts:
         attempt += 1
         if attempt > REACT_ABSOLUTE_MAX_AINVOKE_ATTEMPTS:
@@ -685,7 +661,8 @@ async def _run_react_ainvoke_with_retries(
             )
         try:
             t0 = time.perf_counter()
-            _wall_timeout = _react_llm_timeout(agent)
+            _wall_timeout = _react_llm_timeout(agent, config)
+            await _acquire_transport_llm(agent)
             response = await asyncio.wait_for(
                 cast(Any, react_agent).ainvoke(state, config=invoke_config),
                 timeout=_wall_timeout,
@@ -839,6 +816,20 @@ async def _run_react_ainvoke_with_retries(
                             },
                         )
                         continue
+            elif (
+                exception_indicates_transient_transport_error(exc)
+                and transport_retries < _MAX_TRANSPORT_RETRIES
+                and attempt < max_attempts
+            ):
+                transport_retries += 1
+                logger.warning(
+                    f"{log_prefix} ⚠ transient transport error on attempt "
+                    f"{attempt}/{max_attempts} (transport_retry={transport_retries}/"
+                    f"{_MAX_TRANSPORT_RETRIES}, agent={name}) — retrying in "
+                    f"{_react_retry_delay(attempt)}s: {format_exception_message(exc)}"
+                )
+                await asyncio.sleep(_react_retry_delay(attempt))
+                continue
 
             logger.error(f"{log_prefix} ❌ Failed: {format_exception_message(exc)}")
             if isinstance(exc, TimeoutError):
@@ -847,7 +838,7 @@ async def _run_react_ainvoke_with_retries(
                     config,
                     query,
                     analysis,
-                    wall_seconds=_react_llm_timeout(agent),
+                    wall_seconds=_react_llm_timeout(agent, config),
                     path=log_prefix,
                     steps_taken=attempt,
                     steps=steps,
@@ -861,6 +852,10 @@ async def _run_react_ainvoke_with_retries(
                 fail_note = "Chat template rejected the message list (no user query found). "
             elif exception_indicates_context_window_exceeded(exc):
                 fail_note = "Context window exceeded after compaction retries. "
+            elif exception_indicates_transient_transport_error(exc):
+                fail_note = (
+                    "HTTP transport disconnected (LLM or MCP proxy) after transport retries. "
+                )
             else:
                 fail_note = ""
             exc_str = format_exception_message(exc)
@@ -943,11 +938,13 @@ async def _handle_react_streaming(
     _tool_arg_dicts: dict[str, dict[str, Any]] = {}
     tool_names = _react_tool_names(tools)
     _graph_wall_timeout = _react_graph_wall_timeout(agent)
+    last_stream_kind: str | None = None
 
     try:
         async with asyncio.timeout(_graph_wall_timeout):
             async for event in react_agent.astream_events(state, config=invoke_config, version="v2"):
                 kind = event["event"]
+                last_stream_kind = kind
 
                 if kind == "on_chat_model_stream":
                     chunk = event["data"]["chunk"]
@@ -1080,7 +1077,7 @@ async def _handle_react_streaming(
                     ]
                 },
             )
-            _wall_timeout = _react_llm_timeout(agent)
+            _wall_timeout = _react_llm_timeout(agent, config)
             final_response = await asyncio.wait_for(
                 cast(Any, react_agent).ainvoke(recovery_state, config=invoke_config),
                 timeout=_wall_timeout,
@@ -1099,6 +1096,14 @@ async def _handle_react_streaming(
 
         if not output:
             output = "No output produced."
+
+        _stream_success = bool(output) and output not in (
+            "No output produced.",
+            "I ran the tool but could not produce a final summary. "
+            "Expand the tool row above for the raw result, or send another message to retry.",
+        )
+        if tool_names and output and _is_stray_tool_json_text(output.strip(), tool_names):
+            _stream_success = False
 
         usage = _extract_token_usage(final_response)
         llm_step = _make_step(
@@ -1131,7 +1136,9 @@ async def _handle_react_streaming(
             query=query,
             output=output,
             steps_taken=steps_taken_from_audit(steps),
-            success=True,
+            success=_stream_success,
+            failure_class=None if _stream_success else "tool_error",
+            retryable=not _stream_success,
             analysis=analysis,
             steps=steps,
             token_usage=usage,
@@ -1204,10 +1211,42 @@ async def _handle_react_streaming(
                 event_queue=event_queue,
             )
         root_msg = format_exception_message(exc)
+        stream_ctx = f" last_event={last_stream_kind!r}" if last_stream_kind else ""
+        if agent.get("strict_execution"):
+            logger.warning(
+                f"[React|stream] astream_events failed ({root_msg}){stream_ctx} — strict_execution, no ainvoke fallback"
+            )
+            return ExecutionResult(
+                pattern_used=PatternType.REACT,
+                query=query,
+                output=root_msg,
+                steps_taken=steps_taken_from_audit(steps),
+                success=False,
+                failure_class="transport",
+                retryable=True,
+                analysis=analysis,
+                steps=steps,
+                messages=(final_response or {}).get("messages", []) if isinstance(final_response, dict) else [],
+                metadata={"execution_path": "stream_failed_strict"},
+            )
         logger.warning(
-            f"[React|stream] astream_events failed ({root_msg}) — "
+            f"[React|stream] astream_events failed ({root_msg}){stream_ctx} — "
             f"continuing via ainvoke retry loop for {name}"
         )
+        try:
+            from ..runtime.invocation_context import get_invocation_emitter
+
+            _recovery_emitter = get_invocation_emitter()
+            if _recovery_emitter is not None:
+                _recovery_emitter.emit_orchestration_step(
+                    depth=0,
+                    pattern="REACT",
+                    action="execution.recovery_path",
+                    reason="stream_to_ainvoke",
+                    error=root_msg[:500],
+                )
+        except Exception:
+            pass
         initial_state: dict | None = None
         if isinstance(final_response, dict):
             msgs = final_response.get("messages")
@@ -1391,7 +1430,8 @@ async def _handle_react_hitl(
         silent_in_batch += 1
         try:
             t0 = time.perf_counter()
-            _wall_timeout = _react_llm_timeout(agent)
+            _wall_timeout = _react_llm_timeout(agent, incoming_config)
+            await _acquire_transport_llm(agent)
             response = await asyncio.wait_for(
                 cast(Any, react_agent).ainvoke(
                     {"messages": messages},
@@ -1497,7 +1537,7 @@ async def _handle_react_hitl(
                 incoming_config,
                 query,
                 analysis,
-                wall_seconds=_react_llm_timeout(agent),
+                wall_seconds=_react_llm_timeout(agent, incoming_config),
                 path="[React|HITL]",
                 steps_taken=attempt,
                 steps=steps,

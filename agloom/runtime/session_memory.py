@@ -19,6 +19,15 @@ def _session_max_turns(args: Namespace) -> int:
 
 
 def _summarize_budget_from_args(args: Namespace) -> int | None:
+    """Infer summarize budget from model context window, not output max_tokens."""
+    from agloom.context.window import infer_context_window_tokens
+
+    model = getattr(args, "model", None)
+    if model is not None:
+        try:
+            return infer_context_window_tokens(model)
+        except Exception:
+            pass
     raw = getattr(args, "max_tokens", None)
     if raw is None:
         return None
@@ -60,7 +69,6 @@ async def open_isolated_session_memory(
     mt = _memory_type(args)
     session_key = _safe_session_slug(agp_session_id)
     budget = _summarize_budget_from_args(args)
-    auto_sum = bool(getattr(args, "auto_summarize", True))
 
     if mt == "sqlite":
         raw = getattr(args, "memory_path", None) or ".agloom/session_memory.sqlite"
@@ -75,7 +83,6 @@ async def open_isolated_session_memory(
         sm = SessionMemory(
             store=store,
             max_turns=_session_max_turns(args),
-            auto_summarize=auto_sum,
             summarize_max_tokens_budget=budget,
             agp_session_key=session_key,
         )
@@ -92,7 +99,7 @@ async def open_isolated_session_memory(
             SessionMemory(
                 store=InMemoryStore(),
                 max_turns=1,
-                auto_summarize=False,
+                summarizer_model=None,
                 agp_session_key=session_key,
             ),
             None,
@@ -105,7 +112,6 @@ async def open_isolated_session_memory(
             SessionMemory(
                 store=InMemoryStore(),
                 max_turns=_session_max_turns(args),
-                auto_summarize=auto_sum,
                 summarize_max_tokens_budget=budget,
                 agp_session_key=session_key,
             ),

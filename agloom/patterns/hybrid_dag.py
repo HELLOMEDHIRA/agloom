@@ -8,6 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from ..src.llm_streaming import stream_or_invoke_llm
 from ..src.logging_utils import get_logger
 from ..src.models import (
+    AgentEvent,
     ExecutionResult,
     PatternType,
     QueryAnalysis,
@@ -18,8 +19,10 @@ from ..src.models import (
     _extract_token_usage,
     _make_step,
     _merge_token_usage,
+    _trunc,
 )
 from ._dag import group_by_level, inject_dag_context
+from ._failure import exec_failure_kwargs
 from ._resolve import resolve_worker_configs
 from ._steps_accounting import steps_taken_from_audit
 from ._synthesis_contract import (
@@ -78,6 +81,7 @@ async def handle_hybrid_dag(
             analysis=analysis,
             steps=steps,
             messages=raw_messages,
+            **exec_failure_kwargs(kind="planning"),
         )
 
     plans = [
@@ -101,6 +105,7 @@ async def handle_hybrid_dag(
     )
 
     halt_event: asyncio.Event = asyncio.Event()
+    event_queue = agent.get("_event_queue")
 
     all_results: list[WorkerResult] = []
     completed: dict[str, WorkerResult] = {}
@@ -136,6 +141,14 @@ async def handle_hybrid_dag(
 
         enriched = [inject_dag_context(cfg, completed) for cfg in level_configs]
         for cfg in enriched:
+            steps.append(_make_step(StepType.WORKER_START, cfg.worker_id, input=cfg.task, max_length=ml))
+            if event_queue is not None:
+                await event_queue.put(
+                    AgentEvent(
+                        type="worker_start",
+                        data={"name": cfg.worker_id, "input": _trunc(cfg.task, ml)},
+                    )
+                )
             logger.event(
                 f"[HYBRID_DAG] Worker '{cfg.worker_id}' — "
                 f"tools={[t.name for t in cfg.tools] if cfg.tools else 'LLM-only'} "
@@ -166,6 +179,26 @@ async def handle_hybrid_dag(
         for result in level_results:
             all_results.append(result)
             completed[result.worker_id] = result
+            for step in getattr(result, "steps", []):
+                if step.type not in (StepType.TOOL_CALL, StepType.TOOL_RESULT):
+                    continue
+                steps.append(step)
+                if event_queue is not None and not (
+                    step.metadata.get("wire_emitted") or step.metadata.get("_wire_emitted")
+                ):
+                    event_type = "tool_call" if step.type == StepType.TOOL_CALL else "tool_result"
+                    await event_queue.put(
+                        AgentEvent(
+                            type=event_type,
+                            data={
+                                "worker_id": result.worker_id,
+                                "name": step.name,
+                                "input": step.input,
+                                "output": step.output,
+                                **step.metadata,
+                            },
+                        )
+                    )
             steps.append(
                 _make_step(
                     StepType.WORKER_END,
@@ -177,6 +210,19 @@ async def handle_hybrid_dag(
                     max_length=ml,
                 )
             )
+            if event_queue is not None:
+                await event_queue.put(
+                    AgentEvent(
+                        type="worker_end",
+                        data={
+                            "name": result.worker_id,
+                            "input": _trunc(result.task, ml),
+                            "output": _trunc(result.output, ml),
+                            "duration_ms": result.elapsed_ms,
+                            "signal": result.signal.value,
+                        },
+                    )
+                )
             if result.token_usage:
                 usage = _merge_token_usage(usage, result.token_usage)
             raw_messages.extend(getattr(result, "messages", []))
@@ -218,6 +264,7 @@ async def handle_hybrid_dag(
                 token_usage=usage,
                 messages=raw_messages,
                 metadata={"halted_workers": [r.worker_id for r in halted]},
+                **exec_failure_kwargs("HALT_ALL"),
             )
         logger.error("[HYBRID_DAG] All workers failed.")
         return ExecutionResult(
@@ -232,6 +279,7 @@ async def handle_hybrid_dag(
             steps=steps,
             token_usage=usage,
             messages=raw_messages,
+            **exec_failure_kwargs(ALL_PATTERN_WORKERS_FAILED_ERROR, kind="worker"),
         )
 
     outputs_block = _format_all_outputs(all_results)
@@ -290,12 +338,19 @@ async def handle_hybrid_dag(
 
     worker_success = sum(1 for r in all_results if r.signal == SignalType.SUCCESS)
     synthesis_degraded = synthesis_error is not None
+    success = pattern_synthesis_success(worker_results=all_results, synthesis_degraded=synthesis_degraded)
+    failure_kw: dict = {}
+    if not success:
+        if synthesis_error == "SynthesisTimeout":
+            failure_kw = exec_failure_kwargs(synthesis_error, kind="timeout")
+        elif synthesis_error:
+            failure_kw = exec_failure_kwargs(synthesis_error)
 
     return ExecutionResult(
         query=query,
         pattern_used=PatternType.HYBRID_DAG,
         output=synthesis,
-        success=pattern_synthesis_success(worker_results=all_results, synthesis_degraded=synthesis_degraded),
+        success=success,
         steps_taken=steps_taken_from_audit(steps),
         worker_results=all_results,
         error=synthesis_error,
@@ -308,6 +363,7 @@ async def handle_hybrid_dag(
         steps=steps,
         token_usage=usage,
         messages=raw_messages,
+        **failure_kw,
     )
 
 

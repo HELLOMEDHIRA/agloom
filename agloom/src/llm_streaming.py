@@ -17,6 +17,12 @@ from .wire_stream_content import split_stream_parts_from_chunk
 logger = get_logger(__name__)
 
 
+async def _acquire_rate_limit(agent: dict) -> None:
+    tm = agent.get("_transport_manager")
+    if tm is not None:
+        await tm.acquire_llm_slot()
+
+
 async def astream_llm_to_event_queue(
     llm: Any,
     messages: Sequence[BaseMessage],
@@ -83,6 +89,7 @@ async def stream_or_invoke_llm(
     """
     event_queue = agent.get("_event_queue")
     base: list[BaseMessage] = list(messages)
+    await _acquire_rate_limit(agent)
     if event_queue is not None:
         text, last_chunk, stream_usage = await astream_llm_to_event_queue(
             llm, messages, event_queue, timeout=timeout, worker_id=worker_id

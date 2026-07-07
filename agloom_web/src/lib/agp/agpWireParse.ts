@@ -17,15 +17,21 @@ const envelope = z.object({
   data: z.unknown(),
 })
 
-const asDataObject = (data: unknown): Record<string, unknown> => {
+const asDataObject = (data: unknown, eventType?: string): Record<string, unknown> => {
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-    throw new SyntaxError('AGP event data must be a plain object')
+    const kind = data === null ? 'null' : Array.isArray(data) ? 'array' : typeof data
+    const head = eventType
+      ? `AGP event type "${eventType}"`
+      : 'AGP event'
+    throw new SyntaxError(
+      `${head}: \`data\` must be a plain object (got ${kind}). Unknown types still require object-shaped \`data\` for forward compatibility.`,
+    )
   }
   return { ...(data as Record<string, unknown>) }
 }
 
 /** Parse ``data`` with *schema*; merge validated keys onto the raw wire object (keep extras). */
-const mergeData = <T extends z.ZodTypeAny>(raw: Record<string, unknown>, schema: T): z.infer<T> & Record<string, unknown> => {
+const mergeData = <T extends z.ZodTypeAny>(raw: Record<string, unknown>, schema: T): z.infer<T> & Record<string, unknown>  => {
   const r = schema.safeParse(raw)
   if (!r.success) {
     const msg = r.error.issues.map((i) => `${i.path.join('.') || 'data'}: ${i.message}`).join('; ')
@@ -102,6 +108,21 @@ const d = {
       priority: z.string().optional(),
       verification_step_count: z.number().optional(),
     })).optional(),
+  }),
+  harnessTaskUpdated: z.object({
+    task_id: z.string(),
+    status: z.string(),
+    notes: z.string().optional(),
+    project: z.string().optional(),
+  }),
+  contextSummarized: z.object({
+    scope: z.enum(['session', 'harness', 'job', 'injection']),
+    turns_before: z.number().optional(),
+    turns_after: z.number().optional(),
+    tokens_before: z.number().optional(),
+    tokens_after: z.number().optional(),
+    artifact_refs: z.array(z.string()).optional(),
+    content_hash: z.string().optional(),
   }),
   thinkingStep: z.object({
     step: z.string(),
@@ -220,6 +241,14 @@ const d = {
           tool_count: z.number().optional(),
           tool_names: z.array(z.string()).optional(),
           tool_names_truncated: z.boolean().optional(),
+          tool_catalog: z
+            .array(
+              z.object({
+                name: z.string(),
+                description: z.string().optional(),
+              }),
+            )
+            .optional(),
         }),
       )
       .optional(),
@@ -441,6 +470,8 @@ const DATA_BY_TYPE: Record<string, z.ZodTypeAny> = {
   'pattern.classified': d.patternClassified,
   'plan.preview': d.planPreview,
   'harness.synced': d.harnessSynced,
+  'harness.task.updated': d.harnessTaskUpdated,
+  'context.summarized': d.contextSummarized,
   'thinking.step': d.thinkingStep,
   'progress.step': d.progressStep,
   'token.delta': d.tokenDelta,
@@ -516,11 +547,12 @@ export const parseInboundAGPEventJSONWire = (parsed: unknown): Record<string, un
     throw new SyntaxError(`Invalid AGP envelope: ${msg}`)
   }
   const { data, ...rest } = o.data
-  const rawData = asDataObject(data)
+  const rawData = asDataObject(data, rest.type)
   const schema = DATA_BY_TYPE[rest.type]
   if (schema) {
     const merged = mergeData(rawData, schema)
     return { ...rest, data: merged }
   }
+  // Forward-compatible: no Zod schema for this ``type`` yet — ``data`` is still validated as an object above.
   return { ...rest, data: rawData }
 }

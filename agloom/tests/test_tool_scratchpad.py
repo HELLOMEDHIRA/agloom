@@ -83,4 +83,4 @@ def test_tool_context_settings_from_mapping():
     assert settings["context_window"] == 131072
     assert settings["digest_min_chars"] == 2000
 
-    assert tool_context_settings_from_mapping({"tool_scratchpad": False, "_tool_scratchpad": pad}) is None
+    assert tool_context_settings_from_mapping({"tool_scratchpad": False, "_tool_scratchpad": pad}) is not None

@@ -400,6 +400,166 @@
       "title": "CheckpointSavedData",
       "type": "object"
     },
+    "ContextSummarized": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "context.summarized",
+          "default": "context.summarized",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/ContextSummarizedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "ContextSummarized",
+      "type": "object"
+    },
+    "ContextSummarizedData": {
+      "additionalProperties": true,
+      "description": "Context Plane compressed memory to fit the inferred input budget.",
+      "properties": {
+        "scope": {
+          "default": "session",
+          "enum": [
+            "session",
+            "harness",
+            "job",
+            "injection"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "turns_before": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turns Before"
+        },
+        "turns_after": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turns After"
+        },
+        "tokens_before": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokens Before"
+        },
+        "tokens_after": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokens After"
+        },
+        "artifact_refs": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Artifact Refs",
+          "type": "array"
+        },
+        "content_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Hash"
+        }
+      },
+      "title": "ContextSummarizedData",
+      "type": "object"
+    },
     "ErrorData": {
       "additionalProperties": true,
       "description": "A runtime error surfaced to the frontend. ``fatal`` kills the session; ``transient`` does\nnot (e.g. a tool retry, a rate-limit backoff).",
@@ -1687,6 +1847,117 @@
         "action"
       ],
       "title": "HarnessSyncedData",
+      "type": "object"
+    },
+    "HarnessTaskUpdated": {
+      "additionalProperties": false,
+      "properties": {
+        "v": {
+          "const": "1",
+          "default": "1",
+          "title": "V",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "session": {
+          "title": "Session",
+          "type": "string"
+        },
+        "thread": {
+          "title": "Thread",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "trace": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace"
+        },
+        "type": {
+          "const": "harness.task.updated",
+          "default": "harness.task.updated",
+          "title": "Type",
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/HarnessTaskUpdatedData"
+        }
+      },
+      "required": [
+        "session",
+        "thread",
+        "seq",
+        "data"
+      ],
+      "title": "HarnessTaskUpdated",
+      "type": "object"
+    },
+    "HarnessTaskUpdatedData": {
+      "additionalProperties": true,
+      "description": "Single harness ledger task mutation (claim, status, notes).",
+      "properties": {
+        "task_id": {
+          "title": "Task Id",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "notes": {
+          "default": "",
+          "title": "Notes",
+          "type": "string"
+        },
+        "project": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Project"
+        }
+      },
+      "required": [
+        "task_id",
+        "status"
+      ],
+      "title": "HarnessTaskUpdatedData",
       "type": "object"
     },
     "MemoryLtRecall": {
@@ -8589,12 +8860,14 @@
       "agent.idle": "#/$defs/AgentIdle",
       "checkpoint.restored": "#/$defs/CheckpointRestored",
       "checkpoint.saved": "#/$defs/CheckpointSaved",
+      "context.summarized": "#/$defs/ContextSummarized",
       "error.fatal": "#/$defs/ErrorFatal",
       "error.transient": "#/$defs/ErrorTransient",
       "feedback.scored": "#/$defs/FeedbackScored",
       "graph.node.enter": "#/$defs/GraphNodeEnter",
       "graph.node.exit": "#/$defs/GraphNodeExit",
       "harness.synced": "#/$defs/HarnessSynced",
+      "harness.task.updated": "#/$defs/HarnessTaskUpdated",
       "hitl.allowlisted": "#/$defs/HITLAllowlisted",
       "hitl.denied": "#/$defs/HITLDenied",
       "hitl.granted": "#/$defs/HITLGranted",
@@ -8725,6 +8998,9 @@
       "$ref": "#/$defs/HarnessSynced"
     },
     {
+      "$ref": "#/$defs/HarnessTaskUpdated"
+    },
+    {
       "$ref": "#/$defs/ThinkingStep"
     },
     {
@@ -8810,6 +9086,9 @@
     },
     {
       "$ref": "#/$defs/MemoryLtStore"
+    },
+    {
+      "$ref": "#/$defs/ContextSummarized"
     },
     {
       "$ref": "#/$defs/CheckpointSaved"

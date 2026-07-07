@@ -56,6 +56,17 @@ asyncio.run(main())
 
 ---
 
+## Feature highlights
+
+- **Turn planner** — nine patterns, one `create_agent`
+- **Context Plane** — automatic summarization and scratchpad recall (no blind truncation)
+- **Workload profiles** — `profile="interactive"` | `platform_embedded"` | `harness_long"`
+- **Harness** — cross-session task ledger + optional `HarnessJobRunner`
+- **AGP streaming** — same events for CLI, web, and embedders
+- **Minimal config** — model + optional `store` + `profile`; see [minimal config guide](https://agloom.readthedocs.io/_packages/agloom/guides/minimal-config/)
+
+---
+
 ## Integration paths
 
 1. **Application** — embed `create_agent` in your service ([quick start](https://agloom.readthedocs.io/_packages/agloom/getting-started/quickstart/))

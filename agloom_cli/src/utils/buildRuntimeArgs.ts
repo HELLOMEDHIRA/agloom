@@ -22,7 +22,7 @@ export type RuntimeArgsInput = {
   memoryPath?: string
   skillsDir?: string
   summarizerModel?: string
-  noAutoSummarize?: boolean
+  profile?: string
   sessionMaxTurns: number
   maxTurns?: number
   budgetTokens?: number
@@ -82,7 +82,7 @@ export const buildRuntimeArgs = (o: RuntimeArgsInput): string[] => {
   if (o.memoryPath) parts.push('--memory-path', o.memoryPath)
   if (o.skillsDir) parts.push('--skills-dir', o.skillsDir)
   if (o.summarizerModel) parts.push('--summarizer-model', o.summarizerModel)
-  if (o.noAutoSummarize) parts.push('--no-auto-summarize')
+  if (o.profile) parts.push('--profile', o.profile)
   parts.push('--session-max-turns', String(turns))
   if (o.budgetTokens !== undefined && !Number.isNaN(o.budgetTokens) && o.budgetTokens > 0) {
     parts.push('--budget-tokens', String(Math.floor(o.budgetTokens)))

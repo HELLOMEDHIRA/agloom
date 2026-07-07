@@ -63,7 +63,6 @@ async def test_ainvoke_direct_shortcircuit_patched_classifier(stub_llm) -> None:
             model=stub_llm,
             name="integration-direct",
             query_cache=False,
-            auto_summarize=False,
         )
         try:
             result = await agent.ainvoke("What is 2+2?", thread_id="thread-int-1")
@@ -99,7 +98,6 @@ async def test_ainvoke_routes_to_registry_stub_handler(stub_llm) -> None:
             model=stub_llm,
             name="integration-react",
             query_cache=False,
-            auto_summarize=False,
         )
         reg = dict(agent.config["registry"])
         reg[PatternType.REACT] = stub_react_handler
@@ -123,7 +121,6 @@ async def test_ainvoke_records_session_memory(stub_llm) -> None:
             model=stub_llm,
             name="integration-memory",
             query_cache=False,
-            auto_summarize=False,
         )
         try:
             await agent.ainvoke("remember this", thread_id=tid)
@@ -144,7 +141,6 @@ def test_create_agent_sync_and_invoke_without_running_loop(stub_llm) -> None:
             model=stub_llm,
             name="integration-sync",
             query_cache=False,
-            auto_summarize=False,
         )
         assert isinstance(agent, UnifiedAgent)
         try:

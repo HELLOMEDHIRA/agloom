@@ -110,6 +110,29 @@ export interface HarnessSyncedEvent extends Envelope {
   }
 }
 
+export interface HarnessTaskUpdatedEvent extends Envelope {
+  type: 'harness.task.updated'
+  data: {
+    task_id: string
+    status: string
+    notes?: string
+    project?: string
+  }
+}
+
+export interface ContextSummarizedEvent extends Envelope {
+  type: 'context.summarized'
+  data: {
+    scope: 'session' | 'harness' | 'job' | 'injection'
+    turns_before?: number
+    turns_after?: number
+    tokens_before?: number
+    tokens_after?: number
+    artifact_refs?: string[]
+    content_hash?: string
+  }
+}
+
 // thinking.*
 
 export interface ThinkingStepEvent extends Envelope {
@@ -534,6 +557,7 @@ export interface RuntimeMCPServersEvent extends Envelope {
       tool_count?: number
       tool_names?: string[]
       tool_names_truncated?: boolean
+      tool_catalog?: Array<{ name: string; description?: string }>
     }>
   }
 }
@@ -573,6 +597,8 @@ export type AGPKnownEvent =
   | PatternClassifiedEvent
   | PlanPreviewEvent
   | HarnessSyncedEvent
+  | HarnessTaskUpdatedEvent
+  | ContextSummarizedEvent
   | ThinkingStepEvent
   | ProgressStepEvent
   | TokenDeltaEvent
@@ -825,6 +851,6 @@ export type AGPCommand =
   | CommandHarnessGitCmd
   | CommandPlanPreviewCmd
 
-// Utility types (WebSocket `createAGPClient` — keep in sync with agloom_cli `types/agp.ts`)
+// Utility types (WebSocket clients — see agloom_web `lib/agp/client.ts`. Stdio CLI uses `BridgeStatus` in `runtime/bridge.ts`.)
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed' | 'error'

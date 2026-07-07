@@ -28,7 +28,6 @@ def test_session_started_snapshot_api_key_env_nonempty(monkeypatch) -> None:
         provider="openai",
         api_key_env="MY_SECRET_KEY",
         session_max_turns=50,
-        auto_summarize=True,
         summarizer_model=None,
         memory_type=None,
         memory_path=None,
@@ -62,7 +61,6 @@ def test_session_started_snapshot_persist_api_key_writes_secret(monkeypatch) -> 
         provider="openai",
         api_key_env="MY_SECRET_KEY",
         session_max_turns=50,
-        auto_summarize=True,
         summarizer_model=None,
         memory_type=None,
         memory_path=None,
@@ -84,7 +82,6 @@ def test_session_started_snapshot_env_var_enables_persist(monkeypatch) -> None:
         provider=None,
         api_key_env="MY_K",
         session_max_turns=50,
-        auto_summarize=True,
         summarizer_model=None,
         memory_type=None,
         memory_path=None,
@@ -104,7 +101,6 @@ def test_session_started_snapshot_omit_env_skips_secret(monkeypatch) -> None:
         provider=None,
         api_key_env="MY_K",
         session_max_turns=50,
-        auto_summarize=True,
         summarizer_model=None,
         memory_type=None,
         memory_path=None,
@@ -194,7 +190,6 @@ def test_inject_then_merge_then_apply_api_key_flow(tmp_path, monkeypatch) -> Non
         provider=None,
         api_key_env="MISSING_VAR",
         session_max_turns=30,
-        auto_summarize=False,
         summarizer_model="anthropic:claude-3-5-haiku",
         memory_type="sqlite",
         memory_path=".agloom/mem.sqlite",
@@ -209,7 +204,6 @@ def test_inject_then_merge_then_apply_api_key_flow(tmp_path, monkeypatch) -> Non
     assert "credential_env_var" not in ec
     assert "api_key_secret" not in ec
     assert ec["session_max_turns"] == 30
-    assert ec["auto_summarize"] is False
     assert ec["summarizer_model"] == "anthropic:claude-3-5-haiku"
     assert ec["memory_type"] == "sqlite"
     assert ec["provider_resolved"] == "openai"
@@ -245,7 +239,6 @@ def test_session_started_snapshot_nvidia_prefix_and_canonical_key(monkeypatch) -
         provider=None,
         api_key_env=None,
         session_max_turns=50,
-        auto_summarize=True,
         summarizer_model=None,
         memory_type="sqlite",
         memory_path=None,
@@ -283,7 +276,6 @@ def test_session_started_snapshot_llm_endpoint_from_env(monkeypatch) -> None:
         provider=None,
         api_key_env=None,
         session_max_turns=50,
-        auto_summarize=True,
         summarizer_model=None,
         memory_type=None,
         memory_path=None,
@@ -305,7 +297,6 @@ def test_session_started_snapshot_explicit_base_url() -> None:
         provider=None,
         api_key_env=None,
         session_max_turns=50,
-        auto_summarize=True,
         summarizer_model=None,
         memory_type=None,
         memory_path=None,
@@ -353,7 +344,6 @@ def test_session_started_snapshot_env_present_without_api_key_env(monkeypatch) -
         provider=None,
         api_key_env=None,
         session_max_turns=50,
-        auto_summarize=True,
         summarizer_model=None,
         memory_type=None,
         memory_path=None,
@@ -377,7 +367,6 @@ def test_session_started_snapshot_sampling_penalties_and_max_tokens_override() -
         provider=None,
         api_key_env=None,
         session_max_turns=50,
-        auto_summarize=True,
         summarizer_model=None,
         memory_type=None,
         memory_path=None,

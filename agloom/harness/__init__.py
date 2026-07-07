@@ -1,5 +1,6 @@
 """Long-running agent harness: task artifacts in LTS, git helpers, and manual initializer."""
 
+from .job_runner import HarnessJobRunner, JobSnapshot
 from .initializer import InitializerResult, create_initializer_tool, run_initializer
 from .metadata import (
     HARNESS_TOOLS_APPENDIX,
@@ -40,9 +41,11 @@ from .seed import seed_harness_tasks
 
 __all__ = [
     "BootstrapState",
+    "HarnessJobRunner",
     "HARNESS_TOOLS_APPENDIX",
     "HarnessMetadata",
     "InitializerResult",
+    "JobSnapshot",
     "ProgressArtifact",
     "ProgressTracker",
     "Task",

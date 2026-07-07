@@ -1,6 +1,6 @@
 /** HITL gate UI: option buttons or free-text (e.g. `ask_user` clarification). */
 
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo } from 'react'
 import { Box, Text, useInput } from 'ink'
 import { StatusMessage } from '@inkjs/ui'
 import TextInput from 'ink-text-input'
@@ -12,8 +12,7 @@ interface Props {
   bridge: AGPBridge
 }
 
-const BTN_COLORS = ['green', 'red', 'blue', 'yellow', 'cyan', 'magenta'] as const
-type BtnColor = (typeof BTN_COLORS)[number]
+type BtnColor = 'green' | 'red' | 'blue' | 'yellow' | 'cyan' | 'magenta'
 
 interface ButtonDef {
   key: string
@@ -72,13 +71,6 @@ export const HITLPrompt = ({ request, bridge }: Props): React.ReactElement => {
   )
 
   const { buttons } = useMemo(() => buildButtons(request.kind, request.options), [request.kind, request.options])
-
-  useEffect(() => {
-    setMode(
-      request.kind === 'clarification' && request.options.length === 0 ? 'free_text' : 'option',
-    )
-    setFreeText('')
-  }, [request.requestId, request.kind, request.options.length])
 
   const sendDefault = (): void => {
     bridge.hitlRespond(request.requestId, hitlDefaultDecision(request.kind, request.default))

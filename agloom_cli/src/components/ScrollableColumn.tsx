@@ -1,6 +1,6 @@
 /** Fixed-height column with line-based scroll (Ctrl+[ / Ctrl+] or PgUp/PgDn). */
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { Box, Text, useInput } from 'ink'
 
 interface Props {
@@ -32,31 +32,22 @@ export const ScrollableColumn = ({
 }: Props): React.ReactElement => {
   const total = lines.length
   const maxScroll = Math.max(0, total - maxLines)
-  const [scrollTop, setScrollTop] = useState(maxScroll)
-  /** When false, user has scrolled up — do not snap to bottom on token/line growth. */
-  const [stickToBottom, setStickToBottom] = useState(true)
-
-  useEffect(() => {
-    setScrollTop((prev) => {
-      if (pinToBottomOnGrow && stickToBottom) return maxScroll
-      return Math.min(prev, maxScroll)
-    })
-  }, [maxScroll, pinToBottomOnGrow, stickToBottom, total])
+  const [userScroll, setUserScroll] = useState({ top: 0, stickToBottom: true })
+  const scrollTop =
+    pinToBottomOnGrow && userScroll.stickToBottom ? maxScroll : Math.min(userScroll.top, maxScroll)
 
   useInput((_char, key) => {
     if (!scrollActive || total <= maxLines) return
     const step = key.pageUp || key.pageDown ? Math.max(3, maxLines - 1) : 1
     if (key.pageDown || (allowBracketScroll && key.ctrl && _char === ']')) {
-      setScrollTop((s) => {
-        const next = Math.min(maxScroll, s + step)
-        setStickToBottom(next >= maxScroll)
-        return next
+      setUserScroll((s) => {
+        const next = Math.min(maxScroll, s.top + step)
+        return { top: next, stickToBottom: next >= maxScroll }
       })
       return
     }
     if (key.pageUp || (allowBracketScroll && key.ctrl && _char === '[')) {
-      setStickToBottom(false)
-      setScrollTop((s) => Math.max(0, s - step))
+      setUserScroll((s) => ({ top: Math.max(0, s.top - step), stickToBottom: false }))
     }
   })
 

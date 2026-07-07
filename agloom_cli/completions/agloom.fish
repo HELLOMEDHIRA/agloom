@@ -25,7 +25,7 @@ complete -c agloom -l memory -d 'Session memory type' -r
 complete -c agloom -l memory-path -d 'SQLite path for memory' -r
 complete -c agloom -l skills-dir -d 'Skills directory' -r
 complete -c agloom -l summarizer-model -d 'Summarizer model' -r
-complete -c agloom -l no-auto-summarize -d 'Disable auto summarization'
+complete -c agloom -l profile -d 'Workload profile (interactive, harness_long, …)'
 complete -c agloom -l session-max-turns -d 'Session memory max turns' -r
 complete -c agloom -l max-turns -d 'Alias for session-max-turns' -r
 complete -c agloom -l prompt -d 'Direct prompt' -r
