@@ -17,9 +17,8 @@ async def test_agloom_skip_json_schema_env_skips_first_path(monkeypatch: pytest.
     monkeypatch.setenv("AGLOOM_SKIP_JSON_SCHEMA", "1")
     calls: list[str | None] = []
 
-    def fake_build_structured(llm, schema, *, method=None):
+    def fake_build_structured(llm, schema, *, method=None, bind_kwargs=None):
         calls.append(method)
-        return None
 
     monkeypatch.setattr("agloom.src.llm_utils._build_structured", fake_build_structured)
 

@@ -155,10 +155,17 @@ async def robust_structured_call[T: BaseModel](
     timeout: float = 30.0,
     rate_limiter: AsyncRateLimiter | None = None,
     caller: str = "",
+    bind_kwargs: dict[str, Any] | None = None,
 ) -> T | None:
     """Parse ``schema`` from ``llm`` via json_schema → tool calling → raw JSON fallback; returns None if all fail.
 
     Set ``AGLOOM_SKIP_JSON_SCHEMA=1`` to skip the ``json_schema`` attempt for any provider (after Groq-specific skips).
+
+    ``bind_kwargs`` (e.g. a reasoning-OFF preference such as
+    ``{"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}``) is bound onto the
+    FINAL structured runnable (after ``with_structured_output``) and onto the raw-JSON fallback
+    LLM. Binding before ``with_structured_output`` is lost because that call rebuilds from the
+    underlying model and discards bound kwargs like ``extra_body``.
     """
     tag = f"[{caller}] " if caller else ""
     errors: list[str] = []
@@ -194,13 +201,13 @@ async def robust_structured_call[T: BaseModel](
         return None
 
     if not skip_json_schema:
-        structured = _build_structured(llm, schema, method="json_schema")
+        structured = _build_structured(llm, schema, method="json_schema", bind_kwargs=bind_kwargs)
         if structured is not None:
             result = await _invoke_retry_half_busy(structured, "json_schema")
             if result is not None:
                 return result
 
-    structured = _build_structured(llm, schema, method=None)
+    structured = _build_structured(llm, schema, method=None, bind_kwargs=bind_kwargs)
     if structured is not None:
         for attempt in range(max_retries):
             if attempt > 0:
@@ -220,6 +227,7 @@ async def robust_structured_call[T: BaseModel](
         rate_limiter,
         tag,
         errors,
+        bind_kwargs=bind_kwargs,
     )
     if result is not None:
         return result
@@ -284,21 +292,44 @@ def _structured_inner_get_or_create(llm: Any) -> OrderedDict[tuple[type[Any], st
         return inner
 
 
+def _maybe_bind(runnable: Any, bind_kwargs: dict[str, Any] | None) -> Any:
+    """Bind *bind_kwargs* onto *runnable*, returning a new runnable (no-op when empty/unbindable).
+
+    Applied to the OUTER structured runnable so per-invocation kwargs (e.g. ``extra_body`` for a
+    reasoning-OFF preference) survive — ``with_structured_output`` discards kwargs bound onto the
+    underlying model.
+    """
+    if runnable is None or not bind_kwargs:
+        return runnable
+    bind = getattr(runnable, "bind", None)
+    if not callable(bind):
+        return runnable
+    try:
+        return bind(**bind_kwargs)
+    except Exception:
+        return runnable
+
+
 def _build_structured[T: BaseModel](
     llm: Any,
     schema: type[T],
     method: str | None,
+    *,
+    bind_kwargs: dict[str, Any] | None = None,
 ) -> Any | None:
     """Build a structured LLM, returning None if the method is unsupported.
 
     Cached per LLM instance (weak dict when hashable, else ``id(llm)``) so GC/id reuse
-    cannot return a structured runnable bound to a different model.
+    cannot return a structured runnable bound to a different model. The cache stores the
+    UNBOUND structured runnable; *bind_kwargs* is applied to the returned runnable on each
+    call so callers can request per-invocation kwargs (e.g. reasoning OFF) without polluting
+    the shared cache.
     """
     inner_key = (schema, method)
     inner = _structured_inner_get(llm)
     if inner is not None and inner_key in inner:
         inner.move_to_end(inner_key)
-        return inner[inner_key]
+        return _maybe_bind(inner[inner_key], bind_kwargs)
 
     kwargs: dict[str, Any] = {"include_raw": False}
     if method is not None:
@@ -313,7 +344,7 @@ def _build_structured[T: BaseModel](
         inner.popitem(last=False)
     inner[inner_key] = result
 
-    return result
+    return _maybe_bind(result, bind_kwargs)
 
 
 def exercise_llm_weak_dict_paths(llm: Any) -> None:
@@ -379,6 +410,8 @@ async def _try_raw_json_fallback[T: BaseModel](
     rate_limiter: AsyncRateLimiter | None,
     tag: str,
     errors: list[str],
+    *,
+    bind_kwargs: dict[str, Any] | None = None,
 ) -> T | None:
     """Last-resort: call LLM for plain text, extract JSON, parse with Pydantic."""
     try:
@@ -390,12 +423,13 @@ async def _try_raw_json_fallback[T: BaseModel](
             )
         )
         augmented = [json_instruction] + list(messages)
+        call_llm = _maybe_bind(llm, bind_kwargs)
 
         if rate_limiter:
             await rate_limiter.acquire()
         async with DEFAULT_LLM_SEMAPHORE:
             raw_resp = await asyncio.wait_for(
-                llm.ainvoke(augmented),
+                call_llm.ainvoke(augmented),
                 timeout=timeout,
             )
         text = raw_resp.content if hasattr(raw_resp, "content") else str(raw_resp)

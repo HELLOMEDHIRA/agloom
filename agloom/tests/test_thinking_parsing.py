@@ -170,10 +170,24 @@ def test_apply_reasoning_preference_noop_returns_llm_unchanged() -> None:
 
 @pytest.mark.parametrize(
     "label",
-    ["openai:o3-mini", "deepseek-r1", "qwq-32b", "qwen3-thinking", "gemini-2.5-flash-thinking"],
+    [
+        "openai:o3-mini",
+        "deepseek-r1",
+        "qwq-32b",
+        "qwen3-thinking",
+        "gemini-2.5-flash-thinking",
+        "litellm_proxy/qwen36fp8",
+        "qwen36fp8",
+        "qwq32bfp8",
+    ],
 )
 def test_label_indicates_reasoning_model_true(label: str) -> None:
     assert label_indicates_reasoning_model(label) is True
+
+
+def test_bare_quantized_qwen_is_reasoning_active_without_explicit_enable() -> None:
+    # Regression: qwen36fp8 must scale timeouts even when enable_thinking is not passed.
+    assert reasoning_is_active(None, enable_thinking=None, model_label="qwen36fp8") is True
 
 
 @pytest.mark.parametrize("label", ["openai:gpt-4o", "claude-3-5-sonnet", "llama-3.3-70b"])
@@ -242,6 +256,60 @@ async def test_classifier_reasoning_off_and_parses_reasoning_wrapped_json() -> N
     assert any(
         (kw.get("extra_body") or {}).get("chat_template_kwargs", {}).get("enable_thinking") is False
         for kw in bind_calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_robust_structured_call_binds_reasoning_off_on_final_runnable() -> None:
+    """bind_kwargs must reach the FINAL invoked runnable, not just an intermediate binding."""
+    from pydantic import BaseModel
+
+    from agloom.llm.reasoning_control import reasoning_preference_kwargs
+    from agloom.src.llm_utils import robust_structured_call
+
+    class _Schema(BaseModel):
+        ok: bool = True
+
+    captured: list[dict] = []
+
+    class _Structured:
+        def __init__(self, bound: dict | None = None) -> None:
+            self._bound = bound or {}
+
+        def bind(self, **kwargs: object) -> _Structured:
+            return _Structured({**self._bound, **kwargs})
+
+        async def ainvoke(self, _messages: object, **kwargs: object) -> _Schema:
+            captured.append({**self._bound, **kwargs})
+            return _Schema(ok=True)
+
+    class _LLM:
+        model_name = "litellm_proxy/qwen36fp8"
+
+        def with_structured_output(self, _schema: object, **_kwargs: object) -> _Structured:
+            # Simulates the real bug surface: kwargs bound onto the model are NOT carried here.
+            return _Structured()
+
+        def bind(self, **_kwargs: object) -> _LLM:
+            return self
+
+        async def ainvoke(self, _messages: object, **_kwargs: object) -> AIMessage:
+            return AIMessage(content='{"ok": true}')
+
+    bind_kwargs = reasoning_preference_kwargs(enable=False, model_label="litellm_proxy/qwen36fp8")
+    result = await robust_structured_call(
+        _LLM(),
+        _Schema,
+        [HumanMessage(content="hi")],
+        timeout=5.0,
+        bind_kwargs=bind_kwargs,
+    )
+
+    assert result is not None
+    assert captured, "structured runnable was never invoked"
+    assert (
+        captured[0].get("extra_body", {}).get("chat_template_kwargs", {}).get("enable_thinking")
+        is False
     )
 
 

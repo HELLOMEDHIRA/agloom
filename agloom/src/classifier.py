@@ -586,15 +586,18 @@ async def analyze_query(
     # (provider-agnostic; a no-op where the provider has no toggle — Fix 1 parser + Fix 4
     # timeout scaling keep those correct). This does NOT affect the user-facing task model.
     from agloom.llm.chat_template_compat import extract_model_label
-    from agloom.llm.reasoning_control import apply_reasoning_preference
+    from agloom.llm.reasoning_control import apply_reasoning_preference, reasoning_preference_kwargs
 
-    llm_no_reasoning = apply_reasoning_preference(
-        llm, enable=False, model_label=extract_model_label(llm)
-    )
+    _model_label = extract_model_label(llm)
+    # Pass reasoning-OFF THROUGH robust_structured_call so it binds on the FINAL structured
+    # runnable — binding onto the model here would be discarded by with_structured_output.
+    reasoning_off_kwargs = reasoning_preference_kwargs(enable=False, model_label=_model_label)
+    # The plain-text fallback call below invokes the model directly, so a normal bind survives.
+    llm_no_reasoning = apply_reasoning_preference(llm, enable=False, model_label=_model_label)
 
     try:
         raw = await robust_structured_call(
-            llm_no_reasoning,
+            llm,
             wire_model,
             [
                 SystemMessage(content=TURN_PLANNER_SYSTEM),
@@ -603,6 +606,7 @@ async def analyze_query(
             max_retries=structured_max_retries,
             timeout=classifier_timeout,
             caller="Classifier",
+            bind_kwargs=reasoning_off_kwargs,
         )
         if raw is None:
             raise ValueError("All structured output strategies exhausted")

@@ -19,11 +19,16 @@ import re
 from typing import Any
 
 # Model-id / label markers that indicate a reasoning-first model family (any provider).
+# For Qwen we match the family broadly (plain ``qwen``/``qwq`` and quantized ``*fp8`` ids such as
+# ``qwen36fp8``): Qwen3-class checkpoints reason by default, so scaling timeouts up is the safe
+# default even when ``enable_thinking`` is not explicitly passed.
 _REASONING_MODEL_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bo[1345](?:-|\b)"),  # OpenAI o1/o3/o4/o5-series
     re.compile(r"deepseek[-_]?r\d"),  # deepseek-r1, deepseek_r1
     re.compile(r"\bqwq\b"),  # Qwen QwQ reasoning line
-    re.compile(r"qwen[\w.-]*thinking"),  # qwen*-thinking
+    re.compile(r"qwq"),  # bare/quantized QwQ ids (e.g. qwq32bfp8)
+    re.compile(r"qwen"),  # Qwen family, incl. quantized qwen*fp8 (qwen36fp8)
+    re.compile(r"fp8"),  # quantized reasoning checkpoints commonly tagged *fp8
     re.compile(r"gemini[\w.-]*thinking"),  # gemini-*-thinking
     re.compile(r"claude[\w.-]*thinking"),  # claude-*-thinking
     re.compile(r"magistral"),  # Mistral reasoning line
