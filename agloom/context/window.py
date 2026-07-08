@@ -60,6 +60,7 @@ def reserved_output_tokens(
     *,
     context_window: int,
     configured_max_tokens: int | None = None,
+    enable_thinking: bool | None = None,
 ) -> int:
     """Tokens reserved for model output so input budgeting stays safe."""
     candidates: list[int] = []
@@ -75,7 +76,13 @@ def reserved_output_tokens(
         if isinstance(raw, int) and raw > 0:
             candidates.append(raw)
     if not candidates:
-        return min(_OUTPUT_CAP, max(1024, int(context_window * 0.06)))
-    requested = max(candidates)
-    cap = max(1024, int(context_window * _MAX_OUTPUT_FRACTION))
-    return min(requested, cap, _OUTPUT_CAP)
+        reserved = min(_OUTPUT_CAP, max(1024, int(context_window * 0.06)))
+    else:
+        requested = max(candidates)
+        cap = max(1024, int(context_window * _MAX_OUTPUT_FRACTION))
+        reserved = min(requested, cap, _OUTPUT_CAP)
+    if enable_thinking is True:
+        thinking_extra = max(4096, int(context_window * 0.05))
+        cap = max(1024, int(context_window * _MAX_OUTPUT_FRACTION))
+        reserved = min(reserved + thinking_extra, cap)
+    return reserved

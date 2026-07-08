@@ -211,6 +211,41 @@ def uses_strict_chat_template(model_label: str) -> bool:
     return False
 
 
+def _system_text(msg: Any) -> str | None:
+    if isinstance(msg, SystemMessage):
+        raw = msg.content
+    elif isinstance(msg, dict):
+        raw = msg.get("content")
+    else:
+        raw = getattr(msg, "content", None)
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        text = raw.strip()
+        return text or None
+    if isinstance(raw, list):
+        text = content_blocks_to_text(raw).strip()
+        return text or None
+    text = str(raw).strip()
+    return text or None
+
+
+def coalesce_system_messages_first(messages: list[Any]) -> list[Any]:
+    """Merge all system messages into one leading system message (system-first invariant).
+
+    vLLM/LiteLLM strict templates (Qwen) reject a system message not at index 0.
+    Preserves relative order of non-system messages. No-op when already correct.
+    """
+    systems = [m for m in messages if _is_system_message(m)]
+    if not systems:
+        return messages
+    if len(systems) == 1 and _is_system_message(messages[0]):
+        return messages
+    others = [m for m in messages if not _is_system_message(m)]
+    merged = "\n\n".join(t for s in systems if (t := _system_text(s)))
+    return [SystemMessage(content=merged), *others]
+
+
 def _human_content_as_text(content: Any) -> str | None:
     if content is None:
         return None
@@ -370,7 +405,7 @@ def ensure_messages_for_chat_template(
                 f"[chat_template_compat] Empty user message at index {idx} — filling default user turn"
             )
             repaired[idx] = _replace_human_content(msg, _DEFAULT_USER_TURN)
-            return repaired
+            return coalesce_system_messages_first(repaired)
 
     insert_at = 0
     for idx, msg in enumerate(repaired):
@@ -381,7 +416,9 @@ def ensure_messages_for_chat_template(
     logger.warning(
         f"[chat_template_compat] No user query in {len(repaired)} message(s) — inserting default user turn"
     )
-    return repaired[:insert_at] + [HumanMessage(content=_DEFAULT_USER_TURN)] + repaired[insert_at:]
+    return coalesce_system_messages_first(
+        repaired[:insert_at] + [HumanMessage(content=_DEFAULT_USER_TURN)] + repaired[insert_at:]
+    )
 
 
 def repair_messages_for_chat_template(
@@ -392,21 +429,33 @@ def repair_messages_for_chat_template(
     """Normalize user blocks and ensure a non-empty user query exists for strict templates."""
     repaired = normalize_messages_for_chat_template(list(messages or []))
     if _has_nonempty_user_text(repaired):
-        return repaired
+        return coalesce_system_messages_first(repaired)
 
     state_msgs = list((state or {}).get("messages") or [])
     fallback = _latest_user_text_from_messages(state_msgs) or _DEFAULT_USER_TURN
     if repaired and _is_human_message(repaired[-1]):
-        return repaired[:-1] + [_replace_human_content(repaired[-1], fallback)]
-    return [HumanMessage(content=fallback), *repaired]
+        return coalesce_system_messages_first(
+            repaired[:-1] + [_replace_human_content(repaired[-1], fallback)]
+        )
+    return coalesce_system_messages_first([HumanMessage(content=fallback), *repaired])
 
 
-def patch_strict_template_model_settings(existing: dict[str, Any] | None) -> dict[str, Any]:
-    """Patch provider model settings for tool loops (e.g. disable extended thinking modes)."""
+def patch_strict_template_model_settings(
+    existing: dict[str, Any] | None,
+    *,
+    enable_thinking: bool | None = None,
+) -> dict[str, Any]:
+    """Patch provider model settings for strict-template tool loops.
+
+    When *enable_thinking* is ``None``, nothing is injected (model/gateway decides).
+    When ``True`` or ``False``, sets ``chat_template_kwargs.enable_thinking`` explicitly.
+    """
     settings = dict(existing or {})
+    if enable_thinking is None:
+        return settings
     extra = dict(settings.get("extra_body") or {})
     ctk = dict(extra.get("chat_template_kwargs") or {})
-    ctk.setdefault("enable_thinking", False)
+    ctk["enable_thinking"] = enable_thinking
     extra["chat_template_kwargs"] = ctk
     settings["extra_body"] = extra
     return settings
@@ -456,21 +505,21 @@ def repair_react_graph_state(
 
     repaired = normalize_messages_for_chat_template(list(messages))
     if _has_nonempty_user_text(repaired):
-        return repaired
+        return coalesce_system_messages_first(repaired)
 
     state_msgs = list((state or {}).get("messages") or [])
     from_state = _latest_user_text_from_messages(state_msgs)
     if from_state:
         repaired = ensure_messages_for_chat_template(repaired, state=state)
         if _has_nonempty_user_text(repaired):
-            return repaired
+            return coalesce_system_messages_first(repaired)
 
     opening = ensure_messages_for_chat_template([HumanMessage(content=_query_text())])
     tail = [m for m in repaired if not _is_human_message(m)]
     logger.warning(
         f"[chat_template_compat] ReAct state missing user query — prepending opening turn ({len(tail)} trailing msgs)"
     )
-    return opening + tail
+    return coalesce_system_messages_first(opening + tail)
 
 
 def exception_indicates_missing_user_query(exc: BaseException) -> bool:

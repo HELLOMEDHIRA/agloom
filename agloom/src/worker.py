@@ -303,9 +303,11 @@ def _worker_react_middleware(invoke_config: dict | None, worker_id: str) -> list
     )
 
     force = True
+    enable_thinking: bool | None = None
     cfg: dict[str, Any] = {}
     if invoke_config is not None:
         force = bool(invoke_config.get("react_force_tool_choice_on_user_turn", True))
+        enable_thinking = invoke_config.get("enable_thinking")
         cfg = invoke_config
     leading: list[Any] = []
     trailing: list[Any] = []
@@ -316,6 +318,7 @@ def _worker_react_middleware(invoke_config: dict | None, worker_id: str) -> list
         trailing.append(scratch_mw)
     return build_langchain_agent_middleware(
         force_tool_choice_on_user_turn=force,
+        enable_thinking=enable_thinking,
         extras=[*leading, *_hitl_middleware_for_invoke(invoke_config, worker_id), *trailing],
     )
 

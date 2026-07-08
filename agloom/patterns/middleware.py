@@ -18,6 +18,7 @@ from ..llm.chat_template_compat import (
     resolve_react_tool_choice,
     uses_strict_chat_template,
 )
+from ..src.wire_stream_content import sanitize_model_call_response
 from ..src.logging_utils import get_logger
 from .hitl_tool_coalesce import CompositeToolHitlCoalescer, build_default_hitl_coalescer
 
@@ -75,7 +76,12 @@ def should_force_tool_choice_on_request(messages: list[Any] | None) -> bool:
     return _is_human_message(messages[0])
 
 
-def _prepare_react_model_request(request: Any, *, tool_choice_enabled: bool) -> Any:
+def _prepare_react_model_request(
+    request: Any,
+    *,
+    tool_choice_enabled: bool,
+    enable_thinking: bool | None = None,
+) -> Any:
     """Normalize user content and apply provider-safe ``tool_choice`` overrides."""
     state = getattr(request, "state", None)
     messages = ensure_messages_for_chat_template(
@@ -84,9 +90,10 @@ def _prepare_react_model_request(request: Any, *, tool_choice_enabled: bool) -> 
     )
     model_label = model_label_for_middleware(request.model)
     overrides: dict[str, Any] = {"messages": messages}
-    if uses_strict_chat_template(model_label):
+    if uses_strict_chat_template(model_label) and enable_thinking is not None:
         overrides["model_settings"] = patch_strict_template_model_settings(
-            getattr(request, "model_settings", None)
+            getattr(request, "model_settings", None),
+            enable_thinking=enable_thinking,
         )
     if tool_choice_enabled and request.tools:
         choice = resolve_react_tool_choice(messages, model_label=model_label)
@@ -108,26 +115,37 @@ class ReactUserTurnToolChoiceMiddleware(AgentMiddleware):
         self,
         *,
         enabled: bool = True,
+        enable_thinking: bool | None = None,
     ) -> None:
         super().__init__()
         self._enabled = enabled
+        self._enable_thinking = enable_thinking
 
     def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
-        prepared = _prepare_react_model_request(request, tool_choice_enabled=self._enabled)
-        return handler(prepared)
+        prepared = _prepare_react_model_request(
+            request,
+            tool_choice_enabled=self._enabled,
+            enable_thinking=self._enable_thinking,
+        )
+        return sanitize_model_call_response(handler(prepared))
 
     async def awrap_model_call(
         self,
         request: Any,
         handler: Callable[[Any], Awaitable[Any]],
     ) -> Any:
-        prepared = _prepare_react_model_request(request, tool_choice_enabled=self._enabled)
-        return await handler(prepared)
+        prepared = _prepare_react_model_request(
+            request,
+            tool_choice_enabled=self._enabled,
+            enable_thinking=self._enable_thinking,
+        )
+        return sanitize_model_call_response(await handler(prepared))
 
 
 def build_langchain_agent_middleware(
     *,
     force_tool_choice_on_user_turn: bool = True,
+    enable_thinking: bool | None = None,
     extras: list[Any] | None = None,
 ) -> list[Any]:
     """Middleware chain for LangChain ``create_agent`` (ReAct + pattern workers).
@@ -137,7 +155,12 @@ def build_langchain_agent_middleware(
     user turn uses ``tool_choice=required`` for Groq/Cerebras-style providers; strict-template
     models use provider default instead. When False, only the tool_choice overrides are disabled.
     """
-    chain: list[Any] = [ReactUserTurnToolChoiceMiddleware(enabled=force_tool_choice_on_user_turn)]
+    chain: list[Any] = [
+        ReactUserTurnToolChoiceMiddleware(
+            enabled=force_tool_choice_on_user_turn,
+            enable_thinking=enable_thinking,
+        )
+    ]
     if extras:
         chain.extend(extras)
     return chain

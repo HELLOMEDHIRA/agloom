@@ -29,9 +29,10 @@ def compute_context_budget(
     model_spec: Any = None,
     context_window_tokens: int | None = None,
     compact_ratio: float = _INPUT_FRACTION,
+    enable_thinking: bool | None = None,
 ) -> ContextBudget:
     ctx = context_window_tokens or infer_context_window_tokens(llm, model_spec)
-    reserved = reserved_output_tokens(llm, context_window=ctx)
+    reserved = reserved_output_tokens(llm, context_window=ctx, enable_thinking=enable_thinking)
     input_budget = max(1024, int(ctx * compact_ratio) - reserved)
     digest = max(_DEFAULT_DIGEST_MIN, min(_DEFAULT_DIGEST_MAX, input_budget // 32))
     return ContextBudget(

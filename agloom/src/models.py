@@ -1153,6 +1153,15 @@ class AgentConfig(BaseModel):
         description="Model context window for REACT budgeting; inferred from model when unset.",
     )
 
+    enable_thinking: bool | None = Field(
+        default=None,
+        description=(
+            "Extended thinking for strict chat-template models (vLLM/LiteLLM/Qwen). "
+            "None = do not inject chat_template_kwargs (model/gateway decides). "
+            "True/False sets enable_thinking explicitly."
+        ),
+    )
+
     max_pattern_depth: int = Field(
         default=0,
         ge=0,

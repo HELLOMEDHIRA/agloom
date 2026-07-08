@@ -3203,6 +3203,7 @@ async def create_agent(
     react_tool_use_failed_auto_retries_hitl: int = 2,
     react_tool_use_failed_user_rounds: int = 3,
     context_window_tokens: int | None = None,
+    enable_thinking: bool | None = None,
     tool_digest_min_chars: int | None = None,
     max_pattern_depth: int = 0,
     max_orchestration_llm_calls: int = 100,
@@ -3358,6 +3359,7 @@ async def create_agent(
         react_tool_use_failed_auto_retries_hitl=react_tool_use_failed_auto_retries_hitl,
         react_tool_use_failed_user_rounds=react_tool_use_failed_user_rounds,
         context_window_tokens=context_window_tokens,
+        enable_thinking=enable_thinking,
         max_pattern_depth=max_pattern_depth,
         max_orchestration_llm_calls=max_orchestration_llm_calls,
         max_orchestration_tokens=max_orchestration_tokens,
@@ -3392,8 +3394,17 @@ async def create_agent(
     from agloom.transport.manager import TransportManager, TransportPolicy
 
     ctx_window = context_window_tokens or infer_context_window_tokens(resolved_llm, model)
-    ctx_reserved = reserved_output_tokens(resolved_llm, context_window=ctx_window)
-    _ctx_budget = compute_context_budget(resolved_llm, model_spec=model, context_window_tokens=ctx_window)
+    ctx_reserved = reserved_output_tokens(
+        resolved_llm,
+        context_window=ctx_window,
+        enable_thinking=enable_thinking,
+    )
+    _ctx_budget = compute_context_budget(
+        resolved_llm,
+        model_spec=model,
+        context_window_tokens=ctx_window,
+        enable_thinking=enable_thinking,
+    )
     if tool_digest_min_chars is not None:
         tool_digest_min_chars = max(500, min(4000, tool_digest_min_chars))
     else:
@@ -3626,6 +3637,7 @@ async def create_agent(
         "context_window_tokens": ctx_window,
         "context_reserved_output_tokens": ctx_reserved,
         "context_compact_ratio": context_compact_ratio,
+        "enable_thinking": enable_thinking,
         "_handoff_targets": [],
         "_delegate_targets": [],
         "_bg_delegation_manager": BackgroundDelegationManager(),

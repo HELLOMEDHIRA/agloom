@@ -5,9 +5,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage
 
-from agloom.context.tokens import estimate_messages_tokens
 from agloom.context.tool_scratchpad import ToolScratchpad
 from agloom.patterns.react import (
     _MAX_TRANSPORT_RETRIES,
@@ -126,43 +125,3 @@ async def test_adaptive_input_budget_lowers_after_oversized_disconnect() -> None
         agent_config=agent,
     )
     assert mw._input_budget() == min(base, adaptive)
-
-
-@pytest.mark.asyncio
-async def test_no_tools_strict_litellm_disables_extended_thinking() -> None:
-    captured: dict = {}
-
-    class _ChatLiteLLM:
-        model_name = "litellm_proxy/qwen36fp8"
-
-    llm = _ChatLiteLLM()
-    llm.ainvoke = AsyncMock(  # type: ignore[attr-defined]
-        side_effect=lambda _m, **kw: captured.update(kw) or AIMessage(content="ok")
-    )
-
-    agent = {
-        "llm": llm,
-        "system_prompt": "sys",
-        "name": "strict-no-tools",
-        "context_window_tokens": 128_000,
-        "context_reserved_output_tokens": 8192,
-        "context_compact_ratio": 0.82,
-    }
-
-    with patch(
-        "agloom.orchestrator.hooks.maybe_recover_react_failure",
-        AsyncMock(side_effect=lambda _a, _c, _q, _an, result: result),
-    ):
-        result = await _run_react_no_tools_direct(
-            agent,
-            "hello",
-            _analysis(),
-            config={"_steps": []},
-            steps=[],
-            ml=0,
-        )
-
-    assert result.success is True
-    extra = captured.get("extra_body") or {}
-    ctk = extra.get("chat_template_kwargs") or {}
-    assert ctk.get("enable_thinking") is False

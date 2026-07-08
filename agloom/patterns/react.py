@@ -13,9 +13,8 @@ from ..llm.chat_template_compat import (
     exception_indicates_missing_user_query,
     extract_model_label,
     human_message_after_missing_user_query,
-    patch_strict_template_model_settings,
-    uses_strict_chat_template,
     repair_react_graph_state,
+    uses_strict_chat_template,
 )
 from ..context.compaction import append_context_compaction_recap, compact_messages_for_budget
 from ..context.tool_scratchpad import ToolScratchpad
@@ -25,6 +24,7 @@ from ..src.multimodal import content_blocks_to_text, text_from_user_turn
 from ..src.wire_stream_content import (
     answer_text_from_content,
     emit_llm_chunk_to_event_queue,
+    sanitize_ai_message_for_history,
     split_stream_parts_from_chunk,
 )
 
@@ -389,13 +389,6 @@ def _compact_react_state_for_context_pressure(
     return {**state, "messages": compacted}
 
 
-def _react_no_tools_llm_kwargs(model_label: str) -> dict[str, Any]:
-    if not uses_strict_chat_template(model_label):
-        return {}
-    # Raw ainvoke/astream bypass LangChain middleware bind(); pass extra_body directly.
-    return patch_strict_template_model_settings(None)
-
-
 def _preflight_react_messages(
     agent: dict,
     messages: list[Any],
@@ -439,8 +432,6 @@ async def _run_react_no_tools_direct(
 ) -> ExecutionResult:
     """Direct LLM path when the agent has no tools — pre-flight budget + transport retry."""
     llm = agent["llm"]
-    _mlabel = extract_model_label(llm)
-    invoke_kw = _react_no_tools_llm_kwargs(_mlabel)
     user_text = query if isinstance(query, str) else text_from_user_turn(query)
     messages = ensure_messages_for_chat_template(
         [
@@ -464,7 +455,7 @@ async def _run_react_no_tools_direct(
 
                 async def _stream_no_tools() -> None:
                     nonlocal last_chunk
-                    async for chunk in llm.astream(messages, **invoke_kw):
+                    async for chunk in llm.astream(messages):
                         last_chunk = chunk
                         reasoning, answer = await emit_llm_chunk_to_event_queue(eq, chunk)
                         if answer:
@@ -473,15 +464,16 @@ async def _run_react_no_tools_direct(
                 await asyncio.wait_for(_stream_no_tools(), timeout=_timeout)
                 output = "".join(chunks) or "No output produced."
                 usage = _extract_token_usage(last_chunk) if last_chunk else {}
-                out_messages: list = messages + ([last_chunk] if last_chunk else [])
+                stored = sanitize_ai_message_for_history(last_chunk) if last_chunk else None
+                out_messages: list = messages + ([stored] if stored is not None else [])
             else:
                 resp = await asyncio.wait_for(
-                    llm.ainvoke(messages, **invoke_kw),
+                    llm.ainvoke(messages),
                     timeout=_AINVOKE_TIMEOUT,
                 )
                 output = answer_text_from_content(resp.content) or "No output produced."
                 usage = _extract_token_usage(resp)
-                out_messages = messages + [resp]
+                out_messages = messages + [sanitize_ai_message_for_history(resp)]
 
             dur = round((time.perf_counter() - t0) * 1000, 1)
             steps.append(
@@ -571,6 +563,7 @@ def _langchain_react_middleware(agent: dict, *extra: Any) -> list[Any]:
 
     return build_langchain_agent_middleware(
         force_tool_choice_on_user_turn=bool(agent.get("react_force_tool_choice_on_user_turn", True)),
+        enable_thinking=agent.get("enable_thinking"),
         extras=[*leading, *extra, *trailing],
     )
 
