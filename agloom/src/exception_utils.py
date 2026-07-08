@@ -68,8 +68,10 @@ def format_exception_message(exc: BaseException, *, include_type: bool = True) -
         msg = f"{msg} ({http_detail})"
     if exception_indicates_transient_transport_error(exc):
         hint = (
-            "Transient HTTP transport failure — often a proxy idle timeout, connection pool "
-            "reset, or client-side cancellation mid-stream; retry or raise llm_timeout."
+            "Transient HTTP transport failure — often an oversized request body dropped by a "
+            "LiteLLM/vLLM gateway, a proxy idle timeout, or a connection reset. agloom auto-compacts "
+            "and retries up to 3×; full tool payloads stay in scratchpad (agloom_recall_tool_artifact). "
+            "Optional override: context_window_tokens."
         )
         if hint not in msg:
             msg = f"{msg} [{hint}]"

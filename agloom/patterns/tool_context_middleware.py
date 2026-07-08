@@ -83,6 +83,7 @@ class ContextBudgetMiddleware(AgentMiddleware):
         compact_ratio: float = 0.82,
         max_wire_chars: int = MAX_TOOL_WIRE_CHARS,
         event_queue: Any | None = None,
+        agent_config: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         self._context_window = max(4096, context_window)
@@ -91,9 +92,15 @@ class ContextBudgetMiddleware(AgentMiddleware):
         self._compact_ratio = min(0.95, max(0.5, compact_ratio))
         self._max_wire_chars = max(1024, max_wire_chars)
         self._event_queue = event_queue
+        self._agent_config = agent_config
 
     def _input_budget(self) -> int:
-        return max(2048, int(self._context_window * self._compact_ratio) - self._reserved_output)
+        budget = max(2048, int(self._context_window * self._compact_ratio) - self._reserved_output)
+        if self._agent_config is not None:
+            adaptive = self._agent_config.get("_adaptive_input_budget")
+            if isinstance(adaptive, int):
+                budget = min(budget, max(2048, adaptive))
+        return budget
 
     async def _compact_to_budget(
         self,
@@ -182,6 +189,7 @@ def tool_context_settings_from_mapping(cfg: dict[str, Any]) -> dict[str, Any] | 
         "max_wire_chars": int(cfg.get("max_tool_wire_chars", MAX_TOOL_WIRE_CHARS)),
         "summarizer_model": summarizer,
         "event_queue": cfg.get("_event_queue"),
+        "agent_config": cfg,
     }
 
 
@@ -195,6 +203,7 @@ def build_tool_context_middleware(settings: dict[str, Any]) -> tuple[Any, Any]:
         compact_ratio=settings["compact_ratio"],
         max_wire_chars=settings.get("max_wire_chars", MAX_TOOL_WIRE_CHARS),
         event_queue=settings.get("event_queue"),
+        agent_config=settings.get("agent_config"),
     )
     scratch = ToolScratchpadMiddleware(
         scratchpad=pad,

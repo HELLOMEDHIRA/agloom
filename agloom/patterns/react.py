@@ -13,6 +13,7 @@ from ..llm.chat_template_compat import (
     exception_indicates_missing_user_query,
     extract_model_label,
     human_message_after_missing_user_query,
+    patch_strict_template_model_settings,
     uses_strict_chat_template,
     repair_react_graph_state,
 )
@@ -96,6 +97,7 @@ async def _react_failure(
     messages: list | None = None,
     kind: str = "execution",
     error: str | None = None,
+    exc: BaseException | None = None,
 ) -> ExecutionResult:
     from ..orchestrator.hooks import maybe_recover_react_failure
 
@@ -108,7 +110,7 @@ async def _react_failure(
         analysis=analysis,
         steps=steps,
         messages=messages or [],
-        **exec_failure_kwargs(error or output, kind=kind),
+        **exec_failure_kwargs(error or output, kind=kind, exc=exc),
     )
     return await maybe_recover_react_failure(agent, config, query, analysis, failed)
 
@@ -322,20 +324,54 @@ def _react_invoke_state(
     return {**state, "messages": repaired}
 
 
-def _compact_react_state_for_context_pressure(agent: dict, state: dict) -> dict | None:
-    """Emergency compaction when the provider reports context window exhaustion."""
-    pad = agent.get("_tool_scratchpad")
-    if not isinstance(pad, ToolScratchpad):
-        return None
-    from ..context.tool_scratchpad import MAX_TOOL_WIRE_CHARS
-
+def _react_base_input_budget(agent: dict) -> int:
     window = int(agent.get("context_window_tokens") or infer_context_window_tokens(agent.get("llm")))
     reserved = int(
         agent.get("context_reserved_output_tokens")
         or reserved_output_tokens(agent.get("llm"), context_window=window)
     )
     ratio = float(agent.get("context_compact_ratio", 0.82))
-    budget = max(2048, int(window * ratio) - reserved)
+    return max(2048, int(window * ratio) - reserved)
+
+
+def _react_input_budget(agent: dict) -> int:
+    """Input token budget including any per-run adaptive ceiling learned from transport failures."""
+    budget = _react_base_input_budget(agent)
+    adaptive = agent.get("_adaptive_input_budget")
+    if isinstance(adaptive, int):
+        budget = min(budget, max(2048, adaptive))
+    return budget
+
+
+def _record_adaptive_input_budget_on_transport(agent: dict, est_at_failure: int) -> None:
+    """Lower effective input budget when a large request likely caused a gateway disconnect."""
+    base = _react_base_input_budget(agent)
+    if est_at_failure >= int(base * 0.85):
+        agent["_adaptive_input_budget"] = max(2048, int(est_at_failure * 0.8))
+
+
+def _transport_keep_recent_rounds(transport_retry: int) -> int:
+    """Progressively compact more tool history on each transport retry (2 → 1 → 0)."""
+    if transport_retry <= 1:
+        return 2
+    if transport_retry == 2:
+        return 1
+    return 0
+
+
+def _compact_react_state_for_context_pressure(
+    agent: dict,
+    state: dict,
+    *,
+    keep_recent_tool_rounds: int = 2,
+) -> dict | None:
+    """Emergency compaction when the provider reports context window exhaustion."""
+    pad = agent.get("_tool_scratchpad")
+    if not isinstance(pad, ToolScratchpad):
+        return None
+    from ..context.tool_scratchpad import MAX_TOOL_WIRE_CHARS
+
+    budget = _react_input_budget(agent)
     max_wire = int(agent.get("max_tool_wire_chars", MAX_TOOL_WIRE_CHARS))
     msgs = list(state.get("messages") or [])
     if not msgs:
@@ -344,12 +380,178 @@ def _compact_react_state_for_context_pressure(agent: dict, state: dict) -> dict 
         msgs,
         pad,
         target_input_tokens=budget,
+        keep_recent_tool_rounds=keep_recent_tool_rounds,
         max_wire_chars=max_wire,
     )
     compacted = append_context_compaction_recap(compacted, scratchpad=pad)
     if estimate_messages_tokens(compacted) >= estimate_messages_tokens(msgs):
         return None
     return {**state, "messages": compacted}
+
+
+def _react_no_tools_llm_kwargs(model_label: str) -> dict[str, Any]:
+    if not uses_strict_chat_template(model_label):
+        return {}
+    # Raw ainvoke/astream bypass LangChain middleware bind(); pass extra_body directly.
+    return patch_strict_template_model_settings(None)
+
+
+def _preflight_react_messages(
+    agent: dict,
+    messages: list[Any],
+    *,
+    keep_recent_tool_rounds: int = 2,
+) -> list[Any]:
+    """Shrink message list toward the input budget before an LLM call (Context Plane)."""
+    budget = _react_input_budget(agent)
+    est = estimate_messages_tokens(messages)
+    if est <= budget:
+        return messages
+
+    pad = agent.get("_tool_scratchpad")
+    if not isinstance(pad, ToolScratchpad):
+        pad = ToolScratchpad(agent_key=str(agent.get("name") or "react"))
+        agent["_tool_scratchpad"] = pad
+
+    from ..context.tool_scratchpad import MAX_TOOL_WIRE_CHARS
+
+    max_wire = int(agent.get("max_tool_wire_chars", MAX_TOOL_WIRE_CHARS))
+    compacted = compact_messages_for_budget(
+        messages,
+        pad,
+        target_input_tokens=budget,
+        keep_recent_tool_rounds=keep_recent_tool_rounds,
+        max_wire_chars=max_wire,
+    )
+    if estimate_messages_tokens(compacted) >= est:
+        return messages
+    return append_context_compaction_recap(compacted, scratchpad=pad)
+
+
+async def _run_react_no_tools_direct(
+    agent: dict,
+    query: str | list[Any],
+    analysis: QueryAnalysis,
+    config: dict | None,
+    *,
+    steps: list,
+    ml: int,
+) -> ExecutionResult:
+    """Direct LLM path when the agent has no tools — pre-flight budget + transport retry."""
+    llm = agent["llm"]
+    _mlabel = extract_model_label(llm)
+    invoke_kw = _react_no_tools_llm_kwargs(_mlabel)
+    user_text = query if isinstance(query, str) else text_from_user_turn(query)
+    messages = ensure_messages_for_chat_template(
+        [
+            SystemMessage(content=_react_base_system_prompt(agent)),
+            HumanMessage(content=user_text),
+        ]
+    )
+    messages = _preflight_react_messages(agent, messages)
+    event_queue = agent.get("_event_queue")
+    transport_retries = 0
+    last_exc: BaseException | None = None
+
+    while transport_retries <= _MAX_TRANSPORT_RETRIES:
+        t0 = time.perf_counter()
+        try:
+            if event_queue is not None:
+                eq = event_queue
+                _timeout = float(agent.get("llm_timeout", 120.0))
+                chunks: list[str] = []
+                last_chunk = None
+
+                async def _stream_no_tools() -> None:
+                    nonlocal last_chunk
+                    async for chunk in llm.astream(messages, **invoke_kw):
+                        last_chunk = chunk
+                        reasoning, answer = await emit_llm_chunk_to_event_queue(eq, chunk)
+                        if answer:
+                            chunks.append(answer)
+
+                await asyncio.wait_for(_stream_no_tools(), timeout=_timeout)
+                output = "".join(chunks) or "No output produced."
+                usage = _extract_token_usage(last_chunk) if last_chunk else {}
+                out_messages: list = messages + ([last_chunk] if last_chunk else [])
+            else:
+                resp = await asyncio.wait_for(
+                    llm.ainvoke(messages, **invoke_kw),
+                    timeout=_AINVOKE_TIMEOUT,
+                )
+                output = answer_text_from_content(resp.content) or "No output produced."
+                usage = _extract_token_usage(resp)
+                out_messages = messages + [resp]
+
+            dur = round((time.perf_counter() - t0) * 1000, 1)
+            steps.append(
+                _make_step(
+                    StepType.LLM_CALL,
+                    "react_fallback_llm",
+                    input=user_text,
+                    output=output,
+                    duration_ms=dur,
+                    max_length=ml,
+                )
+            )
+            return ExecutionResult(
+                pattern_used=PatternType.REACT,
+                query=query,
+                output=output,
+                steps_taken=1,
+                success=True,
+                analysis=analysis,
+                steps=steps,
+                token_usage=usage,
+                messages=out_messages,
+            )
+        except Exception as exc:
+            last_exc = exc
+            if isinstance(exc, TimeoutError):
+                raise
+            if (
+                exception_indicates_transient_transport_error(exc)
+                and transport_retries < _MAX_TRANSPORT_RETRIES
+            ):
+                transport_retries += 1
+                est_at_failure = estimate_messages_tokens(messages)
+                _record_adaptive_input_budget_on_transport(agent, est_at_failure)
+                keep = _transport_keep_recent_rounds(transport_retries)
+                shrunk = _preflight_react_messages(
+                    agent,
+                    messages,
+                    keep_recent_tool_rounds=keep,
+                )
+                if estimate_messages_tokens(shrunk) < est_at_failure:
+                    messages = shrunk
+                logger.warning(
+                    f"[React] no-tools transport retry {transport_retries}/{_MAX_TRANSPORT_RETRIES}: "
+                    f"{format_exception_message(exc)}"
+                )
+                await asyncio.sleep(_react_retry_delay(transport_retries))
+                continue
+            if exception_indicates_transient_transport_error(exc):
+                break
+            raise
+
+    if last_exc is not None and exception_indicates_transient_transport_error(last_exc):
+        exc_str = format_exception_message(last_exc)
+        return await _react_failure(
+            agent,
+            config,
+            query,
+            analysis,
+            output=f"HTTP transport disconnected after transport retries. REACT execution failed: {exc_str}",
+            steps_taken=transport_retries,
+            steps=steps,
+            messages=messages,
+            kind="transport",
+            error=exc_str,
+            exc=last_exc,
+        )
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("no-tools direct LLM loop exited without result")
 
 
 def _langchain_react_middleware(agent: dict, *extra: Any) -> list[Any]:
@@ -526,56 +728,13 @@ async def handle_react(
 
     if not tools:
         logger.debug("[React] No tools — direct LLM fallback.")
-        t0 = time.perf_counter()
-        messages = [
-            SystemMessage(content=_react_base_system_prompt(agent)),
-            HumanMessage(content=query),
-        ]
-        event_queue = agent.get("_event_queue")
-        if event_queue is not None:
-            eq = event_queue
-            _timeout = float(agent.get("llm_timeout", 120.0))
-            chunks: list[str] = []
-            last_chunk = None
-
-            async def _stream_no_tools() -> None:
-                nonlocal last_chunk
-                async for chunk in llm.astream(messages):
-                    last_chunk = chunk
-                    reasoning, answer = await emit_llm_chunk_to_event_queue(eq, chunk)
-                    if answer:
-                        chunks.append(answer)
-
-            await asyncio.wait_for(_stream_no_tools(), timeout=_timeout)
-            output = "".join(chunks) or "No output produced."
-            usage = _extract_token_usage(last_chunk) if last_chunk else {}
-            out_messages: list = messages + ([last_chunk] if last_chunk else [])
-        else:
-            resp = await asyncio.wait_for(llm.ainvoke(messages), timeout=_AINVOKE_TIMEOUT)
-            output = answer_text_from_content(resp.content) or "No output produced."
-            usage = _extract_token_usage(resp)
-            out_messages = messages + [resp]
-        dur = round((time.perf_counter() - t0) * 1000, 1)
-        steps.append(
-            _make_step(
-                StepType.LLM_CALL,
-                "react_fallback_llm",
-                input=text_from_user_turn(query),
-                output=output,
-                duration_ms=dur,
-                max_length=ml,
-            )
-        )
-        return ExecutionResult(
-            pattern_used=PatternType.REACT,
-            query=query,
-            output=output,
-            steps_taken=1,
-            success=True,
-            analysis=analysis,
+        return await _run_react_no_tools_direct(
+            agent,
+            query,
+            analysis,
+            config,
             steps=steps,
-            token_usage=usage,
-            messages=out_messages,
+            ml=ml,
         )
 
     event_queue = agent.get("_event_queue")
@@ -863,13 +1022,29 @@ async def _run_react_ainvoke_with_retries(
                 and attempt < max_attempts
             ):
                 transport_retries += 1
+                est_at_failure = estimate_messages_tokens(list(state.get("messages") or []))
+                _record_adaptive_input_budget_on_transport(agent, est_at_failure)
+                keep = _transport_keep_recent_rounds(transport_retries)
+                compacted = _compact_react_state_for_context_pressure(
+                    agent,
+                    state,
+                    keep_recent_tool_rounds=keep,
+                )
                 logger.warning(
                     f"{log_prefix} ⚠ transient transport error on attempt "
                     f"{attempt}/{max_attempts} (transport_retry={transport_retries}/"
-                    f"{_MAX_TRANSPORT_RETRIES}, agent={name}) — retrying in "
+                    f"{_MAX_TRANSPORT_RETRIES}, agent={name}) — compacting and retrying in "
                     f"{_react_retry_delay(attempt)}s: {format_exception_message(exc)}"
                 )
                 await asyncio.sleep(_react_retry_delay(attempt))
+                if compacted is not None:
+                    after = estimate_messages_tokens(compacted.get("messages") or [])
+                    if after < est_at_failure:
+                        logger.warning(
+                            f"{log_prefix} transport compact retry est_tokens "
+                            f"{est_at_failure} -> {after} keep_recent={keep}"
+                        )
+                        state = _react_invoke_state(agent, query, compacted)
                 continue
 
             logger.error(f"{log_prefix} ❌ Failed: {format_exception_message(exc)}")
@@ -902,6 +1077,9 @@ async def _run_react_ainvoke_with_retries(
             else:
                 fail_note = ""
             exc_str = format_exception_message(exc)
+            fail_kind = "execution"
+            if exception_indicates_transient_transport_error(exc):
+                fail_kind = "transport"
             return await _react_failure(
                 agent,
                 config,
@@ -911,6 +1089,9 @@ async def _run_react_ainvoke_with_retries(
                 steps_taken=attempt,
                 steps=steps,
                 messages=(response or {}).get("messages", []),
+                kind=fail_kind,
+                error=exc_str,
+                exc=exc,
             )
 
     return await _react_failure(
@@ -1291,7 +1472,15 @@ async def _handle_react_streaming(
                 or (initial_state or {}).get("messages")
                 or _react_opening_messages(query)
             )
-            compacted = _compact_react_state_for_context_pressure(agent, {"messages": msgs})
+            est_at_failure = estimate_messages_tokens(msgs)
+            _record_adaptive_input_budget_on_transport(agent, est_at_failure)
+            transport_retry = _MAX_TRANSPORT_RETRIES - stream_compact_retry_remaining + 1
+            keep = _transport_keep_recent_rounds(transport_retry)
+            compacted = _compact_react_state_for_context_pressure(
+                agent,
+                {"messages": msgs},
+                keep_recent_tool_rounds=keep,
+            )
             if compacted is not None:
                 before = estimate_messages_tokens(msgs)
                 after = estimate_messages_tokens(compacted.get("messages") or [])

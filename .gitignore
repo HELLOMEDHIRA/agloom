@@ -41,6 +41,10 @@ coverage.xml
 .ruff_cache/
 .pytest_cache/
 
+# Harness run artifacts
+agloom-progress.json
+agloom-progress.meta.json
+
 # Logs
 *.log
 
