@@ -5,19 +5,83 @@ Uses ``langchain-mcp-adapters``; ``connect_mcp_servers`` is invoked lazily from 
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import random
 import weakref
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, model_validator
 
-from .logging_utils import get_logger
+from .exception_utils import exception_indicates_transient_transport_error
 from .exception_utils import unwrap_exception as _unwrap_exception
+from .logging_utils import get_logger
 from .reserved_tools import check_reserved_tool_names, is_agloom_reserved_tool_name
 
 logger = get_logger(__name__)
+
+# Per-call transient-transport retry (backoff + jitter). MCP observability tools are idempotent
+# reads, so re-dialing a single flaky connect is safe and far cheaper than bubbling the blip up to
+# the stream handler (which would compact context or replay the whole REACT tool investigation).
+_MCP_RETRY_BASE_DELAY = 0.4
+_MCP_RETRY_MAX_DELAY = 4.0
+
+
+async def _acall_with_transient_retry(
+    factory: Callable[[], Awaitable[Any]],
+    *,
+    max_retries: int,
+    label: str,
+) -> Any:
+    """Await ``factory()``; on a transient transport error re-dial up to ``max_retries`` times.
+
+    Only :func:`exception_indicates_transient_transport_error` failures are retried — every other
+    error (including ``ToolException``) propagates immediately. ``max_retries`` is the number of
+    additional re-dials after the first attempt (0 = no retry).
+    """
+    attempt = 0
+    while True:
+        try:
+            return await factory()
+        except Exception as exc:
+            if attempt >= max_retries or not exception_indicates_transient_transport_error(exc):
+                raise
+            delay = min(_MCP_RETRY_MAX_DELAY, _MCP_RETRY_BASE_DELAY * (2**attempt))
+            delay += random.uniform(0.0, delay / 2.0)  # noqa: S311 - retry jitter, not cryptographic
+            logger.warning(
+                f"MCP tool {label!r}: transient transport error on attempt {attempt + 1} "
+                f"({type(_unwrap_exception(exc)).__name__}); re-dialing in {delay:.2f}s"
+            )
+            await asyncio.sleep(delay)
+            attempt += 1
+
+
+def _wrap_tool_transient_retry(tool: BaseTool, *, max_retries: int, server_name: str) -> BaseTool:
+    """Wrap an MCP tool's async invocation so a single flaky connect is re-dialed in place.
+
+    Absorbs the blip where it happens: no LLM replay, no context compaction, no whole-graph rerun.
+    Returns *tool* unchanged when retries are disabled or the tool exposes no async ``coroutine``.
+    """
+    if max_retries <= 0:
+        return tool
+    coro = getattr(tool, "coroutine", None)
+    if coro is None or not callable(coro):
+        return tool
+    tool_name = getattr(tool, "name", "mcp_tool")
+    label = f"{server_name}/{tool_name}"
+    inner_coro = cast("Callable[..., Awaitable[Any]]", coro)
+
+    async def _retrying_coroutine(*args: Any, **kwargs: Any) -> Any:
+        return await _acall_with_transient_retry(
+            lambda: inner_coro(*args, **kwargs),
+            max_retries=max_retries,
+            label=label,
+        )
+
+    return _copy_tool_fields(tool, coroutine=_retrying_coroutine)
 
 
 def _adapter_transport(transport: str) -> str:
@@ -242,7 +306,7 @@ async def load_mcp_capabilities(
             await aclose_mcp_client(client)
 
         server_dict = _build_server_dict(servers, transport_overrides, transport_manager)
-        client = MultiServerMCPClient(cast(Any, server_dict))
+        client = MultiServerMCPClient(cast("Any", server_dict))
         client_holder = {"client": client, "_client_ref": weakref.ref(client)}
         logger.info(f"MCP: client ready for {list(server_dict)} (attempt {attempt + 1})")
 
@@ -467,6 +531,10 @@ async def connect_mcp_servers(
     wired_tools_by_server: dict[str, list[BaseTool]] = {}
     mcp_prompts: dict[str, list[str]] = {}
     mcp_uris: dict[str, list[str]] = {}
+    try:
+        mcp_tool_max_retries = int(agent.get("mcp_tool_max_retries", 2))
+    except (TypeError, ValueError):
+        mcp_tool_max_retries = 2
 
     for cap in caps:
         wired_server_tools: list[BaseTool] = []
@@ -476,6 +544,7 @@ async def connect_mcp_servers(
                 t,
                 existing_names,
                 agent_name=agent_name,
+                mcp_tool_max_retries=mcp_tool_max_retries,
             )
             if wired is None:
                 continue
@@ -554,7 +623,7 @@ def _with_agloom_limit_hint(tool: BaseTool) -> BaseTool:
     model_copy = getattr(tool, "model_copy", None)
     if callable(model_copy):
         try:
-            return cast(BaseTool, model_copy(update={"description": new_desc}))
+            return cast("BaseTool", model_copy(update={"description": new_desc}))
         except Exception:
             pass
     try:
@@ -573,7 +642,7 @@ def _copy_tool_fields(tool: BaseTool, **updates: Any) -> BaseTool:
     model_copy = getattr(tool, "model_copy", None)
     if callable(model_copy):
         try:
-            return cast(BaseTool, model_copy(update=updates))
+            return cast("BaseTool", model_copy(update=updates))
         except Exception:
             pass
     for key, value in updates.items():
@@ -590,6 +659,7 @@ def _wire_mcp_tool(
     existing_names: set[str],
     *,
     agent_name: str,
+    mcp_tool_max_retries: int = 2,
 ) -> BaseTool | None:
     """Return MCP tool ready to merge, or None when a duplicate should be skipped."""
     original_name = tool.name
@@ -613,6 +683,9 @@ def _wire_mcp_tool(
     wired = _with_agloom_limit_hint(tool)
     if wire_name != original_name:
         wired = _copy_tool_fields(wired, name=wire_name)
+    wired = _wrap_tool_transient_retry(
+        wired, max_retries=mcp_tool_max_retries, server_name=server_name
+    )
     return wired
 
 

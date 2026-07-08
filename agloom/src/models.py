@@ -1092,6 +1092,17 @@ class AgentConfig(BaseModel):
     structured_max_retries: int = Field(
         default=2, ge=0, le=10, description="Max retries inside robust_structured_call()"
     )
+    mcp_tool_max_retries: int = Field(
+        default=2,
+        ge=0,
+        le=10,
+        description=(
+            "Per-call transient-transport retries for MCP tool invocations. When a stateless MCP "
+            "tool raises a transient transport error (e.g. RemoteProtocolError 'Server "
+            "disconnected'), agloom re-dials that single idempotent call with backoff+jitter "
+            "instead of bubbling up to replay the whole REACT turn. 0 disables per-call retry."
+        ),
+    )
 
     rate_limit: float | None = Field(default=None, description="Max LLM calls/sec (None=unlimited)")
 
