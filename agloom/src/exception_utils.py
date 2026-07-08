@@ -59,6 +59,37 @@ def _http_error_detail(exc: BaseException, *, max_len: int = 500) -> str:
     return "; ".join(chunks)
 
 
+def transient_transport_hint(*, oversized: bool | None = None) -> str:
+    """Diagnostic hint for a transient transport disconnect.
+
+    ``oversized`` keys the wording to the last request's estimated size:
+    - ``True``  — the request body likely exceeded the gateway limit; agloom compacts + retries.
+    - ``False`` — a small request; this is a latency / idle-timeout blip (common with reasoning
+      models), so agloom re-sends unchanged and does NOT compact. Raise ``llm_timeout``.
+    - ``None``  — size unknown; describe both and the automatic handling.
+    """
+    if oversized is True:
+        return (
+            "Transient HTTP transport failure on an oversized request — the body likely exceeded "
+            "the LiteLLM/vLLM gateway limit. agloom auto-compacts and retries; full tool payloads "
+            "stay in scratchpad (agloom_recall_tool_artifact). Optional override: context_window_tokens."
+        )
+    if oversized is False:
+        return (
+            "Transient HTTP transport failure on a small request — this is a latency / proxy "
+            "idle-timeout blip (common with slow reasoning models), not an oversized body. agloom "
+            "re-sends unchanged and does not compact. Raise llm_timeout (and classifier_timeout for "
+            "the router) for reasoning models."
+        )
+    return (
+        "Transient HTTP transport failure — either the request exceeded the gateway body limit or "
+        "the model took too long to respond (common with reasoning models). agloom retries and "
+        "compacts only when the request was actually oversized; full tool payloads stay in "
+        "scratchpad (agloom_recall_tool_artifact). Raise llm_timeout for slow reasoning models, or "
+        "context_window_tokens for large contexts."
+    )
+
+
 def format_exception_message(exc: BaseException, *, include_type: bool = True) -> str:
     """Human-readable message with ``ExceptionGroup`` / ``TaskGroup`` wrappers removed."""
     root = unwrap_exception(exc)
@@ -67,18 +98,13 @@ def format_exception_message(exc: BaseException, *, include_type: bool = True) -
     if http_detail and http_detail not in msg:
         msg = f"{msg} ({http_detail})"
     if exception_indicates_transient_transport_error(exc):
-        hint = (
-            "Transient HTTP transport failure — often an oversized request body dropped by a "
-            "LiteLLM/vLLM gateway, a proxy idle timeout, or a connection reset. agloom auto-compacts "
-            "and retries up to 3×; full tool payloads stay in scratchpad (agloom_recall_tool_artifact). "
-            "Optional override: context_window_tokens."
-        )
+        hint = transient_transport_hint()
         if hint not in msg:
             msg = f"{msg} [{hint}]"
     if not include_type:
         return msg
     type_name = type(root).__name__
-    if msg.startswith(f"{type_name}:") or msg.startswith(f"{type_name}("):
+    if msg.startswith((f"{type_name}:", f"{type_name}(")):
         return msg
     return f"{type_name}: {msg}"
 

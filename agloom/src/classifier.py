@@ -9,12 +9,11 @@ import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from .logging_utils import get_logger
 from .llm_utils import robust_structured_call
+from .logging_utils import get_logger
 from .models import (
     PatternType,
     QueryAnalysis,
-    QueryAnalysisToolPayload,
     TurnPlan,
     classifier_tool_payload_type,
     normalize_reflection_analysis,
@@ -414,11 +413,7 @@ def coerce_analysis_when_tools_required(
         return analysis
 
     coerce = False
-    if analysis.pattern == PatternType.DIRECT:
-        coerce = True
-    elif analysis.pattern == PatternType.REFLECTION:
-        coerce = True
-    elif analysis.pattern in _MULTI_WORKER_PATTERNS and _subtasks_lack_required_tools(analysis):
+    if analysis.pattern == PatternType.DIRECT or analysis.pattern == PatternType.REFLECTION or (analysis.pattern in _MULTI_WORKER_PATTERNS and _subtasks_lack_required_tools(analysis)):
         coerce = True
 
     if not coerce:
@@ -587,9 +582,19 @@ async def analyze_query(
     wire_model = classifier_tool_payload_type(harness_needs_plan=harness_needs_plan)
     has_tools = bool(tools)
 
+    # Internal utility call: agloom's router must not monologue. Request reasoning OFF
+    # (provider-agnostic; a no-op where the provider has no toggle — Fix 1 parser + Fix 4
+    # timeout scaling keep those correct). This does NOT affect the user-facing task model.
+    from agloom.llm.chat_template_compat import extract_model_label
+    from agloom.llm.reasoning_control import apply_reasoning_preference
+
+    llm_no_reasoning = apply_reasoning_preference(
+        llm, enable=False, model_label=extract_model_label(llm)
+    )
+
     try:
         raw = await robust_structured_call(
-            llm,
+            llm_no_reasoning,
             wire_model,
             [
                 SystemMessage(content=TURN_PLANNER_SYSTEM),
@@ -648,7 +653,7 @@ async def analyze_query(
 
         try:
             raw_resp = await asyncio.wait_for(
-                llm.ainvoke(
+                llm_no_reasoning.ainvoke(
                     [
                         SystemMessage(content=_CLASSIFIER_FALLBACK_SYSTEM),
                         HumanMessage(content=query),

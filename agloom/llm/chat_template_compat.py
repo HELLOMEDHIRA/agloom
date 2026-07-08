@@ -143,7 +143,7 @@ def tag_llm_for_chat_template_compat(llm: Any, model_spec: Any) -> None:
         return
     for target in _unwrap_model_chain(llm):
         try:
-            setattr(target, "_agloom_model_label", label)
+            target._agloom_model_label = label
         except Exception:
             pass
 
@@ -445,20 +445,20 @@ def patch_strict_template_model_settings(
     *,
     enable_thinking: bool | None = None,
 ) -> dict[str, Any]:
-    """Patch provider model settings for strict-template tool loops.
+    """Thin, backward-compatible wrapper over the provider-agnostic reasoning control.
 
-    When *enable_thinking* is ``None``, nothing is injected (model/gateway decides).
-    When ``True`` or ``False``, sets ``chat_template_kwargs.enable_thinking`` explicitly.
+    For strict chat-template (vLLM/LiteLLM/Qwen) models this maps a reasoning preference to
+    ``extra_body.chat_template_kwargs.enable_thinking``. When *enable_thinking* is ``None``,
+    nothing is injected (model/gateway decides). Provider-neutral routing lives in
+    :mod:`agloom.llm.reasoning_control`.
     """
-    settings = dict(existing or {})
-    if enable_thinking is None:
-        return settings
-    extra = dict(settings.get("extra_body") or {})
-    ctk = dict(extra.get("chat_template_kwargs") or {})
-    ctk["enable_thinking"] = enable_thinking
-    extra["chat_template_kwargs"] = ctk
-    settings["extra_body"] = extra
-    return settings
+    from .reasoning_control import apply_reasoning_preference
+
+    return apply_reasoning_preference(
+        dict(existing or {}),
+        enable=enable_thinking,
+        model_label="vllm",
+    )
 
 
 def resolve_react_tool_choice(

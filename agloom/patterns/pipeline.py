@@ -11,7 +11,7 @@ from ..src.models import (
     _make_step,
     _merge_token_usage,
 )
-from ._failure import exec_failure_kwargs
+from ._failure import ExecFailureKwargs, exec_failure_kwargs
 from ._resolve import resolve_worker_configs
 from ._sequential import run_sequential_workers
 from ._steps_accounting import steps_taken_from_audit
@@ -137,7 +137,7 @@ async def handle_pipeline(
         f"[Pipeline] ✅ Done — {len(successful)}/{len(worker_results)} steps succeeded, {len(final_output)} chars."
     )
 
-    failure_kw = exec_failure_kwargs(kind="worker") if not success else {}
+    failure_kw: ExecFailureKwargs = exec_failure_kwargs(kind="worker") if not success else {}
 
     return ExecutionResult(
         pattern_used=PatternType.PIPELINE,

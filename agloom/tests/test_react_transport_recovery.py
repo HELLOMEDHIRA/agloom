@@ -12,6 +12,7 @@ from agloom.patterns.react import (
     _MAX_TRANSPORT_RETRIES,
     _react_base_input_budget,
     _record_adaptive_input_budget_on_transport,
+    _request_was_oversized,
     _run_react_no_tools_direct,
 )
 from agloom.patterns.tool_context_middleware import ContextBudgetMiddleware
@@ -125,3 +126,60 @@ async def test_adaptive_input_budget_lowers_after_oversized_disconnect() -> None
         agent_config=agent,
     )
     assert mw._input_budget() == min(base, adaptive)
+
+
+@pytest.mark.asyncio
+async def test_small_request_disconnect_does_not_lower_adaptive_budget() -> None:
+    """Latency case: a disconnect on a small (non-oversized) request must not compact/adapt."""
+    agent: dict = {
+        "context_window_tokens": 128_000,
+        "context_reserved_output_tokens": 8192,
+        "context_compact_ratio": 0.82,
+    }
+    small_est = 500
+    assert _request_was_oversized(agent, small_est) is False
+    _record_adaptive_input_budget_on_transport(agent, small_est)
+    assert agent.get("_adaptive_input_budget") is None
+
+
+@pytest.mark.asyncio
+async def test_no_tools_latency_retry_recovers_without_lowering_budget() -> None:
+    """Small-request transient disconnect → plain re-send, recover, no adaptive budget."""
+    attempts = 0
+    llm = MagicMock()
+    llm.model_name = "gpt-4"
+
+    async def _ainvoke(_messages, **_kw):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("Server disconnected without sending a response")
+        return AIMessage(content="recovered after latency blip")
+
+    llm.ainvoke = AsyncMock(side_effect=_ainvoke)
+
+    agent = {
+        "llm": llm,
+        "system_prompt": "sys",
+        "name": "no-tools-latency",
+        "context_window_tokens": 128_000,
+        "context_reserved_output_tokens": 8192,
+        "context_compact_ratio": 0.82,
+    }
+
+    with patch(
+        "agloom.orchestrator.hooks.maybe_recover_react_failure",
+        AsyncMock(side_effect=lambda _a, _c, _q, _an, result: result),
+    ):
+        result = await _run_react_no_tools_direct(
+            agent,
+            "hello",
+            _analysis(),
+            config={"_steps": []},
+            steps=[],
+            ml=0,
+        )
+
+    assert attempts == 2
+    assert result.success is True
+    assert agent.get("_adaptive_input_budget") is None

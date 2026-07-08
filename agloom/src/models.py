@@ -10,11 +10,11 @@ from typing import Any
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from agloom.prompts.core import DEFAULT_SYSTEM_PROMPT  # noqa: F401 — public re-export
+
 from .logging_utils import get_logger
 
 _cfg_logger = get_logger(__name__)
-
-from agloom.prompts.core import DEFAULT_SYSTEM_PROMPT  # noqa: F401 — public re-export
 
 
 def resolve_turn_planner_timeout(
@@ -1156,9 +1156,11 @@ class AgentConfig(BaseModel):
     enable_thinking: bool | None = Field(
         default=None,
         description=(
-            "Extended thinking for strict chat-template models (vLLM/LiteLLM/Qwen). "
-            "None = do not inject chat_template_kwargs (model/gateway decides). "
-            "True/False sets enable_thinking explicitly."
+            "Extended thinking/reasoning preference, applied provider-agnostically "
+            "(vLLM/LiteLLM chat_template_kwargs, Anthropic thinking, Gemini thinking_budget, "
+            "Groq reasoning_effort; no-op where the provider has no toggle). "
+            "None = inject nothing (model/gateway decides). True/False sets it explicitly. "
+            "Reasoning-active models also raise default timeouts."
         ),
     )
 

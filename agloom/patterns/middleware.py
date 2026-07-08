@@ -9,17 +9,16 @@ from typing import Any
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from ..src.hitl_contract import HITLEvent, call_user_callback
 from ..llm.chat_template_compat import (
     ensure_messages_for_chat_template,
-    extract_model_label,
     model_label_for_middleware,
-    patch_strict_template_model_settings,
     resolve_react_tool_choice,
     uses_strict_chat_template,
 )
-from ..src.wire_stream_content import sanitize_model_call_response
+from ..llm.reasoning_control import apply_reasoning_preference
+from ..src.hitl_contract import HITLEvent, call_user_callback
 from ..src.logging_utils import get_logger
+from ..src.wire_stream_content import sanitize_model_call_response
 from .hitl_tool_coalesce import CompositeToolHitlCoalescer, build_default_hitl_coalescer
 
 logger = get_logger(__name__)
@@ -90,10 +89,11 @@ def _prepare_react_model_request(
     )
     model_label = model_label_for_middleware(request.model)
     overrides: dict[str, Any] = {"messages": messages}
-    if uses_strict_chat_template(model_label) and enable_thinking is not None:
-        overrides["model_settings"] = patch_strict_template_model_settings(
-            getattr(request, "model_settings", None),
-            enable_thinking=enable_thinking,
+    if enable_thinking is not None:
+        overrides["model_settings"] = apply_reasoning_preference(
+            dict(getattr(request, "model_settings", None) or {}),
+            enable=enable_thinking,
+            model_label=model_label,
         )
     if tool_choice_enabled and request.tools:
         choice = resolve_react_tool_choice(messages, model_label=model_label)

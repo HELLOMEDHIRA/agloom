@@ -7,6 +7,15 @@ from collections.abc import Mapping
 from typing import Any, cast
 from uuid import uuid4
 
+from langchain.agents import create_agent
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph.errors import GraphRecursionError
+
+from ..context.compaction import append_context_compaction_recap, compact_messages_for_budget
+from ..context.tokens import estimate_messages_tokens
+from ..context.tool_scratchpad import ToolScratchpad
+from ..context.window import infer_context_window_tokens, reserved_output_tokens
 from ..llm.chat_template_compat import (
     _DEFAULT_USER_TURN,
     ensure_messages_for_chat_template,
@@ -16,23 +25,7 @@ from ..llm.chat_template_compat import (
     repair_react_graph_state,
     uses_strict_chat_template,
 )
-from ..context.compaction import append_context_compaction_recap, compact_messages_for_budget
-from ..context.tool_scratchpad import ToolScratchpad
-from ..context.tokens import estimate_messages_tokens
-from ..context.window import infer_context_window_tokens, reserved_output_tokens
-from ..src.multimodal import content_blocks_to_text, text_from_user_turn
-from ..src.wire_stream_content import (
-    answer_text_from_content,
-    emit_llm_chunk_to_event_queue,
-    sanitize_ai_message_for_history,
-    split_stream_parts_from_chunk,
-)
-
-from langchain.agents import create_agent
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.runnables import RunnableConfig
-from langgraph.errors import GraphRecursionError
-
+from ..src.exception_utils import exception_indicates_transient_transport_error, format_exception_message
 from ..src.hitl_contract import (
     DEFAULT_REACT_TOOL_USE_FAILED_AUTO_RETRIES_HITL,
     DEFAULT_REACT_TOOL_USE_FAILED_USER_ROUNDS,
@@ -43,8 +36,6 @@ from ..src.hitl_contract import (
     normalize_react_tool_use_failed_decision,
 )
 from ..src.logging_utils import get_logger
-from ..src.reserved_tools import TOOL_LOAD_SKILL, TOOL_RECALL_TOOL_ARTIFACT
-from ..src.worker import resolve_event_queue
 from ..src.models import (
     DEFAULT_SYSTEM_PROMPT,
     AgentEvent,
@@ -57,12 +48,38 @@ from ..src.models import (
     _make_step,
     _trunc,
 )
+from ..src.multimodal import text_from_user_turn
+from ..src.reserved_tools import TOOL_LOAD_SKILL, TOOL_RECALL_TOOL_ARTIFACT
+from ..src.wire_stream_content import (
+    answer_text_from_content,
+    emit_llm_chunk_to_event_queue,
+    sanitize_ai_message_for_history,
+    split_stream_parts_from_chunk,
+)
+from ..src.worker import resolve_event_queue
 from ._failure import exec_failure_kwargs
-from .hitl_tool_coalesce import build_default_hitl_coalescer
 from ._steps_accounting import steps_taken_from_audit
+from .hitl_tool_coalesce import build_default_hitl_coalescer
 from .middleware import HumanApprovalMiddleware, UserAbort, build_langchain_agent_middleware
+from .react_timeouts import (
+    react_graph_wall_timeout as _react_graph_wall_timeout,
+)
+from .react_timeouts import (
+    react_llm_timeout as _react_llm_timeout,
+)
+from .react_timeouts import (
+    react_recursion_limit as _react_recursion_limit,
+)
+from .react_timeouts import (
+    react_recursion_limit_failure_message as _react_recursion_limit_failure_message,
+)
+from .react_timeouts import (
+    react_timeout_failure_message as _react_timeout_failure_message,
+)
 from .react_tool_recovery import (
     exception_indicates_context_window_exceeded,
+)
+from .react_tool_recovery import (
     exception_indicates_tool_use_failed as _exception_indicates_tool_use_failed,
 )
 from .react_tool_recovery import (
@@ -80,7 +97,6 @@ from .react_tool_recovery import (
 from .react_tool_recovery import (
     last_ai_message_is_stray_tool_json as _last_ai_message_is_stray_tool_json,
 )
-from ..src.exception_utils import exception_indicates_transient_transport_error, format_exception_message
 
 logger = get_logger(__name__)
 
@@ -189,15 +205,6 @@ async def _acquire_transport_llm(agent: dict) -> None:
     tm = agent.get("_transport_manager")
     if tm is not None:
         await tm.acquire_llm_slot()
-
-
-from .react_timeouts import (
-    react_graph_wall_timeout as _react_graph_wall_timeout,
-    react_llm_timeout as _react_llm_timeout,
-    react_recursion_limit as _react_recursion_limit,
-    react_recursion_limit_failure_message as _react_recursion_limit_failure_message,
-    react_timeout_failure_message as _react_timeout_failure_message,
-)
 
 
 async def _react_emit_stream_error(
@@ -343,10 +350,22 @@ def _react_input_budget(agent: dict) -> int:
     return budget
 
 
+_OVERSIZE_FRACTION = 0.85
+
+
+def _request_was_oversized(agent: dict, est_tokens: int) -> bool:
+    """True when the just-sent request was large enough to plausibly overflow the gateway.
+
+    A disconnect on a small request is a latency/idle-timeout blip, not an oversized body —
+    compaction would be a no-op and lowering the adaptive budget would be wrong.
+    """
+    base = _react_base_input_budget(agent)
+    return est_tokens >= int(base * _OVERSIZE_FRACTION)
+
+
 def _record_adaptive_input_budget_on_transport(agent: dict, est_at_failure: int) -> None:
     """Lower effective input budget when a large request likely caused a gateway disconnect."""
-    base = _react_base_input_budget(agent)
-    if est_at_failure >= int(base * 0.85):
+    if _request_was_oversized(agent, est_at_failure):
         agent["_adaptive_input_budget"] = max(2048, int(est_at_failure * 0.8))
 
 
@@ -453,13 +472,17 @@ async def _run_react_no_tools_direct(
                 chunks: list[str] = []
                 last_chunk = None
 
-                async def _stream_no_tools() -> None:
+                async def _stream_no_tools(
+                    _messages: list = messages,
+                    _eq: Any = eq,
+                    _chunks: list[str] = chunks,
+                ) -> None:
                     nonlocal last_chunk
-                    async for chunk in llm.astream(messages):
+                    async for chunk in llm.astream(_messages):
                         last_chunk = chunk
-                        reasoning, answer = await emit_llm_chunk_to_event_queue(eq, chunk)
+                        _, answer = await emit_llm_chunk_to_event_queue(_eq, chunk)
                         if answer:
-                            chunks.append(answer)
+                            _chunks.append(answer)
 
                 await asyncio.wait_for(_stream_no_tools(), timeout=_timeout)
                 output = "".join(chunks) or "No output produced."
@@ -507,19 +530,27 @@ async def _run_react_no_tools_direct(
             ):
                 transport_retries += 1
                 est_at_failure = estimate_messages_tokens(messages)
-                _record_adaptive_input_budget_on_transport(agent, est_at_failure)
-                keep = _transport_keep_recent_rounds(transport_retries)
-                shrunk = _preflight_react_messages(
-                    agent,
-                    messages,
-                    keep_recent_tool_rounds=keep,
-                )
-                if estimate_messages_tokens(shrunk) < est_at_failure:
-                    messages = shrunk
-                logger.warning(
-                    f"[React] no-tools transport retry {transport_retries}/{_MAX_TRANSPORT_RETRIES}: "
-                    f"{format_exception_message(exc)}"
-                )
+                if _request_was_oversized(agent, est_at_failure):
+                    _record_adaptive_input_budget_on_transport(agent, est_at_failure)
+                    keep = _transport_keep_recent_rounds(transport_retries)
+                    shrunk = _preflight_react_messages(
+                        agent,
+                        messages,
+                        keep_recent_tool_rounds=keep,
+                    )
+                    if estimate_messages_tokens(shrunk) < est_at_failure:
+                        messages = shrunk
+                    logger.warning(
+                        f"[React] no-tools transport retry {transport_retries}/{_MAX_TRANSPORT_RETRIES} "
+                        f"(oversized ~{est_at_failure} tok, compacting): "
+                        f"{format_exception_message(exc)}"
+                    )
+                else:
+                    logger.warning(
+                        f"[React] no-tools transport retry {transport_retries}/{_MAX_TRANSPORT_RETRIES} "
+                        f"(not oversized ~{est_at_failure} tok, likely latency; re-sending unchanged): "
+                        f"{format_exception_message(exc)}"
+                    )
                 await asyncio.sleep(_react_retry_delay(transport_retries))
                 continue
             if exception_indicates_transient_transport_error(exc):
@@ -528,12 +559,21 @@ async def _run_react_no_tools_direct(
 
     if last_exc is not None and exception_indicates_transient_transport_error(last_exc):
         exc_str = format_exception_message(last_exc)
+        oversized = _request_was_oversized(agent, estimate_messages_tokens(messages))
+        diag = (
+            "oversized request body dropped by the gateway"
+            if oversized
+            else "latency / idle-timeout (request was not oversized)"
+        )
         return await _react_failure(
             agent,
             config,
             query,
             analysis,
-            output=f"HTTP transport disconnected after transport retries. REACT execution failed: {exc_str}",
+            output=(
+                f"HTTP transport disconnected after transport retries — {diag}. "
+                f"REACT execution failed: {exc_str}"
+            ),
             steps_taken=transport_retries,
             steps=steps,
             messages=messages,
@@ -786,7 +826,6 @@ async def _run_react_ainvoke_with_retries(
     ml = agent.get("max_step_output_length", 0)
 
     hitl_extras = _hitl_middleware_extras(agent)
-    hitl_active = bool(hitl_extras)
 
     if react_agent is None:
         react_agent = create_agent(
@@ -837,7 +876,7 @@ async def _run_react_ainvoke_with_retries(
             _wall_timeout = _react_llm_timeout(agent, config)
             await _acquire_transport_llm(agent)
             response = await asyncio.wait_for(
-                cast(Any, react_agent).ainvoke(state, config=invoke_config),
+                cast("Any", react_agent).ainvoke(state, config=invoke_config),
                 timeout=_wall_timeout,
             )
             dur = round((time.perf_counter() - t0) * 1000, 1)
@@ -1016,28 +1055,40 @@ async def _run_react_ainvoke_with_retries(
             ):
                 transport_retries += 1
                 est_at_failure = estimate_messages_tokens(list(state.get("messages") or []))
-                _record_adaptive_input_budget_on_transport(agent, est_at_failure)
-                keep = _transport_keep_recent_rounds(transport_retries)
-                compacted = _compact_react_state_for_context_pressure(
-                    agent,
-                    state,
-                    keep_recent_tool_rounds=keep,
-                )
-                logger.warning(
-                    f"{log_prefix} ⚠ transient transport error on attempt "
-                    f"{attempt}/{max_attempts} (transport_retry={transport_retries}/"
-                    f"{_MAX_TRANSPORT_RETRIES}, agent={name}) — compacting and retrying in "
-                    f"{_react_retry_delay(attempt)}s: {format_exception_message(exc)}"
-                )
-                await asyncio.sleep(_react_retry_delay(attempt))
-                if compacted is not None:
-                    after = estimate_messages_tokens(compacted.get("messages") or [])
-                    if after < est_at_failure:
-                        logger.warning(
-                            f"{log_prefix} transport compact retry est_tokens "
-                            f"{est_at_failure} -> {after} keep_recent={keep}"
-                        )
-                        state = _react_invoke_state(agent, query, compacted)
+                oversized = _request_was_oversized(agent, est_at_failure)
+                if oversized:
+                    _record_adaptive_input_budget_on_transport(agent, est_at_failure)
+                    keep = _transport_keep_recent_rounds(transport_retries)
+                    compacted = _compact_react_state_for_context_pressure(
+                        agent,
+                        state,
+                        keep_recent_tool_rounds=keep,
+                    )
+                    logger.warning(
+                        f"{log_prefix} ⚠ transient transport error on attempt "
+                        f"{attempt}/{max_attempts} (transport_retry={transport_retries}/"
+                        f"{_MAX_TRANSPORT_RETRIES}, agent={name}) — oversized request "
+                        f"(~{est_at_failure} tok), compacting and retrying in "
+                        f"{_react_retry_delay(attempt)}s: {format_exception_message(exc)}"
+                    )
+                    await asyncio.sleep(_react_retry_delay(attempt))
+                    if compacted is not None:
+                        after = estimate_messages_tokens(compacted.get("messages") or [])
+                        if after < est_at_failure:
+                            logger.warning(
+                                f"{log_prefix} transport compact retry est_tokens "
+                                f"{est_at_failure} -> {after} keep_recent={keep}"
+                            )
+                            state = _react_invoke_state(agent, query, compacted)
+                else:
+                    logger.warning(
+                        f"{log_prefix} ⚠ transient transport error on attempt "
+                        f"{attempt}/{max_attempts} (transport_retry={transport_retries}/"
+                        f"{_MAX_TRANSPORT_RETRIES}, agent={name}) — request not oversized "
+                        f"(~{est_at_failure} tok); likely latency/idle timeout, re-sending "
+                        f"unchanged in {_react_retry_delay(attempt)}s: {format_exception_message(exc)}"
+                    )
+                    await asyncio.sleep(_react_retry_delay(attempt))
                 continue
 
             logger.error(f"{log_prefix} ❌ Failed: {format_exception_message(exc)}")
@@ -1129,7 +1180,6 @@ async def _handle_react_streaming(
     ml = agent.get("max_step_output_length", 0)
 
     hitl_extras = _hitl_middleware_extras(agent)
-    hitl_active = bool(hitl_extras)
 
     react_agent = create_agent(
         model=llm,
@@ -1303,7 +1353,7 @@ async def _handle_react_streaming(
             )
             _wall_timeout = _react_llm_timeout(agent, config)
             final_response = await asyncio.wait_for(
-                cast(Any, react_agent).ainvoke(recovery_state, config=invoke_config),
+                cast("Any", react_agent).ainvoke(recovery_state, config=invoke_config),
                 timeout=_wall_timeout,
             )
             msgs = list((final_response or {}).get("messages", []))
@@ -1466,31 +1516,51 @@ async def _handle_react_streaming(
                 or _react_opening_messages(query)
             )
             est_at_failure = estimate_messages_tokens(msgs)
-            _record_adaptive_input_budget_on_transport(agent, est_at_failure)
             transport_retry = _MAX_TRANSPORT_RETRIES - stream_compact_retry_remaining + 1
-            keep = _transport_keep_recent_rounds(transport_retry)
-            compacted = _compact_react_state_for_context_pressure(
-                agent,
-                {"messages": msgs},
-                keep_recent_tool_rounds=keep,
-            )
-            if compacted is not None:
-                before = estimate_messages_tokens(msgs)
-                after = estimate_messages_tokens(compacted.get("messages") or [])
-                if after < before:
-                    logger.warning(
-                        f"[React|stream] transport error — stream_compact_retry "
-                        f"est_tokens {before} -> {after}{stream_ctx}"
-                    )
-                    return await _handle_react_streaming(
-                        agent,
-                        query,
-                        analysis,
-                        config=config,
-                        event_queue=event_queue,
-                        stream_compact_retry_remaining=stream_compact_retry_remaining - 1,
-                        initial_state=compacted,
-                    )
+            if _request_was_oversized(agent, est_at_failure):
+                _record_adaptive_input_budget_on_transport(agent, est_at_failure)
+                keep = _transport_keep_recent_rounds(transport_retry)
+                compacted = _compact_react_state_for_context_pressure(
+                    agent,
+                    {"messages": msgs},
+                    keep_recent_tool_rounds=keep,
+                )
+                if compacted is not None:
+                    before = estimate_messages_tokens(msgs)
+                    after = estimate_messages_tokens(compacted.get("messages") or [])
+                    if after < before:
+                        logger.warning(
+                            f"[React|stream] transport error — oversized request, "
+                            f"stream_compact_retry est_tokens {before} -> {after}{stream_ctx}"
+                        )
+                        return await _handle_react_streaming(
+                            agent,
+                            query,
+                            analysis,
+                            config=config,
+                            event_queue=event_queue,
+                            stream_compact_retry_remaining=stream_compact_retry_remaining - 1,
+                            initial_state=compacted,
+                        )
+            else:
+                # Not oversized: a genuine transient blip / latency (common with reasoning
+                # models). Re-send the same state after a short backoff — never claim we
+                # compacted when we did not. Also covers strict_execution before it gives up.
+                logger.warning(
+                    f"[React|stream] transient transport error — request not oversized "
+                    f"(~{est_at_failure} tok); plain retry "
+                    f"{transport_retry}/{_MAX_TRANSPORT_RETRIES} after backoff{stream_ctx}"
+                )
+                await asyncio.sleep(_react_retry_delay(transport_retry))
+                return await _handle_react_streaming(
+                    agent,
+                    query,
+                    analysis,
+                    config=config,
+                    event_queue=event_queue,
+                    stream_compact_retry_remaining=stream_compact_retry_remaining - 1,
+                    initial_state={"messages": msgs},
+                )
         if agent.get("strict_execution"):
             logger.warning(
                 f"[React|stream] astream_events failed ({root_msg}){stream_ctx} — strict_execution, no ainvoke fallback"
@@ -1712,7 +1782,7 @@ async def _handle_react_hitl(
             _wall_timeout = _react_llm_timeout(agent, incoming_config)
             await _acquire_transport_llm(agent)
             response = await asyncio.wait_for(
-                cast(Any, react_agent).ainvoke(
+                cast("Any", react_agent).ainvoke(
                     {"messages": messages},
                     config=invoke_config,
                 ),
@@ -1950,7 +2020,7 @@ def _tool_output_to_wire_text(raw_out: Any, *, max_length: int = 0) -> str:
     elif isinstance(raw_out, dict) and isinstance(raw_out.get("summary"), str):
         return raw_out["summary"] if not max_length else _trunc(raw_out["summary"], max_length)
     elif hasattr(raw_out, "content"):
-        text = _ai_message_content_to_text(getattr(raw_out, "content"))
+        text = _ai_message_content_to_text(raw_out.content)
     else:
         text = str(raw_out or "")
     return _trunc(text, max_length) if max_length else text

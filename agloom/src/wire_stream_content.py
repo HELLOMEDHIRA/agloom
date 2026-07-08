@@ -1,10 +1,11 @@
 """Split provider stream chunks into model reasoning vs assistant answer text.
 
 LangChain ``AIMessageChunk`` shapes differ by vendor (Anthropic thinking blocks,
-DeepSeek ``reasoning_content``, OpenAI reasoning fields, Qwen inline
-``<think>`` tags, …). All streaming paths should use
-:func:`emit_llm_chunk_to_event_queue` so reasoning reaches AGP as
-``token.delta`` with ``role="reasoning"`` and answer text as ``role="assistant"``.
+DeepSeek ``reasoning_content``, OpenAI reasoning fields, and inline reasoning tags
+such as ``<think>`` / ``<reasoning>`` emitted by open-weight models of any vendor).
+All streaming paths should use :func:`emit_llm_chunk_to_event_queue` so reasoning
+reaches AGP as ``token.delta`` with ``role="reasoning"`` and answer text as
+``role="assistant"``.
 """
 
 from __future__ import annotations
@@ -20,8 +21,19 @@ _KWARGS_REASONING_KEYS = ("reasoning_content", "reasoning", "thinking")
 _BLOCK_REASONING_TYPES = frozenset({"thinking", "reasoning", "reasoning_content"})
 _SKIP_BLOCK_TYPES = frozenset({"image", "image_url", "input_audio", "video", "file"})
 
-_QWEN_THINK_OPEN_RE = re.compile(r"<\s*(?:redacted_thinking|think)\s*>", re.IGNORECASE)
-_QWEN_THINK_CLOSE_RE = re.compile(r"<\s*/\s*(?:redacted_thinking|think)\s*>", re.IGNORECASE)
+# Provider-agnostic inline reasoning tag names. Open-weight models across vendors wrap
+# chain-of-thought in one of these; add new conventions here (case-insensitive, whitespace
+# tolerant). ``redacted_thinking`` covers Anthropic's redacted marker leaking as text.
+_INLINE_REASONING_TAGS: tuple[str, ...] = (
+    "think",
+    "thinking",
+    "reason",
+    "reasoning",
+    "redacted_thinking",
+)
+_TAG_ALT = "|".join(re.escape(t) for t in _INLINE_REASONING_TAGS)
+_REASONING_OPEN_RE = re.compile(rf"<\s*(?:{_TAG_ALT})\s*>", re.IGNORECASE)
+_REASONING_CLOSE_RE = re.compile(rf"<\s*/\s*(?:{_TAG_ALT})\s*>", re.IGNORECASE)
 
 
 def _surrogate_safe_text(text: str) -> str:
@@ -30,16 +42,21 @@ def _surrogate_safe_text(text: str) -> str:
     return text.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
 
 
-def _split_qwen_inline_thinking(text: str) -> tuple[str, str]:
-    """Return ``(reasoning, answer)`` from Qwen-style inline thinking tags in plain text."""
-    if not text or not _QWEN_THINK_OPEN_RE.search(text):
+def _split_inline_reasoning(text: str) -> tuple[str, str]:
+    """Return ``(reasoning, answer)`` from provider-agnostic inline reasoning tags.
+
+    Handles multiple tag conventions (``<think>``, ``<thinking>``, ``<reasoning>``, …),
+    is whitespace-tolerant, and treats a dangling unclosed open tag mid-stream as
+    reasoning through end-of-chunk.
+    """
+    if not text or not _REASONING_OPEN_RE.search(text):
         return "", text
 
     reasoning_parts: list[str] = []
     answer_parts: list[str] = []
     rest = text
     while True:
-        open_match = _QWEN_THINK_OPEN_RE.search(rest)
+        open_match = _REASONING_OPEN_RE.search(rest)
         if not open_match:
             if rest:
                 answer_parts.append(rest)
@@ -48,7 +65,7 @@ def _split_qwen_inline_thinking(text: str) -> tuple[str, str]:
         if before:
             answer_parts.append(before)
         after_open = rest[open_match.end() :]
-        close_match = _QWEN_THINK_CLOSE_RE.search(after_open)
+        close_match = _REASONING_CLOSE_RE.search(after_open)
         if close_match is None:
             if after_open:
                 reasoning_parts.append(after_open)
@@ -72,7 +89,7 @@ def _text_from_mapping(block: dict[str, Any]) -> str:
 def _split_content_block(block: Any) -> tuple[str, str]:
     """Return ``(reasoning_piece, answer_piece)`` for one content block."""
     if isinstance(block, str):
-        return _split_qwen_inline_thinking(block)
+        return _split_inline_reasoning(block)
     if not isinstance(block, dict):
         return "", str(block)
     btype = block.get("type")
@@ -83,9 +100,9 @@ def _split_content_block(block: Any) -> tuple[str, str]:
     if btype in _SKIP_BLOCK_TYPES:
         return "", ""
     if btype == "text":
-        return _split_qwen_inline_thinking(str(block.get("text", "")))
+        return _split_inline_reasoning(str(block.get("text", "")))
     if isinstance(block.get("text"), str):
-        return _split_qwen_inline_thinking(block["text"])
+        return _split_inline_reasoning(block["text"])
     return "", ""
 
 
@@ -125,7 +142,7 @@ def split_stream_parts_from_chunk(chunk: Any) -> tuple[str, str]:
         return "".join(reasoning_parts), "".join(answer_parts)
     if isinstance(content, str):
         if content:
-            r, a = _split_qwen_inline_thinking(content)
+            r, a = _split_inline_reasoning(content)
             if r:
                 reasoning_parts.append(r)
             if a:
@@ -138,7 +155,7 @@ def split_stream_parts_from_chunk(chunk: Any) -> tuple[str, str]:
             if a:
                 answer_parts.append(a)
     elif content:
-        r, a = _split_qwen_inline_thinking(str(content))
+        r, a = _split_inline_reasoning(str(content))
         if r:
             reasoning_parts.append(r)
         if a:
@@ -152,8 +169,8 @@ def answer_text_from_content(content: Any) -> str:
     if content is None:
         return ""
     if isinstance(content, str):
-        if _QWEN_THINK_OPEN_RE.search(content):
-            _, answer = _split_qwen_inline_thinking(content)
+        if _REASONING_OPEN_RE.search(content):
+            _, answer = _split_inline_reasoning(content)
             return answer
         return content
     if isinstance(content, list):
@@ -164,8 +181,8 @@ def answer_text_from_content(content: Any) -> str:
                 parts.append(answer)
         return "".join(parts)
     text = str(content)
-    if _QWEN_THINK_OPEN_RE.search(text):
-        _, answer = _split_qwen_inline_thinking(text)
+    if _REASONING_OPEN_RE.search(text):
+        _, answer = _split_inline_reasoning(text)
         return answer
     return text
 
@@ -173,9 +190,9 @@ def answer_text_from_content(content: Any) -> str:
 def sanitize_assistant_content_for_history(content: Any) -> Any:
     """Strip inline thinking from assistant content before it is stored in message history."""
     if isinstance(content, str):
-        if not _QWEN_THINK_OPEN_RE.search(content):
+        if not _REASONING_OPEN_RE.search(content):
             return content
-        _, answer = _split_qwen_inline_thinking(content)
+        _, answer = _split_inline_reasoning(content)
         return answer
     if isinstance(content, list):
         cleaned: list[Any] = []

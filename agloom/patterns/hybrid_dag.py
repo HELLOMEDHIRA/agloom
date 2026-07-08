@@ -22,7 +22,7 @@ from ..src.models import (
     _trunc,
 )
 from ._dag import group_by_level, inject_dag_context
-from ._failure import exec_failure_kwargs
+from ._failure import ExecFailureKwargs, exec_failure_kwargs
 from ._resolve import resolve_worker_configs
 from ._steps_accounting import steps_taken_from_audit
 from ._synthesis_contract import (
@@ -32,7 +32,6 @@ from ._synthesis_contract import (
     human_message_body_replace_placeholders,
     pattern_synthesis_success,
 )
-from .hitl import run_workers_with_hitl
 
 logger = get_logger(__name__)
 
@@ -339,7 +338,7 @@ async def handle_hybrid_dag(
     worker_success = sum(1 for r in all_results if r.signal == SignalType.SUCCESS)
     synthesis_degraded = synthesis_error is not None
     success = pattern_synthesis_success(worker_results=all_results, synthesis_degraded=synthesis_degraded)
-    failure_kw: dict = {}
+    failure_kw: ExecFailureKwargs = {}
     if not success:
         if synthesis_error == "SynthesisTimeout":
             failure_kw = exec_failure_kwargs(synthesis_error, kind="timeout")

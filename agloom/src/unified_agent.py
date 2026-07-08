@@ -25,6 +25,20 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool, StructuredTool
 
+from ..memory import (
+    LongTermStore,
+    SessionMemory,
+    build_memory_context,
+    create_memory_tools,
+)
+from ..patterns.blackboard import handle_blackboard
+from ..patterns.hybrid_dag import handle_hybrid_dag
+from ..patterns.pipeline import handle_pipeline
+from ..patterns.planner_executor import handle_planner_executor
+from ..patterns.react import handle_react
+from ..patterns.reflection import handle_reflection
+from ..patterns.supervisor import handle_supervisor
+from ..patterns.swarm import handle_swarm
 from .classifier import analyze_query, query_needs_registered_tools
 from .compat import ensure_langchain_pending_deprecation_suppressed
 from .delegation import (
@@ -38,15 +52,6 @@ from .delegation import (
 from .hitl_contract import HITLEvent, call_user_callback
 from .logging_utils import configure_package_logging, get_logger
 from .mcp_support import MCPConnectionError, MCPServerConfig, aclose_mcp_client
-from .reserved_tools import TOOL_LOAD_SKILL, check_reserved_tool_names as _check_reserved_tool_names
-from ..memory import (
-    LongTermStore,
-    SessionMemory,
-    build_memory_context,
-    create_memory_tools,
-)
-from .multimodal import content_blocks_to_text
-from .wire_stream_content import answer_text_from_content, emit_llm_chunk_to_event_queue
 from .models import (
     DEFAULT_SYSTEM_PROMPT,
     AgentConfig,
@@ -62,16 +67,11 @@ from .models import (
     resolve_turn_planner_timeout,
 )
 from .multimodal import merge_context_into_user_turn, text_from_user_turn
+from .reserved_tools import TOOL_LOAD_SKILL
+from .reserved_tools import check_reserved_tool_names as _check_reserved_tool_names
 from .turn_input import TurnInput
-from ..patterns.blackboard import handle_blackboard
-from ..patterns.hybrid_dag import handle_hybrid_dag
-from ..patterns.pipeline import handle_pipeline
-from ..patterns.planner_executor import handle_planner_executor
-from ..patterns.react import handle_react
-from ..patterns.reflection import handle_reflection
-from ..patterns.supervisor import handle_supervisor
-from ..patterns.swarm import handle_swarm
 from .wire_execution_result import execution_result_wire_dict
+from .wire_stream_content import answer_text_from_content, emit_llm_chunk_to_event_queue
 from .wire_tokens import record_emitted_usage
 
 try:
@@ -832,7 +832,7 @@ def resolve_system_prompt(
     if isinstance(system_prompt, SystemMessage):
         content = system_prompt.content
         system_prompt = content if isinstance(content, str) else str(content)
-    return cast(str, compose_agent_system_prompt(system_prompt, cli_tools=cli_tools))
+    return cast("str", compose_agent_system_prompt(system_prompt, cli_tools=cli_tools))
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -1390,13 +1390,13 @@ async def _ensure_frozen_plan(config: dict, turn: TurnInput) -> None:
     """Classify once and lock classifier-derived execution plan (TTL + fingerprint aware)."""
     import time as _time
 
+    from ..orchestrator import orchestration_enabled
     from .frozen import (
         build_execution_plan,
         classify_text_for_freeze,
         clear_frozen_plan,
         get_frozen_plan,
     )
-    from ..orchestrator import orchestration_enabled
     frozen_ttl = config.get("frozen_analysis_ttl", 0)
     if get_frozen_plan(config) is not None:
         if frozen_ttl <= 0:
@@ -1556,9 +1556,7 @@ async def _run_fresh_impl(
 
     if turn is None:
         turn = config.get("_turn_input")
-    if turn is None:
-        turn = normalize_turn_input(query)
-    elif not isinstance(turn, TurnInput):
+    if turn is None or not isinstance(turn, TurnInput):
         turn = normalize_turn_input(query)
 
     user_turn = turn.user_turn
@@ -2285,7 +2283,7 @@ class UnifiedAgent:
 
     def _normalize_invoke_input(self, value: str | dict | list) -> Any:
         """LangChain-shaped ``{"messages": [...]}``, plain str, or multimodal blocks."""
-        from .turn_input import TurnInput, normalize_turn_input
+        from .turn_input import normalize_turn_input
 
         turn = normalize_turn_input(value)
         if self.config.get("frozen") and isinstance(turn.user_turn, list):
@@ -2611,9 +2609,9 @@ class UnifiedAgent:
                         "clarification_queues": invoke_config["configurable"]["clarification_queues"],
                         "_event_queue": event_queue,
                     }
-                    _pt = run_config.get("_progress_tracker")
+                    _pt: Any = run_config.get("_progress_tracker")
                     if _pt is not None:
-                        setattr(_pt, "_event_queue", event_queue)
+                        _pt._event_queue = event_queue
 
                     result = await run_fresh(
                         config=run_config,
@@ -2928,7 +2926,7 @@ class UnifiedAgent:
                 logger.debug(
                     f"[{self.name}] resume: reusing analysis pattern={preserved_analysis.pattern.value}"
                 )
-            state = await cast(Any, compiled).ainvoke(
+            state = await cast("Any", compiled).ainvoke(
                 Command(resume=value),
                 config=cfg,
             )
@@ -3281,6 +3279,28 @@ async def create_agent(
         turn_planner_timeout if turn_planner_timeout is not None else classifier_timeout
     )
 
+    # Reasoning-active models are slow; raise effective timeout floors so agloom's own
+    # machinery (classify) and REACT turns don't hit the wall and trigger a gateway
+    # disconnect. Provider-agnostic detection; explicit create_agent overrides are preserved
+    # (only the library defaults 120.0 / 60.0 are bumped).
+    from agloom.llm.chat_template_compat import extract_model_label as _extract_model_label
+    from agloom.llm.reasoning_control import reasoning_is_active as _reasoning_is_active
+    from agloom.llm.reasoning_control import scaled_timeouts_for_reasoning as _scaled_timeouts_for_reasoning
+
+    _reasoning_label = model if isinstance(model, str) else _extract_model_label(model)
+    if _reasoning_is_active(
+        None if isinstance(model, str) else model,
+        enable_thinking=enable_thinking,
+        model_label=_reasoning_label,
+    ):
+        llm_timeout, resolved_turn_planner_timeout = _scaled_timeouts_for_reasoning(
+            llm_timeout, resolved_turn_planner_timeout
+        )
+        logger.debug(
+            "[create_agent] reasoning-active model detected — raising timeout floors "
+            f"(llm_timeout={llm_timeout}, classifier_timeout={resolved_turn_planner_timeout})."
+        )
+
     from ..cli_tools import CLI_TOOLS_SYSTEM_APPENDIX, get_cli_tools, normalize_cli_tools_kwargs
 
     cli_tools_kw = normalize_cli_tools_kwargs(cli_tools)
@@ -3379,7 +3399,11 @@ async def create_agent(
 
     validate_frozen_params(frozen)
 
-    skills_mirror_path: Path | None = Path(skills_disk_mirror).resolve() if skills_disk_mirror is not None else None
+    skills_mirror_path: Path | None = (
+        Path(skills_disk_mirror).resolve()  # noqa: ASYNC240 — one-time construction-path resolve, not a hot async path
+        if skills_disk_mirror is not None
+        else None
+    )
 
     resolved_llm = resolve_model(model)
     from agloom.llm.chat_template_compat import wrap_chat_model_for_react_compat
@@ -3389,7 +3413,7 @@ async def create_agent(
     agent_name = (name or "UnifiedAgent").strip()
     resolved_tools = normalize_tools(tools or [])
     from agloom.context.plane import compute_context_budget
-    from agloom.context.tool_scratchpad import ToolScratchpad, attach_tool_scratchpad, MAX_TOOL_WIRE_CHARS
+    from agloom.context.tool_scratchpad import MAX_TOOL_WIRE_CHARS, ToolScratchpad, attach_tool_scratchpad
     from agloom.context.window import infer_context_window_tokens, reserved_output_tokens
     from agloom.transport.manager import TransportManager, TransportPolicy
 

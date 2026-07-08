@@ -47,16 +47,28 @@ def content_hash_for_text(text: str) -> str:
 
 
 def _prepare_summarizer(model: Any) -> Any:
-    """Bind temperature=0 when the model supports ``bind``."""
+    """Bind temperature=0 and request reasoning OFF (internal utility call) when supported."""
     if model is None:
         return None
-    bind = getattr(model, "bind", None)
+    prepared = model
+    bind = getattr(prepared, "bind", None)
     if callable(bind):
         try:
-            return bind(temperature=0)
+            prepared = bind(temperature=0)
         except Exception:
-            pass
-    return model
+            prepared = model
+    # Summarization is an internal utility call — provider-agnostic reasoning OFF (no-op where
+    # the provider has no toggle). Never disables reasoning for the user's task model.
+    try:
+        from ..llm.chat_template_compat import extract_model_label
+        from ..llm.reasoning_control import apply_reasoning_preference
+
+        prepared = apply_reasoning_preference(
+            prepared, enable=False, model_label=extract_model_label(prepared)
+        )
+    except Exception:
+        pass
+    return prepared
 
 
 def refs_preserved_in_summary(

@@ -55,13 +55,15 @@ async def test_ainvoke_transport_retry_compacts_before_resending() -> None:
 
     tool = MagicMock()
     tool.name = "observability_get_logs"
+    # Small window so the ~30k-token request is genuinely oversized (est >= 0.85 * input
+    # budget) — this is the "oversized → still compacts" branch of the latency-vs-size gate.
     agent = {
         "llm": MagicMock(),
         "tools": [tool],
         "system_prompt": "sys",
         "name": "ainvoke-compact-retry-test",
         "_tool_scratchpad": pad,
-        "context_window_tokens": 128_000,
+        "context_window_tokens": 32_000,
         "context_reserved_output_tokens": 8192,
         "context_compact_ratio": 0.82,
     }

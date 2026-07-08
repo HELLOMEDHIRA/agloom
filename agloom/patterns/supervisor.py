@@ -6,6 +6,7 @@ import time
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel as PydanticBaseModel
 
+from ..src.llm_streaming import astream_llm_to_event_queue
 from ..src.logging_utils import get_logger
 from ..src.models import (
     AgentEvent,
@@ -20,8 +21,7 @@ from ..src.models import (
     _merge_token_usage,
     _trunc,
 )
-from ..src.llm_streaming import astream_llm_to_event_queue
-from ._failure import exec_failure_kwargs
+from ._failure import ExecFailureKwargs, exec_failure_kwargs
 from ._resolve import resolve_worker_configs
 from ._steps_accounting import steps_taken_from_audit
 from ._synthesis_contract import ALL_PATTERN_WORKERS_FAILED_ERROR, pattern_synthesis_success
@@ -237,7 +237,7 @@ async def handle_supervisor(
         err = synthesis_error
     logger.event(f"[Supervisor] Done: {len(worker_results)} workers, {len(output)} chars.")
 
-    failure_kw: dict = {}
+    failure_kw: ExecFailureKwargs = {}
     if not success:
         if not any_success:
             failure_kw = exec_failure_kwargs(ALL_PATTERN_WORKERS_FAILED_ERROR, kind="worker")

@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TypedDict
 
 from ..src.exception_utils import exception_indicates_transient_transport_error
+
+
+class ExecFailureKwargs(TypedDict, total=False):
+    """Keyword arguments unpacked into :class:`~agloom.src.models.ExecutionResult`.
+
+    ``total=False`` so an empty ``{}`` (success path) is a valid instance and unpacking is
+    type-checked precisely at each call site.
+    """
+
+    failure_class: str | None
+    retryable: bool
 
 
 def failure_class_for_error(
@@ -39,6 +50,6 @@ def exec_failure_kwargs(
     *,
     kind: str = "execution",
     exc: BaseException | None = None,
-) -> dict[str, Any]:
+) -> ExecFailureKwargs:
     fc, retry = failure_class_for_error(error, kind=kind, exc=exc)
     return {"failure_class": fc, "retryable": retry}
